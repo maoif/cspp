@@ -522,4 +522,4 @@
                  tmp)))]
         [_ (syntax-error stx "invalid rich-progress form")])))
 
-  (rich-register-renderer! rich-progress? rich-progress-render))
+  (rich-register-container-renderer! rich-progress? rich-progress-render))

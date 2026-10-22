@@ -1,6 +1,7 @@
 #!chezscheme
 (import (cspp)
-        (cspp rich private common))
+        (cspp rich private common)
+        (only (cspp rich renderable) rich-register-container-renderer!))
 
 (mat rich-import
 
@@ -1267,5 +1268,246 @@
 
      (equal? "  x" (parameterize ([rich-render-width 5])
                        (rich-export-text (rich-align :body "x" :width 3 :align 'right))))
+
+     )
+
+(define rich-test-render-text
+  (lambda (console value)
+    (rich-string-output
+     (lambda (port)
+       (rich-console-output-port-set! console port)
+       (rich-print console value)))))
+
+(mat rich-table-default-width
+
+     (equal? (string-append "+----+-------------+\n"
+                            "| ID | Description |\n"
+                            "+----+-------------+\n"
+                            "| 7  | abcdefghijk |\n"
+                            "|    | lmnop       |\n"
+                            "+----+-------------+")
+             (rich-test-render-text (rich-console :width 20)
+                          (rich-table :columns ("ID" "Description")
+                                      :rows (("7" "abcdefghijklmnop")))))
+
+     (equal? "+-----+\n| abc |\n+-----+"
+             (rich-test-render-text (rich-console :width 30)
+                          (rich-table :show-header? #f :columns ("A") :rows (("abc")))))
+
+     (equal? "+----+\n| 界 |\n| 界 |\n+----+"
+             (rich-test-render-text (rich-console :width 6)
+                          (rich-table :show-header? #f :columns ("A") :rows (("界界")))))
+
+     (equal? "+---+\n| a |\n| b |\n+---+"
+             (rich-test-render-text (rich-console :width 8)
+                          (rich-table :show-header? #f :columns ("A")
+                                      :rows (((rich-text "a\nb" (rich-style 'red)))))))
+
+     (let ([table (rich-table :title "Long title" :caption "Long caption"
+                             :columns ("A" "B") :rows (("one" "two")))])
+       (andmap
+        (lambda (width)
+          (parameterize ([rich-render-width width])
+            (andmap (lambda (line) (<= (rich-segments-width line) width))
+                    (rich-table-render table))))
+        '(1 2 3 4 5 6 7 8 9 10)))
+
+     (let ([calls 0])
+       (rich-register-renderer!
+        (lambda (value) (eq? value 'table-auto-single-render))
+        (lambda (value) (set! calls (+ calls 1)) "abcdefghijklmnop"))
+       (let ([lines (parameterize ([rich-render-width 8])
+                      (rich-table-render
+                       (rich-table :show-header? #f :columns ("A")
+                                   :rows (list (list 'table-auto-single-render)))))])
+         (and (= calls 1)
+              (andmap (lambda (line) (<= (rich-segments-width line) 8)) lines))))
+
+     )
+
+(mat rich-panel-default-width
+
+     (equal? "+------+\n| abcd |\n| efgh |\n| i    |\n+------+"
+             (rich-test-render-text (rich-console :width 8) (rich-panel :body "abcdefghi")))
+
+     (equal? "+---+\n| x |\n+---+"
+             (rich-test-render-text (rich-console :width 30) (rich-panel :body "x")))
+
+     (let ([panel (rich-panel :title "Long title" :subtitle "Long subtitle"
+                             :body "abcdefghi")])
+       (andmap
+        (lambda (width)
+          (parameterize ([rich-render-width width])
+            (andmap (lambda (line) (<= (rich-segments-width line) width))
+                    (rich-panel-render panel))))
+        '(1 2 3 4 5 6 7 8 9 10)))
+
+     (equal? "+-----------+\n| abcdefghi |\n+-----------+"
+             (rich-test-render-text (rich-console :width 8)
+                          (rich-panel :body "abcdefghi" :width 7)))
+
+     )
+
+(mat rich-other-container-default-width
+
+     (equal? "  abcd \n  ef "
+             (rich-test-render-text (rich-console :width 7)
+                                    (rich-padding :body "abcdef" :left 2 :right 1)))
+
+     (equal? "abcd\n  ef"
+             (rich-test-render-text (rich-console :width 4)
+                                    (rich-align :body "abcdef" :align 'right)))
+
+     (equal? "abcd\nef\nXYZ"
+             (rich-test-render-text (rich-console :width 4)
+                                    (rich-columns :items ("abcdef" "XYZ") :gap 1)))
+
+     (equal? "abcd UVWX\nef   YZ"
+             (rich-test-render-text (rich-console :width 9)
+                                    (rich-layout :direction 'row
+                                                 :items ("abcdef" "UVWXYZ"))))
+
+     (equal? "abcd\nef\nUVWX\nYZ"
+             (rich-test-render-text (rich-console :width 4)
+                                    (rich-layout :direction 'column
+                                                 :items ("abcdef" "UVWXYZ"))))
+
+     (let ([tree (rich-tree :label "root123456")])
+       (rich-tree-add! tree "child12345")
+       (equal? "root1234\n56\n└── chil\n    d123\n    45"
+               (rich-test-render-text (rich-console :width 8) tree)))
+
+     (let* ([tree (rich-tree :label "root123456")]
+            [child (rich-tree-add! tree "child12345")])
+       (rich-tree-add! child "leaf12345")
+       (andmap
+        (lambda (width)
+          (parameterize ([rich-render-width width])
+            (andmap (lambda (line) (<= (rich-segments-width line) width))
+                    (rich-tree-render tree))))
+        '(1 2 3 4 5 6 7 8)))
+
+     (let ([containers
+            (list (rich-padding :body "abcdef" :left 9 :right 9)
+                  (rich-align :body "abcdef")
+                  (rich-columns :items ("abcdef" "uvwxyz"))
+                  (rich-layout :direction 'row :items ("abc" "def" "ghi")))])
+       (andmap
+        (lambda (width)
+          (andmap (lambda (value)
+                    (andmap (lambda (line) (<= (rich-segments-width line) width))
+                            (rich-render (rich-console :width width) value)))
+                  containers))
+        '(1 2 3 4 5)))
+
+     )
+
+(mat rich-container-complete-glyphs
+
+     (equal? "+--+\n|界|\n|界|\n+--+"
+             (rich-test-render-text (rich-console :width 5) (rich-panel :body "界界")))
+
+     (equal? "+--+\n|界|\n|界|\n+--+"
+             (rich-test-render-text (rich-console :width 5)
+                                    (rich-table :show-header? #f :columns ("A")
+                                                :rows (("界界")))))
+
+     (equal? " 界\n 界"
+             (rich-test-render-text (rich-console :width 3)
+                                    (rich-padding :body "界界" :left 2)))
+
+     (equal? "界\n界"
+             (rich-test-render-text (rich-console :width 3)
+                                    (rich-layout :direction 'row :items ("界" "界"))))
+
+     (let ([tree (rich-tree :label "root")])
+       (rich-tree-add! tree "界界")
+       (equal? "root\n└──界\n   界"
+               (rich-test-render-text (rich-console :width 5) tree)))
+
+     )
+
+(mat rich-table-nested-natural-width
+
+     (let ([lines (rich-render
+                   (rich-console :width 30)
+                   (rich-table :columns ("ID" "Details")
+                               :rows (list (list "7" (rich-panel :body "abcdefghijklmnop")))))])
+       (and (= 29 (rich-segments-width (car lines)))
+            (ormap (lambda (line)
+                     (string-contains? (rich-segments->plain line) "abcdefghijklmnop")) lines)))
+
+     (let ([calls 0])
+       (rich-register-renderer!
+        (lambda (value) (eq? value 'nested-table-once))
+        (lambda (value) (set! calls (+ calls 1)) "abcdefghijklmnop"))
+       (let ([lines (rich-render
+                     (rich-console :width 16)
+                     (rich-table :columns ("ID" "Details")
+                                 :rows (list (list "7" (rich-panel :body 'nested-table-once)))))])
+         (and (= calls 1)
+              (andmap (lambda (line) (<= (rich-segments-width line) 16)) lines))))
+
+     )
+
+(mat rich-container-unboxed-fallback
+
+     (equal? "界\n界"
+             (rich-test-render-text (rich-console :width 3) (rich-panel :body "界界")))
+
+     (let ([table (rich-table :show-header? #f :columns ("A" "B")
+                             :rows (list (list (rich-panel :body "界") "界")))])
+       (equal? "界\n界" (rich-test-render-text (rich-console :width 3) table)))
+
+     (let ([lines (rich-render (rich-console :width 1) (make-rich-table))])
+       (andmap (lambda (line) (<= (rich-segments-width line) 1)) lines))
+
+     )
+
+(mat rich-nested-container-glyphs
+
+     (equal? "界\n界"
+             (rich-test-render-text (rich-console :width 2)
+                                    (rich-panel :body (rich-panel :body "界界"))))
+
+     (equal? "界\n界"
+             (rich-test-render-text (rich-console :width 3)
+                                    (rich-panel :body (rich-panel :body "界界"))))
+
+     (let ([calls 0] [text (rich-text "abcdefghijklmnop" (rich-style 'red))])
+       (rich-register-renderer!
+        (lambda (value) (eq? value 'table-cache-lifetime))
+        (lambda (value) (set! calls (+ calls 1)) (rich-text-render text)))
+       (let ([table (rich-table :show-header? #f :columns ("A")
+                               :rows (list (list (rich-panel :body 'table-cache-lifetime))))])
+         (rich-test-render-text (rich-console :width 10) table)
+         (rich-test-render-text (rich-console :width 20) table)
+         (= calls 2)))
+
+     (let* ([style (rich-style 'red)]
+            [lines (rich-render (rich-console :width 8)
+                                (rich-table :show-header? #f :columns ("A")
+                                            :rows (list (list (rich-text "界界界" style)))))]
+            [styled (filter (lambda (segment) (eq? style (rich-segment-style segment)))
+                            (apply append lines))])
+       (and (equal? "界界界" (rich-segments->plain styled))
+            (andmap (lambda (line) (<= (rich-segments-width line) 8)) lines)))
+
+     )
+
+(mat rich-table-reflow-complexity
+
+     (let ([calls 0])
+       (rich-register-container-renderer!
+        rich-table?
+        (lambda (table) (set! calls (+ calls 1)) (rich-table-render table)))
+       (let* ([table (let nest ([depth 8] [body "x"])
+                       (if (zero? depth) body
+                           (nest (- depth 1)
+                                 (rich-table :show-header? #f :columns ("A")
+                                             :rows (list (list body))))))]
+              [output (rich-test-render-text (rich-console :width 1000) table)])
+         (rich-register-container-renderer! rich-table? rich-table-render)
+         (and (< calls 100) (string-contains? output "x"))))
 
      )

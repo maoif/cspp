@@ -12,6 +12,7 @@
   (import (cspp chez)
           (cspp utils)
           (cspp rich private common)
+          (cspp rich private lines)
           (cspp rich segment)
           (cspp rich renderable)
           (cspp rich pretty))
@@ -130,21 +131,25 @@
 
   (define $prefix-label-lines
     (lambda (label first-prefix rest-prefix)
-      (let ([lines (parameterize
-                              ([rich-render-width
-                                (max 1 (- (rich-render-width) (string-length first-prefix)))])
-                            ($value->segment-lines label))])
+      (let* ([available (rich-render-width)]
+             [prefix-width (min (rich-segment-width (rich-segment first-prefix))
+                                (- available 1))]
+             [width (- available prefix-width)]
+             [raw (parameterize ([rich-render-width (max width (min 2 available))])
+                    ($value->segment-lines label))]
+             [prefix-width (min prefix-width (max 0 (- available (rich-lines-min-width raw))))]
+             [prefix (lambda (text)
+                       (rich-segments->plain
+                        (rich-segment-crop (list (rich-segment text)) prefix-width)))]
+             [lines (rich-lines-wrap raw (- available prefix-width))])
         (if (null? lines)
-            (list (list (rich-segment first-prefix)))
+            (list (list (rich-segment (prefix first-prefix))))
             (let loop ([lines lines] [first? #t] [out '()])
               (if (null? lines)
                   (reverse out)
-                  (loop (cdr lines)
-                        #f
-                        (cons (cons (rich-segment
-                                     (if first? first-prefix rest-prefix))
-                                    (car lines))
-                              out))))))))
+                  (loop (cdr lines) #f
+                        (cons (cons (rich-segment (prefix (if first? first-prefix rest-prefix)))
+                                    (car lines)) out))))))))
 
   (define $render-node-children
     (lambda (children prefix guides)
@@ -236,8 +241,8 @@
                 child))))
 
   #|proc:rich-tree-render
-  The `rich-tree-render` procedure renders `tree` as segment lines with Unicode
-  guide characters.
+  The `rich-tree-render` procedure returns segment lines for `tree` with Unicode guides.
+  Labels wrap after guide indentation; deep guides shrink to leave room for complete glyphs.
   |#
   (define rich-tree-render
     (lambda (tree)
@@ -245,8 +250,8 @@
               ($rich-tree-render/guides tree $unicode-guides))))
 
   #|proc:rich-tree-render/ascii
-  The `rich-tree-render/ascii` procedure renders `tree` as segment lines with
-  ASCII guide characters.
+  The `rich-tree-render/ascii` procedure returns segment lines for `tree` with ASCII guides.
+  Labels wrap after guide indentation; deep guides shrink to leave room for complete glyphs.
   |#
   (define rich-tree-render/ascii
     (lambda (tree)
@@ -295,4 +300,4 @@
                    tmp))))]
         [_ (syntax-error stx "invalid rich-tree form")])))
 
-  (rich-register-renderer! rich-tree? rich-tree-render))
+  (rich-register-container-renderer! rich-tree? rich-tree-render))

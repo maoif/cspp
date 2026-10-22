@@ -21,6 +21,7 @@
   (import (cspp chez)
           (cspp utils)
           (cspp rich private common)
+          (cspp rich private lines)
           (cspp rich box)
           (cspp rich segment)
           (cspp rich renderable)
@@ -109,12 +110,7 @@
             (apply string-append (reverse out))
             (loop (- count 1) (cons text out))))))
 
-  (define $segment-lines-width
-    (lambda (lines)
-      (let loop ([lines lines] [width 0])
-        (if (null? lines)
-            width
-            (loop (cdr lines) (max width (rich-segments-width (car lines))))))))
+  (define $segment-lines-width rich-lines-width)
 
   (define $line-at
     (lambda (lines index)
@@ -274,7 +270,8 @@
 
   #|proc:make-rich-table
   The `make-rich-table` procedure constructs a mutable table with ASCII box
-  drawing, one space of cell padding, visible headers, and row lines.
+  drawing, one space of cell padding, visible headers, and row lines. Its rendered width
+  fits the content and wraps at the current terminal or parent content width.
   |#
   (define make-rich-table
     (case-lambda
@@ -420,62 +417,118 @@
               ($rich-table-rows-set! table ($append-one ($rich-table-rows table) values))
               table)))
 
+  ;; Cap the widest columns first so a short ID or status does not waste a long column's space.
+  (define $fit-column-widths
+    (lambda (natural minimum budget)
+      (if (<= (apply + natural) budget)
+          natural
+          (let search ([low 0] [high (apply max natural)])
+            (if (< low high)
+                (let* ([mid (quotient (+ low high 1) 2)]
+                       [used (apply + (map (lambda (width floor)
+                                             (max floor (min width mid))) natural minimum))])
+                  (if (<= used budget) (search mid high) (search low (- mid 1))))
+                (let* ([widths (map (lambda (width floor) (max floor (min width low)))
+                                    natural minimum)]
+                       [left (- budget (apply + widths))])
+                  (map (lambda (width target)
+                         (if (and (> width target) (positive? left))
+                             (begin (set! left (- left 1)) (+ target 1)) target))
+                       natural widths)))))))
+
+  (define $column-minimums
+    (lambda (count headers rows)
+      (map (lambda (index)
+             (rich-lines-min-width
+              (append (if headers (list-ref headers index) '())
+                      (apply append (map (lambda (row) (list-ref row index)) rows)))))
+           (iota count))))
+
+  ;; When borders alone cannot fit, keep fields readable by stacking them without a box.
+  (define $stack-table-blocks
+    (lambda (headers rows width)
+      (if (null? rows)
+          (if headers (apply append (map (lambda (block) (rich-lines-wrap block width)) headers))
+              '())
+          (apply append
+                 (map (lambda (row)
+                        (apply append
+                               (map (lambda (header block)
+                                      (append (if header (rich-lines-wrap header width) '())
+                                              (rich-lines-wrap block width)))
+                                    (or headers (make-list (length row) #f)) row)))
+                      rows)))))
+
+  (define $table-render
+    (lambda (table)
+      (let* ([columns ($rich-table-columns table)] [count (length columns)]
+             [rows ($rich-table-rows table)] [available (rich-render-width)]
+             [chars (rich-box-chars (rich-table-box table))]
+             ;; Measure each cell with room for its siblings' minimum content and borders.
+             [measure-width (max 1 (min 2 available) (- available (* 2 count)))]
+             [render-cell (lambda (value width)
+                            (parameterize ([rich-render-width width])
+                              ($value->segment-lines value)))]
+             [header-values (and (rich-table-show-header? table)
+                                 (map $rich-table-column-title columns))]
+             [headers (and header-values
+                           (map (lambda (value) (render-cell value measure-width)) header-values))]
+             [blocks (map (lambda (row)
+                            (map (lambda (value) (render-cell value measure-width)) row)) rows)]
+             [minimum ($column-minimums count headers blocks)]
+             [padding (if (zero? count) 0
+                          (min (rich-table-padding table)
+                               (max 0 (quotient (- available (+ count 1) (apply + minimum))
+                                                (* 2 count)))))]
+             [budget (max 0 (- available (+ count 1) (* 2 padding count)))]
+             [natural (map max minimum ($column-widths columns headers blocks))]
+             [stack? (< available (max 2 (+ count 1 (apply + minimum))))]
+             [widths (if (or stack? (zero? count)) '()
+                         ($fit-column-widths natural minimum budget))]
+             [render-row (lambda (values widths)
+                           (map (lambda (value width)
+                                  (rich-lines-wrap (render-cell value width) width)) values widths))]
+             [body (if stack?
+                       ($stack-table-blocks
+                        (and header-values
+                             (map (lambda (value) (render-cell value available)) header-values))
+                        (map (lambda (row)
+                               (map (lambda (value) (render-cell value available)) row)) rows)
+                        available)
+                       (let* ([headers (and header-values (render-row header-values widths))]
+                              [wrapped (map (lambda (row) (render-row row widths)) rows)]
+                              [widths (map max minimum ($column-widths columns headers wrapped))])
+                         (append
+                          (list ($top-border chars widths padding))
+                          (if headers
+                              (append ($render-table-row headers columns widths padding chars #t)
+                                      (if (rich-table-show-lines? table)
+                                          (list ($middle-border chars widths padding)) '()))
+                              '())
+                          ($render-data-rows wrapped columns widths padding chars
+                                             (rich-table-show-lines? table))
+                          (list ($bottom-border chars widths padding)))))])
+        (append (if (rich-table-title table)
+                    (rich-lines-wrap ($string->segment-lines (rich-table-title table)) available)
+                    '())
+                body
+                (if (rich-table-caption table)
+                    (rich-lines-wrap ($string->segment-lines (rich-table-caption table)) available)
+                    '())))))
+
   #|proc:rich-table-render
-  The `rich-table-render` procedure renders `table` as segment lines.
+  The `rich-table-render` procedure returns segment lines for `table`. Columns fit their
+  content when space permits; long cells and headers wrap within the available parent or
+  terminal width, preserving styles. Padding shrinks in narrow contexts; when complete
+  glyphs and borders cannot fit, fields stack without borders. Titles and captions wrap.
+  Built-in containers reflow to assigned column widths; custom cell renderers run once.
   |#
   (define rich-table-render
     (lambda (table)
       (pcheck ([rich-table? table])
-              (let* ([columns ($rich-table-columns table)]
-                     [rows ($rich-table-rows table)]
-                     [chars (rich-box-chars (rich-table-box table))]
-                     [padding (rich-table-padding table)]
-                     [cell-width (if (null? columns) (rich-render-width)
-                                     (max 1 (quotient
-                                             (- (rich-render-width) (+ (length columns) 1)
-                                                (* 2 padding (length columns)))
-                                             (length columns))))]
-                     [render-cell (lambda (value)
-                                    (parameterize ([rich-render-width cell-width])
-                                      ($value->segment-lines value)))]
-                     [header-blocks (and (rich-table-show-header? table)
-                                         (map (lambda (column)
-                                                (render-cell
-                                                 ($rich-table-column-title column)))
-                                              columns))]
-                     [row-blocks (map (lambda (row)
-                                        (map render-cell row))
-                                      rows)]
-                     [widths ($column-widths columns header-blocks row-blocks)]
-                     [title (rich-table-title table)]
-                     [caption (rich-table-caption table)]
-                     [body (append
-                            (list ($top-border chars widths padding))
-                            (if header-blocks
-                                (append ($render-table-row header-blocks
-                                                           columns
-                                                           widths
-                                                           padding
-                                                           chars
-                                                           #t)
-                                        (if (rich-table-show-lines? table)
-                                            (list ($middle-border chars widths padding))
-                                            '()))
-                                '())
-                            ($render-data-rows row-blocks
-                                               columns
-                                               widths
-                                               padding
-                                               chars
-                                               (rich-table-show-lines? table))
-                            (list ($bottom-border chars widths padding)))])
-                (append (if title
-                            (list (list (rich-segment title)))
-                            '())
-                        body
-                        (if caption
-                            (list (list (rich-segment caption)))
-                            '()))))))
+        (parameterize ([rich-layout-render-cache
+                        (or (rich-layout-render-cache) (make-eq-hashtable))])
+          ($table-render table)))))
 
   #|macro:rich-table
   The `rich-table` macro constructs and returns a table. The `:columns` and
@@ -572,4 +625,4 @@
                  tmp)))]
         [_ (syntax-error stx "invalid rich-table form")])))
 
-  (rich-register-renderer! rich-table? rich-table-render))
+  (rich-register-container-renderer! rich-table? rich-table-render))
