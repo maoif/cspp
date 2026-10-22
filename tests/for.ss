@@ -1330,3 +1330,43 @@
            [endianness (lambda args 'little)])
        (equal? '(1 515)
                (for/list ([x :bytevector #vu8(0 1 2 3) :type u16 :big]) x))))
+
+(mat vector-configuration-and-capacity
+     (equal? '#(1 3) (for/vector ([x 5] [:guard (odd? x)]) x))
+
+     (equal? '#(0 1) (for/vector ([x 5] [:break (= x 2)]) x))
+
+     (equal? '#(1 3 #f)
+             (for/vector ([:length 3] [x 5] [:guard (odd? x)]) x))
+
+     (equal? '#((1 1) (3 3))
+             (for/vector ([:index i] [:length 2] [x 5] [:guard (odd? x)])
+               (list i x)))
+
+     (equal? '#(1 2 3)
+             (for/vector ([x 3] [:let y (+ x 1)]) y))
+
+     ;; Filling a nested vector must stop all levels immediately.
+     (let ([count 0])
+       (and (equal? '#((0 0))
+                    (for*/vector ([:length 1] [x 5]
+                                  [:let ignored (begin (set! count (+ count 1)) #f)]
+                                  [y 2])
+                      (list x y)))
+            (= count 1)))
+
+     ;; A bounded witness makes failure terminate even with an unbounded source.
+     (let ([count 0])
+       (equal? '#((0 0))
+               (for*/vector ([:length 1] [x :nums +inf.0]
+                             [:let ignored (begin
+                                             (set! count (+ count 1))
+                                             (when (> count 2)
+                                               (error 'vector-capacity "failed to stop")))]
+                             [y 2])
+                 (list x y))))
+
+     ;; A zero-length comprehension must not evaluate its iterator source.
+     (equal? '#()
+             (for*/vector ([:length 0] [x :iota (error 'vector-capacity "source evaluated")])
+               x)))

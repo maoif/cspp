@@ -536,7 +536,7 @@
                 [cl* (filter id `(,(hashtable-ref fragments 'index  #f)
                                   ;; TODO what if there's no iter clauses?
                                   ,@(hashtable-ref fragments 'iter '(#f))
-                                  ,(hashtable-ref fragments 'config  #f)))])
+                                  ,@(hashtable-ref fragments 'config  '())))])
            ;; (println "len: ~a~ncl* ~a" frag-len cl*)
            (if frag-len
                #`(let ([len #,(syntax-case frag-len () [(_ l) #'l])])
@@ -544,20 +544,18 @@
                      (errorf 'for/vector "length is not a nonnegative fixnum: ~a" len))
                    (let ([vec (make-vector len
                                            #,(if frag-fill
-                                                 ;; TODO lift `v` first
                                                  (syntax-case frag-fill () [(_ v) #'v])
-                                                 #'#f))])
-                     ;; need index to index the vec
-                     ;; if :index is given, use it; otherwise, we add one
-                     #,(if frag-index
-                           (let ([i (syntax-case frag-index () [(_ i) #'i])])
-                             #`(for ( #,@cl*
-                                      [:break (fx= #,i len)])
-                                 (vector-set! vec #,i (begin body* ...))))
-                           #`(for ([:index i]
-                                   #,@cl*
-                                   [:break (fx= i len)])
-                               (vector-set! vec i (begin body* ...))))
+                                                 #'#f))]
+                         [position 0])
+                     (unless (fx= len 0)
+                       ;; Escape all loop levels as soon as the vector is full.
+                       (call/1cc
+                        (lambda (finish)
+                          (for (#,@cl*)
+                            (vector-set! vec position (begin body* ...))
+                            (set! position (fx1+ position))
+                            (when (fx= position len)
+                              (finish (void)))))))
                      vec))
                #`(let ([lb (make-list-builder)])
                    (for (#,@cl*)
@@ -681,20 +679,18 @@
                      (errorf 'for*/vector "length is not a nonnegative fixnum: ~a" len))
                    (let ([vec (make-vector len
                                            #,(if frag-fill
-                                                 ;; TODO lift `v` first
                                                  (syntax-case frag-fill () [(_ v) #'v])
-                                                 #'#f))])
-                     ;; need index to index the vec
-                     ;; if :index is given, use it; otherwise, we add one
-                     #,(if frag-index
-                           (let ([i (syntax-case frag-index () [(_ i) #'i])])
-                             #`(for* ( #,@cl*
-                                       [:break (fx= #,i len)])
-                                 (vector-set! vec #,i (begin body* ...))))
-                           #`(for* ([:index i]
-                                    #,@cl*
-                                    [:break (fx= i len)])
-                               (vector-set! vec i (begin body* ...))))
+                                                 #'#f))]
+                         [position 0])
+                     (unless (fx= len 0)
+                       ;; Escape all loop levels as soon as the vector is full.
+                       (call/1cc
+                        (lambda (finish)
+                          (for* (#,@cl*)
+                            (vector-set! vec position (begin body* ...))
+                            (set! position (fx1+ position))
+                            (when (fx= position len)
+                              (finish (void)))))))
                      vec))
                #`(let ([lb (make-list-builder)])
                    (for* (#,@cl*)
