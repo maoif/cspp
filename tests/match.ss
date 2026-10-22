@@ -821,3 +821,11 @@
        (define-record-type Nonempty (fields x))
        (guard (e [else (string-contains? (condition-message e) "invalid record pattern")])
          (match (make-Nonempty 10) [,(Nonempty) #f] [else #f]))))
+
+(mat native-record-syntax-named-field
+     ;; A field name may also be a pattern keyword; its named pattern remains valid.
+     (let ()
+       (define-record-type SyntaxField (fields unquote))
+       (= 10 (match (make-SyntaxField 10)
+               [,(SyntaxField (unquote ,x)) x]
+               [else #f]))))

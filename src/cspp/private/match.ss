@@ -138,7 +138,14 @@
                                                #t)])
                                    '())
                             [(fx= (vector-length fields) #,(length pats))
-                             #,(generate-fields pats #f)]
+                             #,(if named?
+                                   ;; An ambiguous named pattern may have no valid positional
+                                   ;; interpretation, e.g. a field named `unquote`.
+                                   (guard (condition
+                                           [(syntax-violation? condition)
+                                            #`(errorf 'match "invalid record pattern: ~s" '#,pat)])
+                                     (generate-fields pats #f))
+                                   (generate-fields pats #f))]
                             [else (errorf 'match "invalid record pattern: ~s" '#,pat)]))
                          (#,fk))))))])))
 
