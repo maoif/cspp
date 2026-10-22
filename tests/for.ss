@@ -1297,3 +1297,21 @@
         (list x y z)))
 
      )
+
+(mat numeric-range-boundaries
+     ;; Fractional bounds must stop after crossing the exclusive upper bound.
+     (equal? '(0 1 2)
+             (for/list ([x :nums 5/2] [:break (> x 5)]) x))
+
+     (equal? (list (- (most-positive-fixnum) 1))
+             (for/list ([x :fixnums (- (most-positive-fixnum) 1)
+                                   (most-positive-fixnum) 2]) x))
+
+     (equal? (list (+ (most-negative-fixnum) 1))
+             (for/list ([x :fixnums (+ (most-negative-fixnum) 1)
+                                   (most-negative-fixnum) -2]) x))
+
+     ;; :iota accepts natural bounds beyond the fixnum range.
+     (equal? '(0 1 2)
+             (for/list ([x :iota (+ 1 (most-positive-fixnum))]
+                        [:break (= x 3)]) x)))

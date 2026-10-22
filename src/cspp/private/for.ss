@@ -418,8 +418,8 @@
                            (errorf ':iota "not a natural number: ~a" t-stop))
                          #,e))
                    #`[#,v 0]
-                   #`(fx= #,v t-stop)
-                   #`(fx1+ #,v)
+                   #`(= #,v t-stop)
+                   #`(+ #,v 1)
                    #f))]
           [:nums
            (when (not (<= 1 nops 3))
@@ -432,7 +432,7 @@
                                 (errorf ':nums "not a nonnegative number: ~a" t-stop))
                               #,e))
                         #`[#,v 0]
-                        #`(= #,v t-stop)
+                        #`(>= #,v t-stop)
                         #`(+ #,v 1)
                         #f)]
                [2 (list (lambda (e)
@@ -464,7 +464,7 @@
              (case nops
                [1 (list (lambda (e)
                           #`(let ([t-stop #,(car op*)])
-                              (unless (natural? t-stop)
+                              (unless (and (fixnum? t-stop) (fx>= t-stop 0))
                                 (errorf ':fxnums "not a nonnegative fixnum: ~a" t-stop))
                               #,e))
                         #`[#,v 0]
@@ -482,7 +482,7 @@
                         #f)]
                [3 (list (lambda (e)
                           #`(let ([t-start #,(car op*)] [t-stop #,(cadr op*)] [t-step #,(caddr op*)])
-                              (unless (and (fixnum? t-start) (fixnum? t-stop)
+                              (unless (and (fixnum? t-start) (fixnum? t-stop) (fixnum? t-step)
                                            (or (and (fx<= t-start t-stop) (fx> t-step 0))
                                                (and (fx> t-start t-stop)  (fx< t-step 0))))
                                 (errorf ':fxnums "invalid range from ~a to ~a, step ~a" t-start t-stop t-step))
@@ -491,7 +491,13 @@
                         #`(if (fx<= t-start t-stop)
                               (fx>= #,v t-stop)
                               (fx<= #,v t-stop))
-                        #`(fx+ #,v t-step)
+                        ;; Saturate at the exclusive bound if the next fixnum step
+                        ;; would overflow; the next termination check then succeeds.
+                        #`(if (if (fx> t-step 0)
+                                  (fx> #,v (fx- (most-positive-fixnum) t-step))
+                                  (fx< #,v (fx- (most-negative-fixnum) t-step)))
+                              t-stop
+                              (fx+ #,v t-step))
                         #f)]))]
           [:list
            (when (< nops 1)
