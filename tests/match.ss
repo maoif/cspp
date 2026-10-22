@@ -232,6 +232,31 @@
      )
 
 
+(mat ellipsis-capture-order-and-fallback
+
+     (equal? '((1 2 1) (11 22 11) (3))
+             (match '#(#(1 11) #(2 22) #(1 11) end 3)
+               [#(#(,x ,y) ... end ,z ...) (list x y z)]))
+
+     (equal? '((1 2 1) (11 22 11) (3))
+             (match '((1 11) (2 22) (1 11) end 3)
+               [((,x ,y) ... end ,z ...) (list x y z)]))
+
+     ;; A failed repeated vector subpattern must discard its partial captures.
+     (equal? '(#(1 11) bad end)
+             (match '#(#(1 11) bad end)
+               [#(#(,x ,y) ... end) #f]
+               [#(,all ...) all]))
+
+     ;; A failed repeated list subpattern must discard its partial captures.
+     (equal? '((1 11) bad end)
+             (match '((1 11) bad end)
+               [((,x ,y) ... end) #f]
+               [(,all ...) all]))
+
+     )
+
+
 (mat simple-box
 
      (equal? 1
@@ -704,3 +729,25 @@
 
 
 ;;;; error tests
+
+(mat native-record-patterns
+     (let ()
+       (define-record-type ReviewPoint (fields x y))
+       (equal? '(10 20)
+               (match (make-ReviewPoint 10 20)
+                 [,(ReviewPoint ,x ,y) (list x y)]
+                 [else #f])))
+
+     (let ()
+       (define-record-type ReviewPoint (fields x y))
+       (equal? 20
+               (match (make-ReviewPoint 10 20)
+                 [,(ReviewPoint (y ,y)) y]
+                 [else #f])))
+
+     ;; A native record pattern must fall through for other value types.
+     (let ()
+       (define-record-type ReviewPoint (fields x))
+       (match 10
+         [,(ReviewPoint ,x) #f]
+         [else #t])))

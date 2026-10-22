@@ -47,6 +47,8 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
               (assert (procedure? expander))
               (expander process-pattern rho expr-id pat body fk))]
            ;; TODO make this dispatch extensible
+           [(valid-record-type? rho ext)
+            (system-record-expander process-pattern rho expr-id pat body fk)]
            [(record? ext)
             (record-expander process-pattern rho expr-id pat body fk)]
            [(eq? 'box (syntax->datum ext))

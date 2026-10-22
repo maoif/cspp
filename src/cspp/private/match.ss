@@ -90,7 +90,59 @@
                     (syntax-error p "define-match-expander: not a procedure:")))))])))
 
 
+  ;; Local generative records carry a descriptor identifier in the expansion
+  ;; environment; their field names and field count are only known at runtime.
   (define system-record-expander
+    (lambda (pp rho expr-id pat body fk)
+      (syntax-case pat ()
+        [(dt pats ...)
+         (if (record-type-descriptor? (get-type-descriptor rho #'dt))
+             (static-system-record-expander pp rho expr-id pat body fk)
+             (with-syntax ([(rtd fields indices) (generate-temporaries '(rtd fields indices))])
+               (let* ([pats #'(pats ...)]
+                      [named? (andmap
+                               (lambda (p)
+                                 (syntax-case p ()
+                                   [(name value) (identifier? #'name) #t]
+                                   [_ #f]))
+                               pats)]
+                      [generate-fields
+                       (lambda (patterns named?)
+                         (let loop ([patterns patterns] [i 0])
+                           (if (null? patterns)
+                               body
+                               (with-syntax ([(field) (generate-temporaries '(field))])
+                                 #`(let ([field ((record-accessor rtd
+                                                  #,(if named?
+                                                        #`(list-ref indices #,i)
+                                                        i))
+                                                #,expr-id)])
+                                     #,(pp rho #'field (car patterns)
+                                           (loop (cdr patterns) (fx1+ i)) fk))))))])
+                 #`(let ([rtd (record-type-descriptor dt)])
+                     (if ((record-predicate rtd) #,expr-id)
+                         (let* ([fields (record-type-field-names rtd)]
+                                [indices #,(if named?
+                                              #`(map (lambda (name) (vmemq name fields))
+                                                     '#,(datum->syntax #'dt
+                                                        (map (lambda (p) (syntax-case p ()
+                                                                          [(name value) (datum name)]))
+                                                             pats)))
+                                              #'#f)])
+                           (cond
+                            #,@(if named?
+                                   (list #`[(andmap number? indices)
+                                            #,(generate-fields
+                                               (map (lambda (p) (syntax-case p ()
+                                                                  [(name value) #'value])) pats)
+                                               #t)])
+                                   '())
+                            [(fx= (vector-length fields) #,(length pats))
+                             #,(generate-fields pats #f)]
+                            [else (errorf 'match "invalid record pattern: ~s" '#,pat)]))
+                         (#,fk))))))])))
+
+  (define static-system-record-expander
     (lambda (pp rho expr-id pat body fk)
       (syntax-case pat ()
         [(dt pat pats ...)
