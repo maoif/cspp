@@ -102,11 +102,12 @@
 
 (section console "Wrapping And Cropping")
 (let* ([story "the deployment note wraps across several short lines while preserving magenta styling"]
-       [wrapped (rich-segment-wrap (list (rich-segment story (rich-style 'magenta))) 22)]
+       [wrapped (rich-segment-wrap (list (rich-segment story (rich-style 'magenta)))
+                                   (rich-console-width console))]
        [cropped (rich-segment-crop
                  (list (rich-segment "incident-2026-05-02/very-long-service-name"
                                      (rich-style 'yellow)))
-                 26)])
+                 (max 1 (quotient (rich-console-width console) 2)))])
   (print-lines console wrapped)
   (print-lines console (list cropped))
   (rich-print console "visible width check: "
@@ -117,34 +118,33 @@
 (section console "Unicode Cells / 中文")
 ;; CJK, combining accents, and a simple emoji align in scalar and grapheme terminals.
 ;; Multi-code-point emoji are shown outside borders because terminal shaping differs.
-(rich-print console
-            (rich-table
-              :box 'rounded
-              :columns ("Text" "Cells")
-              :rows (((rich-text "中文" (rich-style 'cyan)) "4")
-                     ("café" "4")
-                     ("かな" "4")
-                     ("한글" "4")
-                     ("🚀" "2")))
-            "\n")
+(let ([table (rich-table :box 'rounded :columns ("Text" "Cells"))])
+  (for-each
+   (lambda (text)
+     (rich-table-add-row! table
+                         (rich-text text (rich-style 'cyan))
+                         (number->string (rich-segment-width (rich-segment text)))))
+   '("中文" "café" "かな" "한글" "🚀"))
+  (rich-print console table "\n"))
 (rich-print console "Emoji sequences: 👩🏽‍💻  🇨🇳  ❤️\n")
 (print-lines console
              (rich-segment-wrap
-              (list (rich-segment "中文 café 🚀 编程" (rich-style 'magenta))) 10))
+              (list (rich-segment "中文 café 🚀 编程" (rich-style 'magenta)))
+              (rich-console-width console)))
 (rich-print console "Cropped: "
             (make-dashboard-lines (list (rich-segment-crop
-                                         (list (rich-segment "中文🚀 café")) 6)))
+                                         (list (rich-segment "中文🚀 café"))
+                                         (max 1 (quotient (rich-console-width console) 2)))))
             "\n")
-(rich-print console "Aligned: ["
-            (rich-align :body "中文 é 🚀" :width 20 :align 'right)
-            "]\n")
+(rich-println console "Aligned:")
+(rich-print console (rich-align :body "中文 é 🚀" :align 'right) "\n")
 
 (section console "Rules, Alignment, Padding")
 (define deploy-rule
-  (rich-rule :title "release train" :width 58 :style 'rounded))
-(define left (rich-align :body "left: logs" :width 38 :align 'left))
-(define center (rich-align :body "center: service map" :width 38 :align 'center))
-(define right (rich-align :body "right: alerts" :width 38 :align 'right))
+  (rich-rule :title "release train" :style 'rounded))
+(define left (rich-align :body "left: logs" :align 'left))
+(define center (rich-align :body "center: service map" :align 'center))
+(define right (rich-align :body "right: alerts" :align 'right))
 (define spacer
   (rich-padding
     :body (rich-text "padded command output" (rich-style 'green))
@@ -183,7 +183,6 @@
 (define service-cards
   (rich-columns
     :items (api-panel queue-panel cache-panel deploy-panel alert-panel)
-    :width (rich-console-width console)
     :gap 2))
 (rich-print console service-cards "\n")
 

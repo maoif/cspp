@@ -111,11 +111,11 @@
 (let* ([wrapped (rich-segment-wrap
                  (list (rich-segment "wrapped styled segments keep their style while flowing into a narrow column"
                                      (rich-style 'magenta)))
-                 24)]
+                 (rich-console-width console))]
        [cropped (rich-segment-crop
                  (list (rich-segment "cropped output remains styled"
                                      (rich-style 'green)))
-                 14)])
+                 (max 1 (quotient (rich-console-width console) 2)))])
   (print-lines console wrapped)
   (print-lines console (list cropped))
   (rich-print console
@@ -129,31 +129,30 @@
 (section console "Unicode Cells / 中文")
 ;; CJK, combining accents, and a simple emoji align in scalar and grapheme terminals.
 ;; Multi-code-point emoji are shown outside borders because terminal shaping differs.
-(rich-print console
-            (rich-table
-              :box 'rounded
-              :columns ("Text" "Cells")
-              :rows (((rich-text "中文" (rich-style 'cyan)) "4")
-                     ("café" "4")
-                     ("かな" "4")
-                     ("한글" "4")
-                     ("🚀" "2")))
-            "\n")
+(let ([table (rich-table :box 'rounded :columns ("Text" "Cells"))])
+  (for-each
+   (lambda (text)
+     (rich-table-add-row! table
+                         (rich-text text (rich-style 'cyan))
+                         (number->string (rich-segment-width (rich-segment text)))))
+   '("中文" "café" "かな" "한글" "🚀"))
+  (rich-print console table "\n"))
 (rich-print console "Emoji sequences: 👩🏽‍💻  🇨🇳  ❤️\n")
 (print-lines console
              (rich-segment-wrap
-              (list (rich-segment "中文 café 🚀 编程" (rich-style 'magenta))) 10))
+              (list (rich-segment "中文 café 🚀 编程" (rich-style 'magenta)))
+              (rich-console-width console)))
 (rich-print console "Cropped: "
             (make-example-lines (list (rich-segment-crop
-                                         (list (rich-segment "中文🚀 café")) 6)))
+                                         (list (rich-segment "中文🚀 café"))
+                                         (max 1 (quotient (rich-console-width console) 2)))))
             "\n")
-(rich-print console "Aligned: ["
-            (rich-align :body "中文 é 🚀" :width 20 :align 'right)
-            "]\n")
+(rich-println console "Aligned:")
+(rich-print console (rich-align :body "中文 é 🚀" :align 'right) "\n")
 
 (section console "Rules, Padding, Alignment")
 (define centered-rule
-  (rich-rule :title "centered heavy rule" :width 50 :style 'heavy))
+  (rich-rule :title "centered heavy rule" :style 'heavy))
 (define padded
   (rich-padding
     :body (rich-text "padded body with styled text" (rich-style 'yellow))
@@ -161,9 +160,9 @@
     :right 4
     :bottom 1
     :left 4))
-(define left-align (rich-align :body "left aligned" :width 34 :align 'left))
-(define center-align (rich-align :body "center aligned" :width 34 :align 'center))
-(define right-align (rich-align :body "right aligned" :width 34 :align 'right))
+(define left-align (rich-align :body "left aligned" :align 'left))
+(define center-align (rich-align :body "center aligned" :align 'center))
+(define right-align (rich-align :body "right aligned" :align 'right))
 (rich-print console centered-rule "\n" padded "\n")
 (rich-print console left-align "\n" center-align "\n" right-align "\n")
 
@@ -191,7 +190,6 @@
 (define box-columns
   (rich-columns
     :items (ascii-panel rounded-panel heavy-panel double-panel)
-    :width (rich-console-width console)
     :gap 3))
 (rich-print console box-columns "\n")
 

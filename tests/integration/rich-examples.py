@@ -99,6 +99,14 @@ def check(name, width):
         name, width, unicode_rules)
     for sample in ("中文", "café", "👩🏽‍💻", "🇨🇳", "❤️"):
         assert sample in decoded, (name, "missing Unicode sample", sample)
+    rule_title = "centered heavy rule" if name == "rich.ss" else "release train"
+    example_rules = [line for line in lines if rule_title in line]
+    assert len(example_rules) == 1 and cell_width(example_rules[0]) == width, (
+        name, width, example_rules)
+    aligned_text = "right aligned" if name == "rich.ss" else "right: alerts"
+    aligned_rows = [line for line in lines if line.lstrip() == aligned_text]
+    assert len(aligned_rows) == 1 and cell_width(aligned_rows[0]) == width, (
+        name, width, aligned_rows)
     # Bordered demonstrations should align in both scalar and grapheme terminals.
     start = lines.index(unicode_rules[0])
     stop = next(index for index in range(start + 1, len(lines))
