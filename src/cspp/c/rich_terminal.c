@@ -3,6 +3,13 @@
 #ifdef _WIN32
 
 #include <io.h>
+#include <windows.h>
+
+int cspp_rich_terminal_width(int fd) {
+  CONSOLE_SCREEN_BUFFER_INFO info;
+  if (!GetConsoleScreenBufferInfo((HANDLE)_get_osfhandle(fd), &info)) return 0;
+  return info.srWindow.Right - info.srWindow.Left + 1;
+}
 
 int cspp_rich_terminal_output_supported(int fd) { return _isatty(fd) ? 1 : 0; }
 
@@ -14,6 +21,13 @@ int cspp_rich_terminal_restore_echo(void) { return ENOTSUP; }
 
 #include <termios.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
+
+int cspp_rich_terminal_width(int fd) {
+  struct winsize size;
+  if (!isatty(fd) || ioctl(fd, TIOCGWINSZ, &size) != 0) return 0;
+  return size.ws_col;
+}
 
 int cspp_rich_terminal_output_supported(int fd) { return isatty(fd) ? 1 : 0; }
 

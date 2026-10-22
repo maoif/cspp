@@ -65,7 +65,7 @@
        (make-rich-console-record (current-output-port)
                                  (current-error-port)
                                  (current-input-port)
-                                 80
+                                 #f
                                  'auto
                                  #f
                                  #f
@@ -83,17 +83,24 @@
   (define $terminal-output?
     (foreign-procedure "cspp_rich_terminal_output_supported" (int) boolean))
 
+  (define $terminal-width
+    (foreign-procedure "cspp_rich_terminal_width" (int) int))
+
+  (define $output-descriptor
+    (lambda (port)
+      (cond [(file-port? port) (port-file-descriptor port)]
+            [(eq? port $stdout-port) 1]
+            [(eq? port $stderr-port) 2]
+            [else #f])))
+
   (define $console-color-system
     (lambda (console)
       (let ([system (rich-console-color-system console)]
             [port (rich-console-output-port console)])
         (if (eq? system 'auto)
             (if (or (rich-console-force-terminal? console)
-                    (cond [(file-port? port)
-                           ($terminal-output? (port-file-descriptor port))]
-                          [(eq? port $stdout-port) ($terminal-output? 1)]
-                          [(eq? port $stderr-port) ($terminal-output? 2)]
-                          [else #f]))
+                    (let ([fd ($output-descriptor port)])
+                      (and fd ($terminal-output? fd))))
                 'standard
                 'none)
             system))))
@@ -163,19 +170,26 @@
               ($rich-console-input-port-set! console port))))
 
   #|proc:rich-console-width
-  The `rich-console-width` procedure returns the render width for `console`.
+  The `rich-console-width` procedure returns the effective positive render width for
+  `console`: its explicit width, the destination terminal width, or 80 if unavailable.
+  Automatic widths are queried on each call so terminal resizing takes effect.
   |#
   (define rich-console-width
     (lambda (console)
       (pcheck ([rich-console? console])
-              ($rich-console-width console))))
+              (or ($rich-console-width console)
+                  (let* ([fd ($output-descriptor (rich-console-output-port console))]
+                         [width (and fd ($terminal-width fd))])
+                    (if (and width (positive? width)) width 80))))))
 
   #|proc:rich-console-width-set!
-  The `rich-console-width-set!` procedure sets the render width for `console`.
+  The `rich-console-width-set!` procedure sets `console` to positive integer `width`.
+  Passing `#f` restores automatic terminal width detection (the default). Returns an
+  unspecified value.
   |#
   (define rich-console-width-set!
     (lambda (console width)
-      (pcheck ([rich-console? console] [rich-positive-integer? width])
+      (pcheck ([rich-console? console] [rich-optional-width? width])
               ($rich-console-width-set! console width))))
 
   #|proc:rich-console-color-system
@@ -523,8 +537,12 @@
   (define $write-rich-values
     (lambda (target port values)
       (if (rich-console? target)
-          ($write-rich-values/console target values)
-          ($write-rich-values/plain port values))))
+          (parameterize ([rich-render-width (rich-console-width target)])
+            ($write-rich-values/console target values))
+          (let ([console (make-rich-console)])
+            (rich-console-output-port-set! console port)
+            (parameterize ([rich-render-width (rich-console-width console)])
+              ($write-rich-values/plain port values))))))
 
   #|proc:rich-print
   The `rich-print` procedure prints values to a rich console, an output port, or
@@ -571,8 +589,9 @@
   (define rich-render
     (lambda (console value)
       (pcheck ([rich-console? console])
-              (let ([renderer (rich-renderer-for value)])
-                (cond [(and (rich-tree? value)
+              (parameterize ([rich-render-width (rich-console-width console)])
+                (let ([renderer (rich-renderer-for value)])
+                  (cond [(and (rich-tree? value)
                             (rich-console-ascii-only? console))
                        ($check-rendered-value 'rich-render
                                              (rich-tree-render/ascii value))]
@@ -584,7 +603,7 @@
                        value]
                       [else
                        ($check-rendered-value 'rich-render
-                                             (rich-pretty-render value))])))))
+                                             (rich-pretty-render value))]))))))
 
   #|proc:rich-export-text
   The `rich-export-text` procedure renders a value to plain text and returns the

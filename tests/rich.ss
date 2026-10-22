@@ -894,3 +894,31 @@
      (error? (make-rich-progress 4 '(unknown)))
 
      )
+
+(mat rich-render-width-context
+
+     (begin
+       (rich-register-renderer!
+        (lambda (value) (eq? value 'width-context-test))
+        (lambda (value) (make-string (rich-render-width) #\-)))
+       (let ([console (rich-console :width 17)])
+         (and (equal? (make-string 17 #\-) (rich-render console 'width-context-test))
+              (equal? (make-string 17 #\-)
+                      (rich-string-output
+                       (lambda (port)
+                         (rich-console-output-port-set! console port)
+                         (rich-print console 'width-context-test)))))))
+
+     (let ([console (make-rich-console)])
+       (rich-console-width-set! console 17)
+       (rich-console-width-set! console #f)
+       (rich-string-output
+        (lambda (port)
+          (rich-console-output-port-set! console port)
+          (unless (= 80 (rich-console-width console))
+            (error 'width-context-test "wrong fallback width"))))
+       (= 80 (rich-console-width console)))
+
+     (= 80 (string-length (rich-export-text 'width-context-test)))
+
+     )
