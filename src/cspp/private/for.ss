@@ -232,16 +232,20 @@
          (kw:break? #':break)
          (begin (add-clause! cl)
                 (values #t #t))]
+        [(:guard e :index v)
+         (and (kw:guard? #':guard) (kw:index? #':index) (identifier? #'v))
+         (begin (add-clause! cl)
+                (values #t #t))]
         [(:guard e)
          (kw:guard? #':guard)
          (begin (add-clause! cl)
                 (values #t #t))]
         [(:let v e)
-         (and (kw:let? #':let) (identifier? #'v))
+         (and (memq (datum :let) '(:let :let* :letrec :letrec*)) (identifier? #'v))
          (begin (add-clause! cl)
                 (values #t #t))]
         [(:let-values (v* ...) e)
-         (and (kw:let-values? #':let-values)
+         (and (memq (datum :let-values) '(:let-values :let*-values))
               (andmap identifier? #'(v* ...)))
          (begin (add-clause! cl)
                 (values #t #t))]
@@ -282,8 +286,16 @@
          (kw:break? #':break)
          (begin (add-clause! cl)
                 (values #t #t))]
+        [(:stop e)
+         (kw:stop? #':stop)
+         (begin (add-clause! #'(:stop e (void)))
+                (values #t #t))]
         [(:stop e1 e2)
          (kw:stop? #':stop)
+         (begin (add-clause! cl)
+                (values #t #t))]
+        [(:guard e :index v)
+         (and (kw:guard? #':guard) (kw:index? #':index) (identifier? #'v))
          (begin (add-clause! cl)
                 (values #t #t))]
         [(:guard e)
@@ -291,11 +303,11 @@
          (begin (add-clause! cl)
                 (values #t #t))]
         [(:let v e)
-         (and (kw:let? #':let) (identifier? #'v))
+         (and (memq (datum :let) '(:let :let* :letrec :letrec*)) (identifier? #'v))
          (begin (add-clause! cl)
                 (values #t #t))]
         [(:let-values (v* ...) e)
-         (and (kw:let-values? #':let-values)
+         (and (memq (datum :let-values) '(:let-values :let*-values))
               (andmap identifier? #'(v* ...)))
          (begin (add-clause! cl)
                 (values #t #t))]

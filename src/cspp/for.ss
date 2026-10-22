@@ -76,6 +76,13 @@
 <stop-clause> := [:stop <expr>]
               |  [:stop <expr> <expr>]
   |#
+  #|macro:for/fold
+  The `for/fold` macro iterates its source clauses in parallel and evaluates the body.
+  `:init` binds an accumulator updated from the body result; `:finish` supplies the final value.
+  Binding clauses scope their variables over subsequent clauses and the body. Each binding clause
+  uses its corresponding Scheme binding form with one binding. An indexed guard binds a zero-based
+  index counting passes through that guard, including passes rejected by a later guard.
+  |#
   (define-syntax for/fold
     (lambda (stx)
       ;; this differs from that of for*
@@ -121,7 +128,16 @@
                 [frag-init   (hashtable-ref fragments 'init #f)]
                 [frag-index  (hashtable-ref fragments 'index #f)]
                 [frag-finish (hashtable-ref fragments 'finish #f)]
-                [frag-config (hashtable-ref fragments 'config #f)])
+                [frag-config (hashtable-ref fragments 'config #f)]
+                [guard-indices
+                 (filter id
+                         (map (lambda (conf)
+                                (syntax-case conf ()
+                                  [(:guard e :index v)
+                                   (and (kw:guard? #':guard) (kw:index? #':index))
+                                   (cons conf (car (generate-temporaries '(guard-index))))]
+                                  [_ #f]))
+                              (or frag-config '())))])
            (with-syntax ([(for-loop t-acc t-finish) (generate-temporaries '(for-loop t-acc t-finish))])
              (let* ([iter-frags (process-iter-clauses (hashtable-ref fragments 'iter #f))]
                     [init-def (if frag-init
@@ -184,7 +200,8 @@
                ;; (printf "call/finish-proc: ~a~n" call/finish-proc)
                ;; (printf "frag-config:  ~a~n" frag-config)
                ;; (println "for -------------------------")
-               #`(let ([t-finish #,(cadr call/finish-proc)])
+               #`(let ([t-finish #,(cadr call/finish-proc)]
+                       #,@(map (lambda (entry) #`[#,(cdr entry) 0]) guard-indices))
                    #,(let lp-preloops ([gen-preloops gen-preloops])
                        (if (null? gen-preloops)
                            #`(let for-loop (#,@loop-vars)
@@ -211,6 +228,17 @@
                                                         #`(if e1
                                                               e2
                                                               #,(lp-configs (cdr configs)))]
+                                                       [(:guard e :index v)
+                                                        (kw:guard? #':guard)
+                                                        (let ([counter (cdr (assq conf guard-indices))])
+                                                          #`(if e
+                                                                (let ([v #,counter])
+                                                                  (set! #,counter (fx1+ #,counter))
+                                                                  #,(lp-configs (cdr configs)))
+                                                                #,(if frag-init
+                                                                      #`(let ([t-acc #,init-var])
+                                                                          (for-loop #,@updates))
+                                                                      #`(for-loop #,@updates))))]
                                                        [(:guard e)
                                                         (kw:guard? #':guard)
                                                         #`(if e
@@ -221,11 +249,16 @@
                                                                         (for-loop #,@updates))
                                                                     #`(for-loop #,@updates)))]
                                                        [(:let v e)
-                                                        (kw:let? #':let)
-                                                        #`(let ([v e])
+                                                        (memq (datum :let) '(:let :let* :letrec :letrec*))
+                                                        #`(#,(case (datum :let)
+                                                               [(:let) #'let]
+                                                               [(:let*) #'let*]
+                                                               [(:letrec) #'letrec]
+                                                               [(:letrec*) #'letrec*])
+                                                            ([v e])
                                                             #,(lp-configs (cdr configs)))]
                                                        [(:let-values (v* ...) e)
-                                                        (kw:let-values? #':let-values)
+                                                        (memq (datum :let-values) '(:let-values :let*-values))
                                                         #`(let-values ([(v* ...) e])
                                                             #,(lp-configs (cdr configs)))]
                                                        [_ (syntax-error conf "unknown config clause:")]))))
@@ -255,6 +288,15 @@
                      |  <index-clause>      ; TODO for* can have local indices
                      |  <bind-clause>
                      |  <stop-clause>       ; only in for*, stop the entire iter
+  |#
+  #|macro:for*/fold
+  The `for*/fold` macro nests its source clauses and evaluates the body for each combination.
+  Inner sources can use outer bindings and are evaluated on every entry to their loop level.
+  `:init` binds an accumulator updated from the body result; `:finish` supplies the final value.
+  Binding clauses use the corresponding Scheme binding form and scope over subsequent clauses.
+  Indexed guards count passes starting at zero and reset on every entry to their loop level.
+  `:break` leaves one loop level. `:stop` leaves all levels, returning its optional second expression
+  or an unspecified value when that expression is omitted.
   |#
   (define-syntax for*/fold
     (lambda (stx)
@@ -363,7 +405,21 @@
                                           #,(call-loop '()))))
                            (with-syntax ([(forloop) (generate-temporaries '(forloop))])
                              (let* ([i/c (car i/c*)] [iter-cl (car i/c)] [configs (cdr i/c)]
-                                    [gen-preloop       (or (car iter-cl) (lambda (e) e))]
+                                    [guard-indices
+                                     (filter id
+                                             (map (lambda (conf)
+                                                    (syntax-case conf ()
+                                                      [(:guard e :index v)
+                                                       (and (kw:guard? #':guard) (kw:index? #':index))
+                                                       (cons conf (car (generate-temporaries '(guard-index))))]
+                                                      [_ #f]))
+                                                  configs))]
+                                    [gen-preloop
+                                     (lambda (e)
+                                       ((or (car iter-cl) (lambda (e) e))
+                                        #`(let (#,@(map (lambda (entry) #`[#,(cdr entry) 0])
+                                                       guard-indices))
+                                            #,e)))]
                                     [loop-var          (list-ref iter-cl 1)]
                                     [termination-check (list-ref iter-cl 2)]
                                     [update            (list-ref iter-cl 3)]
@@ -406,17 +462,30 @@
                                                        #`(if e1
                                                              e2
                                                              #,(lp-configs (cdr configs)))]
+                                                      [(:guard e :index v)
+                                                       (kw:guard? #':guard)
+                                                       (let ([counter (cdr (assq conf guard-indices))])
+                                                         #`(if e
+                                                               (let ([v #,counter])
+                                                                 (set! #,counter (fx1+ #,counter))
+                                                                 #,(lp-configs (cdr configs)))
+                                                               (forloop #,@init/index-vars #,update)))]
                                                       [(:guard e)
                                                        (kw:guard? #':guard)
                                                        #`(if e
                                                              #,(lp-configs (cdr configs))
                                                              (forloop #,@init/index-vars #,update))]
                                                       [(:let v e)
-                                                       (kw:let? #':let)
-                                                       #`(let ([v e])
+                                                       (memq (datum :let) '(:let :let* :letrec :letrec*))
+                                                       #`(#,(case (datum :let)
+                                                               [(:let) #'let]
+                                                               [(:let*) #'let*]
+                                                               [(:letrec) #'letrec]
+                                                               [(:letrec*) #'letrec*])
+                                                            ([v e])
                                                            #,(lp-configs (cdr configs)))]
                                                       [(:let-values (v* ...) e)
-                                                       (kw:let-values? #':let-values)
+                                                       (memq (datum :let-values) '(:let-values :let*-values))
                                                        #`(let-values ([(v* ...) e])
                                                            #,(lp-configs (cdr configs)))]
                                                       [_ (syntax-error conf "unknown config clause:")]))))))))))))))))))])))

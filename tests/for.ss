@@ -1399,3 +1399,58 @@
 
      (= 5 (for*/fold ([:init sum 0] [:finish sum] [x 3] [y :iota x])
             (+ sum x))))
+
+(mat documented-binding-clauses
+     (equal? '(1 2 3) (for/list ([x 3] [:let* y (+ x 1)]) y))
+
+     (equal? '(1 1 2)
+             (for/list ([x 3]
+                        [:letrec fact (lambda (n) (if (zero? n) 1 (* n (fact (- n 1)))))])
+               (fact x)))
+
+     (equal? '(1 1 2)
+             (for/list ([x 3]
+                        [:letrec* fact (lambda (n) (if (zero? n) 1 (* n (fact (- n 1)))))])
+               (fact x)))
+
+     (equal? '((0 1) (1 2) (2 3))
+             (for/list ([x 3] [:let*-values (y z) (values x (+ x 1))]) (list y z)))
+
+     (equal? '((0 1) (1 1) (1 2))
+             (for*/list ([x 2] [:let* n (+ x 1)] [y :iota n]
+                          [:letrec fact (lambda (n) (if (zero? n) 1 (* n (fact (- n 1)))))]
+                          [:letrec* f (lambda (n) (if (zero? n) (fact x) (f (- n 1))))]
+                          [:let*-values (z) (values (+ (f y) y))])
+               (list x z))))
+
+(mat guard-local-indices
+     (equal? '((1 0) (3 1) (5 2))
+             (for/list ([x 6] [:guard (odd? x) :index j]) (list x j)))
+
+     ;; Later guards do not undo a pass through an earlier indexed guard.
+     (equal? '((3 1) (5 2))
+             (for/list ([x 6] [:guard (odd? x) :index j] [:guard (> x 1)]) (list x j)))
+
+     (= 3 (for/fold ([:init sum 0] [:finish sum]
+                     [x 6] [:guard (odd? x) :index j]) (+ sum j)))
+
+     ;; Each inner loop has its own index starting from zero.
+     (equal? '((1 0 1 0) (1 0 2 1) (3 1 1 0) (3 1 2 1))
+             (for*/list ([x 4] [:guard (odd? x) :index i]
+                          [y 3] [:guard (> y 0) :index j])
+               (list x i y j)))
+
+     (= 2 (for*/fold ([:init sum 0] [:finish sum] [x 2]
+                      [y 5] [:guard (odd? y) :index j]) (+ sum j)))
+
+     (equal? '#(0 1 #f)
+             (for/vector ([:length 3] [x 4] [:guard (odd? x) :index j]) j)))
+
+(mat one-expression-stop
+     (let ([seen (make-list-builder)])
+       (and (eq? (void)
+                 (for* ([x 3] [y 4] [:stop (= y 2)]) (seen (list x y))))
+            (equal? '((0 0) (0 1)) (seen))))
+
+     (equal? '((0 0) (0 1))
+             (for*/list ([x 3] [y 4] [:stop (= y 2)]) (list x y))))
