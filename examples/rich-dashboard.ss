@@ -42,8 +42,8 @@
 (define run-progress-demo
   (lambda (console)
     (let ([deploy (make-rich-progress)])
-      (let ([assets (rich-progress-add-task! deploy "assets" 8)]
-            [migrate (rich-progress-add-task! deploy "migrations" 5)]
+      (let ([assets (rich-progress-add-task! deploy "资源 assets" 8)]
+            [migrate (rich-progress-add-task! deploy "迁移 migrations" 5)]
             [workers (rich-progress-add-task! deploy "workers" #f)])
         (let ([live (make-rich-live deploy console 0 #f)])
           (let loop ([i 0])
@@ -113,6 +113,30 @@
               (rich-segments-width (list (rich-segment "deploy")
                                          (rich-segment "\033[1m" #f #t)))
               "\n"))
+
+(section console "Unicode Cells / 中文")
+;; Character counts differ from terminal cells: CJK is wide, accents combine,
+;; and a joined emoji stays together when wrapping or cropping.
+(rich-print console
+            (rich-table
+              :box 'rounded
+              :columns ("Text" "Cells")
+              :rows (((rich-text "中文" (rich-style 'cyan)) "4")
+                     ("café" "4")
+                     ("👩🏽‍💻" "2")
+                     ("🇨🇳" "2")
+                     ("❤️" "2")))
+            "\n")
+(print-lines console
+             (rich-segment-wrap
+              (list (rich-segment "中文 café 👩🏽‍💻 编程" (rich-style 'magenta))) 10))
+(rich-print console "Cropped: "
+            (make-dashboard-lines (list (rich-segment-crop
+                                         (list (rich-segment "中文👩🏽‍💻 café")) 6)))
+            "\n")
+(rich-print console "Aligned: ["
+            (rich-align :body "中文 é 👩🏽‍💻" :width 20 :align 'right)
+            "]\n")
 
 (section console "Rules, Alignment, Padding")
 (define deploy-rule

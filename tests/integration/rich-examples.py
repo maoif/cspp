@@ -9,6 +9,7 @@ import selectors
 import time
 import subprocess
 import tempfile
+import unicodedata
 
 from importlib.util import module_from_spec, spec_from_file_location
 
@@ -18,6 +19,15 @@ terminal = module_from_spec(spec)
 spec.loader.exec_module(terminal)
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 SGR = re.compile(rb"\x1b\[[0-9;]*m")
+
+
+def cell_width(text):
+    # Independent fixture measurement: these familiar emoji occupy two cells each.
+    for cluster in ("👩🏽‍💻", "🇨🇳", "❤️"):
+        text = text.replace(cluster, "xx")
+    return sum(0 if unicodedata.category(ch) in ("Mn", "Mc", "Me", "Cf")
+               else 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+               for ch in text)
 
 
 def check(name, width):
@@ -77,8 +87,18 @@ def check(name, width):
     title = "Styles, Themes, Text" if name == "rich.ss" else "Styled Signals"
     rules = [line for line in lines if title in line]
     progress = [line for line in lines if re.search(r"\[[#-]*\]", line)]
-    assert len(rules) == 1 and len(rules[0]) == width, (name, width, rules)
-    assert progress and all(len(line) == width for line in progress), (name, width, progress)
+    assert len(rules) == 1 and cell_width(rules[0]) == width, (name, width, rules)
+    assert progress and all(cell_width(line) == width for line in progress), (name, width, progress)
+    unicode_rules = [line for line in lines if "Unicode Cells / 中文" in line]
+    assert len(unicode_rules) == 1 and cell_width(unicode_rules[0]) == width, (
+        name, width, unicode_rules)
+    for sample in ("中文", "café", "👩🏽‍💻", "🇨🇳", "❤️"):
+        assert sample in decoded, (name, "missing Unicode sample", sample)
+    sample_rows = [line for line in lines if "│" in line
+                   and any(sample in line for sample in ("中文", "café", "👩🏽‍💻", "🇨🇳", "❤️"))]
+    assert len(sample_rows) == 5 and {cell_width(line) for line in sample_rows} == {16}, (
+        name, sample_rows)
+
 
 
 if __name__ == "__main__":

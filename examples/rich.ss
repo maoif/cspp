@@ -41,7 +41,7 @@
 (define live-demo
   (lambda (console)
     (let ([progress (make-rich-progress)])
-      (let ([compile-id (rich-progress-add-task! progress "compile" 5)]
+      (let ([compile-id (rich-progress-add-task! progress "编译 compile" 5)]
             [test-id (rich-progress-add-task! progress "test" 4)])
         (let ([live (make-rich-live progress console 0 #f)])
           (let loop ([i 0])
@@ -125,6 +125,30 @@
               ", stripped ANSI: "
               (rich-strip-ansi "\033[31mred\033[0m")
               "\n"))
+
+(section console "Unicode Cells / 中文")
+;; Character counts differ from terminal cells: CJK is wide, accents combine,
+;; and a joined emoji stays together when wrapping or cropping.
+(rich-print console
+            (rich-table
+              :box 'rounded
+              :columns ("Text" "Cells")
+              :rows (((rich-text "中文" (rich-style 'cyan)) "4")
+                     ("café" "4")
+                     ("👩🏽‍💻" "2")
+                     ("🇨🇳" "2")
+                     ("❤️" "2")))
+            "\n")
+(print-lines console
+             (rich-segment-wrap
+              (list (rich-segment "中文 café 👩🏽‍💻 编程" (rich-style 'magenta))) 10))
+(rich-print console "Cropped: "
+            (make-example-lines (list (rich-segment-crop
+                                         (list (rich-segment "中文👩🏽‍💻 café")) 6)))
+            "\n")
+(rich-print console "Aligned: ["
+            (rich-align :body "中文 é 👩🏽‍💻" :width 20 :align 'right)
+            "]\n")
 
 (section console "Rules, Padding, Alignment")
 (define centered-rule
