@@ -127,27 +127,28 @@
               "\n"))
 
 (section console "Unicode Cells / 中文")
-;; Character counts differ from terminal cells: CJK is wide, accents combine,
-;; and a joined emoji stays together when wrapping or cropping.
+;; CJK, combining accents, and a simple emoji align in scalar and grapheme terminals.
+;; Multi-code-point emoji are shown outside borders because terminal shaping differs.
 (rich-print console
             (rich-table
               :box 'rounded
               :columns ("Text" "Cells")
               :rows (((rich-text "中文" (rich-style 'cyan)) "4")
                      ("café" "4")
-                     ("👩🏽‍💻" "2")
-                     ("🇨🇳" "2")
-                     ("❤️" "2")))
+                     ("かな" "4")
+                     ("한글" "4")
+                     ("🚀" "2")))
             "\n")
+(rich-print console "Emoji sequences: 👩🏽‍💻  🇨🇳  ❤️\n")
 (print-lines console
              (rich-segment-wrap
-              (list (rich-segment "中文 café 👩🏽‍💻 编程" (rich-style 'magenta))) 10))
+              (list (rich-segment "中文 café 🚀 编程" (rich-style 'magenta))) 10))
 (rich-print console "Cropped: "
             (make-example-lines (list (rich-segment-crop
-                                         (list (rich-segment "中文👩🏽‍💻 café")) 6)))
+                                         (list (rich-segment "中文🚀 café")) 6)))
             "\n")
 (rich-print console "Aligned: ["
-            (rich-align :body "中文 é 👩🏽‍💻" :width 20 :align 'right)
+            (rich-align :body "中文 é 🚀" :width 20 :align 'right)
             "]\n")
 
 (section console "Rules, Padding, Alignment")

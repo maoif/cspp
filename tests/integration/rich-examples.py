@@ -25,6 +25,11 @@ def cell_width(text):
     # Independent fixture measurement: these familiar emoji occupy two cells each.
     for cluster in ("👩🏽‍💻", "🇨🇳", "❤️"):
         text = text.replace(cluster, "xx")
+    return scalar_cell_width(text)
+
+
+def scalar_cell_width(text):
+    # Terminals without grapheme shaping advance by each code point's cell width.
     return sum(0 if unicodedata.category(ch) in ("Mn", "Mc", "Me", "Cf")
                else 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
                for ch in text)
@@ -83,7 +88,7 @@ def check(name, width):
     assert not re.search(r'\\(?:x1[bB];|033|e)', export_rows[0]), (name, export_rows)
     if SGR.search(output):
         assert SGR.search(export_rows[0].encode()), (name, "unstyled ANSI preview")
-    lines = ANSI.sub("", decoded).replace("\r", "\n").splitlines()
+    lines = ANSI.sub("", decoded).replace("\r\n", "\n").replace("\r", "\n").splitlines()
     title = "Styles, Themes, Text" if name == "rich.ss" else "Styled Signals"
     rules = [line for line in lines if title in line]
     progress = [line for line in lines if re.search(r"\[[#-]*\]", line)]
@@ -94,10 +99,18 @@ def check(name, width):
         name, width, unicode_rules)
     for sample in ("中文", "café", "👩🏽‍💻", "🇨🇳", "❤️"):
         assert sample in decoded, (name, "missing Unicode sample", sample)
-    sample_rows = [line for line in lines if "│" in line
-                   and any(sample in line for sample in ("中文", "café", "👩🏽‍💻", "🇨🇳", "❤️"))]
-    assert len(sample_rows) == 5 and {cell_width(line) for line in sample_rows} == {16}, (
-        name, sample_rows)
+    # Bordered demonstrations should align in both scalar and grapheme terminals.
+    start = lines.index(unicode_rules[0])
+    stop = next(index for index in range(start + 1, len(lines))
+                if lines[index].startswith("╰"))
+    table = lines[start + 1:stop + 1]
+    assert table and table[0].startswith("╭"), (name, table)
+    for measure in (cell_width, scalar_cell_width):
+        assert {measure(line) for line in table} == {16}, (name, measure.__name__, table)
+        rows = [line for line in table if line.startswith("│")]
+        for row in rows:
+            borders = [measure(row[:index]) for index, char in enumerate(row) if char == "│"]
+            assert borders == [0, 7, 15], (name, measure.__name__, row, borders)
 
 
 
