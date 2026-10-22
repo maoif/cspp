@@ -66,7 +66,14 @@ def check(name, width):
             os.close(master)
             if slave is not None:
                 os.close(slave)
-    lines = ANSI.sub("", output.decode()).replace("\r", "\n").splitlines()
+    decoded = output.decode()
+    export_label = "ansi value" if name == "rich.ss" else "ansi export"
+    export_rows = [line for line in decoded.splitlines() if export_label in line]
+    assert len(export_rows) == 1, (name, export_rows)
+    assert not re.search(r'\\(?:x1[bB];|033|e)', export_rows[0]), (name, export_rows)
+    if SGR.search(output):
+        assert SGR.search(export_rows[0].encode()), (name, "unstyled ANSI preview")
+    lines = ANSI.sub("", decoded).replace("\r", "\n").splitlines()
     title = "Styles, Themes, Text" if name == "rich.ss" else "Styled Signals"
     rules = [line for line in lines if title in line]
     progress = [line for line in lines if re.search(r"\[[#-]*\]", line)]

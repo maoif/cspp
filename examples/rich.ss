@@ -102,7 +102,9 @@
             "truecolor cyan"
             (reset-style)
             ": "
-            (format "~s" (rich-export-ansi (rich-text "sample" (rich-style #x33ccff))))
+            (rich-text (rich-strip-ansi
+                        (rich-export-ansi (rich-text "sample" (rich-style #x33ccff))))
+                       (rich-style #x33ccff))
             "\n")
 
 (section console "Segments, Wrapping, Cropping")
@@ -253,6 +255,6 @@
       :box 'rounded
       :columns ("Export" "Preview")
       :rows (("text length" (number->string (string-length plain)))
-             ("ansi value" (format "~s" ansi))
+             ("ansi value" (rich-text (rich-strip-ansi ansi) (rich-style 'bold 'green)))
              ("renderer?" (if (rich-renderable? build-table) "registered" "plain")))))
   (rich-print console export-table "\n"))

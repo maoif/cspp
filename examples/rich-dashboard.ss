@@ -241,7 +241,7 @@
       :box 'rounded
       :columns ("Capability" "Value")
       :rows (("text export length" (number->string (string-length plain)))
-             ("ansi export" (format "~s" ansi))
+             ("ansi export" (rich-text (rich-strip-ansi ansi) (rich-style 'bold 'green)))
              ("registered renderer" (if (rich-renderable? service-table) "yes" "no"))
              ("color system" (if (rich-color-system? 'standard) "standard" "unknown")))))
   (rich-print console export-table "\n"))
