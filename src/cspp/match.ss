@@ -172,7 +172,7 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
               ;; ... in the end
               [(pat dots)
                (eq? (datum dots) '...)
-               #`(if (pair? expr-id)
+               #`(if (or (null? expr-id) (pair? expr-id))
                      ;; Get all pat vars in `pat`,
                      ;; iterate through the input list, for each item,
                      ;; destructure it and accumulate matched components in `bindings ...`.
@@ -281,7 +281,10 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
 
   (define-syntax mlambda
     (lambda (stx)
-      (syntax-case stx ()
+      (syntax-case stx (else)
+        [(k cl* ... [else e0 e* ...])
+         #'(lambda (arg)
+             (match arg cl* ... [else e0 e* ...]))]
         [(k cl cl* ...)
          #'(lambda (arg)
              (match arg cl cl* ...
@@ -290,7 +293,10 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
 
   (define-syntax $mlambda+
     (lambda (stx)
-      (syntax-case stx ()
+      (syntax-case stx (else)
+        [(k who cl* ... [else e0 e* ...])
+         #'(lambda arg
+             (match arg cl* ... [else e0 e* ...]))]
         [(k who cl cl* ...)
          #'(lambda arg
              (match arg cl cl* ...
@@ -316,7 +322,7 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
       (syntax-case stx (else)
         [(k () e0 e* ...) #'(let () e0 e* ...)]
         [(k ([pat* rhs*] ...) e0 e* ...)
-         (trace-let loop ([pat* #'(pat* ...)] [rhs* #'(rhs* ...)])
+         (let loop ([pat* #'(pat* ...)] [rhs* #'(rhs* ...)])
            (if (null? pat*)
                #'(begin e0 e* ...)
                #`(match #,(car rhs*)

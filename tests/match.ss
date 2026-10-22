@@ -778,3 +778,27 @@
             (string-contains? (condition-message result)
                               "invalid index number or name for regex")
             (equal? (condition-irritants result) '(missing)))))
+
+(mat matching-helper-boundaries
+     (= 42 ((mlambda [0 0] [else 42]) 1))
+
+     (= 42 ((mlambda+ [(0) 0] [else 42]) 1))
+
+     (let ([value #f])
+       (and (string=? ""
+                      (with-output-to-string
+                        (lambda ()
+                          (parameterize ([trace-output-port (current-output-port)])
+                            (set! value (eval '(mlet* ([,x 1]) x)
+                                              (environment '(cspp))))))))
+            (= value 1)))
+
+     (equal? '() (match '() [(,x ...) x] [else #f]))
+
+     (equal? '(() ()) (match '() [((,x ,y) ...) (list x y)] [else #f]))
+
+     (equal? '(() (1 2))
+             (match '(() (1 2)) [((,x ...) ...) x] [else #f]))
+
+     ;; A repeated list pattern must reject a non-list input.
+     (match 123 [(,x ...) #f] [else #t]))
