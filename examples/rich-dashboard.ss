@@ -9,7 +9,7 @@
 (define section
   (lambda (console title)
     (rich-println console)
-    (let ([rule (make-rich-rule title 82 'double)])
+    (let ([rule (rich-rule :title title :style 'double)])
       (rich-print console (rich-style 'bold #x66ddff) rule (reset-style) "\n"))))
 
 (define print-lines
@@ -19,31 +19,29 @@
 
 (define run-prompt-demo
   (lambda (console)
-    (let ([in (open-input-string "us-east\nblue\nrobot-token\nn\n")]
-          [out (open-output-string)])
-      (let ([prompt-console (make-rich-console)])
-        (rich-console-input-port-set! prompt-console in)
-        (rich-console-output-port-set! prompt-console out)
-        (rich-console-color-system-set! prompt-console 'none)
-      (let* ([region (rich-prompt prompt-console "Region" "local" '("us-east" "eu-west" "local"))]
-             [ring (rich-prompt prompt-console "Ring" "green" '("blue" "green"))]
-             [secret (rich-password prompt-console "Robot token")]
-             [approved? (rich-confirm prompt-console "Open traffic?")])
-        (let ([prompt-table (make-rich-table)])
-          (rich-table-title-set! prompt-table "Automated Prompt Session")
-          (rich-table-box-set! prompt-table 'square)
-          (rich-table-add-column! prompt-table "Field")
-          (rich-table-add-column! prompt-table "Value")
-          (rich-table-add-row! prompt-table "region" region)
-          (rich-table-add-row! prompt-table "ring" ring)
-          (rich-table-add-row! prompt-table "token" secret)
-          (rich-table-add-row! prompt-table "approved" (if approved? "true" "false"))
-          (rich-table-add-row! prompt-table "prompt transcript" (get-output-string out))
-          (rich-print console prompt-table "\n")))))))
+    (call-with-port (open-input-string "us-east\nblue\nrobot-token\nn\n")
+      (lambda (input)
+        (call-with-port (open-output-string)
+          (lambda (output)
+            (let* ([prompt-console (rich-console :input-port input :output-port output
+                                                :color-system 'none)]
+                   [region (rich-prompt prompt-console "Region" "local"
+                                        '("us-east" "eu-west" "local"))]
+                   [ring (rich-prompt prompt-console "Ring" "green" '("blue" "green"))]
+                   [secret (rich-password prompt-console "Robot token")]
+                   [approved? (rich-confirm prompt-console "Open traffic?")]
+                   [table (rich-table :title "Automated Prompt Session" :box 'square
+                                      :columns ("Field" "Value"))])
+              (rich-table-add-row! table "region" region)
+              (rich-table-add-row! table "ring" ring)
+              (rich-table-add-row! table "token" secret)
+              (rich-table-add-row! table "approved" (if approved? "true" "false"))
+              (rich-table-add-row! table "prompt transcript" (get-output-string output))
+              (rich-print console table "\n"))))))))
 
 (define run-progress-demo
   (lambda (console)
-    (let ([deploy (make-rich-progress 24 (rich-progress-default-columns))])
+    (let ([deploy (make-rich-progress)])
       (let ([assets (rich-progress-add-task! deploy "assets" 8)]
             [migrate (rich-progress-add-task! deploy "migrations" 5)]
             [workers (rich-progress-add-task! deploy "workers" #f)])
@@ -63,9 +61,6 @@
           (rich-println console "\n"))))))
 
 (define console (make-rich-console))
-(rich-console-width-set! console 82)
-(rich-console-color-system-set! console 'standard)
-(rich-console-force-terminal?-set! console #t)
 
 (define dashboard-theme
   (rich-theme
@@ -88,11 +83,11 @@
             "\n")
 
 (section console "Styled Signals")
-(define status-text (rich-text "api " (rich-theme-ref dashboard-theme 'muted)))
-(rich-text-append! status-text "healthy " (rich-theme-ref dashboard-theme 'good))
-(rich-text-append! status-text "queue " (rich-theme-ref dashboard-theme 'muted))
-(rich-text-append! status-text "busy " (rich-theme-ref dashboard-theme 'busy))
-(rich-text-append! status-text "cache " (rich-theme-ref dashboard-theme 'muted))
+(define status-text (rich-text "api " 'muted))
+(rich-text-append! status-text "healthy " 'good)
+(rich-text-append! status-text "queue " 'muted)
+(rich-text-append! status-text "busy " 'busy)
+(rich-text-append! status-text "cache " 'muted)
 (rich-text-append! status-text "warm" (rich-style 'underline 'cyan))
 (rich-print console status-text "\n")
 (rich-print console
@@ -163,7 +158,7 @@
 (define service-cards
   (rich-columns
     :items (api-panel queue-panel cache-panel deploy-panel alert-panel)
-    :width 82
+    :width (rich-console-width console)
     :gap 2))
 (rich-print console service-cards "\n")
 
@@ -176,9 +171,9 @@
     :show-header? #t
     :show-lines? #t
     :columns ("Service" "State" "Detail")
-    :rows (("api" (rich-text "green" (rich-theme-ref dashboard-theme 'good)) "p95 82ms")
-           ("queue" (rich-text "yellow" (rich-theme-ref dashboard-theme 'busy)) "142 jobs\n18 workers")
-           ("edge" (rich-text "green" (rich-theme-ref dashboard-theme 'good)) "2 regions"))))
+    :rows (("api" (rich-text "green" 'good) "p95 82ms")
+           ("queue" (rich-text "yellow" 'busy) "142 jobs\n18 workers")
+           ("edge" (rich-text "green" 'good) "2 regions"))))
 (rich-print console service-table "\n")
 
 (section console "Tree, Layout, Pretty")
@@ -246,7 +241,7 @@
       :box 'rounded
       :columns ("Capability" "Value")
       :rows (("text export length" (number->string (string-length plain)))
-             ("ansi export" ansi)
+             ("ansi export" (format "~s" ansi))
              ("registered renderer" (if (rich-renderable? service-table) "yes" "no"))
              ("color system" (if (rich-color-system? 'standard) "standard" "unknown")))))
   (rich-print console export-table "\n"))

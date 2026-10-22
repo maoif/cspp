@@ -9,7 +9,7 @@
 (define section
   (lambda (console title)
     (rich-println console)
-    (let ([rule (make-rich-rule title 76 'heavy)])
+    (let ([rule (rich-rule :title title :style 'heavy)])
       (rich-print console (rich-style 'bold 'cyan) rule (reset-style) "\n"))))
 
 (define print-lines
@@ -19,31 +19,28 @@
 
 (define prompt-demo
   (lambda (console)
-    (let ([in (open-input-string "release\n\ns3cr3t\nyes\n")]
-          [out (open-output-string)])
-      (let ([prompt-console (make-rich-console)])
-        (rich-console-input-port-set! prompt-console in)
-        (rich-console-output-port-set! prompt-console out)
-        (rich-console-color-system-set! prompt-console 'none)
-      (let* ([mode (rich-prompt prompt-console "Mode" "debug" '("debug" "release"))]
-             [target (rich-prompt prompt-console "Target" "native")]
-             [password (rich-password prompt-console "Token")]
-             [confirmed? (rich-confirm prompt-console "Deploy?")])
-        (let ([prompt-table (make-rich-table)])
-          (rich-table-title-set! prompt-table "Prompt APIs")
-          (rich-table-box-set! prompt-table 'rounded)
-          (rich-table-add-column! prompt-table "API")
-          (rich-table-add-column! prompt-table "Result")
-          (rich-table-add-row! prompt-table "rich-prompt / choices" mode)
-          (rich-table-add-row! prompt-table "rich-prompt / default" target)
-          (rich-table-add-row! prompt-table "rich-password / string port" password)
-          (rich-table-add-row! prompt-table "rich-confirm" (if confirmed? "yes" "no"))
-          (rich-table-add-row! prompt-table "captured prompt text" (get-output-string out))
-          (rich-print console prompt-table "\n")))))))
+    (call-with-port (open-input-string "release\n\ns3cr3t\nyes\n")
+      (lambda (input)
+        (call-with-port (open-output-string)
+          (lambda (output)
+            (let* ([prompt-console (rich-console :input-port input :output-port output
+                                                :color-system 'none)]
+                   [mode (rich-prompt prompt-console "Mode" "debug" '("debug" "release"))]
+                   [target (rich-prompt prompt-console "Target" "native")]
+                   [password (rich-password prompt-console "Token")]
+                   [confirmed? (rich-confirm prompt-console "Deploy?")]
+                   [table (rich-table :title "Prompt APIs" :box 'rounded
+                                      :columns ("API" "Result"))])
+              (rich-table-add-row! table "rich-prompt / choices" mode)
+              (rich-table-add-row! table "rich-prompt / default" target)
+              (rich-table-add-row! table "rich-password / string port" password)
+              (rich-table-add-row! table "rich-confirm" (if confirmed? "yes" "no"))
+              (rich-table-add-row! table "captured prompt text" (get-output-string output))
+              (rich-print console table "\n"))))))))
 
 (define live-demo
   (lambda (console)
-    (let ([progress (make-rich-progress 18 (rich-progress-default-columns))])
+    (let ([progress (make-rich-progress)])
       (let ([compile-id (rich-progress-add-task! progress "compile" 5)]
             [test-id (rich-progress-add-task! progress "test" 4)])
         (let ([live (make-rich-live progress console 0 #f)])
@@ -54,12 +51,13 @@
               (rich-live-refresh! live)
               (milisleep 500)
               (loop (+ i 1))))
+          (rich-progress-complete! progress compile-id)
+          (rich-progress-complete! progress test-id)
+          (rich-live-refresh! live)
           (rich-live-stop! live)
           (rich-println console "\n"))))))
 
 (define console (make-rich-console))
-(rich-console-width-set! console 76)
-(rich-console-color-system-set! console 'standard)
 
 (define palette
   (rich-theme
@@ -94,9 +92,9 @@
             "reverse on truecolor background"
             (reset-style)
             "\n")
-(let ([text (rich-text "stream " (rich-theme-ref palette 'dim))])
-  (rich-text-append! text "compile " (rich-theme-ref palette 'hot))
-  (rich-text-append! text "ok" (rich-theme-ref palette 'ok))
+(let ([text (rich-text "stream " 'dim)])
+  (rich-text-append! text "compile " 'hot)
+  (rich-text-append! text "ok" 'ok)
   (rich-print console text "\n"))
 (rich-print console
             "Standard ANSI for "
@@ -104,7 +102,7 @@
             "truecolor cyan"
             (reset-style)
             ": "
-            (rich-export-ansi (rich-text "sample" (rich-style #x33ccff)))
+            (format "~s" (rich-export-ansi (rich-text "sample" (rich-style #x33ccff))))
             "\n")
 
 (section console "Segments, Wrapping, Cropping")
@@ -166,7 +164,7 @@
 (define box-columns
   (rich-columns
     :items (ascii-panel rounded-panel heavy-panel double-panel)
-    :width 76
+    :width (rich-console-width console)
     :gap 3))
 (rich-print console box-columns "\n")
 
@@ -255,6 +253,6 @@
       :box 'rounded
       :columns ("Export" "Preview")
       :rows (("text length" (number->string (string-length plain)))
-             ("ansi value" ansi)
+             ("ansi value" (format "~s" ansi))
              ("renderer?" (if (rich-renderable? build-table) "registered" "plain")))))
   (rich-print console export-table "\n"))

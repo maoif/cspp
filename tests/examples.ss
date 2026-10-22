@@ -89,3 +89,7 @@
 (mat example-crypto-integration
      (mat-requires (openssl)
        (= 0 (system "cd .. && python3 tests/integration/examples.py crypto"))))
+
+(mat rich-examples-terminal-sizing
+     (or (eq? (system-platform) 'windows)
+         (= 0 (system "cd .. && python3 tests/integration/rich-examples.py"))))
