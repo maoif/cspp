@@ -569,18 +569,18 @@
       ($rich-align? x)))
 
   #|proc:make-rich-align
-  The `make-rich-align` procedure constructs an alignment renderable around
-  `body` with a positive `width` and an alignment of `left`, `center`, or
-  `right`.
+  The `make-rich-align` procedure returns a renderable around `body`. Optional `width`
+  is a positive cell count or `#f` (default) to use the available content width.
+  The `align` mode is `left` (default), `center`, or `right`.
   |#
   (define make-rich-align
     (case-lambda
       [()
-       (make-rich-align "" 80 'left)]
+       (make-rich-align "" #f 'left)]
       [(body)
-       (make-rich-align body 80 'left)]
+       (make-rich-align body #f 'left)]
       [(body width align)
-       (pcheck ([rich-positive-integer? width] [$rich-align-value? align])
+       (pcheck ([rich-optional-width? width] [$rich-align-value? align])
                ($make-rich-align-record body width align))]))
 
   #|proc:rich-align-body
@@ -600,7 +600,8 @@
               ($rich-align-body-set! align body))))
 
   #|proc:rich-align-width
-  The `rich-align-width` procedure returns the target width for `align`.
+  The `rich-align-width` procedure returns the configured width for `align`: `#f` for
+  automatic sizing or a positive cell count.
   |#
   (define rich-align-width
     (lambda (align)
@@ -608,12 +609,12 @@
               ($rich-align-width align))))
 
   #|proc:rich-align-width-set!
-  The `rich-align-width-set!` procedure sets the positive target width for
-  `align`.
+  The `rich-align-width-set!` procedure sets `align` to positive cell count `width`,
+  or `#f` to use the available content width. Returns an unspecified value.
   |#
   (define rich-align-width-set!
     (lambda (align width)
-      (pcheck ([rich-align? align] [rich-positive-integer? width])
+      (pcheck ([rich-align? align] [rich-optional-width? width])
               ($rich-align-width-set! align width))))
 
   #|proc:rich-align-align
@@ -638,7 +639,7 @@
   (define rich-align-render
     (lambda (align)
       (pcheck ([rich-align? align])
-              (let ([width (rich-align-width align)]
+              (let ([width (or (rich-align-width align) (rich-render-width))]
                     [align-value (rich-align-align align)])
                 (map (lambda (line)
                        (let ([current (rich-segments-width line)])
@@ -704,18 +705,19 @@
       ($rich-columns? x)))
 
   #|proc:make-rich-columns
-  The `make-rich-columns` procedure constructs a column flow renderable from a
-  list of `items`, positive `width`, and non-negative `gap`.
+  The `make-rich-columns` procedure returns a column flow renderable from list `items`.
+  Optional `width` is a positive cell count or `#f` (default) for the available width.
+  The nonnegative cell count `gap` separates adjacent items and defaults to two.
   |#
   (define make-rich-columns
     (case-lambda
       [()
-       (make-rich-columns '() 80 2)]
+       (make-rich-columns '() #f 2)]
       [(items)
-       (make-rich-columns items 80 2)]
+       (make-rich-columns items #f 2)]
       [(items width gap)
        (pcheck ([list? items]
-                [rich-positive-integer? width]
+                [rich-optional-width? width]
                 [rich-nonnegative-integer? gap])
                ($make-rich-columns-record items width gap))]))
 
@@ -736,7 +738,8 @@
               ($rich-columns-items-set! columns items))))
 
   #|proc:rich-columns-width
-  The `rich-columns-width` procedure returns the flow width for `columns`.
+  The `rich-columns-width` procedure returns the configured flow width for `columns`:
+  `#f` for automatic sizing or a positive cell count.
   |#
   (define rich-columns-width
     (lambda (columns)
@@ -744,12 +747,12 @@
               ($rich-columns-width columns))))
 
   #|proc:rich-columns-width-set!
-  The `rich-columns-width-set!` procedure sets the positive flow width for
-  `columns`.
+  The `rich-columns-width-set!` procedure sets `columns` to positive cell count `width`,
+  or `#f` to use the available content width. Returns an unspecified value.
   |#
   (define rich-columns-width-set!
     (lambda (columns width)
-      (pcheck ([rich-columns? columns] [rich-positive-integer? width])
+      (pcheck ([rich-columns? columns] [rich-optional-width? width])
               ($rich-columns-width-set! columns width))))
 
   #|proc:rich-columns-gap
@@ -775,16 +778,15 @@
   (define rich-columns-render
     (lambda (columns)
       (pcheck ([rich-columns? columns])
-              (apply append
-                     (map (lambda (row)
-                            ($columns-render-row row (rich-columns-gap columns)))
-                          ($pack-column-blocks
-                           (parameterize ([rich-render-width
-                                           (min (rich-render-width)
-                                                (rich-columns-width columns))])
-                             ($items->blocks (rich-columns-items columns)))
-                           (rich-columns-width columns)
-                           (rich-columns-gap columns)))))))
+        (let ([width (or (rich-columns-width columns) (rich-render-width))])
+          (apply append
+                 (map (lambda (row)
+                        ($columns-render-row row (rich-columns-gap columns)))
+                      ($pack-column-blocks
+                       (parameterize ([rich-render-width (min (rich-render-width) width)])
+                         ($items->blocks (rich-columns-items columns)))
+                       width
+                       (rich-columns-gap columns))))))))
 
   #|macro:rich-columns
   The `rich-columns` macro constructs and returns a columns renderable. The

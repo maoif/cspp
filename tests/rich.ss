@@ -1240,3 +1240,32 @@
                                        (rich-segment "︎x" (rich-style 'green))) 1)))
 
      )
+
+(mat rich-automatic-align-and-columns
+
+     (let ([align (rich-align :body "界" :align 'right)])
+       (and (equal? "   界" (parameterize ([rich-render-width 5])
+                               (rich-export-text align)))
+            (equal? " 界" (parameterize ([rich-render-width 3])
+                             (rich-export-text align)))))
+
+     (let ([columns (rich-columns :items ("aaaa" "bbbb") :gap 1)])
+       (and (equal? "aaaa bbbb" (parameterize ([rich-render-width 9])
+                                   (rich-export-text columns)))
+            (equal? "aaaa\nbbbb" (parameterize ([rich-render-width 8])
+                                     (rich-export-text columns)))))
+
+     (let ([align (rich-align :body "x" :width 3 :align 'right)])
+       (rich-align-width-set! align #f)
+       (equal? "    x" (parameterize ([rich-render-width 5])
+                          (rich-export-text align))))
+
+     (let ([columns (rich-columns :items ("aaaa" "bbbb") :width 9 :gap 1)])
+       (rich-columns-width-set! columns #f)
+       (equal? "aaaa\nbbbb" (parameterize ([rich-render-width 8])
+                                (rich-export-text columns))))
+
+     (equal? "  x" (parameterize ([rich-render-width 5])
+                       (rich-export-text (rich-align :body "x" :width 3 :align 'right))))
+
+     )
