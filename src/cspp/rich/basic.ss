@@ -340,9 +340,12 @@
                      [width (or (rich-rule-width rule) (rich-render-width))]
                      [text (if (and title (not (string=? title "")))
                                (let* ([title-text (string-append " " title " ")]
-                                      [title-width (string-length title-text)])
+                                      [title-width (rich-segment-width (rich-segment title-text))])
                                  (if (>= title-width width)
-                                     (substring title-text 0 width)
+                                     (rich-segments->plain
+                                      (rich-segment-pad-right
+                                       (rich-segment-crop (list (rich-segment title-text)) width)
+                                       width))
                                      (let* ([space (- width title-width)]
                                             [left (quotient space 2)]
                                             [right (- space left)])

@@ -1088,3 +1088,155 @@
                   (rich-live-refresh! live)))))
 
      )
+
+(mat rich-unicode-cells
+
+     (= 9 (rich-segment-width (rich-segment "中文 café")))
+
+     (= 2 (rich-segment-width (rich-segment "\033[31m界\033[0m")))
+
+     (= 2 (rich-segment-width (rich-segment "👩🏽‍💻")))
+
+     (= 2 (rich-segment-width (rich-segment "🇨🇳")))
+
+     (= 2 (rich-segment-width (rich-segment "❤️")))
+
+     (= 1 (rich-segment-width (rich-segment "·")))
+
+     (equal? '("中文" "测试")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "中文测试")) 4)))
+
+     (equal? '("aé" "界" "b")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "aé界b")) 2)))
+
+     (equal? '("a界" "b")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "a界b")) 3)))
+
+     ;; A glyph wider than the whole line becomes a space, rather than looping forever.
+     (equal? '(" " "x")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "界x")) 1)))
+
+     (equal? "a" (rich-segments->plain
+                   (rich-segment-crop (list (rich-segment "a界b")) 2)))
+
+     (equal? "é" (rich-segments->plain
+                   (rich-segment-crop (list (rich-segment "éx")) 1)))
+
+     (equal? "👩🏽‍💻" (rich-segments->plain
+                        (rich-segment-crop (list (rich-segment "👩🏽‍💻x")) 2)))
+
+     (equal? "界  " (rich-segments->plain
+                     (rich-segment-pad-right (list (rich-segment "界")) 4)))
+
+     (equal? "  界" (rich-export-text (rich-align :body "界" :width 4 :align 'right)))
+
+     (= 10 (rich-segment-width
+            (rich-segment (rich-export-text (rich-rule :title "中文" :width 10))))))
+
+(mat rich-unicode-live
+
+     (equal? "a界界é\r\033[2K\033[1A\r\033[2Kx"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "a界界é"
+                                           (rich-console :output-port port :width 4) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "x")
+                  (rich-live-refresh! live)))))
+
+     (equal? "界界́\r\033[2Kx"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "界界́"
+                                           (rich-console :output-port port :width 4) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "x")
+                  (rich-live-refresh! live)))))
+
+     )
+
+(mat rich-unicode-styled-boundaries
+
+     (= 2 (rich-segments-width (list (rich-segment "👩" (rich-style 'red))
+                                    (rich-segment "‍💻" (rich-style 'green)))))
+
+     (equal? '("é" "x")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "e" (rich-style 'red))
+                                           (rich-segment "́x" (rich-style 'green))) 1)))
+
+     (equal? "é" (rich-segments->plain
+                   (rich-segment-crop (list (rich-segment "e" (rich-style 'red))
+                                            (rich-segment "́x" (rich-style 'green))) 1)))
+
+     (equal? '("👩‍💻" "x")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "👩" (rich-style 'red))
+                                           (rich-segment "‍💻x" (rich-style 'green))) 2)))
+
+     (equal? "" (rich-segments->plain
+                 (rich-segment-crop (list (rich-segment "界") (rich-segment "x")) 1)))
+
+     )
+
+(mat rich-unicode-containers
+
+     (equal? "+--+\n|界|\n+--+"
+             (rich-export-text (rich-panel :body "界" :padding 0 :box 'ascii)))
+
+     (equal? '(10 10 10 10 10)
+             (map rich-segments-width
+                  (rich-table-render (rich-table :box 'ascii :columns ("A" "B")
+                                                 :rows (("界" "é"))))))
+
+     (equal? "  " (rich-export-text (rich-rule :title "界" :width 2)))
+
+     (let ([progress (make-rich-progress #f '(description bar percentage))])
+       (rich-progress-add-task! progress "编译 👩🏽‍💻" 10)
+       (rich-progress-add-task! progress "café" 10)
+       (equal? '(30 30)
+               (parameterize ([rich-render-width 30])
+                 (map rich-segments-width (rich-progress-render progress)))))
+
+     ;; Combining text following a full-width line must not trigger an extra wrap.
+     (equal? "界界́界\r\033[2K\033[1A\r\033[2Kx"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "界界́界"
+                                           (rich-console :output-port port :width 4) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "x")
+                  (rich-live-refresh! live)))))
+
+     )
+
+(mat rich-unicode-regional-indicators
+
+     (= 2 (rich-segment-width (rich-segment "🇨")))
+
+     (= 4 (rich-segment-width (rich-segment "🇨🇳🇺")))
+
+     (equal? '("🇨🇳" "🇺")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "🇨🇳🇺")) 2)))
+
+     )
+
+(mat rich-unicode-text-presentation
+
+     (= 1 (rich-segment-width (rich-segment "⌚︎")))
+
+     (= 2 (rich-segment-width (rich-segment "⌚️")))
+
+     (= 2 (rich-segment-width (rich-segment "界︎")))
+
+     (equal? "⌚︎"
+             (rich-segments->plain
+              (rich-segment-crop (list (rich-segment "⌚" (rich-style 'red))
+                                       (rich-segment "︎x" (rich-style 'green))) 1)))
+
+     )

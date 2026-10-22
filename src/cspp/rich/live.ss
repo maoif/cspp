@@ -33,6 +33,7 @@
   (import (cspp chez)
           (cspp utils)
           (cspp rich private common)
+          (cspp rich private cells)
           (cspp rich style)
           (cspp rich segment)
           (cspp rich renderable)
@@ -135,8 +136,11 @@
                      [(char=? ch #\tab)
                       (loop (+ i 1) (min (- width 1) (* 8 (+ 1 (quotient column 8)))) rows)]
                      [(< (char->integer ch) 32) (loop (+ i 1) column rows)]
-                     [(= column width) (loop (+ i 1) 1 (+ rows 1))]
-                     [else (loop (+ i 1) (+ column 1) rows)]))))))))
+                     [else
+                      (let-values ([(end cells) (rich-cell-next frame i)])
+                        (cond [(zero? cells) (loop end column rows)]
+                              [(> (+ column cells) width) (loop end cells (+ rows 1))]
+                              [else (loop end (+ column cells) rows)]))]))))))))
 
   (define $clear-live-output
     (lambda (port line-count)
