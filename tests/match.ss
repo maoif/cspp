@@ -185,6 +185,10 @@
 
 (mat vector-with-ellipses-in-the-end
 
+     (equal? '()
+             (match '#()
+               [#(,x ...) x]))
+
      (equal? '((33 333) (22 222) (11 111))
              (match '#(#(1 2 3) #(11 22 33) #(111 222 333))
                [#(_ #(,a ,b ,c) ...) (list c b a)]))
@@ -203,6 +207,10 @@
 
 
 (mat vector-with-ellipses-in-the-middle
+
+     (equal? '()
+             (match '#(1 2)
+               [#(,x ... 1 2) x]))
 
      (equal? '((22 33) (222 333))
              (match '#(#(1 2 3) #(11 22 33) #(111 222 333) #(1111 2222 3333 4444))

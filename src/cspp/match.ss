@@ -19,19 +19,6 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
           (cspp private match)
           (cspp io))
 
-  (define subvector->list
-    (lambda (vec start)
-      (let ([len (vector-length vec)]
-            [ls (list (vector-ref vec start))])
-        ;; no need to do error tests
-        (let loop ([next ls]
-                   [i (add1 start)])
-          (if (fx= i len)
-              ls
-              (let ([item (list (vector-ref vec i))])
-                (set-cdr! next item)
-                (loop item (add1 i))))))))
-
   ;; match interface
   (define-syntax match
     (lambda (stx)
@@ -90,6 +77,53 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                   [(pat0 . pat1) (loop #'pat0 (loop #'pat1 patvars))]
                   [#(pat0 pat1 ...) (loop #'pat0 (loop #'(pat1 ...) patvars))]
                   [_ patvars]))))
+          (define process-vector-pats
+            (lambda (vecid vlen veci pats body fk)
+              (syntax-case pats ()
+                [()
+                 #`(if (fx= #,veci #,vlen)
+                       #,body
+                       (#,fk))]
+                [(pat dots)
+                 (eq? (datum dots) '...)
+                 (with-syntax ([(patvars ...) (extract-pat-vars #'pat)])
+                   (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
+                                 [(i viter vitem) (generate-temporaries '(i viter vitem))])
+                     #`(let viter ([i #,veci] [bindings '()] ...)
+                         (if (fx= i #,vlen)
+                             (let ([patvars (reverse bindings)] ...)
+                               #,body)
+                             (let ([vitem (vector-ref #,vecid i)])
+                               #,(process-pattern rho #'vitem #'pat
+                                                  #'(viter (fx1+ i) (cons patvars bindings) ...)
+                                                  fk))))))]
+                [(pat0 dots . pat1)
+                 (eq? (datum dots) '...)
+                 (with-syntax ([(patvars ...) (extract-pat-vars #'pat0)])
+                   (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
+                                 [(i viter vitem new-fk) (generate-temporaries '(i viter vitem new-fk))])
+                     #`(let viter ([i #,veci] [bindings '()] ...)
+                         (let ([new-fk
+                                (lambda ()
+                                  (if (fx< i #,vlen)
+                                      (let ([vitem (vector-ref #,vecid i)])
+                                        #,(process-pattern rho #'vitem #'pat0
+                                                           #'(viter (fx1+ i) (cons patvars bindings) ...)
+                                                           fk))
+                                      (#,fk)))])
+                           #,(process-vector-pats vecid vlen #'i #'pat1
+                                                  #`(let ([patvars (reverse bindings)] ...)
+                                                      #,body)
+                                                  #'new-fk)))))]
+                [(pat0 pat1 ...)
+                 (with-syntax ([(vitem) (generate-temporaries '(vitem))])
+                   #`(if (fx< #,veci #,vlen)
+                         (let ([vitem (vector-ref #,vecid #,veci)])
+                           #,(process-pattern rho #'vitem #'pat0
+                                              (process-vector-pats vecid vlen #`(fx1+ #,veci)
+                                                                   #'(pat1 ...) body fk)
+                                              fk))
+                         (#,fk)))])))
           ;;(printf "process-pattern ~s ~s ~s ~s~n" expr-id pat body fk)
           (with-syntax ([expr-id expr-id])
             (syntax-case pat (unquote quasiquote unquote-splicing quasisyntax)
@@ -197,54 +231,7 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                #`(if (vector? expr-id)
                      #,(with-syntax ([(vlen) (generate-temporaries '(vlen))])
                          #`(let ([vlen (vector-length expr-id)])
-                             (if (fx= 0 vlen)
-                                 (#,fk)
-                                 #,(let loop ([veci 0] [pats #'(pats ...)])
-                                     (with-syntax ([vi (datum->syntax #'expr-id veci)])
-                                       (syntax-case pats ()
-                                         ;; here we use list pattern for ease of looping
-                                         [()
-                                          #`(if (fx= vi vlen)
-                                                #,body
-                                                (#,fk))]
-                                         [(pat dots)
-                                          (eq? (datum dots) '...)
-                                          (with-syntax ([(patvars ...) (extract-pat-vars #'pat)])
-                                            (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
-                                                          [(i viter vitem) (generate-temporaries '(i viter vitem))])
-                                              #`(let viter ([i vi] [bindings '()] ...)
-                                                  (if (fx= i vlen)
-                                                      (let ([patvars (reverse bindings)] ...)
-                                                        #,body)
-                                                      (let ([vitem (vector-ref expr-id i)])
-                                                        #,(process-pattern rho #'vitem #'pat
-                                                                           #'(viter (add1 i) (cons patvars bindings) ...)
-                                                                           fk))))))]
-                                         ;; note: here `.` is restored
-                                         [(pat0 dots . pat1)
-                                          (eq? (datum dots) '...)
-                                          (with-syntax ([(patvars ...) (extract-pat-vars #'pat0)])
-                                            (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
-                                                          [(ls iter new-fk) (generate-temporaries '(ls iter new-fk))])
-                                              ;; Turn the rest of the vector into a list and proceeed as in `(pat0 dots . pat1)`.
-                                              #`(let iter ([ls (subvector->list expr-id vi)] [bindings '()] ...)
-                                                  (let ([new-fk (lambda ()
-                                                                  (if (pair? ls)
-                                                                      (let ([first (car ls)] [rest (cdr ls)])
-                                                                        #,(process-pattern rho #'first #'pat0
-                                                                                           #'(iter rest (cons patvars bindings) ...)
-                                                                                           fk))
-                                                                      (#,fk)))])
-                                                    #,(process-pattern rho #'ls #'pat1
-                                                                       #`(let ([patvars (reverse bindings)] ...)
-                                                                           #,body)
-                                                                       #'new-fk)))))]
-                                         [(pat0 pat1 ...)
-                                          (with-syntax ([(vitem) (generate-temporaries '(vitem))])
-                                            #`(let ([vitem (vector-ref expr-id vi)])
-                                                #,(process-pattern rho #'vitem #'pat0
-                                                                   (loop (add1 veci) (cdr pats))
-                                                                   fk)))]))))))
+                             #,(process-vector-pats #'expr-id #'vlen #'0 #'(pats ...) body fk)))
                      (#,fk))]
               [lit
                (literal? #'lit)
