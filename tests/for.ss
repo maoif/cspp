@@ -1370,3 +1370,32 @@
      (equal? '#()
              (for*/vector ([:length 0] [x :iota (error 'vector-capacity "source evaluated")])
                x)))
+
+(mat nested-iterator-initialization
+     (equal? '((1 0) (2 0) (2 1))
+             (for*/list ([x 3] [y :iota x]) (list x y)))
+
+     (equal? '((0 0) (1 0) (1 1))
+             (for*/list ([x 2] [:let bound (+ x 1)] [y :iota bound]) (list x y)))
+
+     ;; The inner source must use the loop binding rather than its outer namesake.
+     (let ([x 5])
+       (equal? '((1 0) (2 0) (2 1))
+               (for*/list ([x 3] [y :iota x]) (list x y))))
+
+     (let ([count 0])
+       (and (equal? '((0 0) (1 0) (2 0))
+                    (for*/list ([x 3] [y :iota (begin (set! count (+ count 1)) 1)])
+                      (list x y)))
+            (= count 3)))
+
+     (equal? '((0 a) (0 b) (1 a) (1 b) (2 a) (2 b))
+             (for*/list ([x 3] [y :iter (list->iter '(a b))]) (list x y)))
+
+     ;; Inner setup must not run when an outer guard rejects the iteration.
+     (equal? '()
+             (for*/list ([x 3] [:guard #f]
+                          [y :iota (error 'nested-setup "source evaluated")]) y))
+
+     (= 5 (for*/fold ([:init sum 0] [:finish sum] [x 3] [y :iota x])
+            (+ sum x))))

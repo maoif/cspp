@@ -326,7 +326,6 @@
                                           (cons (process-iter-clause (car i/c))
                                                 (cdr i/c)))
                                         frag-iter/config)]
-                    [gen-preloops (map caar iters/configs)]
                     [call/finish-proc (if frag-finish
                                           (let ([params '()])
                                             (when frag-index
@@ -350,80 +349,77 @@
                ;; (printf "index-var: ~a~n" index-var)
                ;; (println "for* -------------------------")
                #`(let ([t-finish #,(cadr call/finish-proc)])
-                   #,(let lp-preloops ([gen-preloops gen-preloops])
-                       (if (null? gen-preloops)
-                           (let lp-for-loop ([i/c* iters/configs] [last-forloop #f] [last-update #f])
-                             (let ([call-lastforloop #`(#,last-forloop #,@init/index-vars #,last-update)])
-                               (if (null? i/c*)
-                                   (let ([call-loop (lambda (init?)
-                                                      (if frag-index
-                                                          #`(#,last-forloop #,@init? (fx1+ #,index-var) #,last-update)
-                                                          #`(#,last-forloop #,@init?                    #,last-update)))])
-                                     (if frag-init
-                                         #`(let ([t-acc (begin body* ...)])
-                                             #,(call-loop (list #'t-acc)))
-                                         #`(begin body* ...
-                                                  #,(call-loop '()))))
-                                   (with-syntax ([(forloop) (generate-temporaries '(forloop))])
-                                     (let* ([i/c (car i/c*)] [iter-cl (car i/c)] [configs (cdr i/c)]
-                                            [loop-var          (list-ref iter-cl 1)]
-                                            [termination-check (list-ref iter-cl 2)]
-                                            [update            (list-ref iter-cl 3)]
-                                            [gen-getter        (list-ref iter-cl 4)]
-                                            [loop-var
-                                             (let ([vars (if last-forloop
-                                                             (let* ([vars (if frag-index (list #`[#,index-var #,index-var])     '())]
-                                                                    [vars (if frag-init  (cons #`[#,init-var  #,init-var] vars) vars)])
-                                                               vars)
-                                                             (let* ([vars (if frag-index (list index-def)     '())]
-                                                                    [vars (if frag-init  (cons init-def vars) vars)])
-                                                               vars))])
-                                               `(,@vars ,loop-var))])
-                                       ;; if current level terminates, call forloop of last level
-                                       #`(let forloop (#,@loop-var)
-                                           (if #,termination-check
-                                               ;; continue on the outer loop
-                                               #,(if last-forloop
-                                                     call-lastforloop
-                                                     ;; already outermost loop, stop
-                                                     (car call/finish-proc))
-                                               #,(let ([gen-getter (lambda (e) (if gen-getter (gen-getter e) e))])
-                                                   (gen-getter
-                                                    (let lp-configs ([configs (if configs configs '())])
-                                                      (if (null? configs)
-                                                          (lp-for-loop (cdr i/c*) #'forloop update)
-                                                          (let ([conf (car configs)])
-                                                            (syntax-case conf ()
-                                                              [(:break e)
-                                                               (kw:break? #':break)
-                                                               #`(if e
-                                                                     #,(if last-forloop
-                                                                           call-lastforloop
-                                                                           ;; already outermost loop, stop
-                                                                           #`(void))
-                                                                     #,(lp-configs (cdr configs)))]
-                                                              [(:stop e1 e2)
-                                                               (kw:stop? #':stop)
-                                                               #`(if e1
-                                                                     e2
-                                                                     #,(lp-configs (cdr configs)))]
-                                                              [(:guard e)
-                                                               (kw:guard? #':guard)
-                                                               #`(if e
-                                                                     #,(lp-configs (cdr configs))
-                                                                     (forloop #,@init/index-vars #,update))]
-                                                              [(:let v e)
-                                                               (kw:let? #':let)
-                                                               #`(let ([v e])
-                                                                   #,(lp-configs (cdr configs)))]
-                                                              [(:let-values (v* ...) e)
-                                                               (kw:let-values? #':let-values)
-                                                               #`(let-values ([(v* ...) e])
-                                                                   #,(lp-configs (cdr configs)))]
-                                                              [_ (syntax-error conf "unknown config clause:")])))))))))))))
-                           (if (car gen-preloops)
-                               ((car gen-preloops) (lp-preloops (cdr gen-preloops)))
-                               (lp-preloops (cdr gen-preloops)))))))))])))
+                   #,(let lp-for-loop ([i/c* iters/configs] [last-forloop #f] [last-update #f])
+                     (let ([call-lastforloop #`(#,last-forloop #,@init/index-vars #,last-update)])
+                       (if (null? i/c*)
+                           (let ([call-loop (lambda (init?)
+                                              (if frag-index
+                                                  #`(#,last-forloop #,@init? (fx1+ #,index-var) #,last-update)
+                                                  #`(#,last-forloop #,@init?                    #,last-update)))])
+                             (if frag-init
+                                 #`(let ([t-acc (begin body* ...)])
+                                     #,(call-loop (list #'t-acc)))
+                                 #`(begin body* ...
+                                          #,(call-loop '()))))
+                           (with-syntax ([(forloop) (generate-temporaries '(forloop))])
+                             (let* ([i/c (car i/c*)] [iter-cl (car i/c)] [configs (cdr i/c)]
+                                    [gen-preloop       (or (car iter-cl) (lambda (e) e))]
+                                    [loop-var          (list-ref iter-cl 1)]
+                                    [termination-check (list-ref iter-cl 2)]
+                                    [update            (list-ref iter-cl 3)]
+                                    [gen-getter        (list-ref iter-cl 4)]
+                                    [loop-var
+                                     (let ([vars (if last-forloop
+                                                     (let* ([vars (if frag-index (list #`[#,index-var #,index-var])     '())]
+                                                            [vars (if frag-init  (cons #`[#,init-var  #,init-var] vars) vars)])
+                                                       vars)
+                                                     (let* ([vars (if frag-index (list index-def)     '())]
+                                                            [vars (if frag-init  (cons init-def vars) vars)])
+                                                       vars))])
+                                       `(,@vars ,loop-var))])
+                               ;; if current level terminates, call forloop of last level
+                               (gen-preloop
+                                #`(let forloop (#,@loop-var)
+                                   (if #,termination-check
+                                       ;; continue on the outer loop
+                                       #,(if last-forloop
+                                             call-lastforloop
+                                             ;; already outermost loop, stop
+                                             (car call/finish-proc))
+                                       #,(let ([gen-getter (lambda (e) (if gen-getter (gen-getter e) e))])
+                                           (gen-getter
+                                            (let lp-configs ([configs (if configs configs '())])
+                                              (if (null? configs)
+                                                  (lp-for-loop (cdr i/c*) #'forloop update)
+                                                  (let ([conf (car configs)])
+                                                    (syntax-case conf ()
+                                                      [(:break e)
+                                                       (kw:break? #':break)
+                                                       #`(if e
+                                                             #,(if last-forloop
+                                                                   call-lastforloop
+                                                                   ;; already outermost loop, stop
+                                                                   #`(void))
+                                                             #,(lp-configs (cdr configs)))]
+                                                      [(:stop e1 e2)
+                                                       (kw:stop? #':stop)
+                                                       #`(if e1
+                                                             e2
+                                                             #,(lp-configs (cdr configs)))]
+                                                      [(:guard e)
+                                                       (kw:guard? #':guard)
+                                                       #`(if e
+                                                             #,(lp-configs (cdr configs))
+                                                             (forloop #,@init/index-vars #,update))]
+                                                      [(:let v e)
+                                                       (kw:let? #':let)
+                                                       #`(let ([v e])
+                                                           #,(lp-configs (cdr configs)))]
+                                                      [(:let-values (v* ...) e)
+                                                       (kw:let-values? #':let-values)
+                                                       #`(let-values ([(v* ...) e])
+                                                           #,(lp-configs (cdr configs)))]
+                                                      [_ (syntax-error conf "unknown config clause:")]))))))))))))))))))])))
 
 
 
