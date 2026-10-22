@@ -100,12 +100,12 @@
              (static-system-record-expander pp rho expr-id pat body fk)
              (with-syntax ([(rtd fields indices) (generate-temporaries '(rtd fields indices))])
                (let* ([pats #'(pats ...)]
-                      [named? (andmap
+                      [named? (and (pair? pats) (andmap
                                (lambda (p)
                                  (syntax-case p ()
                                    [(name value) (identifier? #'name) #t]
                                    [_ #f]))
-                               pats)]
+                               pats))]
                       [generate-fields
                        (lambda (patterns named?)
                          (let loop ([patterns patterns] [i 0])
@@ -169,16 +169,16 @@
                                  (loop (cdr fields) (cdr npats))
                                  fk))))
                    (#,fk))))]
-        [(dt pat pats ...)
-         (by-pos-record-pats? rho #'dt #'(pat pats ...))
+        [(dt pats ...)
+         (by-pos-record-pats? rho #'dt #'(pats ...))
          (with-syntax ([(type?) (generate-temporaries '(type?))]
                        [rtd (datum->syntax #'dt (get-type-descriptor rho #'dt))]
-                       [(fld* ...) (generate-temporaries (enumerate #'(pat pats ...)))]
-                       [(i ...) (datum->syntax #'dt (enumerate #'(pat pats ...)))])
+                       [(fld* ...) (generate-temporaries (enumerate #'(pats ...)))]
+                       [(i ...) (datum->syntax #'dt (enumerate #'(pats ...)))])
            #`(let ([type? (record-predicate 'rtd)])
                (if (type? #,expr-id)
                    (let ([fld* ((record-accessor 'rtd i) #,expr-id)] ...)
-                     #,(let loop ([fields #'(fld* ...)] [npats #'(pat pats ...)])
+                     #,(let loop ([fields #'(fld* ...)] [npats #'(pats ...)])
                          (if (null? fields)
                              body
                              (pp rho (car fields) (car npats)

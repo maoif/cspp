@@ -802,3 +802,22 @@
 
      ;; A repeated list pattern must reject a non-list input.
      (match 123 [(,x ...) #f] [else #t]))
+
+(mat native-record-descriptor-boundaries
+     (let ()
+       (define-record-type StaticPoint (nongenerative review-static-point) (fields x))
+       (= 10 (match (make-StaticPoint 10) [,(StaticPoint ,x) x])))
+
+     (let ()
+       (define-record-type StaticEmpty (nongenerative review-static-empty) (fields))
+       (match (make-StaticEmpty) [,(StaticEmpty) #t] [else #f]))
+
+     (let ()
+       (define-record-type DynamicEmpty (fields))
+       (match (make-DynamicEmpty) [,(DynamicEmpty) #t] [else #f]))
+
+     ;; A zero-field pattern is invalid for a record with a field.
+     (let ()
+       (define-record-type Nonempty (fields x))
+       (guard (e [else (string-contains? (condition-message e) "invalid record pattern")])
+         (match (make-Nonempty 10) [,(Nonempty) #f] [else #f]))))
