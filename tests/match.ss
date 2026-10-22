@@ -751,3 +751,30 @@
        (match 10
          [,(ReviewPoint ,x) #f]
          [else #t])))
+
+(mat extension-fallbacks
+     ;; An absent key must fail, while a stored #f is a valid value.
+     (match (make-hashtable string-hash string=?)
+       [,(hash ("missing" ,value)) #f]
+       [else #t])
+
+     (let ([table (make-hashtable string-hash string=?)])
+       (hashtable-set! table "key" #f)
+       (match table
+         [,(hash ("key" ,value)) (eq? value #f)]
+         [else #f]))
+
+     ;; Incompatible extension inputs must try the next clause.
+     (match 123 [,(hash ("key" ,value)) #f] [else #t])
+
+     (match 123 [,(regex "a") #f] [else #t])
+
+     (match 123 [,(regex "a" (0 ,value)) #f] [else #t])
+
+     ;; An unknown named group must report the group, not reference a variable.
+     (let ([result (guard (e [#t e])
+                     (match "a" [,(regex "a" (missing ,value)) value]))])
+       (and (condition? result)
+            (string-contains? (condition-message result)
+                              "invalid index number or name for regex")
+            (equal? (condition-irritants result) '(missing)))))

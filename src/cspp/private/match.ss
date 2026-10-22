@@ -322,7 +322,7 @@
           (syntax-case rest ()
             [()
              (with-syntax ([(m) (generate-temporaries '(m))])
-               #`(let ([m (irregex-search #,regex #,expr-id)])
+               #`(let ([m (and (string? #,expr-id) (irregex-search #,regex #,expr-id))])
                    (if m
                        #,body
                        (#,fk))))]
@@ -338,7 +338,7 @@
                               [_ (syntax-error pat "only one pattern variable is allowed in regex pattern: ")]))
                           #'(v* ...)))
              (with-syntax ([(m) (generate-temporaries '(m))])
-               #`(let ([m (irregex-search #,regex #,expr-id)])
+               #`(let ([m (and (string? #,expr-id) (irregex-search #,regex #,expr-id))])
                    (if m
                        #,(let loop ([n* #'(n* ...)]
                                     [v* (map (lambda (v) (syntax-case v () [,var #'var])) #'(v* ...))])
@@ -347,7 +347,7 @@
                                #`(if (irregex-match-valid-index? m '#,(car n*))
                                      (let ([#,(car v*) (irregex-match-substring m '#,(car n*))])
                                        #,(loop (cdr n*) (cdr v*)))
-                                     (errorf 'match "invalid index number or name for regex: ~a" #,(car n*)))))
+                                     (errorf 'match "invalid index number or name for regex: ~a" '#,(car n*)))))
                        (#,fk))))]
             [_ (syntax-error pat "match: invalid regex pattern:")])))
       (syntax-case pat ()
@@ -383,11 +383,13 @@
                    (if (null? k*)
                        body
                        (with-syntax ([(v) (generate-temporaries '(v))])
-                         #`(let ([v (hashtable-ref #,expr-id #,(car k*) #f)])
-                             #,(pp rho #'v (car pat*)
-                                   (loop (cdr k*) (cdr pat*))
-                                   fk)))))
-               #,fk)]
+                         #`(if (hashtable-contains? #,expr-id #,(car k*))
+                               (let ([v (hashtable-ref #,expr-id #,(car k*) #f)])
+                                 #,(pp rho #'v (car pat*)
+                                       (loop (cdr k*) (cdr pat*))
+                                       fk))
+                               (#,fk)))))
+               (#,fk))]
         [else (syntax-error pat "match: invalid pattern for hash: ")])))
 
   )
