@@ -1315,3 +1315,18 @@
      (equal? '(0 1 2)
              (for/list ([x :iota (+ 1 (most-positive-fixnum))]
                         [:break (= x 3)]) x)))
+
+(mat bytevector-stride-and-hygiene
+     (equal? '(2571 1543 515)
+             (for/list ([x :bytevector #vu8(0 1 2 3 4 5 6 7 8 9 10 11)
+                           :type u16 :big :rev :step 2]) x))
+
+     (equal? '(2312 1284 256)
+             (for/list ([x :bytevector #vu8(0 1 2 3 4 5 6 7 8 9 10 11)
+                           :type u16 :little :from 0 :to 10 :rev :step 2]) x))
+
+     ;; Caller bindings must not replace the generated primitive accessor.
+     (let ([bytevector-u16-ref (lambda args 42)]
+           [endianness (lambda args 'little)])
+       (equal? '(1 515)
+               (for/list ([x :bytevector #vu8(0 1 2 3) :type u16 :big]) x))))

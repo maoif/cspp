@@ -777,17 +777,16 @@
                                        (errorf ':bytevector "unknown access type: ~a" t))
                                      t)
                                    'u8)]
-                    [endianness (datum->syntax v
-                                               (if op-little
-                                                   (if op-big
-                                                       (errorf ':bytevector ":big and :little cannot be given at the same time")
-                                                       '(endianness little))
-                                                   (if op-big
-                                                       '(endianness big)
-                                                       '(endianness little))))])
+                    [endianness (if op-little
+                                    (if op-big
+                                        (errorf ':bytevector ":big and :little cannot be given at the same time")
+                                        #'(endianness little))
+                                    (if op-big
+                                        #'(endianness big)
+                                        #'(endianness little)))])
                (with-syntax ([(t-vec t-len t-i t-from t-to t-step)
                               (generate-temporaries '(t-vec t-len t-i t-from t-to t-step))])
-                 (let ([vref (datum->syntax v (caddr (assoc op-type *bv-table*)))]
+                 (let ([vref (datum->syntax #'bytevector-u8-ref (caddr (assoc op-type *bv-table*)))]
                        [size (datum->syntax v (cadr  (assoc op-type *bv-table*)))])
                    ;; (println "vref: ~a size: ~a" vref size)
                    (list (lambda (e)
@@ -838,7 +837,7 @@
                                #`(let ([#,v (#,vref t-vec t-i)])
                                    #,e))
                              (lambda (e)
-                               #`(let ([#,v (#,vref t-vec (if (fx> t-step 0) t-i (fx+ t-i t-step 1)) #,endianness)])
+                               #`(let ([#,v (#,vref t-vec (if (fx> t-step 0) t-i (fx- t-i #,size -1)) #,endianness)])
                                    #,e))))))))]
           [:hashtable-keys
            (when (< nops 1)
