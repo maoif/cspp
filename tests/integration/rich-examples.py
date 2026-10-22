@@ -94,6 +94,11 @@ def check(name, width):
     progress = [line for line in lines if re.search(r"\[[#-]*\]", line)]
     assert len(rules) == 1 and cell_width(rules[0]) == width, (name, width, rules)
     assert progress and all(cell_width(line) == width for line in progress), (name, width, progress)
+    # All generated box rows should fit the terminal, including nested cards and tables.
+    box_starts = set("+│╭├╰┌└╔╚║╠┏┗┃┣")
+    boxed = [line for line in lines if line and line[0] in box_starts]
+    assert boxed and all(cell_width(line) <= width for line in boxed), (
+        name, width, [line for line in boxed if cell_width(line) > width])
     unicode_rules = [line for line in lines if "Unicode Cells / 中文" in line]
     assert len(unicode_rules) == 1 and cell_width(unicode_rules[0]) == width, (
         name, width, unicode_rules)

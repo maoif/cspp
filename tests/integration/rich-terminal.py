@@ -51,14 +51,17 @@ def main():
 (define progress (rich-progress :columns '(description bar percentage)))
 (rich-progress-add-task! progress "build" 10)
 (define live (make-rich-live progress console 0 #f))
+(define table (rich-table :columns ("ID" "Payload")
+                         :rows (("7" (make-string 120 #\\x)))))
+(define panel (rich-panel :body (make-string 120 #\\z)))
 (define mark
   (lambda () (display "\\033]0;CSPP-END\\007") (flush-output-port)))
-(rich-print console rule "\\n")
+(rich-print console rule "\\n" table "\\n" panel "\\n")
 (rich-live-refresh! live)
 (mark)
 (get-line (current-input-port))
 (rich-live-refresh! live)
-(rich-print console "\\n" rule)
+(rich-print console "\\n" rule "\\n" table "\\n" panel)
 (mark)
 ''')
         master, slave = pty.openpty()
@@ -70,7 +73,10 @@ def main():
                 stdin=subprocess.PIPE, stdout=slave, stderr=subprocess.PIPE)
             initial = ANSI.sub(b"", read_frame(master)).split(b"\r\n")
             assert initial[0] == b"-" * 93, initial
-            assert len(initial[1]) == 93, initial
+            assert len(initial[-1]) == 93, initial
+            assert all(len(line) <= 93 for line in initial), initial
+            assert sum(line.count(b"x") for line in initial) == 120, initial
+            assert sum(line.count(b"z") for line in initial) == 120, initial
             resize(slave, 47)
             process.stdin.write(b"\n")
             process.stdin.flush()
@@ -80,6 +86,10 @@ def main():
             plain = ANSI.sub(b"", updated).split(b"\r\n")
             assert len(plain[0].replace(b"\r", b"")) == 47, plain
             assert plain[1] == b"-" * 47, plain
+            assert all(len(line) <= 47 for line in plain[1:]), plain
+            assert sum(line.count(b"x") for line in plain[2:]) == 120, plain
+            assert sum(line.count(b"z") for line in plain[2:]) == 120, plain
+            assert any(line.startswith(b"+") and len(line) == 47 for line in plain), plain
             _, error = process.communicate(timeout=10)
             assert process.returncode == 0 and not error, error
         finally:
