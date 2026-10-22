@@ -985,3 +985,106 @@
                  (rich-export-text table))))
 
      )
+
+(mat rich-progress-auto-width
+
+     (parameterize ([rich-render-width 30] [rich-current-time (lambda () 0)])
+       (let ([progress (make-rich-progress #f '(description bar percentage completed))])
+         (let ([id (rich-progress-add-task! progress "a" 10)])
+           (rich-progress-update! progress id 5))
+         (rich-progress-add-task! progress "long" 10)
+         (equal? "a    [#######-------] 50% 5/10\nlong [--------------]  0% 0/10"
+                 (rich-export-text progress))))
+
+     (parameterize ([rich-render-width 10])
+       (let ([progress (make-rich-progress #f '(description bar percentage))])
+         (rich-progress-add-task! progress "long-description" 10)
+         (equal? "long [] 0%" (rich-export-text progress))))
+
+     (parameterize ([rich-render-width 3])
+       (let ([progress (make-rich-progress #f '(description bar percentage))])
+         (rich-progress-add-task! progress "long-description" 10)
+         (= 3 (string-length (rich-export-text progress)))))
+
+     (parameterize ([rich-render-width 15])
+       (let ([progress (make-rich-progress #f '(bar bar))])
+         (rich-progress-add-task! progress "x" 10)
+         (equal? "[-----] [-----]" (rich-export-text progress))))
+
+     (parameterize ([rich-render-width 30])
+       (let ([progress (make-rich-progress 4 '(description bar))])
+         (rich-progress-add-task! progress "x" 10)
+         (equal? "x [----]" (rich-export-text progress))))
+
+     (let ([progress (rich-progress :columns '(bar))])
+       (rich-progress-add-task! progress "x" 10)
+       (= 80 (string-length (rich-export-text progress))))
+
+     )
+
+(mat rich-live-single-frame
+
+     (let ([calls 0])
+       (rich-register-renderer!
+        (lambda (value) (eq? value 'live-single-frame-test))
+        (lambda (value)
+          (set! calls (+ calls 1))
+          (if (odd? calls) "abcdefghij" "x")))
+       (let ([output
+              (rich-string-output
+               (lambda (port)
+                 (let ([live (make-rich-live 'live-single-frame-test
+                                            (rich-console :output-port port :width 5) 0 #f)])
+                   (rich-live-refresh! live)
+                   (rich-live-refresh! live))))])
+         (and (= calls 2)
+              (equal? "abcdefghij\r\033[2K\033[1A\r\033[2Kx" output))))
+
+     (equal? "abcde\r\033[2Kx"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "abcde"
+                                           (rich-console :output-port port :width 5) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "x")
+                  (rich-live-refresh! live)))))
+
+     )
+
+(mat rich-terminal-sizing
+
+     (or (eq? (system-platform) 'windows)
+         (= 0 (system "cd .. && python3 tests/integration/rich-terminal.py")))
+
+     )
+
+(mat rich-live-control-width
+
+     (equal? "abcde\rx\r\033[2Ky"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "abcde\rx"
+                                           (rich-console :output-port port :width 5) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "y")
+                  (rich-live-refresh! live)))))
+
+     (equal? "a\tbc\r\033[2K\033[1A\r\033[2Ky"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "a\tbc"
+                                           (rich-console :output-port port :width 8) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "y")
+                  (rich-live-refresh! live)))))
+
+     (equal? "abcd\bbx\r\033[2Ky"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "abcd\bbx"
+                                           (rich-console :output-port port :width 5) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "y")
+                  (rich-live-refresh! live)))))
+
+     )

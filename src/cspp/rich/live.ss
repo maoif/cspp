@@ -44,7 +44,7 @@
             (mutable refresh-rate $rich-live-refresh-rate $rich-live-refresh-rate-set!)
             (mutable transient? $rich-live-transient? $rich-live-transient?-set!)
             (mutable started? $rich-live-started? $rich-live-started?-set!)
-            (mutable previous-line-count $rich-live-previous-line-count $rich-live-previous-line-count-set!)
+            (mutable previous-frame $rich-live-previous-frame $rich-live-previous-frame-set!)
             (mutable thread $rich-live-thread $rich-live-thread-set!)
             (mutable stop? $rich-live-stop? $rich-live-stop?-set!)))
 
@@ -97,19 +97,46 @@
               [nsec (* 1000000 (remainder milliseconds 1000))])
          (make-time 'time-duration nsec sec)))))
 
-  (define $string-line-count
-    (lambda (text)
-      (let ([len (string-length text)])
-        (let loop ([i 0] [n 1])
-          (cond [(= i len) n]
-                [(char=? (string-ref text i) #\newline)
-                 (loop (+ i 1) (+ n 1))]
-                [else
-                 (loop (+ i 1) n)])))))
-
-  (define $rendered-line-count
-    (lambda (value)
-      ($string-line-count (rich-export-text value))))
+  (define $frame-line-count
+    (lambda (frame width)
+      (if (not frame)
+          0
+          (let ([len (string-length frame)])
+            (let loop ([i 0] [column 0] [rows 1])
+              ;; column=width denotes the terminal's pending wrap at the right edge.
+              (if (= i len)
+                  rows
+                  (let ([ch (string-ref frame i)])
+                    (cond
+                     [(char=? ch #\esc)
+                      ;; SGR/erase sequences and OSC metadata do not occupy cells.
+                      (cond
+                       [(and (< (+ i 1) len) (char=? (string-ref frame (+ i 1)) #\[))
+                        (let scan ([j (+ i 2)])
+                          (cond [(= j len) (loop len column rows)]
+                                [(<= #x40 (char->integer (string-ref frame j)) #x7e)
+                                 (loop (+ j 1) column rows)]
+                                [else (scan (+ j 1))]))]
+                       [(and (< (+ i 1) len) (char=? (string-ref frame (+ i 1)) #\]))
+                        (let scan ([j (+ i 2)])
+                          (cond [(= j len) (loop len column rows)]
+                                [(char=? (string-ref frame j) #\bel)
+                                 (loop (+ j 1) column rows)]
+                                [(and (char=? (string-ref frame j) #\esc)
+                                      (< (+ j 1) len)
+                                      (char=? (string-ref frame (+ j 1)) #\\))
+                                 (loop (+ j 2) column rows)]
+                                [else (scan (+ j 1))]))]
+                       [else (loop (min len (+ i 2)) column rows)])]
+                     [(char=? ch #\newline) (loop (+ i 1) 0 (+ rows 1))]
+                     [(char=? ch #\return) (loop (+ i 1) 0 rows)]
+                     [(char=? ch #\backspace)
+                      (loop (+ i 1) (max 0 (- column (if (= column width) 2 1))) rows)]
+                     [(char=? ch #\tab)
+                      (loop (+ i 1) (min (- width 1) (* 8 (+ 1 (quotient column 8)))) rows)]
+                     [(< (char->integer ch) 32) (loop (+ i 1) column rows)]
+                     [(= column width) (loop (+ i 1) 1 (+ rows 1))]
+                     [else (loop (+ i 1) (+ column 1) rows)]))))))))
 
   (define $clear-live-output
     (lambda (port line-count)
@@ -159,13 +186,13 @@
   (define make-rich-live
     (case-lambda
       [(renderable)
-       ($make-rich-live-record renderable (make-rich-console) 4 #f #f 0 #f #f)]
+       ($make-rich-live-record renderable (make-rich-console) 4 #f #f #f #f #f)]
       [(renderable console refresh-rate transient?)
        (pcheck ([rich-console? console]
                 [$real-nonnegative? refresh-rate]
                 [boolean? transient?])
                ($make-rich-live-record renderable console refresh-rate
-                                       transient? #f 0 #f #f))]))
+                                       transient? #f #f #f #f))]))
 
   #|proc:rich-live-renderable
   The `rich-live-renderable` procedure returns the renderable for `live`.
@@ -237,19 +264,21 @@
 
   #|proc:rich-live-refresh!
   The `rich-live-refresh!` procedure clears the previous live output and writes
-  the current renderable to the live console.
+  the current renderable to the live console and returns `live`. Each frame is rendered
+  once at the current available width. Clearing counts wrapped physical terminal rows,
+  including after resize, without counting a pending wrap at the right edge twice.
   |#
   (define rich-live-refresh!
     (lambda (live)
       (pcheck ([rich-live? live])
               (let* ([console (rich-live-console live)]
-                     [port (rich-console-output-port console)])
-                ($clear-live-output port ($rich-live-previous-line-count live))
-                (rich-print console (rich-live-renderable live))
+                     [port (rich-console-output-port console)]
+                     [frame (rich-console-frame console (rich-live-renderable live))]
+                     [width (rich-console-output-width console)])
+                ($clear-live-output port ($frame-line-count ($rich-live-previous-frame live) width))
+                (display frame port)
                 (flush-output-port port)
-                ($rich-live-previous-line-count-set!
-                 live
-                 ($rendered-line-count (rich-live-renderable live)))
+                ($rich-live-previous-frame-set! live frame)
                 live))))
 
   #|proc:rich-live-start!
@@ -288,9 +317,11 @@
                   ($rich-live-thread-set! live #f))
                 (when (rich-live-transient? live)
                   (let ([port (rich-console-output-port (rich-live-console live))])
-                    ($clear-live-output port ($rich-live-previous-line-count live))
+                    ($clear-live-output
+                     port ($frame-line-count ($rich-live-previous-frame live)
+                                             (rich-console-output-width (rich-live-console live))))
                     (flush-output-port port)
-                    ($rich-live-previous-line-count-set! live 0)))
+                    ($rich-live-previous-frame-set! live #f)))
                 ($rich-live-started?-set! live #f))
               live)))
 

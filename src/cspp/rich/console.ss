@@ -1,6 +1,8 @@
 #!chezscheme
 (library (cspp rich console)
-  (export make-rich-console
+  (export rich-console-frame
+          rich-console-output-width
+          make-rich-console
           rich-console
           rich-console?
           rich-console-output-port
@@ -92,6 +94,17 @@
             [(eq? port $stdout-port) 1]
             [(eq? port $stderr-port) 2]
             [else #f])))
+
+  #|proc:rich-console-output-width
+  The private `rich-console-output-width` procedure returns the physical destination
+  width for `console`, falling back to its effective render width when size is unknown.
+  |#
+  (define rich-console-output-width
+    (lambda (console)
+      (pcheck ([rich-console? console])
+              (let* ([fd ($output-descriptor (rich-console-output-port console))]
+                     [width (and fd ($terminal-width fd))])
+                (if (and width (positive? width)) width (rich-console-width console))))))
 
   (define $console-color-system
     (lambda (console)
@@ -633,5 +646,26 @@
            (rich-console-output-port-set! console port)
            (rich-console-color-system-set! console 'standard)
            (rich-print console value))))))
+
+  #|proc:rich-console-frame
+  The private `rich-console-frame` procedure renders `value` once using `console`'s
+  current width, theme, ASCII, and color policy. Returns the encoded frame string.
+  The destination console and its ports are left unchanged.
+  |#
+  (define rich-console-frame
+    (lambda (console value)
+      (pcheck ([rich-console? console])
+              (let ([width (rich-console-width console)]
+                    [colors ($console-color-system console)])
+                (rich-string-output
+                 (lambda (port)
+                   (let ([capture (make-rich-console-record
+                                   port (rich-console-error-port console)
+                                   (rich-console-input-port console) width colors
+                                   (rich-console-force-terminal? console)
+                                   (rich-console-soft-wrap? console)
+                                   (rich-console-theme console)
+                                   (rich-console-ascii-only? console))])
+                     (rich-print capture value))))))))
 
   (rich-register-renderer! rich-text? rich-text-render))

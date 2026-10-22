@@ -158,6 +158,65 @@
                         (if first? out (cons " " out)))
                   #f)))))
 
+  ;; Measure each column across all visible tasks before allocating flexible bars.
+  (define $automatic-task-lines
+    (lambda (tasks columns now)
+      (let* ([available (rich-render-width)]
+             [count (length columns)]
+             [names (list->vector columns)]
+             [widths (make-vector count 0)]
+             [rows (map (lambda (task)
+                          (list->vector
+                           (map (lambda (column) ($task-column task 0 column now)) columns)))
+                        tasks)])
+        (for-each
+         (lambda (row)
+           (do ([i 0 (+ i 1)]) ((= i count))
+             (vector-set! widths i (max (vector-ref widths i)
+                                       (rich-segment-width (rich-segment (vector-ref row i)))))))
+         rows)
+        (let* ([bars (length (filter (lambda (name) (eq? name 'bar)) columns))]
+               [used (+ (max 0 (- count 1)) (apply + (vector->list widths)))]
+               [excess (max 0 (- used available))])
+          ;; Bar interiors are already zero. Descriptions yield space next.
+          (do ([i 0 (+ i 1)]) ((= i count))
+            (when (eq? (vector-ref names i) 'description)
+              (let ([removed (min excess (vector-ref widths i))])
+                (vector-set! widths i (- (vector-ref widths i) removed))
+                (set! excess (- excess removed))
+                (set! used (- used removed)))))
+          (when (positive? bars)
+            (let ([left (max 0 (- available used))] [remaining bars])
+              (do ([i 0 (+ i 1)]) ((= i count))
+                (when (eq? (vector-ref names i) 'bar)
+                  (let ([extra (quotient left remaining)])
+                    (vector-set! widths i (+ 2 extra))
+                    (set! left (- left extra))
+                    (set! remaining (- remaining 1)))))))
+          (map
+           (lambda (task row)
+             (let ([line
+                    (let loop ([i 0] [out '()])
+                      (if (= i count)
+                          (apply string-append (reverse out))
+                          (let* ([name (vector-ref names i)]
+                                 [width (vector-ref widths i)]
+                                 [text (if (eq? name 'bar)
+                                           ($task-bar task (- width 2))
+                                           (rich-segments->plain
+                                            (rich-segment-crop
+                                             (list (rich-segment (vector-ref row i))) width)))]
+                                 [space (make-string
+                                         (max 0 (- width (rich-segment-width (rich-segment text))))
+                                         #\space)]
+                                 [padded (if (memq name '(percentage completed elapsed remaining speed))
+                                             (string-append space text)
+                                             (string-append text space))])
+                            (loop (+ i 1) (cons padded (if (zero? i) out (cons " " out)))))))])
+               ;; If fixed columns alone cannot fit, keep automatic output on one row.
+               (rich-segment-crop (list (rich-segment line)) available)))
+           tasks rows)))))
+
   (define $visible-tasks
     (lambda (progress)
       (let loop ([tasks ($rich-progress-tasks progress)] [out '()])
@@ -255,22 +314,24 @@
 
   #|proc:make-rich-progress
   The `make-rich-progress` procedure constructs a progress display with a
-  positive integer bar `width` (default 40) and no tasks. The list `columns` selects
-  output columns in order; its default is `rich-progress-default-columns`. Supported
+  bar `width` and no tasks. The default `#f` fills available content width after
+  reserving space for other columns; a positive exact integer fixes the bar interior width.
+  The list `columns` selects output columns in order; its default is
+  `rich-progress-default-columns`. Supported
   symbols are `description`, `bar`, `percentage`, `completed`, `elapsed`, `remaining`,
   `speed`, and `spinner`. An empty list produces empty task lines. Returns the display.
   |#
   (define make-rich-progress
     (case-lambda
       [()
-       ($make-rich-progress-record 0 40 (rich-progress-default-columns) '() #f)]
+       ($make-rich-progress-record 0 #f (rich-progress-default-columns) '() #f)]
       [(width columns)
-       (pcheck ([rich-positive-integer? width] [$columns? columns])
+       (pcheck ([rich-optional-width? width] [$columns? columns])
                ($make-rich-progress-record 0 width columns '() #f))]))
 
   (define $rich-progress-width-set!/checked
     (lambda (progress width)
-      (pcheck ([rich-progress? progress] [rich-positive-integer? width])
+      (pcheck ([rich-progress? progress] [rich-optional-width? width])
               ($rich-progress-width-set! progress width))))
 
   (define $rich-progress-columns-set!/checked
@@ -388,18 +449,24 @@
   Elapsed and estimated remaining durations use `HH:MM:SS`; unavailable estimates
   use `--:--:--`. Speed is the average completed units per second, rounded to two
   decimal places. Unknown totals show `?` for percentage and a bare completed count.
-  Timing uses `rich-current-time` and freezes when the task is explicitly completed.
+  Automatic sizing aligns columns across visible tasks. Bars receive leftover space;
+  descriptions are shortened when needed, then rows are cropped if fixed columns cannot fit.
+  Explicit bar widths retain their fixed layout. Timing uses `rich-current-time` and
+  freezes when the task is explicitly completed.
   Spinner frames cycle through `|`, `/`, `-`, and `\` every tenth of a second.
   |#
   (define rich-progress-render
     (lambda (progress)
       (pcheck ([rich-progress? progress])
-              (let ([now ((rich-current-time))])
-                (map (lambda (task)
-                       (list (rich-segment
-                              ($task-line task ($rich-progress-width progress)
-                                          ($rich-progress-columns progress) now))))
-                     ($visible-tasks progress))))))
+              (let ([now ((rich-current-time))]
+                    [tasks ($visible-tasks progress)]
+                    [width ($rich-progress-width progress)]
+                    [columns ($rich-progress-columns progress)])
+                (if width
+                    (map (lambda (task)
+                           (list (rich-segment ($task-line task width columns now))))
+                         tasks)
+                    ($automatic-task-lines tasks columns now))))))
 
   #|macro:rich-progress
   The `rich-progress` macro constructs and returns a progress display.
