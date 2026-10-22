@@ -341,7 +341,11 @@
   (define rich-panel-render
     (lambda (panel)
       (pcheck ([rich-panel? panel])
-              (let* ([lines ($panel-body-lines panel)]
+              (let* ([lines (parameterize
+                                     ([rich-render-width
+                                       (max 1 (- (or (rich-panel-width panel) (rich-render-width))
+                                                 (* 2 (rich-panel-padding panel)) 2))])
+                                   ($panel-body-lines panel))]
                      [padding (rich-panel-padding panel)]
                      [natural-content-width ($segment-lines-width lines)]
                      [natural-total-width (+ natural-content-width (* padding 2) 2)]

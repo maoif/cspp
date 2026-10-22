@@ -130,7 +130,10 @@
 
   (define $prefix-label-lines
     (lambda (label first-prefix rest-prefix)
-      (let ([lines ($value->segment-lines label)])
+      (let ([lines (parameterize
+                              ([rich-render-width
+                                (max 1 (- (rich-render-width) (string-length first-prefix)))])
+                            ($value->segment-lines label))])
         (if (null? lines)
             (list (list (rich-segment first-prefix)))
             (let loop ([lines lines] [first? #t] [out '()])

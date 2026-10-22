@@ -260,19 +260,21 @@
 
   #|proc:make-rich-rule
   The `make-rich-rule` procedure constructs a horizontal rule with an optional
-  `title`, positive `width`, and box `style`.
+  string `title` (or `#f`), optional `width`, and box `style`, and returns the rule.
+  The default `width` is `#f`, which fills the available content width at render time.
+  A positive exact integer keeps a fixed width, including when nested in a container.
   |#
   (define make-rich-rule
     (case-lambda
       [()
-       (make-rich-rule #f 80 'ascii)]
+       (make-rich-rule #f #f 'ascii)]
       [(title)
-       (make-rich-rule title 80 'ascii)]
+       (make-rich-rule title #f 'ascii)]
       [(title width)
        (make-rich-rule title width 'ascii)]
       [(title width style)
        (pcheck ([$rich-rule-title? title]
-                [rich-positive-integer? width]
+                [rich-optional-width? width]
                 [rich-box-style? style])
                ($make-rich-rule-record title width style))]))
 
@@ -293,7 +295,8 @@
               ($rich-rule-title-set! rule title))))
 
   #|proc:rich-rule-width
-  The `rich-rule-width` procedure returns the configured width for `rule`.
+  The `rich-rule-width` procedure returns the configured width for `rule`: `#f` for
+  automatic sizing or a positive exact integer for a fixed width.
   |#
   (define rich-rule-width
     (lambda (rule)
@@ -301,11 +304,12 @@
               ($rich-rule-width rule))))
 
   #|proc:rich-rule-width-set!
-  The `rich-rule-width-set!` procedure sets the positive width for `rule`.
+  The `rich-rule-width-set!` procedure sets `rule` to positive exact integer `width`,
+  or `#f` to fill the available content width. Returns an unspecified value.
   |#
   (define rich-rule-width-set!
     (lambda (rule width)
-      (pcheck ([rich-rule? rule] [rich-positive-integer? width])
+      (pcheck ([rich-rule? rule] [rich-optional-width? width])
               ($rich-rule-width-set! rule width))))
 
   #|proc:rich-rule-style
@@ -333,7 +337,7 @@
               (let* ([chars (rich-box-chars (rich-rule-style rule))]
                      [h (vector-ref chars 4)]
                      [title (rich-rule-title rule)]
-                     [width (rich-rule-width rule)]
+                     [width (or (rich-rule-width rule) (rich-render-width))]
                      [text (if (and title (not (string=? title "")))
                                (let* ([title-text (string-append " " title " ")]
                                       [title-width (string-length title-text)])
@@ -503,7 +507,11 @@
                              ($pad-line line
                                         (rich-padding-left padding)
                                         (rich-padding-right padding)))
-                           ($value->segment-lines (rich-padding-body padding)))
+                           (parameterize ([rich-render-width
+                                           (max 1 (- (rich-render-width)
+                                                     (rich-padding-left padding)
+                                                     (rich-padding-right padding)))])
+                             ($value->segment-lines (rich-padding-body padding))))
                       ($blank-lines (rich-padding-bottom padding))))))
 
   #|macro:rich-padding
@@ -640,7 +648,8 @@
                                  [(center)
                                   (let ([left (quotient space 2)])
                                     ($pad-line line left (- space left)))])))))
-                     ($value->segment-lines (rich-align-body align)))))))
+                     (parameterize ([rich-render-width width])
+                       ($value->segment-lines (rich-align-body align))))))))
 
   #|macro:rich-align
   The `rich-align` macro constructs and returns an alignment renderable.
@@ -767,7 +776,10 @@
                      (map (lambda (row)
                             ($columns-render-row row (rich-columns-gap columns)))
                           ($pack-column-blocks
-                           ($items->blocks (rich-columns-items columns))
+                           (parameterize ([rich-render-width
+                                           (min (rich-render-width)
+                                                (rich-columns-width columns))])
+                             ($items->blocks (rich-columns-items columns)))
                            (rich-columns-width columns)
                            (rich-columns-gap columns)))))))
 
@@ -890,7 +902,12 @@
       (pcheck ([rich-layout? layout])
               (case (rich-layout-direction layout)
                 [(row)
-                 ($render-horizontal-blocks ($items->blocks (rich-layout-items layout)) 1)]
+                 (let* ([items (rich-layout-items layout)]
+                        [count (length items)]
+                        [width (if (zero? count) (rich-render-width)
+                                   (max 1 (quotient (- (rich-render-width) (- count 1)) count)))])
+                   (parameterize ([rich-render-width width])
+                     ($render-horizontal-blocks ($items->blocks items) 1)))]
                 [(column)
                  (apply append
                         (map $value->segment-lines (rich-layout-items layout)))]))))

@@ -922,3 +922,66 @@
      (= 80 (string-length (rich-export-text 'width-context-test)))
 
      )
+
+(mat rich-rule-auto-width
+
+     (equal? (make-string 80 #\-) (rich-export-text (make-rich-rule)))
+
+     (equal? (make-string 23 #\-)
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 23) (make-rich-rule)))))
+
+     (equal? (make-string 7 #\-)
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 23)
+                            (rich-rule :width 7)))))
+
+     (let ([rule (rich-rule :width 7)])
+       (rich-rule-width-set! rule #f)
+       (equal? (make-string 80 #\-) (rich-export-text rule)))
+
+     (equal? "  ---------------   "
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 20)
+                            (rich-padding :body (make-rich-rule) :left 2 :right 3)))))
+
+     (equal? "+----------+\n| -------- |\n+----------+"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 12)
+                            (rich-panel :body (make-rich-rule))))))
+
+     (equal? "------"
+             (rich-export-text (rich-align :body (make-rich-rule) :width 6)))
+
+     (equal? "+-------+\n|-------|\n+-------+"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 30)
+                            (rich-panel :body (make-rich-rule) :width 9 :padding 0)))))
+
+     )
+
+(mat rich-rule-container-width
+
+     (equal? "------- -------"
+             (parameterize ([rich-render-width 15])
+               (rich-export-text (make-rich-layout 'row
+                                                   (list (make-rich-rule) (make-rich-rule))))))
+
+     (equal? "root\n└── ------"
+             (parameterize ([rich-render-width 10])
+               (let ([tree (make-rich-tree "root")])
+                 (rich-tree-add! tree (make-rich-rule))
+                 (rich-export-text tree))))
+
+     (equal? "+-----+-----+\n| --- | --- |\n+-----+-----+"
+             (parameterize ([rich-render-width 13])
+               (let ([table (rich-table :show-header? #f :columns ("a" "b"))])
+                 (rich-table-add-row! table (make-rich-rule) (make-rich-rule #f 3))
+                 (rich-export-text table))))
+
+     )

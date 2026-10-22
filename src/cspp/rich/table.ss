@@ -430,13 +430,21 @@
                      [rows ($rich-table-rows table)]
                      [chars (rich-box-chars (rich-table-box table))]
                      [padding (rich-table-padding table)]
+                     [cell-width (if (null? columns) (rich-render-width)
+                                     (max 1 (quotient
+                                             (- (rich-render-width) (+ (length columns) 1)
+                                                (* 2 padding (length columns)))
+                                             (length columns))))]
+                     [render-cell (lambda (value)
+                                    (parameterize ([rich-render-width cell-width])
+                                      ($value->segment-lines value)))]
                      [header-blocks (and (rich-table-show-header? table)
                                          (map (lambda (column)
-                                                ($value->segment-lines
+                                                (render-cell
                                                  ($rich-table-column-title column)))
                                               columns))]
                      [row-blocks (map (lambda (row)
-                                        (map $value->segment-lines row))
+                                        (map render-cell row))
                                       rows)]
                      [widths ($column-widths columns header-blocks row-blocks)]
                      [title (rich-table-title table)]
