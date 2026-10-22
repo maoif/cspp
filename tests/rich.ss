@@ -501,11 +501,11 @@
      )
 
 (mat rich-progress-empty-task
-     (let ([progress (make-rich-progress 4 (rich-progress-default-columns))])
+     (let ([progress (make-rich-progress 4 '(description bar percentage completed))])
        (rich-progress-add-task! progress "empty" 0)
        (string=? "empty [####] 100% 0/0" (rich-export-text progress)))
 
-     (let* ([progress (make-rich-progress 4 (rich-progress-default-columns))]
+     (let* ([progress (make-rich-progress 4 '(description bar percentage completed))]
             [id (rich-progress-add-task! progress "empty" #f)])
        (rich-progress-task-total-set! progress id 0)
        (rich-progress-complete! progress id)
@@ -782,5 +782,115 @@
 
      ;; Console color system must be supported.
      (error? (rich-console :color-system 'unsupported))
+
+     )
+
+(mat rich-console-auto-color
+
+     (equal? "x"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port)
+                            (rich-text "x" (rich-style 'red))))))
+
+     (equal? "x"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'auto)
+                            (rich-style 'red) "x" (reset-style)))))
+
+     (equal? "\033[31mx\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :force-terminal? #t)
+                            (rich-text "x" (rich-style 'red))))))
+
+     (equal? "x"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'none
+                                          :force-terminal? #t)
+                            (rich-text "x" (rich-style 'red))))))
+
+     )
+
+(mat rich-console-theme-styles
+
+     (let* ([theme (rich-theme :accent (rich-style 'red))]
+            [text (rich-text "x" 'accent)]
+            [render (lambda ()
+                      (rich-string-output
+                       (lambda (port)
+                         (rich-print (rich-console :output-port port :theme theme
+                                                   :color-system 'standard)
+                                     (rich-panel :body text)))))])
+       (let ([first (render)])
+         (rich-theme-set! theme 'accent (rich-style 'blue))
+         (and (equal? "+---+\n| \033[31mx\033[0m |\n+---+" first)
+              (equal? "+---+\n| \033[34mx\033[0m |\n+---+" (render)))))
+
+     (equal? "x"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'none)
+                            (rich-text "x" 'accent)))))
+
+     (equal? "x" (rich-export-text (rich-text "x" 'accent)))
+
+     (equal? "\033[31mA\033[34mS\033[0m\033[31mB\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard
+                                          :theme (rich-theme :accent (rich-style 'blue)))
+                            (rich-style 'red) "A" (rich-text "S" 'accent)
+                            "B" (reset-style)))))
+
+     ;; Error case: a named style needs a binding when ANSI output is enabled.
+     (error? (rich-export-ansi (rich-text "x" 'missing)))
+
+     )
+
+(mat rich-progress-selected-columns
+
+     (let ([progress (make-rich-progress 4 '(completed description percentage bar))])
+       (let ([id (rich-progress-add-task! progress "build" 8)])
+         (rich-progress-update! progress id 2)
+         (equal? "2/8 build 25% [#---]" (rich-export-text progress))))
+
+     (let ([progress (rich-progress :width 4 :columns '(description))])
+       (rich-progress-add-task! progress "build" #f)
+       (equal? "build" (rich-export-text progress)))
+
+     (let ([progress (make-rich-progress 4 '())])
+       (rich-progress-add-task! progress "build" 8)
+       (equal? "" (rich-export-text progress)))
+
+     (parameterize ([rich-current-time (lambda () 0)])
+       (let ([progress (make-rich-progress 4 '(percentage completed remaining speed))])
+         (rich-progress-add-task! progress "unknown" #f)
+         (equal? "? 0 --:--:-- 0.0/s" (rich-export-text progress))))
+
+     (let ([now 0])
+       (parameterize ([rich-current-time (lambda () now)])
+         (let ([progress (make-rich-progress 4 '(spinner))])
+           (rich-progress-add-task! progress "spin" #f)
+           (set! now 1/10)
+           (equal? "/" (rich-export-text progress)))))
+
+     (let ([now 0])
+       (parameterize ([rich-current-time (lambda () now)])
+         (let* ([progress (make-rich-progress 4 '(elapsed remaining speed spinner))]
+                [id (rich-progress-add-task! progress "build" 8)])
+           (set! now 2)
+           (rich-progress-update! progress id 4)
+           (let ([running (rich-export-text progress)])
+             (rich-progress-complete! progress id)
+             (set! now 10)
+             (and (equal? "00:00:02 00:00:02 2.0/s |" running)
+                  (equal? "00:00:02 00:00:00 4.0/s |"
+                          (rich-export-text progress)))))))
+
+     ;; Error case: column descriptors must be supported names.
+     (error? (make-rich-progress 4 '(unknown)))
 
      )

@@ -17,7 +17,7 @@
 
   (define $rich-text-style?
     (lambda (x)
-      (or (not x) (rich-style? x) (rich-reset? x))))
+      (or (not x) (symbol? x) (rich-style? x) (rich-reset? x))))
 
   (define $rich-text-span
     (lambda (text style)
@@ -44,6 +44,9 @@
   #|proc:make-rich-text
   The `make-rich-text` procedure constructs a mutable rich text value. When
   `text` is supplied, it is appended as the initial span with optional `style`.
+  The string `text` defaults to empty. The `style` is a style object, theme-name
+  symbol resolved by the printing console, reset object, or `#f` (the default).
+  Returns the new rich text value.
   |#
   (define make-rich-text
     (case-lambda
@@ -57,7 +60,8 @@
 
   #|proc:rich-text
   The `rich-text` procedure constructs a mutable rich text value from `text`
-  and an optional `style`.
+  and an optional `style` and returns it. The `text` is a string; `style` may be a
+  style object, theme-name symbol resolved by the console, reset object, or `#f`.
   |#
   (define rich-text
     (case-lambda
@@ -68,7 +72,9 @@
 
   #|proc:rich-text-append!
   The `rich-text-append!` procedure appends `text` as a span with optional
-  `style` to `rich-text` and returns `rich-text`.
+  `style` to the rich text value `rich-text` and returns `rich-text`. The `text`
+  is a string; `style` is a style object, theme-name symbol resolved by the console,
+  reset object, or `#f` (the default).
   |#
   (define rich-text-append!
     (case-lambda

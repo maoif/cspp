@@ -2,6 +2,10 @@
 
 #ifdef _WIN32
 
+#include <io.h>
+
+int cspp_rich_terminal_output_supported(int fd) { return _isatty(fd) ? 1 : 0; }
+
 int cspp_rich_terminal_echo_supported(void) { return 0; }
 int cspp_rich_terminal_disable_echo(void) { return ENOTSUP; }
 int cspp_rich_terminal_restore_echo(void) { return ENOTSUP; }
@@ -10,6 +14,8 @@ int cspp_rich_terminal_restore_echo(void) { return ENOTSUP; }
 
 #include <termios.h>
 #include <unistd.h>
+
+int cspp_rich_terminal_output_supported(int fd) { return isatty(fd) ? 1 : 0; }
 
 static struct termios saved_termios;
 static int saved_termios_valid = 0;

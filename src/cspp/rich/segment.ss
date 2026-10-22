@@ -25,7 +25,7 @@
 
   (define $rich-segment-style?
     (lambda (x)
-      (or (not x) (rich-style? x) (rich-reset? x))))
+      (or (not x) (symbol? x) (rich-style? x) (rich-reset? x))))
 
   (define $rich-segment-list?
     (lambda (x)
@@ -94,8 +94,8 @@
               ($rich-segment-text segment))))
 
   #|proc:rich-segment-style
-  The `rich-segment-style` procedure returns the style object, reset object, or
-  `#f` stored in `segment`.
+  The `rich-segment-style` procedure returns the style object, theme-name symbol,
+  reset object, or `#f` stored in `segment`.
   |#
   (define rich-segment-style
     (lambda (segment)
@@ -112,8 +112,9 @@
               ($rich-segment-control? segment))))
 
   #|proc:make-rich-segment
-  The `make-rich-segment` procedure constructs a text segment from `text`, an
-  optional style or reset object, and an optional control flag.
+  The `make-rich-segment` procedure returns a segment containing the string `text`.
+  Optional `style` is a style object, a theme-name symbol resolved by the console,
+  a reset object, or `#f`. Optional boolean `control?` makes the segment zero-width.
   |#
   (define make-rich-segment
     (case-lambda
@@ -126,7 +127,9 @@
                ($make-rich-segment text style control?))]))
 
   #|proc:rich-segment
-  The `rich-segment` procedure constructs a rich text segment.
+  The `rich-segment` procedure returns a segment from the string `text`, optional
+  `style`, and optional boolean `control?`, just like `make-rich-segment`. The style
+  may be a style object, theme-name symbol, reset object, or `#f`.
   |#
   (define rich-segment make-rich-segment)
 

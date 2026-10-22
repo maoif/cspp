@@ -56,7 +56,12 @@
 
   (define $columns?
     (lambda (x)
-      (list? x)))
+      (and (list? x)
+           (rich-list-every?
+            (lambda (column)
+              (and (memq column '(description bar percentage completed elapsed remaining speed
+                                  spinner)) #t))
+            x))))
 
   (define $append-one
     (lambda (ls value)
@@ -107,25 +112,51 @@
                        ($string-repeat "-" (- width filled))
                        "]"))))
 
+  (define $duration-string
+    (lambda (seconds)
+      (let* ([seconds (inexact->exact (floor seconds))]
+             [hours (quotient seconds 3600)]
+             [minutes (quotient (remainder seconds 3600) 60)]
+             [seconds (remainder seconds 60)]
+             [two-digits (lambda (n)
+                           (string-append (if (< n 10) "0" "") (number->string n)))])
+        (string-append (two-digits hours) ":" (two-digits minutes) ":" (two-digits seconds)))))
+
+  (define $task-column
+    (lambda (task width column now)
+      (let* ([completed ($rich-progress-task-completed task)]
+             [total ($rich-progress-task-total task)]
+             [elapsed (max 0 (- (or ($rich-progress-task-stop-time task) now)
+                                ($rich-progress-task-start-time task)))]
+             [speed (if (positive? elapsed) (/ completed elapsed) 0)])
+        (case column
+          [(description) ($rich-progress-task-description task)]
+          [(bar) ($task-bar task width)]
+          [(percentage) (if total
+                            (string-append (number->string ($percent completed total)) "%")
+                            "?")]
+          [(completed) (if total
+                           (string-append (number->string completed) "/" (number->string total))
+                           (number->string completed))]
+          [(elapsed) ($duration-string elapsed)]
+          [(remaining) (cond [(and total (>= completed total)) "00:00:00"]
+                             [(and total (positive? speed))
+                              ($duration-string (ceiling (/ (- total completed) speed)))]
+                             [else "--:--:--"])]
+          [(speed) (string-append
+                    (number->string (exact->inexact (/ (round (* speed 100)) 100))) "/s")]
+          [(spinner) (vector-ref '#("|" "/" "-" "\\")
+                                 (modulo (inexact->exact (floor (* elapsed 10))) 4))]))))
+
   (define $task-line
-    (lambda (task width)
-      (let ([description ($rich-progress-task-description task)]
-            [completed ($rich-progress-task-completed task)]
-            [total ($rich-progress-task-total task)])
-        (if total
-            (string-append description
-                           " "
-                           ($task-bar task width)
-                           " "
-                           (number->string ($percent completed total))
-                           "%"
-                           " "
-                           (number->string completed)
-                           "/"
-                           (number->string total))
-            (string-append description
-                           " "
-                           (number->string completed))))))
+    (lambda (task width columns now)
+      (let loop ([columns columns] [out '()] [first? #t])
+        (if (null? columns)
+            (apply string-append (reverse out))
+            (loop (cdr columns)
+                  (cons ($task-column task width (car columns) now)
+                        (if first? out (cons " " out)))
+                  #f)))))
 
   (define $visible-tasks
     (lambda (progress)
@@ -224,7 +255,10 @@
 
   #|proc:make-rich-progress
   The `make-rich-progress` procedure constructs a progress display with a
-  default bar width and no tasks.
+  positive integer bar `width` (default 40) and no tasks. The list `columns` selects
+  output columns in order; its default is `rich-progress-default-columns`. Supported
+  symbols are `description`, `bar`, `percentage`, `completed`, `elapsed`, `remaining`,
+  `speed`, and `spinner`. An empty list produces empty task lines. Returns the display.
   |#
   (define make-rich-progress
     (case-lambda
@@ -350,15 +384,22 @@
 
   #|proc:rich-progress-render
   The `rich-progress-render` procedure renders visible progress tasks as segment
-  lines.
+  lines and returns them in task order using the configured columns of `progress`.
+  Elapsed and estimated remaining durations use `HH:MM:SS`; unavailable estimates
+  use `--:--:--`. Speed is the average completed units per second, rounded to two
+  decimal places. Unknown totals show `?` for percentage and a bare completed count.
+  Timing uses `rich-current-time` and freezes when the task is explicitly completed.
+  Spinner frames cycle through `|`, `/`, `-`, and `\` every tenth of a second.
   |#
   (define rich-progress-render
     (lambda (progress)
       (pcheck ([rich-progress? progress])
-              (map (lambda (task)
-                     (list (rich-segment
-                            ($task-line task ($rich-progress-width progress)))))
-                   ($visible-tasks progress)))))
+              (let ([now ((rich-current-time))])
+                (map (lambda (task)
+                       (list (rich-segment
+                              ($task-line task ($rich-progress-width progress)
+                                          ($rich-progress-columns progress) now))))
+                     ($visible-tasks progress))))))
 
   #|macro:rich-progress
   The `rich-progress` macro constructs and returns a progress display.

@@ -57,7 +57,7 @@
 
   #|proc:make-rich-console
   The `make-rich-console` procedure constructs a console using current ports and
-  conservative terminal defaults.
+  automatic terminal detection. ANSI is suppressed on nonterminal output ports.
   |#
   (define make-rich-console
     (case-lambda
@@ -66,7 +66,7 @@
                                  (current-error-port)
                                  (current-input-port)
                                  80
-                                 'standard
+                                 'auto
                                  #f
                                  #f
                                  #f
@@ -75,6 +75,38 @@
   (define $rich-console-theme?
     (lambda (x)
       (or (not x) (rich-theme? x))))
+
+  ;; Chez may wrap its original console ports in thread-safe custom ports.
+  (define $stdout-port (console-output-port))
+  (define $stderr-port (console-error-port))
+
+  (define $terminal-output?
+    (foreign-procedure "cspp_rich_terminal_output_supported" (int) boolean))
+
+  (define $console-color-system
+    (lambda (console)
+      (let ([system (rich-console-color-system console)]
+            [port (rich-console-output-port console)])
+        (if (eq? system 'auto)
+            (if (or (rich-console-force-terminal? console)
+                    (cond [(file-port? port)
+                           ($terminal-output? (port-file-descriptor port))]
+                          [(eq? port $stdout-port) ($terminal-output? 1)]
+                          [(eq? port $stderr-port) ($terminal-output? 2)]
+                          [else #f]))
+                'standard
+                'none)
+            system))))
+
+  (define $resolve-segment-style
+    (lambda (console style)
+      (if (symbol? style)
+          (if (eq? ($console-color-system console) 'none)
+              #f
+              (let* ([theme (rich-console-theme console)]
+                     [resolved (and theme (rich-theme-ref theme style))])
+                (or resolved (errorf 'rich-print "unknown theme style: ~s" style))))
+          style)))
 
   #|proc:rich-console-output-port
   The `rich-console-output-port` procedure returns the output port used by
@@ -156,8 +188,10 @@
               ($rich-console-color-system console))))
 
   #|proc:rich-console-color-system-set!
-  The `rich-console-color-system-set!` procedure sets the ANSI color system for
-  `console`.
+  The `rich-console-color-system-set!` procedure sets `console` to `color-system` and
+  returns an unspecified value. The default `'auto` detects terminal output; `'none`
+  suppresses ANSI. Explicit `'standard`, `'256`, and `'truecolor` enable ANSI even on
+  nonterminal ports. RGB colors currently use truecolor sequences in each enabled mode.
   |#
   (define rich-console-color-system-set!
     (lambda (console color-system)
@@ -174,8 +208,10 @@
               ($rich-console-force-terminal? console))))
 
   #|proc:rich-console-force-terminal?-set!
-  The `rich-console-force-terminal?-set!` procedure sets whether `console`
-  forces terminal output behavior.
+  The `rich-console-force-terminal?-set!` procedure sets whether `console` treats its
+  output port as a terminal in automatic color mode. The boolean `force-terminal?`
+  enables this override when true; explicit color modes take precedence. Returns an
+  unspecified value.
   |#
   (define rich-console-force-terminal?-set!
     (lambda (console force-terminal?)
@@ -210,7 +246,10 @@
               ($rich-console-theme console))))
 
   #|proc:rich-console-theme-set!
-  The `rich-console-theme-set!` procedure sets the theme for `console`.
+  The `rich-console-theme-set!` procedure sets the theme for `console` to `theme`, a
+  rich theme or `#f`, and returns an unspecified value. Symbol styles in segments and
+  text spans are looked up in this theme each time they are printed. An unbound style
+  raises an error when ANSI is enabled; plain output ignores styles.
   |#
   (define rich-console-theme-set!
     (lambda (console theme)
@@ -368,12 +407,12 @@
           (display ansi port)))))
 
   (define $write-segment-line/ansi
-    (lambda (port color-system active-style style-emitted? line)
+    (lambda (console port color-system active-style style-emitted? line)
       (let loop ([segments line] [style-emitted? style-emitted?])
         (if (null? segments)
             style-emitted?
             (let* ([segment (car segments)]
-                   [style (rich-segment-style segment)]
+                   [style ($resolve-segment-style console (rich-segment-style segment))]
                    [segment-style-emitted?
                     (and (rich-style? style)
                          ($write-style-ansi port color-system style))]
@@ -400,7 +439,7 @@
                 (loop (cdr segments) style-emitted?)))))))
 
   (define $write-segment-lines/ansi
-    (lambda (port color-system active-style lines style-emitted?)
+    (lambda (console port color-system active-style lines style-emitted?)
       (let loop ([lines lines] [first? #t] [style-emitted? style-emitted?])
         (if (null? lines)
             style-emitted?
@@ -408,17 +447,17 @@
               (unless first? (newline port))
               (loop (cdr lines)
                     #f
-                    ($write-segment-line/ansi port color-system active-style
+                    ($write-segment-line/ansi console port color-system active-style
                                              style-emitted? (car lines))))))))
 
   (define $write-rendered-value/ansi
-    (lambda (port color-system active-style value style-emitted?)
+    (lambda (console port color-system active-style value style-emitted?)
       (let ([value ($check-rendered-value 'rich-print value)])
         (cond [(string? value)
                (display value port)
               style-emitted?]
               [else
-               ($write-segment-lines/ansi port color-system active-style value
+               ($write-segment-lines/ansi console port color-system active-style value
                                           style-emitted?)]))))
 
   (define $write-rich-value/plain
@@ -442,7 +481,7 @@
   (define $write-rich-values/console
     (lambda (console values)
       (let ([port (rich-console-output-port console)]
-            [color-system (rich-console-color-system console)])
+            [color-system ($console-color-system console)])
         (let loop ([values values] [active-style #f] [style-emitted? #f])
           (unless (null? values)
             (let ([value (car values)])
@@ -464,12 +503,12 @@
                              (cond [(and (rich-tree? value)
                                          (rich-console-ascii-only? console))
                                     ($write-rendered-value/ansi
-                                     port color-system active-style
+                                     console port color-system active-style
                                      (rich-tree-render/ascii value)
                                      style-emitted?)]
                                    [renderer
                                     ($write-rendered-value/ansi
-                                     port color-system active-style (renderer value)
+                                     console port color-system active-style (renderer value)
                                      style-emitted?)]
                                    [($rich-direct-value? value)
                                     ($write-segment-line port
@@ -477,7 +516,7 @@
                                     style-emitted?]
                                    [else
                                     ($write-rendered-value/ansi
-                                     port color-system active-style
+                                     console port color-system active-style
                                      (rich-pretty-render value)
                                      style-emitted?)])))])))))))
 
