@@ -96,7 +96,7 @@
 
   (define $percent
     (lambda (completed total)
-      (if (zero? total)
+      (if (>= completed total)
           100
           (min 100 ($rounded-exact (* 100 (/ completed total)))))))
 
@@ -105,7 +105,7 @@
       (let* ([total ($rich-progress-task-total task)]
              [completed ($rich-progress-task-completed task)]
              [filled (cond [(not total) 0]
-                           [(zero? total) width]
+                           [(>= completed total) width]
                            [else (min width ($rounded-exact (* width (/ completed total))))])])
         (string-append "["
                        ($string-repeat "#" filled)
@@ -128,7 +128,8 @@
              [total ($rich-progress-task-total task)]
              [elapsed (max 0 (- (or ($rich-progress-task-stop-time task) now)
                                 ($rich-progress-task-start-time task)))]
-             [speed (if (positive? elapsed) (/ completed elapsed) 0)])
+             [speed (if (positive? elapsed)
+                        (/ (inexact->exact completed) (inexact->exact elapsed)) 0)])
         (case column
           [(description) ($rich-progress-task-description task)]
           [(bar) ($task-bar task width)]

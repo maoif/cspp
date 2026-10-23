@@ -1990,3 +1990,20 @@
        (eq? live (rich-live-stop! live)))
 
      )
+
+(mat rich-progress-large-finite-counts
+
+     (let* ([progress (make-rich-progress 4 '(bar percentage))]
+            [id (rich-progress-add-task! progress "build" 1)])
+       (rich-progress-update! progress id 1e308)
+       (equal? "[####] 100%" (rich-export-text progress)))
+
+     (let ([now 0])
+       (parameterize ([rich-current-time (lambda () now)])
+         (let* ([progress (make-rich-progress 4 '(bar percentage speed remaining))]
+                [id (rich-progress-add-task! progress "build" 1)])
+           (set! now 0.001)
+           (rich-progress-update! progress id 1e308)
+           (string-contains? (rich-export-text progress) "[####] 100%" "00:00:00"))))
+
+     )
