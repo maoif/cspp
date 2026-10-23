@@ -11,6 +11,7 @@
           rich-tree-render/ascii)
   (import (cspp chez)
           (cspp utils)
+          (only (cspp list) make-list-builder)
           (cspp rich private common)
           (cspp rich private lines)
           (cspp rich segment)
@@ -19,7 +20,7 @@
 
   (define-record-type (rich-tree-record $make-rich-tree-record $rich-tree?)
     (fields (mutable label $rich-tree-label $rich-tree-label-set!)
-            (mutable children $rich-tree-children $rich-tree-children-set!)))
+            (immutable children $rich-tree-child-builder)))
 
   (define $rich-tree-list?
     (lambda (x)
@@ -33,12 +34,8 @@
     (lambda (x)
       (and (list? x) (rich-list-every? $rich-segment-list? x))))
 
-  (define $append-one
-    (lambda (ls value)
-      (let loop ([ls ls] [out '()])
-        (if (null? ls)
-            (rich-reverse-append out (list value))
-            (loop (cdr ls) (cons (car ls) out))))))
+  (define $rich-tree-children
+    (lambda (tree) (($rich-tree-child-builder tree))))
 
   (define $string-split-lines
     (lambda (text)
@@ -172,7 +169,7 @@
                                                 ($guide-branch guides last?))
                                  child-prefix)]
                    [child-lines ($render-node-children
-                                 (rich-tree-children child)
+                                 ($rich-tree-children child)
                                  child-prefix
                                  guides)])
               (loop (cdr children)
@@ -184,7 +181,7 @@
       (parameterize ([rich-layout-render-cache
                       (or (rich-layout-render-cache) (make-eq-hashtable))])
         (append ($prefix-label-lines (rich-tree-label tree) "" "")
-                ($render-node-children (rich-tree-children tree) "" guides)))))
+                ($render-node-children ($rich-tree-children tree) "" guides)))))
 
   ;;;;===----------------------------------------------------------------------===
   ;;;; Tree
@@ -199,16 +196,18 @@
       ($rich-tree? x)))
 
   #|proc:make-rich-tree
-  The `make-rich-tree` procedure constructs a mutable tree node with `label`
-  and an initially empty child list.
+  The `make-rich-tree` procedure returns a mutable node with `label` and optional list
+  `children` of tree nodes (default empty). The input list is copied; child nodes are shared.
   |#
   (define make-rich-tree
     (case-lambda
       [(label)
-       ($make-rich-tree-record label '())]
+       ($make-rich-tree-record label (make-list-builder))]
       [(label children)
        (pcheck ([$rich-tree-list? children])
-               ($make-rich-tree-record label children))]))
+               (let ([builder (make-list-builder)])
+                 (for-each builder children)
+                 ($make-rich-tree-record label builder)))]))
 
   #|proc:rich-tree-label
   The `rich-tree-label` procedure returns the label for `tree`.
@@ -227,12 +226,13 @@
               ($rich-tree-label-set! tree label))))
 
   #|proc:rich-tree-children
-  The `rich-tree-children` procedure returns the child nodes for `tree`.
+  The `rich-tree-children` procedure returns a fresh list of the child nodes for `tree`,
+  in insertion order. Later additions to the tree do not change this list.
   |#
   (define rich-tree-children
     (lambda (tree)
       (pcheck ([rich-tree? tree])
-              ($rich-tree-children tree))))
+              (list-copy ($rich-tree-children tree)))))
 
   #|proc:rich-tree-add!
   The `rich-tree-add!` procedure appends a child node with `label` to `tree` and
@@ -242,9 +242,7 @@
     (lambda (tree label)
       (pcheck ([rich-tree? tree])
               (let ([child (make-rich-tree label)])
-                ($rich-tree-children-set!
-                 tree
-                 ($append-one ($rich-tree-children tree) child))
+                (($rich-tree-child-builder tree) child)
                 child))))
 
   #|proc:rich-tree-render

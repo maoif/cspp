@@ -61,3 +61,29 @@
                                    (length (rich-render console value))))))))
       '(tall-table tall-columns tall-layout))))
  '(1000 2000 4000 8000))
+
+(for-each
+ (lambda (size)
+   (measure 'add-children size
+            (lambda ()
+              (let ([tree (make-rich-tree "root")])
+                (lambda ()
+                  (do ([index 0 (+ index 1)]) ((= index size)) (rich-tree-add! tree "x"))
+                  (= size (length (rich-tree-children tree)))))))
+   (measure 'add-tasks size
+            (lambda ()
+              (let ([progress (make-rich-progress #f '(description))])
+                (lambda ()
+                  (do ([index 0 (+ index 1)]) ((= index size) #t)
+                    (rich-progress-add-task! progress "x" 10)))))))
+ '(1000 2000 4000 8000))
+(for-each
+ (lambda (size)
+   (measure 'deep-tree size
+            (lambda ()
+              (let ([tree (let loop ([left size] [tree (make-rich-tree "x")])
+                            (if (zero? left) tree
+                                (loop (- left 1) (make-rich-tree "x" (list tree)))))]
+                    [console (rich-console :width 10)])
+                (lambda () (= (+ size 1) (length (rich-render console tree))))))))
+ '(500 1000 2000 4000))

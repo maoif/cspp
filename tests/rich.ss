@@ -2067,3 +2067,23 @@
          (lambda () (close-port side))))
 
      )
+
+(mat rich-tree-insertion-allocation
+
+     ;; New children must not repeatedly copy all existing siblings.
+     (let ([tree (make-rich-tree "root")] [size 2000])
+       (collect)
+       (let ([before (statistics)])
+         (do ([index 0 (+ index 1)]) ((= index size)) (rich-tree-add! tree index))
+         (let ([allocated (sstats-bytes (sstats-difference (statistics) before))]
+               [children (rich-tree-children tree)])
+           (and (< allocated (* size 2048)) (= size (length children))
+                (= 0 (rich-tree-label (car children)))
+                (= (- size 1) (rich-tree-label (list-ref children (- size 1))))))))
+
+     (let* ([tree (make-rich-tree "root")] [first (rich-tree-add! tree "first")]
+            [children (rich-tree-children tree)])
+       (rich-tree-add! tree "second")
+       (equal? (list first) children))
+
+     )
