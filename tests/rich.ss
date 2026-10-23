@@ -1794,3 +1794,21 @@
              (rich-export-text (rich-panel :subtitle "A\nB" :width 8 :body "x")))
 
      )
+
+(mat rich-container-primitive-renderers
+
+     (andmap
+      (lambda (value)
+        (rich-register-renderer! (lambda (candidate) (eqv? candidate value))
+                                 (lambda (value) "CUSTOM"))
+        (andmap
+         (lambda (container)
+           (string-contains? (rich-test-render-text (rich-console :width 30) container) "CUSTOM"))
+         (list value (rich-panel :body value) (rich-padding :body value)
+               (rich-align :body value) (make-rich-columns (list value))
+               (make-rich-layout 'row (list value)) (make-rich-layout 'column (list value))
+               (rich-table :columns ("A") :rows (list (list value)))
+               (make-rich-tree value))))
+      (list (string-copy "primitive-renderer") 'primitive-renderer 617289 #\λ))
+
+     )
