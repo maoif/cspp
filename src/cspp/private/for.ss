@@ -906,8 +906,8 @@
         (cond [(natural? lit)
                (list #f
                      #`[#,v 0]
-                     #`(fx= #,v #,lit)
-                     #`(fx1+ #,v)
+                     #`(= #,v #,lit)
+                     #`(+ #,v 1)
                      #f)]
               [(string? lit)
                (with-syntax ([(t-str t-i) (generate-temporaries '(t-str t-i))])

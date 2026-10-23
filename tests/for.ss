@@ -1500,3 +1500,10 @@
      ;; Outer binding clauses keep their lexical scope inside inner iterators.
      (equal? '(100 100 100 100)
              (for*/list ([:index i] [x 2] [:let-values (i) (values 100)] [y 2]) i)))
+
+(mat large-literal-range
+     (equal? '(0 1 2)
+             (for/list ([x 1152921504606846976] [:break (= x 3)]) x))
+
+     (equal? '(0 1 2)
+             (for*/list ([x 1152921504606846976] [:break (= x 3)]) x)))
