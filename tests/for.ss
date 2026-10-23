@@ -1684,3 +1684,20 @@
        (equal? '((one 1 0))
                (for/list ([(key value) :hashtable table :index i :guard (= value 1)])
                  (list key value i)))))
+
+(mat duplicate-source-options
+     ;; Duplicate options must be rejected rather than discard an earlier expression.
+     (error? (eval '(for/list ([x :vector '#(0 1 2) :step 1 :step 2]) x)))
+
+     (error? (eval '(for/list ([x :string "abc" :from 0 :from 1]) x)))
+
+     (error? (eval '(for/list ([x :fxvector (fxvector 1 2) :to 1 :to 2]) x)))
+
+     (error? (eval '(for/list ([x :flvector (flvector 1.0 2.0) :rev :rev]) x)))
+
+     (error? (eval '(for/list ([x :bytevector #vu8(0 1) :type u8 :type s8]) x)))
+
+     (error? (eval '(for/list ([x :list '(0 1 2) :step 1 :step 2]) x)))
+
+     ;; Invalid earlier arity must not disappear behind a later valid occurrence.
+     (error? (eval '(for/list ([x :vector '#(0 1 2) :from 0 1 :from 1]) x))))
