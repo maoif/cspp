@@ -1671,3 +1671,43 @@
         "* Working"))
 
      )
+
+(define rich-test-confirm
+  (lambda (answer default)
+    (let ([input (open-input-string answer)])
+      (dynamic-wind
+        void
+        (lambda ()
+          (let ([result #f])
+            (rich-string-output
+             (lambda (port)
+               (let ([console (rich-console :input-port input :output-port port)])
+                 (set! result
+                       (if (boolean? default) (rich-confirm console "Continue?" default)
+                           (rich-confirm console "Continue?"))))))
+            result))
+        (lambda () (close-port input))))))
+
+(mat rich-confirm-case-insensitive
+
+     (andmap (lambda (answer) (rich-test-confirm answer 'no-default))
+             '("y\n" "Y\n" "yes\n" "YES\n" "YeS\n"))
+
+     (andmap (lambda (answer) (not (rich-test-confirm answer 'no-default)))
+             '("n\n" "N\n" "no\n" "NO\n" "nO\n"))
+
+     (rich-test-confirm "YES\n" #f)
+
+     (not (rich-test-confirm "NO\n" #t))
+
+     (rich-test-confirm "\n" #t)
+
+     (not (rich-test-confirm "\n" #f))
+
+     ;; An empty answer without a default is not a confirmation.
+     (error? (rich-test-confirm "\n" 'no-default))
+
+     ;; Case normalization must not accept an invalid answer.
+     (error? (rich-test-confirm "MAYBE\n" #t))
+
+     )
