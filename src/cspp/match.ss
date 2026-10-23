@@ -19,7 +19,17 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
           (cspp private match)
           (cspp io))
 
-  ;; match interface
+  #|macro:match
+  The `match` macro evaluates its input once and tries its pattern clauses in order.
+  `,name` captures a value, `` `name `` compares against a bound value, and `_` ignores a value.
+  List and vector patterns destructure their elements; `...` repeats a pattern zero or more times,
+  collecting its captures in lists. Captures preceding a suffix are visible to its backreferences.
+  Extension patterns destructure records, datatypes, boxes, hashes, and regex matches. Expressions
+  embedded in extensions are evaluated as expressions and do not declare pattern captures.
+  A clause may have `(guard predicate ...)` before its body. Failed clauses try the next clause;
+  a final `else` provides a fallback, and an unmatched input without a fallback raises an error.
+  The selected body supplies the result values.
+  |#
   (define-syntax match
     (lambda (stx)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -198,50 +208,48 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
               [(pat dots)
                (eq? (datum dots) '...)
                #`(if (or (null? expr-id) (pair? expr-id))
-                     ;; Get all pat vars in `pat`,
-                     ;; iterate through the input list, for each item,
-                     ;; destructure it and accumulate matched components in `bindings ...`.
+                     ;; Accumulate only captures declared by the active pattern interpretation.
                      #,(with-pattern-vars #'pat
-                   (lambda (variables)
-                     (with-syntax ([(patvars ...) variables])
-                         (with-syntax ([(lbs ...)      (generate-temporaries #'(patvars ...))]
-                                       [(iter first rest) (generate-temporaries '(iter first rest))])
-                           #`(let ([lbs (make-list-builder)] ...)
-                               (let iter ([ls expr-id])
-                                 (cond
-                                  [(null? ls)
-                                   (let ([patvars (lbs)] ...)
-                                     #,body)]
-                                  [(pair? ls)
-                                   (let ([first (car ls)] [rest (cdr ls)])
-                                     #,(process-pattern rho #'first #'pat
-                                                        #'(begin (lbs patvars) ...
-                                                                 (iter rest))
-                                                        fk))]
-                                  [else (#,fk)])))))))
+                         (lambda (variables)
+                           (with-syntax ([(patvars ...) variables]
+                                         [(lbs ...) (generate-temporaries variables)]
+                                         [(iter first rest) (generate-temporaries '(iter first rest))])
+                             #`(let ([lbs (make-list-builder)] ...)
+                                 (let iter ([ls expr-id])
+                                   (cond
+                                    [(null? ls)
+                                     (let ([patvars (lbs)] ...)
+                                       #,body)]
+                                    [(pair? ls)
+                                     (let ([first (car ls)] [rest (cdr ls)])
+                                       #,(process-pattern rho #'first #'pat
+                                                          #'(begin (lbs patvars) ...
+                                                                   (iter rest))
+                                                          fk))]
+                                    [else (#,fk)]))))))
                      (#,fk))]
               ;; ... in the middle, prefer `pat1`
               [(pat0 dots . pat1)
                (eq? (datum dots) '...)
                (with-pattern-vars #'pat0
-                   (lambda (variables)
-                     (with-syntax ([(patvars ...) variables])
-                 (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
-                               [(iter ls first rest new-fk) (generate-temporaries '(iter ls first rest new-fk))])
-                   #`(let iter ([ls expr-id] [bindings '()] ...)
-                       (let ([new-fk (lambda ()
-                                       ;; give up one item in the list to be matched against `pat0`
-                                       (if (pair? ls)
-                                           (let ([first (car ls)] [rest (cdr ls)])
-                                             #,(process-pattern rho #'first #'pat0
-                                                                #'(iter rest (cons patvars bindings) ...)
-                                                                fk))
-                                           (#,fk)))])
-                         ;; Match the input directly with `pat1` first, if it matches,
-                         ;; `pat0` or all pats vars inside `pat0` is '().
-                         ;; If the input fails to match `pat1`, call `new-fk`,
-                         (let ([patvars (reverse bindings)] ...)
-                           #,(process-pattern rho #'ls #'pat1 body #'new-fk))))))))]
+                 (lambda (variables)
+                   (with-syntax ([(patvars ...) variables]
+                                 [(bindings ...) (generate-temporaries variables)]
+                                 [(iter ls first rest new-fk)
+                                  (generate-temporaries '(iter ls first rest new-fk))])
+                     #`(let iter ([ls expr-id] [bindings '()] ...)
+                         (let ([new-fk
+                                (lambda ()
+                                  ;; Give up one item to match against the repeated pattern.
+                                  (if (pair? ls)
+                                      (let ([first (car ls)] [rest (cdr ls)])
+                                        #,(process-pattern rho #'first #'pat0
+                                                           #'(iter rest (cons patvars bindings) ...)
+                                                           fk))
+                                      (#,fk)))])
+                           ;; Prefer the suffix, extending the repeated prefix on failure.
+                           (let ([patvars (reverse bindings)] ...)
+                             #,(process-pattern rho #'ls #'pat1 body #'new-fk)))))))]
               ;; encapsulates (pat ...), (pat . pat), (pat ... . pat)
               [(pat0 . pat1)
                (with-syntax ([(first rest) (generate-temporaries '(first rest))])
