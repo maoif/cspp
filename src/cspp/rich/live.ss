@@ -287,25 +287,31 @@
 
   #|proc:rich-live-start!
   The `rich-live-start!` procedure starts refreshing `live` and returns `live`.
+  If the first refresh fails, the error is raised and `live` remains ready to retry.
   |#
   (define rich-live-start!
     (lambda (live)
       (pcheck ([rich-live? live])
               (unless ($rich-live-started? live)
-                ($rich-live-started?-set! live #t)
-                ($rich-live-stop?-set! live #f)
-                (rich-live-refresh! live)
-                (when (positive? (rich-live-refresh-rate live))
-                  (let ([thread
-                         (fork-thread
-                          (lambda ()
-                            (let loop ()
-                              (unless ($rich-live-stop? live)
-                                ((rich-sleep) (/ 1 (rich-live-refresh-rate live)))
+                (guard (condition
+                        [else
+                         ($rich-live-stop?-set! live #t)
+                         ($rich-live-started?-set! live #f)
+                         (raise condition)])
+                  ($rich-live-started?-set! live #t)
+                  ($rich-live-stop?-set! live #f)
+                  (rich-live-refresh! live)
+                  (when (positive? (rich-live-refresh-rate live))
+                    (let ([thread
+                           (fork-thread
+                            (lambda ()
+                              (let loop ()
                                 (unless ($rich-live-stop? live)
-                                  (rich-live-refresh! live)
-                                  (loop))))))])
-                    ($rich-live-thread-set! live thread))))
+                                  ((rich-sleep) (/ 1 (rich-live-refresh-rate live)))
+                                  (unless ($rich-live-stop? live)
+                                    (rich-live-refresh! live)
+                                    (loop))))))])
+                      ($rich-live-thread-set! live thread)))))
               live)))
 
   #|proc:rich-live-stop!
@@ -500,7 +506,8 @@
 
   #|proc:rich-status-start!
   The `rich-status-start!` procedure starts a live display for `status` so its
-  frame is refreshed at the status interval.
+  frame is refreshed at the status interval and returns `status`. If startup fails,
+  the error is raised and the status can be started again after its cause is repaired.
   |#
   (define rich-status-start!
     (lambda (status)
@@ -511,8 +518,8 @@
                                             (rich-status-console status)
                                             (/ 1 (rich-status-interval status))
                                             #f)])
-                  ($rich-status-live-set! status live)
-                  (rich-live-start! live)))
+                  (rich-live-start! live)
+                  ($rich-status-live-set! status live)))
               status)))
 
   #|proc:rich-status-stop!

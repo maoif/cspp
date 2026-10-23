@@ -1630,3 +1630,44 @@
                   #t)))))
 
      )
+
+(mat rich-live-start-recovery
+
+     ;; A renderer error during the first frame must leave the display ready to retry.
+     (let ([value (vector 'live-start-recovery)] [fail? #t] [calls 0])
+       (rich-register-renderer!
+        (lambda (candidate) (eq? candidate value))
+        (lambda (value)
+          (set! calls (+ calls 1))
+          (if fail? (error 'live-start-recovery "first frame failed") "working")))
+       (equal? "working"
+               (rich-string-output
+                (lambda (port)
+                  (let ([live (make-rich-live value (rich-console :output-port port) 0 #f)])
+                    (unless (guard (condition [else #t]) (rich-live-start! live) #f)
+                      (error 'live-start-recovery "missing renderer error"))
+                    (set! fail? #f)
+                    (rich-live-start! live)
+                    (rich-live-start! live)
+                    (rich-live-stop! live)
+                    (unless (= calls 2)
+                      (error 'live-start-recovery "startup was not retried exactly once")))))))
+
+     ;; Failed status output must allow retry after its console destination is repaired.
+     (let ([closed (open-output-string)])
+       (close-port closed)
+       (string-contains?
+        (rich-string-output
+         (lambda (port)
+           (let* ([console (rich-console :output-port closed)]
+                  [status (make-rich-status "Working" console '("*") 0.001)])
+             (unless (guard (condition [else #t]) (rich-status-start! status) #f)
+               (error 'status-start-recovery "missing output error"))
+             (rich-console-output-port-set! console port)
+             (dynamic-wind
+               (lambda () (rich-status-start! status))
+               void
+               (lambda () (rich-status-stop! status))))))
+        "* Working"))
+
+     )
