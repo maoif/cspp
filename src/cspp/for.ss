@@ -174,7 +174,15 @@
                                  (when frag-index (set! res (cons index-def res)))
                                  (when frag-init  (set! res (cons init-def  res)))
                                  res)]
-                    [termination-checks (map (lambda (x*) (list-ref x* 2)) iter-frags)]
+                    [termination-checks
+                     (append
+                      ;; Check all known bounds before any filter can seek indefinitely.
+                      (if (exists (lambda (fragment) (list-ref fragment 7)) iter-frags)
+                          (map (lambda (fragment)
+                                 (or (list-ref fragment 7) (list-ref fragment 2)))
+                               iter-frags)
+                          '())
+                      (map (lambda (fragment) (list-ref fragment 2)) iter-frags))]
                     [updates (let ([res (map (lambda (x*) (list-ref x* 3)) iter-frags)])
                                (when frag-index
                                  (set! res (cons (syntax-case frag-index ()

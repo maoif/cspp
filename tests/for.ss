@@ -1665,9 +1665,8 @@
                                   :guard (begin (set! calls (+ calls 1)) (odd? x))]
                                [y :list '(a b)])
                       (list x y)))
-            ;; The parallel source consumes the next accepted item before noticing
-            ;; that its companion source is exhausted.
-            (= calls 4)))
+            ;; Known companion exhaustion prevents another predicate evaluation.
+            (= calls 3)))
 
      ;; A successful predicate must preserve the item it inspected.
      (let ([source (vector 10)])
@@ -1723,3 +1722,34 @@
 
      ;; Crossing a bound in one step remains valid, including an infinite step.
      (equal? '(0) (for/list ([x :nums 0 1 +inf.0]) x)))
+
+(mat parallel-filter-exhaustion
+     ;; Known empty sources must stop before running any companion filter.
+     (equal? '()
+             (for/list ([x :fxiota 0]
+                        [y :nums +inf.0 :guard (error 'exhaustion "filter evaluated")])
+               (list x y)))
+
+     (equal? '()
+             (for/list ([y :nums +inf.0 :guard (error 'exhaustion "filter evaluated")]
+                        [x :list '()])
+               (list x y)))
+
+     ;; After the shortest source ends, do not seek another accepted companion item.
+     (equal? '((0 0))
+             (for/list ([x :fxiota 1]
+                        [y :nums +inf.0 :guard
+                           (if (= y 0) #t (error 'exhaustion "filter past end"))])
+               (list x y)))
+
+     (equal? '#((0 0))
+             (for/vector ([y :nums +inf.0 :guard
+                             (if (= y 0) #t (error 'exhaustion "filter past end"))]
+                          [x :fxiota 1])
+               (list x y)))
+
+     ;; An exhausted filtered source prevents later sources from seeking as well.
+     (equal? '()
+             (for/list ([x :fxiota 3 :guard #f]
+                        [y :nums +inf.0 :guard (error 'exhaustion "later filter")])
+               (list x y))))

@@ -400,6 +400,7 @@
   - gen-getter: generate code that binds the value to be used in the body
   - source-index: source position expression when the iterator has a native index, otherwise #f
   - exposed-variables: public item and iterator-local index identifiers bound by the getter
+  - raw-termination: exhaustion check before filtering, or #f for an unfiltered source
   |#
   (define (process-iter-clause cl)
     (define (process-multi-var-iter-clause v* ty op*)
@@ -1030,9 +1031,10 @@
          [else (loop (cdr options) (cons (car options) arguments) predicate index)])))
     (define (decorate-fragment fragment variables predicate index)
       (let* ([source-index (and (> (length fragment) 5) (list-ref fragment 5))]
+             [raw-termination (and predicate (list-ref fragment 2))]
              [exposed (if index (append variables (list index)) variables)])
         (define (finish fragment)
-          (append (list-head fragment 5) (list source-index exposed)))
+          (append (list-head fragment 5) (list source-index exposed raw-termination)))
         (if (not (or predicate index))
             (finish fragment)
             (with-syntax ([(position seek) (generate-temporaries '(position seek))]
@@ -1065,9 +1067,9 @@
                               (letrec ([seek (lambda (#,state)
                                                (if #,termination #,state #,accept))])
                                 #,body))))
-                       #`[#,state (seek #,initial)]
-                       termination
-                       #`(seek #,advance)
+                       #`[#,state #,initial]
+                       #`(begin (set! #,state (seek #,state)) #,termination)
+                       advance
                        (lambda (body)
                          #`(let ([variable cache] ...)
                              #,(bind-index body))))))))))
