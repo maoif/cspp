@@ -176,10 +176,10 @@
   (define $panel-body-lines
     (lambda (panel)
       (append (if (rich-panel-title panel)
-                  (list (list (rich-segment (rich-panel-title panel))))
+                  ($string->segment-lines (rich-panel-title panel))
                   '())
               (if (rich-panel-subtitle panel)
-                  (list (list (rich-segment (rich-panel-subtitle panel))))
+                  ($string->segment-lines (rich-panel-subtitle panel))
                   '())
               ($value->segment-lines (rich-panel-body panel)))))
 

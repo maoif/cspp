@@ -1784,3 +1784,13 @@
          (lambda () (close-port first) (close-port second))))
 
      )
+
+(mat rich-panel-multiline-fixed-headings
+
+     (equal? "+------+\n| A    |\n| B    |\n| x    |\n+------+"
+             (rich-export-text (rich-panel :title "A\nB" :width 8 :body "x")))
+
+     (equal? "+------+\n| A    |\n| B    |\n| x    |\n+------+"
+             (rich-export-text (rich-panel :subtitle "A\nB" :width 8 :body "x")))
+
+     )
