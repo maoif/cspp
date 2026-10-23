@@ -82,6 +82,11 @@
   Binding clauses scope their variables over subsequent clauses and the body. Each binding clause
   uses its corresponding Scheme binding form with one binding. An indexed guard binds a zero-based
   index counting passes through that guard, including passes rejected by a later guard.
+  Iterator-local `:guard` filters its own source before parallel items are paired. Iterator-local
+  `:index` binds the original source position, before filtering, and is available to the guard.
+  Sequence positions survive `:from`, `:to`, `:step`, and `:rev`; typed bytevector positions are
+  byte offsets. Numeric ranges, hashtables, and iterators count source items starting from zero.
+  Lists support the sequence traversal options; sliced or reversed list traversal uses O(n) space.
   |#
   (define-syntax for/fold
     (lambda (stx)
@@ -305,6 +310,7 @@
   `:init` binds an accumulator updated from the body result; `:finish` supplies the final value.
   Binding clauses use the corresponding Scheme binding form and scope over subsequent clauses.
   Indexed guards count passes starting at zero and reset on every entry to their loop level.
+  Iterator-local guards and source indexes follow the `for/fold` rules and restart on each entry.
   `:break` leaves one loop level. `:stop` leaves all levels, returning its optional second expression
   or an unspecified value when that expression is omitted.
   |#
@@ -376,7 +382,7 @@
                                        vars)]
                     ;; (((gen-preloop loop-var tycheck term-check update gen-getter) config0 config1 ...) ...)
                     [iters/configs (map (lambda (i/c)
-                                          (cons (cons (process-iter-clause (car i/c)) (car i/c))
+                                          (cons (process-iter-clause (car i/c))
                                                 (cdr i/c)))
                                         frag-iter/config)]
                     [call/finish-proc (if frag-finish
@@ -416,10 +422,8 @@
                                  #`(begin body* ...
                                           #,(call-loop '()))))
                            (with-syntax ([(forloop) (generate-temporaries '(forloop))])
-                             (let* ([i/c (car i/c*)] [iter-cl (caar i/c)] [configs (cdr i/c)]
-                                    [exposed (syntax-case (cdar i/c) ()
-                                               [((v ...) ty op ...) #'(v ...)]
-                                               [(v rest ...) (list #'v)])]
+                             (let* ([i/c (car i/c*)] [iter-cl (car i/c)] [configs (cdr i/c)]
+                                    [exposed (list-ref iter-cl 6)]
                                     [guard-indices
                                      (filter id
                                              (map (lambda (conf)

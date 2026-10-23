@@ -391,13 +391,15 @@
   - terminate: termination checks for the loop variable
   - next: code that advances the loop variable
   - gen-getter: generate code that binds the value to be used in the body
+  - source-index: source position expression when the iterator has a native index, otherwise #f
+  - exposed-variables: public item and iterator-local index identifiers bound by the getter
   |#
   (define (process-iter-clause cl)
     (define (process-multi-var-iter-clause v* ty op*)
       (let ([nops (length op*)])
         (case ty
           [:hashtable
-           (when (< nops 1)
+           (unless (= nops 1)
              (syntax-error op* "invalid number of options for iter type `:hashtable`:"))
            (unless (= 2 (length v*))
              (syntax-error v* "invalid number of bound variables for iter type `:hashtable`:"))
@@ -512,7 +514,7 @@
                               (fx+ #,v t-step))
                         #f)]))]
           [:list
-           (when (< nops 1)
+           (unless (= nops 1)
              (syntax-error op* "invalid number of options for iter type `:list`:"))
            (with-syntax ([(t-ls) (generate-temporaries '(t-ls))])
              (list (lambda (e)
@@ -594,7 +596,8 @@
                                    (fx+ t-i t-step)))
                        (lambda (e)
                          #`(let ([#,v (vector-ref t-vec t-i)])
-                             #,e))))))]
+                             #,e))
+                       #'t-i))))]
           [:string
            (when (< nops 1)
              (syntax-error op* "invalid number of options for iter type `:string`:"))
@@ -656,7 +659,8 @@
                                    (fx+ t-i t-step)))
                        (lambda (e)
                          #`(let ([#,v (string-ref t-vec t-i)])
-                             #,e))))))]
+                             #,e))
+                       #'t-i))))]
           [:fxvector
            (when (< nops 1)
              (syntax-error op* "invalid number of options for iter type `:fxvector`:"))
@@ -718,7 +722,8 @@
                                    (fx+ t-i t-step)))
                        (lambda (e)
                          #`(let ([#,v (fxvector-ref t-vec t-i)])
-                             #,e))))))]
+                             #,e))
+                       #'t-i))))]
           [:flvector
            (when (< nops 1)
              (syntax-error op* "invalid number of options for iter type `:flvector`:"))
@@ -780,7 +785,8 @@
                                    (fx+ t-i t-step)))
                        (lambda (e)
                          #`(let ([#,v (flvector-ref t-vec t-i)])
-                             #,e))))))]
+                             #,e))
+                       #'t-i))))]
           [:bytevector
            (when (< nops 1)
              (syntax-error op* "invalid number of options for iter type `:bytevector`:"))
@@ -888,9 +894,10 @@
                                    #,e))
                              (lambda (e)
                                #`(let ([#,v (#,vref t-vec (if (fx> t-step 0) t-i (fx- t-i #,size -1)) #,endianness)])
-                                   #,e))))))))]
+                                   #,e)))
+                         #`(if (fx> t-step 0) t-i (fx- t-i #,size -1)))))))]
           [:hashtable-keys
-           (when (< nops 1)
+           (unless (= nops 1)
              (syntax-error op* "invalid number of options for iter type `:hashtable-keys`:"))
            (with-syntax ([(t-ht t-i t-len t-vec) (generate-temporaries '(t-ht t-i t-len t-vec))])
              (list (lambda (e)
@@ -907,7 +914,7 @@
                      #`(let ([#,v (vector-ref t-vec t-i)])
                          #,e))))]
           [:hashtable-values
-           (when (< nops 1)
+           (unless (= nops 1)
              (syntax-error op* "invalid number of options for iter type `:hashtable-values`:"))
            (with-syntax ([(t-ht t-i t-len t-vec) (generate-temporaries '(t-ht t-i t-len t-vec))])
              (list (lambda (e)
@@ -924,7 +931,7 @@
                      #`(let ([#,v (vector-ref t-vec t-i)])
                          #,e))))]
           [:iter
-           (when (< nops 1)
+           (unless (= nops 1)
              (syntax-error op* "invalid number of options for iter type `:iter`:"))
            (with-syntax ([(t-it t-v) (generate-temporaries '(t-it t-v))])
              (list (lambda (e)
@@ -976,20 +983,98 @@
              [fragment (generate state)])
         (append (list-head fragment 4)
                 (list (lambda (body) #`(let ([#,variable #,state]) #,body))))))
+    ;; Common options filter each iterator independently. Sequence indexes describe
+    ;; source positions; other iterators count their unfiltered source values from zero.
+    (define (split-common-options options)
+      (let loop ([options options] [arguments '()] [predicate #f] [index #f])
+        (cond
+         [(null? options) (values (reverse arguments) predicate index)]
+         [(or (kw:guard? (car options)) (kw:index? (car options)))
+          (when (null? (cdr options))
+            (syntax-error cl "missing iterator option argument:"))
+          (if (kw:guard? (car options))
+              (begin
+                (when predicate (syntax-error cl "duplicate iterator guard:"))
+                (loop (cddr options) arguments (cadr options) index))
+              (begin
+                (when index (syntax-error cl "duplicate iterator index:"))
+                (unless (identifier? (cadr options))
+                  (syntax-error (cadr options) "iterator index is not an identifier:"))
+                (loop (cddr options) arguments predicate (cadr options))))]
+         [else (loop (cdr options) (cons (car options) arguments) predicate index)])))
+    (define (decorate-fragment fragment variables predicate index)
+      (let* ([source-index (and (> (length fragment) 5) (list-ref fragment 5))]
+             [exposed (if index (append variables (list index)) variables)])
+        (define (finish fragment)
+          (append (list-head fragment 5) (list source-index exposed)))
+        (if (not (or predicate index))
+            (finish fragment)
+            (with-syntax ([(position seek) (generate-temporaries '(position seek))]
+                          [(cache ...) (generate-temporaries variables)]
+                          [(variable ...) variables])
+              (let* ([preloop (or (car fragment) (lambda (body) body))]
+                     [binding (list-ref fragment 1)]
+                     [state (syntax-case binding () [(state initial) #'state])]
+                     [initial (syntax-case binding () [(state initial) #'initial])]
+                     [termination (list-ref fragment 2)]
+                     [advance (list-ref fragment 3)]
+                     [getter (or (list-ref fragment 4) (lambda (body) body))]
+                     [index-expression (or source-index #'position)]
+                     [bind-index (lambda (body)
+                                   (if index
+                                       #`(let ([#,index #,index-expression]) #,body)
+                                       body))]
+                     [advance (if source-index
+                                  advance
+                                  #`(begin (set! position (+ position 1)) #,advance))]
+                     [accept (getter
+                              (bind-index
+                               #`(if #,(or predicate #'#t)
+                                     (begin (set! cache variable) ... #,state)
+                                     (seek #,advance))))])
+                (finish
+                 (list (lambda (body)
+                         (preloop
+                          #`(let ([position 0] [cache #f] ...)
+                              (letrec ([seek (lambda (#,state)
+                                               (if #,termination #,state #,accept))])
+                                #,body))))
+                       #`[#,state (seek #,initial)]
+                       termination
+                       #`(seek #,advance)
+                       (lambda (body)
+                         #`(let ([variable cache] ...)
+                             #,(bind-index body))))))))))
+    (define (single-fragment variable type arguments)
+      (cond
+       [(memq type '(:iota :nums :fixnums))
+        (numeric-fragment variable
+                          (lambda (state) (process-single-var-iter-clause state type arguments)))]
+       [(and (eq? type ':list) (> (length arguments) 1))
+        ;; Sliced/reversed list traversal uses a preallocated vector to preserve
+        ;; original source positions. Plain list traversal keeps its direct cdr loop.
+        (process-single-var-iter-clause
+         variable ':vector
+         (cons #`(let ([source #,(car arguments)])
+                   (unless (list? source) (errorf ':list "not a list: ~a" source))
+                   (list->vector source))
+               (cdr arguments)))]
+       [else (process-single-var-iter-clause variable type arguments)]))
     (syntax-case cl ()
-      ;; no guards here, already checked
       [(v lit)
-       (if (natural? (->literal #'lit))
-           (numeric-fragment #'v (lambda (state) (process-literal-iter-clause state (datum lit))))
-           (process-literal-iter-clause #'v (datum lit)))]
+       (decorate-fragment
+        (if (natural? (->literal #'lit))
+            (numeric-fragment #'v (lambda (state) (process-literal-iter-clause state (datum lit))))
+            (process-literal-iter-clause #'v (datum lit)))
+        (list #'v) #f #f)]
       [((v* ...) iter-ty op* ...)
-       (process-multi-var-iter-clause #'(v* ...) (datum iter-ty) #'(op* ...))]
+       (let-values ([(arguments predicate index) (split-common-options #'(op* ...))])
+         (decorate-fragment (process-multi-var-iter-clause #'(v* ...) (datum iter-ty) arguments)
+                            #'(v* ...) predicate index))]
       [(v iter-ty op* ...)
-       (if (memq (datum iter-ty) '(:iota :nums :fixnums))
-           (numeric-fragment #'v
-                             (lambda (state)
-                               (process-single-var-iter-clause state (datum iter-ty) #'(op* ...))))
-           (process-single-var-iter-clause #'v (datum iter-ty) #'(op* ...)))]
+       (let-values ([(arguments predicate index) (split-common-options #'(op* ...))])
+         (decorate-fragment (single-fragment #'v (datum iter-ty) arguments)
+                            (list #'v) predicate index))]
       [_ (syntax-error cl "unknown iter clause:")]))
 
 

@@ -1537,3 +1537,86 @@
      (equal? '(1 3 5) (for/list ([x :vector '#(1 2 3 4 5) :step 2]) x))
 
      (equal? '(5 3 1) (for/list ([x :vector '#(1 2 3 4 5) :rev :step 2]) x)))
+
+(mat iterator-local-options
+     (equal? '((1 a) (3 b))
+             (for/list ([x :vector '#(1 2 3) :guard (odd? x)]
+                        [y :list '(a b c)]) (list x y)))
+
+     (equal? '((1 0) (3 2))
+             (for/list ([x :list '(1 2 3) :index j :guard (odd? x)]) (list x j)))
+
+     (equal? '((5 4) (3 2) (1 0))
+             (for/list ([x :vector '#(1 2 3 4 5) :rev :step 2 :index j]) (list x j)))
+
+     (equal? '((5 4) (3 2) (1 0))
+             (for/list ([x :list '(1 2 3 4 5) :rev :step 2 :index j]) (list x j)))
+
+     (equal? '(2 4)
+             (for/list ([x :list '(0 1 2 3 4 5) :from 2 :to 5 :step 2]) x))
+
+     (equal? '((#\d 3) (#\b 1))
+             (for/list ([x :string "abcde" :rev :index j :guard (odd? j)]) (list x j)))
+
+     (equal? '((30 2) (20 1))
+             (for/list ([x :fxvector (fxvector 10 20 30) :rev :index j :guard (> x 10)])
+               (list x j)))
+
+     (equal? '((3.0 2) (1.0 0))
+             (for/list ([x :flvector (flvector 1.0 2.0 3.0) :rev :step 2 :index j])
+               (list x j)))
+
+     (equal? '((515 2) (1 0))
+             (for/list ([x :bytevector #vu8(0 1 2 3) :type u16 :big :rev :index j])
+               (list x j)))
+
+     (equal? '((1 1) (3 3))
+             (for/list ([x :iota 5 :index j :guard (odd? x)]) (list x j)))
+
+     (equal? '((10 0) (14 2))
+             (for/list ([x :nums 10 16 2 :index j :guard (even? j)]) (list x j)))
+
+     (equal? '((a 0) (c 2))
+             (for/list ([x :iter (list->iter '(a b c)) :index j :guard (even? j)])
+               (list x j)))
+
+     (equal? '((0 1 1) (0 3 3) (1 1 1) (1 3 3))
+             (for*/list ([outer 2] [x :list '(0 1 2 3) :index j :guard (odd? x)])
+               (list outer x j)))
+
+     ;; An entirely filtered source terminates without evaluating the body.
+     (equal? '() (for/list ([x :list '(1 2 3) :guard #f]) (error 'guard "body evaluated")))
+
+     ;; Unsupported and duplicate trailing options must raise an expansion error.
+     (error? (eval '(for/list ([x :list '(1 2 3) :unknown 2]) x)))
+
+     (error? (eval '(for/list ([x :iter (list->iter '(1 2)) :step 2]) x)))
+
+     (error? (eval '(for/list ([x :vector '#(1 2) :guard #t :guard #f]) x))))
+
+(mat iterator-option-evaluation
+     (let ([calls 0])
+       (and (equal? '((1 a) (3 b))
+                    (for/list ([x :list '(1 2 3 4)
+                                  :guard (begin (set! calls (+ calls 1)) (odd? x))]
+                               [y :list '(a b)])
+                      (list x y)))
+            ;; The parallel source consumes the next accepted item before noticing
+            ;; that its companion source is exhausted.
+            (= calls 4)))
+
+     ;; A successful predicate must preserve the item it inspected.
+     (let ([source (vector 10)])
+       (equal? '(10)
+               (for/list ([x :vector source
+                             :guard (begin (vector-set! source 0 20) #t)]) x)))
+
+     ;; Iterator-local indexes may shadow the global index without changing its state.
+     (= 4 (for*/fold ([:index i] [:finish i] [x 2]
+                      [y :list '(a b) :index i]) (void)))
+
+     (let ([table (make-eq-hashtable)])
+       (hashtable-set! table 'one 1)
+       (equal? '((one 1 0))
+               (for/list ([(key value) :hashtable table :index i :guard (= value 1)])
+                 (list key value i)))))
