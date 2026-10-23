@@ -307,4 +307,7 @@
                    tmp))))]
         [_ (syntax-error stx "invalid rich-tree form")])))
 
-  (rich-register-container-renderer! rich-tree? rich-tree-render))
+  (rich-register-container-renderer!
+   rich-tree?
+   (lambda (tree)
+     (if (rich-render-ascii-only?) (rich-tree-render/ascii tree) (rich-tree-render tree)))))

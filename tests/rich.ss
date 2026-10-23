@@ -1,7 +1,7 @@
 #!chezscheme
 (import (cspp)
         (cspp rich private common)
-        (only (cspp rich renderable) rich-register-container-renderer!))
+        (only (cspp rich renderable) rich-register-container-renderer! rich-layout-render-cache))
 
 (mat rich-import
 
@@ -1586,5 +1586,47 @@
                      (rich-console :width 3)
                      (make-rich-layout 'row (list value "界"))))
             (= calls 1)))
+
+     )
+
+(mat rich-nested-ascii-tree
+
+     (let ([tree (make-rich-tree "root")])
+       (rich-tree-add! tree "child")
+       (let ([console (rich-console :width 40 :ascii-only? #t)])
+         (equal? "+-----------+\n| root      |\n| `-- child |\n+-----------+"
+                 (rich-test-render-text console (rich-panel :body tree)))))
+
+     (let ([tree (make-rich-tree "root")])
+       (rich-tree-add! tree "child")
+       (let* ([nested (rich-padding :left 1 :body tree)]
+              [console (rich-console :width 40 :ascii-only? #t)]
+              [ascii (rich-test-render-text console nested)])
+         (rich-console-ascii-only?-set! console #f)
+         (and (equal? " root\n `-- child" ascii)
+              (equal? " root\n └── child" (rich-test-render-text console nested)))))
+
+     (let ([tree (make-rich-tree "root")])
+       (rich-tree-add! tree "child")
+       (andmap
+        (lambda (value)
+          (let ([text (rich-test-render-text (rich-console :width 40 :ascii-only? #t) value)])
+            (and (string-contains? text "`-- child")
+                 (not (string-contains? text "└──")))))
+        (list (rich-table :show-header? #f :columns ("A") :rows (list (list tree)))
+              (make-rich-columns (list tree))
+              (make-rich-layout 'column (list tree)))))
+
+     (let ([tree (make-rich-tree "root")])
+       (rich-tree-add! tree "child")
+       (let ([panel (rich-panel :body tree)]
+             [ascii (rich-console :width 40 :ascii-only? #t)]
+             [unicode (rich-console :width 40)])
+         (parameterize ([rich-layout-render-cache (make-eq-hashtable)])
+           (let* ([ascii-lines (map rich-segments->plain (rich-render ascii panel))]
+                  [unicode-lines (map rich-segments->plain (rich-render unicode panel))])
+             (and (member "| `-- child |" ascii-lines)
+                  (member "| └── child |" unicode-lines)
+                  #t)))))
 
      )

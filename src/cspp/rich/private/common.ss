@@ -1,6 +1,7 @@
 #!chezscheme
 (library (cspp rich private common)
   (export rich-render-width
+          rich-render-ascii-only?
           rich-optional-width?
           rich-nonnegative-integer?
           rich-positive-integer?
@@ -18,6 +19,14 @@
   It defaults to 80; console rendering binds it and containers narrow it for children.
   |#
   (define rich-render-width (make-parameter 80))
+
+  #|proc:rich-render-ascii-only?
+  The private `rich-render-ascii-only?` parameter returns whether automatic renderers use
+  ASCII decoration. Optional boolean `ascii-only?` sets the policy and returns unspecified.
+  It defaults to `#f`; console rendering binds it for all nested containers.
+  |#
+  (define rich-render-ascii-only?
+    (make-parameter #f (lambda (ascii-only?) (pcheck ([boolean? ascii-only?]) ascii-only?))))
 
   #|proc:rich-optional-width?
   The private `rich-optional-width?` procedure returns whether `width` is `#f` (automatic)

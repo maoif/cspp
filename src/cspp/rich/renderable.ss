@@ -29,7 +29,7 @@
             (hashtable-set! table key value)
             value))))
 
-  ;; A registration owns its cache key. Width-sensitive containers keep one result per width.
+  ;; A registration owns its cache key. Containers cache each width and decoration policy.
   (define $cached-renderer
     (lambda (renderer width-sensitive?)
       (let ([key (list renderer)])
@@ -39,8 +39,11 @@
                 (renderer value)
                 (let* ([values ($cache-ref! cache key make-eq-hashtable)]
                        [results (if width-sensitive?
-                                    ($cache-ref! values value make-eqv-hashtable) values)]
-                       [result-key (if width-sensitive? (rich-render-width) value)])
+                                    ($cache-ref! values value
+                                                 (lambda () (make-hashtable equal-hash equal?)))
+                                    values)]
+                       [result-key (if width-sensitive?
+                                       (cons (rich-render-width) (rich-render-ascii-only?)) value)])
                   (if (hashtable-contains? results result-key)
                       (hashtable-ref results result-key #f)
                       (let ([result (renderer value)])
@@ -51,7 +54,7 @@
   The internal `rich-register-container-renderer!` registers unary predicate `pred` and
   unary `renderer`, which returns a string or segment lines for matching values. Container
   renderers must be safe to call again when assigned widths change. During sizing, results
-  are reused for matching values and available widths. Returns an unspecified value.
+  are reused for matching values, available widths, and ASCII policy. Returns unspecified.
   |#
   (define rich-register-container-renderer!
     (lambda (pred renderer)

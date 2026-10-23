@@ -527,13 +527,7 @@
                      (let ([renderer (rich-renderer-for value)])
                        (loop (cdr values)
                              active-style
-                             (cond [(and (rich-tree? value)
-                                         (rich-console-ascii-only? console))
-                                    ($write-rendered-value/ansi
-                                     console port color-system active-style
-                                     (rich-tree-render/ascii value)
-                                     style-emitted?)]
-                                   [renderer
+                             (cond [renderer
                                     ($write-rendered-value/ansi
                                      console port color-system active-style (renderer value)
                                      style-emitted?)]
@@ -550,11 +544,13 @@
   (define $write-rich-values
     (lambda (target port values)
       (if (rich-console? target)
-          (parameterize ([rich-render-width (rich-console-width target)])
+          (parameterize ([rich-render-width (rich-console-width target)]
+                         [rich-render-ascii-only? (rich-console-ascii-only? target)])
             ($write-rich-values/console target values))
           (let ([console (make-rich-console)])
             (rich-console-output-port-set! console port)
-            (parameterize ([rich-render-width (rich-console-width console)])
+            (parameterize ([rich-render-width (rich-console-width console)]
+                           [rich-render-ascii-only? (rich-console-ascii-only? console)])
               ($write-rich-values/plain port values))))))
 
   #|proc:rich-print
@@ -602,13 +598,10 @@
   (define rich-render
     (lambda (console value)
       (pcheck ([rich-console? console])
-              (parameterize ([rich-render-width (rich-console-width console)])
+              (parameterize ([rich-render-width (rich-console-width console)]
+                             [rich-render-ascii-only? (rich-console-ascii-only? console)])
                 (let ([renderer (rich-renderer-for value)])
-                  (cond [(and (rich-tree? value)
-                            (rich-console-ascii-only? console))
-                       ($check-rendered-value 'rich-render
-                                             (rich-tree-render/ascii value))]
-                      [renderer
+                  (cond [renderer
                        ($check-rendered-value 'rich-render (renderer value))]
                       [(or (rich-style? value)
                            (rich-reset? value)
