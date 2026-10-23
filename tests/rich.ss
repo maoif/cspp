@@ -1564,3 +1564,27 @@
           '("+-+\n|a|\n|b|\n+-+" "  a\n  b" "a\n└── a\n    b" "a x\nb "))))
 
      )
+
+(mat rich-layout-stacked-child-width
+
+     (equal? "---\n界"
+             (rich-test-render-text
+              (rich-console :width 3)
+              (make-rich-layout 'row (list (make-rich-rule) "界"))))
+
+     (equal? "+-+\n|a|\n|b|\n|c|\n+-+\n界"
+             (rich-test-render-text
+              (rich-console :width 3)
+              (make-rich-layout 'row (list (rich-panel :body "abc") "界"))))
+
+     (let ([calls 0] [value (vector 'stacked-child-width-once)])
+       (rich-register-renderer!
+        (lambda (candidate) (eq? candidate value))
+        (lambda (value) (set! calls (+ calls 1)) "abc"))
+       (and (equal? "abc\n界"
+                    (rich-test-render-text
+                     (rich-console :width 3)
+                     (make-rich-layout 'row (list value "界"))))
+            (= calls 1)))
+
+     )

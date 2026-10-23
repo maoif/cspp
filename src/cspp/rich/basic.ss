@@ -928,8 +928,9 @@
                         (map $value->segment-lines items))]
                  [row? (and row? (andmap (lambda (lines) (<= (rich-lines-min-width lines) width))
                                         raw))]
-                 [raw (if (or (not row?) (= width measure-width)) raw
-                          (parameterize ([rich-render-width width])
+                 [child-width (if row? width available)]
+                 [raw (if (= child-width measure-width) raw
+                          (parameterize ([rich-render-width child-width])
                             (map $value->segment-lines items)))])
             (if row?
                 ($render-horizontal-blocks
