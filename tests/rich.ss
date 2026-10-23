@@ -1524,6 +1524,16 @@
               (rich-console :width 80)
               (rich-panel :width 3 :body (rich-panel :body "界"))))
 
+     (equal? "+-+\n|-|\n+-+"
+             (rich-test-render-text
+              (rich-console :width 80)
+              (rich-panel :width 3 :padding 0 :body (make-rich-rule))))
+
+     (equal? "+-+\n|x|\n+-+"
+             (rich-test-render-text
+              (rich-console :width 80)
+              (rich-panel :width 3 :padding 0 :body (rich-align :body "x"))))
+
      )
 
 (mat rich-container-final-child-width

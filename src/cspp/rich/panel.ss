@@ -359,8 +359,10 @@
                               (min initial-padding (max 0 (quotient (- available 2 minimum) 2))))]
                  [budget (max 1 (- available (* 2 padding) 2))]
                  [unboxed? (and (not fixed) (< available (+ 2 minimum)))]
-                 [child-width (if unboxed? available budget)]
-                 [raw (if (or fixed (= child-width measure-width)) raw
+                 [child-width (cond [fixed (max budget minimum)]
+                                    [unboxed? available]
+                                    [else budget])]
+                 [raw (if (= child-width measure-width) raw
                           (parameterize ([rich-render-width child-width])
                             ($panel-body-lines panel)))]
                  [lines (if fixed raw (rich-lines-wrap raw budget))]
