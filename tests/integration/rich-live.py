@@ -22,11 +22,11 @@ PAUSE = r'''
                     [(1) (rich-live-refresh-rate-set! live 0)]
                     [(2) (set! paused? (= calls 1))
                          (rich-live-refresh-rate-set! live 100)])
-                  (sleep 1))])
+                  (milisleep 1))])
   (rich-live-start! live)
   (let wait ([remaining 1000])
     (when (and (< phase 4) (positive? remaining))
-      (sleep 1) (wait (- remaining 1))))
+      (milisleep 1) (wait (- remaining 1))))
   (rich-live-stop! live))
 (close-port output)
 (unless (and paused? (>= phase 4) (> calls 1))
@@ -106,9 +106,11 @@ STATUS = r'''
 
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-live-") as directory:
-        for name, source in (("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE),
-                             ("false-failure", FAILURE.replace(
-                                 '(error \'worker-recovery "later frame failed")', "(raise #f)")), ("stop", STOP), ("status", STATUS)):
+        cases = (("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE),
+                 ("false-failure", FAILURE.replace(
+                     '(error \'worker-recovery "later frame failed")', "(raise #f)")),
+                 ("stop", STOP), ("status", STATUS))
+        for name, source in cases:
             probe = Path(directory) / (name + ".ss")
             probe.write_text(source)
             result = subprocess.run([str(ROOT / "cspp"), "--script=" + str(probe)],
