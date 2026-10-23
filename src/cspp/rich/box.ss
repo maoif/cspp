@@ -21,11 +21,11 @@
       (and (assq style $rich-box-styles) #t)))
 
   #|proc:rich-box-chars
-  The `rich-box-chars` procedure returns a vector of strings for `style`.
+  The `rich-box-chars` procedure returns a fresh vector of copied strings for `style`.
   The vector order is top-left, top-right, bottom-left, bottom-right,
   horizontal, vertical, left-tee, right-tee, top-tee, bottom-tee, and cross.
   |#
   (define rich-box-chars
     (lambda (style)
       (pcheck ([rich-box-style? style])
-              (list->vector (vector->list (cdr (assq style $rich-box-styles))))))))
+              (vector-map string-copy (cdr (assq style $rich-box-styles)))))))

@@ -1905,3 +1905,16 @@
                                :rows (("a\nb\nc" "x\ny"))))))
 
      )
+
+(mat rich-box-string-isolation
+
+     (let* ([chars (rich-box-chars 'ascii)] [horizontal (vector-ref chars 4)]
+            [saved (string-copy horizontal)])
+       (dynamic-wind
+         (lambda () (string-set! horizontal 0 #\x))
+         (lambda ()
+           (and (equal? "-" (vector-ref (rich-box-chars 'ascii) 4))
+                (equal? "-----" (rich-export-text (rich-rule :width 5)))))
+         (lambda () (string-copy! saved 0 horizontal 0 (string-length saved)))))
+
+     )
