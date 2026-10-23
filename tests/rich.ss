@@ -2007,3 +2007,21 @@
            (string-contains? (rich-export-text progress) "[####] 100%" "00:00:00"))))
 
      )
+
+(mat rich-accumulated-style-restoration
+
+     (equal? "\033[1m\033[31mA\033[34mB\033[32mS\033[0m\033[1m\033[34mC\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard)
+                            (rich-style 'bold 'red) "A" (rich-style 'blue) "B"
+                            (rich-text "S" (rich-style 'green)) "C" (reset-style)))))
+
+     (equal? "\033[41mA\033[4mB\033[32mS\033[0m\033[4m\033[41mC\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard)
+                            (rich-style 'on-red) "A" (rich-style 'underline) "B"
+                            (rich-text "S" (rich-style 'green)) "C" (reset-style)))))
+
+     )
