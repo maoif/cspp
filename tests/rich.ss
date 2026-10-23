@@ -1918,3 +1918,13 @@
          (lambda () (string-copy! saved 0 horizontal 0 (string-length saved)))))
 
      )
+
+(mat rich-rule-single-line-title
+
+     (equal? "-- A B ---" (rich-export-text (rich-rule :title "A\nB" :width 10)))
+
+     (equal? "-- A B ---" (rich-export-text (rich-rule :title "A\r\nB" :width 10)))
+
+     (equal? "-- A B ---" (rich-export-text (rich-rule :title "A\tB" :width 10)))
+
+     )

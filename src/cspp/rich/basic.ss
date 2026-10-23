@@ -327,8 +327,24 @@
       (pcheck ([rich-rule? rule] [rich-box-style? style])
               ($rich-rule-style-set! rule style))))
 
+  ;; Rule titles occupy one physical line. Treat line endings and tabs as spaces.
+  (define $rule-title-text
+    (lambda (title)
+      (rich-string-output
+       (lambda (port)
+         (let loop ([index 0])
+           (unless (= index (string-length title))
+             (let ([character (string-ref title index)])
+               (write-char (if (memv character '(#\return #\newline #\tab))
+                               #\space character) port)
+               (loop (if (and (char=? character #\return)
+                              (< (+ index 1) (string-length title))
+                              (char=? (string-ref title (+ index 1)) #\newline))
+                         (+ index 2) (+ index 1))))))))))
+
   #|proc:rich-rule-render
-  The `rich-rule-render` procedure renders `rule` as one segment line.
+  The `rich-rule-render` procedure renders `rule` as one segment line. Line endings
+  and tabs in its title become spaces; a CRLF pair becomes one space.
   |#
   (define rich-rule-render
     (lambda (rule)
@@ -338,7 +354,7 @@
                      [title (rich-rule-title rule)]
                      [width (or (rich-rule-width rule) (rich-render-width))]
                      [text (if (and title (not (string=? title "")))
-                               (let* ([title-text (string-append " " title " ")]
+                               (let* ([title-text (string-append " " ($rule-title-text title) " ")]
                                       [title-width (rich-segment-width (rich-segment title-text))])
                                  (if (>= title-width width)
                                      (rich-segments->plain
