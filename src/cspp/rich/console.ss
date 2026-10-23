@@ -32,6 +32,8 @@
           rich-export-ansi)
   (import (cspp chez)
           (cspp utils)
+          (only (cspp list) make-list-builder)
+          (cspp rich private lines)
           (cspp rich private common)
           (cspp rich style)
           (cspp rich segment)
@@ -246,8 +248,8 @@
               ($rich-console-force-terminal?-set! console force-terminal?))))
 
   #|proc:rich-console-soft-wrap?
-  The `rich-console-soft-wrap?` procedure returns whether `console` soft-wraps
-  output.
+  The `rich-console-soft-wrap?` procedure returns whether `console` leaves line wrapping
+  to the destination terminal. False (default) inserts line breaks at the console width.
   |#
   (define rich-console-soft-wrap?
     (lambda (console)
@@ -255,8 +257,9 @@
               ($rich-console-soft-wrap? console))))
 
   #|proc:rich-console-soft-wrap?-set!
-  The `rich-console-soft-wrap?-set!` procedure sets whether `console`
-  soft-wraps output.
+  The `rich-console-soft-wrap?-set!` procedure sets boolean `soft-wrap?` for `console`.
+  True leaves wrapping to the terminal; false inserts breaks at its configured width.
+  Returns unspecified. Styles and control segments are preserved across inserted breaks.
   |#
   (define rich-console-soft-wrap?-set!
     (lambda (console soft-wrap?)
@@ -383,15 +386,26 @@
                   (write-char value port)
                   (display value port))))))))
 
+  ;; A hard-wrap pass captures encoded pieces while retaining zero-width controls.
+  (define $output-pieces (make-parameter #f))
+
+  (define $emit
+    (lambda (port text control?)
+      (let ([capture ($output-pieces)])
+        (if (and capture (eq? port (car capture)))
+            ((cdr capture) (rich-segment text #f control?))
+            (display text port)))))
+
   (define $write-segment-line
     (lambda (port line)
-      (display (rich-segments->plain line) port)))
+      (for-each (lambda (segment)
+                  ($emit port (rich-segment-text segment) (rich-segment-control? segment))) line)))
 
   (define $write-segment-lines
     (lambda (port lines)
       (let loop ([lines lines] [first? #t])
         (unless (null? lines)
-          (unless first? (newline port))
+          (unless first? ($emit port "\n" #f))
           ($write-segment-line port (car lines))
           (loop (cdr lines) #f)))))
 
@@ -402,7 +416,7 @@
           (let ([ansi (rich-style->ansi color-system style)])
             (and (not (string=? ansi ""))
                  (begin
-                   (display ansi port)
+                   ($emit port ansi #t)
                    #t))))))
 
   (define $valid-rendered-value?
@@ -418,7 +432,7 @@
   (define $write-rendered-value
     (lambda (port value)
       (let ([value ($check-rendered-value 'rich-print value)])
-        (cond [(string? value) (display value port)]
+        (cond [(string? value) ($emit port value #f)]
               [else ($write-segment-lines port value)]))))
 
   (define $style->ansi
@@ -431,7 +445,7 @@
     (lambda (port color-system active-style)
       (let ([ansi (and active-style ($style->ansi color-system active-style))])
         (unless (or (not ansi) (string=? ansi ""))
-          (display ansi port)))))
+          ($emit port ansi #t)))))
 
   (define $write-segment-line/ansi
     (lambda (console port color-system active-style style-emitted? line)
@@ -448,18 +462,18 @@
                          style-emitted?
                          (not (eq? color-system 'none))
                          (begin
-                           (display rich-ansi-reset port)
+                           ($emit port rich-ansi-reset #t)
                            #t))]
                    [style-emitted?
                     (and (not segment-reset-emitted?)
                          (or segment-style-emitted? style-emitted?))])
-              (display (rich-segment-text segment) port)
+              ($emit port (rich-segment-text segment) (rich-segment-control? segment))
               (let ([style-emitted?
                      (if (and (or segment-style-emitted? segment-reset-emitted?)
                               (not (eq? color-system 'none)))
                          (begin
                            (when segment-style-emitted?
-                             (display rich-ansi-reset port))
+                             ($emit port rich-ansi-reset #t))
                            ($restore-active-style port color-system active-style)
                            (and active-style #t))
                          style-emitted?)])
@@ -471,7 +485,7 @@
         (if (null? lines)
             style-emitted?
             (begin
-              (unless first? (newline port))
+              (unless first? ($emit port "\n" #f))
               (loop (cdr lines)
                     #f
                     ($write-segment-line/ansi console port color-system active-style
@@ -481,7 +495,7 @@
     (lambda (console port color-system active-style value style-emitted?)
       (let ([value ($check-rendered-value 'rich-print value)])
         (cond [(string? value)
-               (display value port)
+               ($emit port value #f)
               style-emitted?]
               [else
                ($write-segment-lines/ansi console port color-system active-style value
@@ -541,7 +555,7 @@
                                    style-emitted?)))]
                     [(rich-reset? value)
                      (when (and style-emitted? (not (eq? color-system 'none)))
-                       (display rich-ansi-reset port))
+                       ($emit port rich-ansi-reset #t))
                      (loop (cdr values) #f #f)]
                     [else
                      (let ([renderer (rich-renderer-for value)])
@@ -566,7 +580,14 @@
       (if (rich-console? target)
           (parameterize ([rich-render-width (rich-console-width target)]
                          [rich-render-ascii-only? (rich-console-ascii-only? target)])
-            ($write-rich-values/console target values))
+            (if (rich-console-soft-wrap? target)
+                ($write-rich-values/console target values)
+                (let* ([pieces (make-list-builder)]
+                       [encoded (parameterize ([$output-pieces (cons port pieces)])
+                                  ($write-rich-values/console target values)
+                                  (pieces))])
+                  ($write-segment-lines
+                   port (rich-lines-wrap (list encoded) (rich-render-width))))))
           (let ([console (make-rich-console)])
             (rich-console-output-port-set! console port)
             (parameterize ([rich-render-width (rich-console-width console)]
@@ -593,7 +614,7 @@
         (let ([port ($target-port target)])
           (pcheck ([output-port? port])
                   ($write-rich-values target port values)
-                  (newline port))))))
+                  ($emit port "\n" #f))))))
 
   #|proc:rich-fprint
   The `rich-fprint` procedure prints values to the given output port.

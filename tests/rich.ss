@@ -1035,7 +1035,7 @@
               (rich-string-output
                (lambda (port)
                  (let ([live (make-rich-live 'live-single-frame-test
-                                            (rich-console :output-port port :width 5) 0 #f)])
+                                            (rich-console :output-port port :soft-wrap? #t :width 5) 0 #f)])
                    (rich-live-refresh! live)
                    (rich-live-refresh! live))))])
          (and (= calls 2)
@@ -1045,7 +1045,7 @@
              (rich-string-output
               (lambda (port)
                 (let ([live (make-rich-live "abcde"
-                                           (rich-console :output-port port :width 5) 0 #f)])
+                                           (rich-console :output-port port :soft-wrap? #t :width 5) 0 #f)])
                   (rich-live-refresh! live)
                   (rich-live-renderable-set! live "x")
                   (rich-live-refresh! live)))))
@@ -1065,7 +1065,7 @@
              (rich-string-output
               (lambda (port)
                 (let ([live (make-rich-live "abcde\rx"
-                                           (rich-console :output-port port :width 5) 0 #f)])
+                                           (rich-console :output-port port :soft-wrap? #t :width 5) 0 #f)])
                   (rich-live-refresh! live)
                   (rich-live-renderable-set! live "y")
                   (rich-live-refresh! live)))))
@@ -1074,7 +1074,7 @@
              (rich-string-output
               (lambda (port)
                 (let ([live (make-rich-live "a\tbc"
-                                           (rich-console :output-port port :width 8) 0 #f)])
+                                           (rich-console :output-port port :soft-wrap? #t :width 8) 0 #f)])
                   (rich-live-refresh! live)
                   (rich-live-renderable-set! live "y")
                   (rich-live-refresh! live)))))
@@ -1083,7 +1083,7 @@
              (rich-string-output
               (lambda (port)
                 (let ([live (make-rich-live "abcd\bbx"
-                                           (rich-console :output-port port :width 5) 0 #f)])
+                                           (rich-console :output-port port :soft-wrap? #t :width 5) 0 #f)])
                   (rich-live-refresh! live)
                   (rich-live-renderable-set! live "y")
                   (rich-live-refresh! live)))))
@@ -1144,7 +1144,7 @@
              (rich-string-output
               (lambda (port)
                 (let ([live (make-rich-live "a界界é"
-                                           (rich-console :output-port port :width 4) 0 #f)])
+                                           (rich-console :output-port port :soft-wrap? #t :width 4) 0 #f)])
                   (rich-live-refresh! live)
                   (rich-live-renderable-set! live "x")
                   (rich-live-refresh! live)))))
@@ -1153,7 +1153,7 @@
              (rich-string-output
               (lambda (port)
                 (let ([live (make-rich-live "界界́"
-                                           (rich-console :output-port port :width 4) 0 #f)])
+                                           (rich-console :output-port port :soft-wrap? #t :width 4) 0 #f)])
                   (rich-live-refresh! live)
                   (rich-live-renderable-set! live "x")
                   (rich-live-refresh! live)))))
@@ -1208,7 +1208,7 @@
              (rich-string-output
               (lambda (port)
                 (let ([live (make-rich-live "界界́界"
-                                           (rich-console :output-port port :width 4) 0 #f)])
+                                           (rich-console :output-port port :soft-wrap? #t :width 4) 0 #f)])
                   (rich-live-refresh! live)
                   (rich-live-renderable-set! live "x")
                   (rich-live-refresh! live)))))
@@ -1343,7 +1343,7 @@
         '(1 2 3 4 5 6 7 8 9 10)))
 
      (equal? "+-----------+\n| abcdefghi |\n+-----------+"
-             (rich-test-render-text (rich-console :width 8)
+             (rich-test-render-text (rich-console :width 8 :soft-wrap? #t)
                           (rich-panel :body "abcdefghi" :width 7)))
 
      )
@@ -2023,5 +2023,47 @@
                 (rich-print (rich-console :output-port port :color-system 'standard)
                             (rich-style 'on-red) "A" (rich-style 'underline) "B"
                             (rich-text "S" (rich-style 'green)) "C" (reset-style)))))
+
+     )
+
+(mat rich-console-wrap-policy
+
+     (equal? "abc\ndef"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 3) "ab" "cdef"))))
+
+     (equal? "abcdef"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 3 :soft-wrap? #t)
+                            "abcdef"))))
+
+     (equal? "\033[31mabc\ndef\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 3 :color-system 'standard)
+                            (rich-text "abcdef" (rich-style 'red))))))
+
+     (equal? "中文\n测试"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 4) "中文测试"))))
+
+     )
+
+(mat rich-wrap-side-output
+
+     (let ([side (open-output-string)] [value (vector 'side-output)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (rich-register-renderer! (lambda (candidate) (eq? candidate value))
+                                    (lambda (value) (rich-fprint side "AUDIT") "X"))
+           (and (equal? "X" (rich-string-output
+                             (lambda (port)
+                               (rich-print (rich-console :output-port port) value))))
+                (equal? "AUDIT" (get-output-string side))))
+         (lambda () (close-port side))))
 
      )
