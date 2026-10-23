@@ -1753,3 +1753,30 @@
              (for/list ([x :fxiota 3 :guard #f]
                         [y :nums +inf.0 :guard (error 'exhaustion "later filter")])
                (list x y))))
+
+(mat nested-break-result
+     (eq? 'done (for*/fold ([x :fxiota 2] [:break (= x 1) 'done]) x))
+
+     ;; An inner break replaces the accumulator and resumes the next outer item.
+     (= 20 (for*/fold ([:init sum 0] [:finish sum]
+                       [x :fxiota 2] [y :fxiota 3]
+                       [:break (= y 1) (+ sum 10)]) (+ sum y)))
+
+     ;; A result expression runs exactly once per break, including non-fold loops.
+     (let ([calls 0] [seen (make-list-builder)])
+       (and (eq? (void)
+                 (for* ([x :fxiota 2] [y :fxiota 3]
+                        [:break (= y 1) (begin (set! calls (+ calls 1)) 'ignored)])
+                   (seen (list x y))))
+            (= calls 2)
+            (equal? '((0 0) (1 0)) (seen))))
+
+     ;; False break conditions must not evaluate their result expression.
+     (= 3 (for*/fold ([:init sum 0] [:finish sum]
+                       [x :fxiota 3] [:break #f (error 'break "result evaluated")])
+            (+ sum x)))
+
+     ;; The break result sees bindings at the clause's original source position.
+     (= 101 (for*/fold ([:init sum 0] [:finish sum]
+                        [x :fxiota 2] [y :fxiota 2] [:let sum 100]
+                        [:break (= y 1) (+ sum x)]) 1)))

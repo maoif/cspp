@@ -325,7 +325,9 @@
   Binding clauses use the corresponding Scheme binding form and scope over subsequent clauses.
   Indexed guards count passes starting at zero and reset on every entry to their loop level.
   Iterator-local guards and source indexes follow the `for/fold` rules and restart on each entry.
-  `:break` leaves one loop level. `:stop` leaves all levels, returning its optional second expression
+  `:break` leaves one loop level. Its optional result replaces the fold accumulator on an inner
+  break and is returned directly on an outermost break. Without an accumulator, inner results
+  are evaluated and discarded. `:stop` leaves all levels, returning its optional second expression
   or an unspecified value when that expression is omitted.
   |#
   (define-syntax for*/fold
@@ -503,6 +505,17 @@
                                                                    call-lastforloop
                                                                    ;; already outermost loop, stop
                                                                    #`(void))
+                                                             #,(lp-configs (cdr configs) shadowed))]
+                                                      [(:break e1 e2)
+                                                       (kw:break? #':break)
+                                                       #`(if e1
+                                                             #,(if last-forloop
+                                                                   #`(let ([break-result e2])
+                                                                       (#,last-forloop
+                                                                        #,@(if frag-init (list #'break-result) '())
+                                                                        #,@(if frag-index (list index-var) '())
+                                                                        #,last-update))
+                                                                   #'e2)
                                                              #,(lp-configs (cdr configs) shadowed))]
                                                       [(:stop e1 e2)
                                                        (kw:stop? #':stop)

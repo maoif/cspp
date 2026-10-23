@@ -287,6 +287,10 @@
          (kw:break? #':break)
          (begin (add-clause! cl)
                 (values #t #t))]
+        [(:break e1 e2)
+         (kw:break? #':break)
+         (begin (add-clause! cl)
+                (values #t #t))]
         [(:stop e)
          (kw:stop? #':stop)
          (begin (add-clause! #'(:stop e (void)))
