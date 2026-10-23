@@ -1866,3 +1866,21 @@
               (< allocated (* 128 size)))))
 
      )
+
+(mat rich-table-row-insertion-allocation
+
+     ;; Appending rows must allocate in proportion to new rows, not all prior rows.
+     (let ([table (rich-table :show-header? #f :show-lines? #f :columns ("A"))]
+           [size 2000])
+       (collect)
+       (let ([before (statistics)])
+         (do ([index 0 (+ index 1)]) ((= index size))
+           (rich-table-add-row! table (number->string index)))
+         (let* ([allocated (sstats-bytes (sstats-difference (statistics) before))]
+                [lines (map rich-segments->plain (rich-table-render table))])
+           (and (< allocated (* size 2048))
+                (= (+ size 2) (length lines))
+                (equal? "| 0    |" (cadr lines))
+                (equal? "| 1999 |" (list-ref lines size))))))
+
+     )

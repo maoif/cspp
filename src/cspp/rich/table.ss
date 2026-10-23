@@ -20,6 +20,7 @@
           rich-table-render)
   (import (cspp chez)
           (cspp utils)
+          (only (cspp list) make-list-builder)
           (cspp rich private common)
           (cspp rich private lines)
           (cspp rich box)
@@ -35,7 +36,10 @@
             (mutable show-lines? $rich-table-show-lines? $rich-table-show-lines?-set!)
             (mutable padding $rich-table-padding $rich-table-padding-set!)
             (mutable columns $rich-table-columns $rich-table-columns-set!)
-            (mutable rows $rich-table-rows $rich-table-rows-set!)))
+            (immutable rows $rich-table-row-builder)))
+
+  (define $rich-table-rows
+    (lambda (table) (($rich-table-row-builder table))))
 
   (define-record-type (rich-table-column-record $make-rich-table-column-record $rich-table-column?)
     (fields (mutable title $rich-table-column-title $rich-table-column-title-set!)
@@ -276,7 +280,7 @@
   (define make-rich-table
     (case-lambda
       [()
-       ($make-rich-table-record #f #f 'ascii #t #t 1 '() '())]))
+       ($make-rich-table-record #f #f 'ascii #t #t 1 '() (make-list-builder))]))
 
   #|proc:rich-table-title
   The `rich-table-title` procedure returns the optional title for `table`.
@@ -414,7 +418,7 @@
                         "row has ~a cells, but table has ~a columns"
                         (length values)
                         (length ($rich-table-columns table))))
-              ($rich-table-rows-set! table ($append-one ($rich-table-rows table) values))
+              (($rich-table-row-builder table) values)
               table)))
 
   ;; Cap the widest columns first so a short ID or status does not waste a long column's space.
