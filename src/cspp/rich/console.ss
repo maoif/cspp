@@ -387,12 +387,12 @@
                   (display value port))))))))
 
   ;; A hard-wrap pass captures encoded pieces while retaining zero-width controls.
-  (define $output-pieces (make-parameter #f))
+  (define $output-pieces (make-parameter '()))
 
   (define $emit
     (lambda (port text control?)
-      (let ([capture ($output-pieces)])
-        (if (and capture (eq? port (car capture)))
+      (let ([capture (assq port ($output-pieces))])
+        (if capture
             ((cdr capture) (rich-segment text #f control?))
             (display text port)))))
 
@@ -583,7 +583,7 @@
             (if (rich-console-soft-wrap? target)
                 ($write-rich-values/console target values)
                 (let* ([pieces (make-list-builder)]
-                       [encoded (parameterize ([$output-pieces (cons port pieces)])
+                       [encoded (parameterize ([$output-pieces (cons (cons port pieces) ($output-pieces))])
                                   ($write-rich-values/console target values)
                                   (pieces))])
                   ($write-segment-lines

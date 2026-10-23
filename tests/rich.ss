@@ -2103,3 +2103,23 @@
                 (equal? "1999" (list-ref lines (- size 1)))))))
 
      )
+
+(mat rich-wrap-nested-destinations
+
+     (let ([main (open-output-string)] [side (open-output-string)]
+           [outer (vector 'outer)] [inner (vector 'inner)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (rich-register-renderer!
+            (lambda (value) (eq? value inner))
+            (lambda (value) (rich-fprint main "B") "S"))
+           (rich-register-renderer!
+            (lambda (value) (eq? value outer))
+            (lambda (value) (rich-print (rich-console :output-port side) inner) "C"))
+           (rich-print (rich-console :output-port main) "A" outer)
+           (and (equal? "ABC" (get-output-string main))
+                (equal? "S" (get-output-string side))))
+         (lambda () (close-port main) (close-port side))))
+
+     )
