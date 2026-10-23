@@ -427,6 +427,11 @@
                          #,e))))]
           [else (syntax-error ty "bad iter type:")])))
     (define (process-single-var-iter-clause v ty op*)
+      (define (numeric-next step)
+        #`(let ([next (+ #,v #,step)])
+            (when (= next #,v)
+              (errorf ':nums "step does not advance source value: ~a, step ~a" #,v #,step))
+            next))
       (let ([nops (length op*)])
         (case ty
           [:iota
@@ -468,7 +473,7 @@
                               #,e))
                         #`[#,v 0]
                         #`(>= #,v t-stop)
-                        #`(+ #,v 1)
+                        (numeric-next #'1)
                         #f)]
                [2 (list (lambda (e)
                           #`(let ([t-start #,(car op*)] [t-stop #,(cadr op*)])
@@ -477,7 +482,7 @@
                               #,e))
                         #`[#,v t-start]
                         #`(>= #,v t-stop)
-                        #`(+ #,v 1)
+                        (numeric-next #'1)
                         #f)]
                [3 (list (lambda (e)
                           #`(let ([t-start #,(car op*)] [t-stop #,(cadr op*)] [t-step #,(caddr op*)])
@@ -490,7 +495,7 @@
                         #`(if (<= t-start t-stop)
                               (>= #,v t-stop)
                               (<= #,v t-stop))
-                        #`(+ #,v t-step)
+                        (numeric-next #'t-step)
                         #f)]))]
           [:fixnums
            (when (not (<= 1 nops 3))

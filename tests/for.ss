@@ -1701,3 +1701,25 @@
 
      ;; Invalid earlier arity must not disappear behind a later valid occurrence.
      (error? (eval '(for/list ([x :vector '#(0 1 2) :from 0 1 :from 1]) x))))
+
+(mat numeric-range-progress
+     ;; Rounding must raise an error instead of repeating a finite range's first value.
+     ;; The break clauses bound these witnesses when progress detection is missing.
+     (error? (let ([visits 0])
+               (for ([x :nums 1e16 (+ 1e16 2.0) 1.0] [:break (= visits 3)])
+                 (set! visits (+ visits 1)))))
+
+     (error? (let ([visits 0])
+               (for ([x :nums 1e16 (+ 1e16 2.0)] [:break (= visits 3)])
+                 (set! visits (+ visits 1)))))
+
+     (error? (let ([visits 0])
+               (for* ([x :nums -1e16 (- -1e16 2.0) -1.0] [:break (= visits 3)])
+                 (set! visits (+ visits 1)))))
+
+     (equal? '(0.0 0.5 1.0) (for/list ([x :nums 0.0 1.5 0.5]) x))
+
+     (equal? '(1.0 0.5 0.0) (for/list ([x :nums 1.0 -0.5 -0.5]) x))
+
+     ;; Crossing a bound in one step remains valid, including an infinite step.
+     (equal? '(0) (for/list ([x :nums 0 1 +inf.0]) x)))

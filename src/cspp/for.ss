@@ -92,6 +92,7 @@
   `[var :fxiota bound]` requires a nonnegative fixnum bound and uses fixnum arithmetic.
   Both forms evaluate `bound` once per source setup and accept only `:guard` and `:index` options.
   All `for` variants support these sources; nested variants set up each source per outer item.
+  A `:nums` range raises an error if rounding prevents its step from advancing the current value.
   |#
   (define-syntax for/fold
     (lambda (stx)
