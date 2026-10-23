@@ -46,6 +46,7 @@
             (mutable transient? $rich-live-transient? $rich-live-transient?-set!)
             (mutable started? $rich-live-started? $rich-live-started?-set!)
             (mutable previous-frame $rich-live-previous-frame $rich-live-previous-frame-set!)
+            (mutable previous-port $rich-live-previous-port $rich-live-previous-port-set!)
             (mutable thread $rich-live-thread $rich-live-thread-set!)
             (mutable stop? $rich-live-stop? $rich-live-stop?-set!)))
 
@@ -190,13 +191,13 @@
   (define make-rich-live
     (case-lambda
       [(renderable)
-       ($make-rich-live-record renderable (make-rich-console) 4 #f #f #f #f #f)]
+       ($make-rich-live-record renderable (make-rich-console) 4 #f #f #f #f #f #f)]
       [(renderable console refresh-rate transient?)
        (pcheck ([rich-console? console]
                 [$real-nonnegative? refresh-rate]
                 [boolean? transient?])
                ($make-rich-live-record renderable console refresh-rate
-                                       transient? #f #f #f #f))]))
+                                       transient? #f #f #f #f #f))]))
 
   #|proc:rich-live-renderable
   The `rich-live-renderable` procedure returns the renderable for `live`.
@@ -280,10 +281,12 @@
                      [port (rich-console-output-port console)]
                      [frame (rich-console-frame console (rich-live-renderable live))]
                      [width (rich-console-output-width console)])
-                ($clear-live-output port ($frame-line-count ($rich-live-previous-frame live) width))
+                (when (eq? port ($rich-live-previous-port live))
+                  ($clear-live-output port ($frame-line-count ($rich-live-previous-frame live) width)))
                 (display frame port)
                 (flush-output-port port)
                 ($rich-live-previous-frame-set! live frame)
+                ($rich-live-previous-port-set! live port)
                 live))))
 
   #|proc:rich-live-start!
@@ -331,11 +334,13 @@
                   ($rich-live-thread-set! live #f))
                 (when (rich-live-transient? live)
                   (let ([port (rich-console-output-port (rich-live-console live))])
-                    ($clear-live-output
-                     port ($frame-line-count ($rich-live-previous-frame live)
-                                             (rich-console-output-width (rich-live-console live))))
+                    (when (eq? port ($rich-live-previous-port live))
+                      ($clear-live-output
+                       port ($frame-line-count ($rich-live-previous-frame live)
+                                               (rich-console-output-width (rich-live-console live)))))
                     (flush-output-port port)
-                    ($rich-live-previous-frame-set! live #f)))
+                    ($rich-live-previous-frame-set! live #f)
+                    ($rich-live-previous-port-set! live #f)))
                 ($rich-live-started?-set! live #f))
               live)))
 

@@ -1740,3 +1740,47 @@
          (lambda () (close-port input) (close-port output))))
 
      )
+
+(mat rich-live-destination
+
+     (let ([first (open-output-string)] [second (open-output-string)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (let ([live (make-rich-live "old\nframe" (rich-console :output-port first) 0 #f)])
+             (rich-live-refresh! live)
+             (display "unrelated\n" second)
+             (rich-live-console-set! live (rich-console :output-port second))
+             (rich-live-renderable-set! live "new")
+             (rich-live-refresh! live)
+             (and (equal? "old\nframe" (get-output-string first))
+                  (equal? "unrelated\nnew" (get-output-string second)))))
+         (lambda () (close-port first) (close-port second))))
+
+     (let ([first (open-output-string)] [second (open-output-string)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (let* ([console (rich-console :output-port first)]
+                  [live (make-rich-live "old" console 0 #f)])
+             (rich-live-refresh! live)
+             (rich-console-output-port-set! console second)
+             (rich-live-renderable-set! live "new")
+             (rich-live-refresh! live)
+             (equal? "new" (get-output-string second))))
+         (lambda () (close-port first) (close-port second))))
+
+     (let ([first (open-output-string)] [second (open-output-string)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (let* ([console (rich-console :output-port first)]
+                  [live (make-rich-live "old" console 0 #t)])
+             (rich-live-start! live)
+             (rich-console-output-port-set! console second)
+             (display "unrelated" second)
+             (rich-live-stop! live)
+             (equal? "unrelated" (get-output-string second))))
+         (lambda () (close-port first) (close-port second))))
+
+     )
