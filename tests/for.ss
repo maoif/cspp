@@ -1507,3 +1507,33 @@
 
      (equal? '(0 1 2)
              (for*/list ([x 1152921504606846976] [:break (= x 3)]) x)))
+
+(mat large-sequence-strides
+     (equal? '(2)
+             (for/list ([x :vector '#(1 2 3) :from 1 :step (most-positive-fixnum)]) x))
+
+     (equal? '(1)
+             (for/list ([x :vector '#(1 2 3) :step (+ 1 (most-positive-fixnum))]) x))
+
+     (equal? '(#\b)
+             (for/list ([x :string "abc" :from 1 :step (most-positive-fixnum)]) x))
+
+     (equal? '(3)
+             (for/list ([x :fxvector (fxvector 1 2 3) :rev :step (most-positive-fixnum)]) x))
+
+     (equal? '(3.0)
+             (for/list ([x :flvector (flvector 1.0 2.0 3.0)
+                           :rev :step (+ 1 (most-positive-fixnum))]) x))
+
+     (equal? '(256)
+             (for/list ([x :bytevector #vu8(0 1) :type u16
+                           :step (most-positive-fixnum)]) x))
+
+     (equal? '(515)
+             (for/list ([x :bytevector #vu8(0 1 2 3) :type u16 :big :rev
+                           :step (+ 1 (most-positive-fixnum))]) x))
+
+     ;; Ordinary non-dividing strides still stop at the exclusive endpoint.
+     (equal? '(1 3 5) (for/list ([x :vector '#(1 2 3 4 5) :step 2]) x))
+
+     (equal? '(5 3 1) (for/list ([x :vector '#(1 2 3 4 5) :rev :step 2]) x)))

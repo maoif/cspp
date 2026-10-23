@@ -572,9 +572,10 @@
                                                     #`(let ([s #,s])
                                                         (unless (positive-natural? s)
                                                           (errorf ':vector "step has to be a positive natural number: ~a" s))
-                                                        (if (<= t-from t-to)
-                                                            s
-                                                            (- s))))
+                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
+                                                          (if (fx<= t-from t-to)
+                                                              stride
+                                                              (fx- stride)))))
                                                   #'(if (<= t-from t-to)
                                                         1
                                                         -1))])
@@ -584,7 +585,13 @@
                        #`(if (fx<= t-from t-to)
                              (fx>= t-i t-to)
                              (fx<= t-i t-to))
-                       #`(fx+ t-i t-step)
+                       #`(if (fx> t-step 0)
+                               (if (fx>= t-step (fx- t-to t-i))
+                                   t-to
+                                   (fx+ t-i t-step))
+                               (if (fx<= t-step (fx- t-to t-i))
+                                   t-to
+                                   (fx+ t-i t-step)))
                        (lambda (e)
                          #`(let ([#,v (vector-ref t-vec t-i)])
                              #,e))))))]
@@ -627,9 +634,10 @@
                                                     #`(let ([s #,s])
                                                         (unless (positive-natural? s)
                                                           (errorf ':string "step has to be a positive natural number: ~a" s))
-                                                        (if (<= t-from t-to)
-                                                            s
-                                                            (- s))))
+                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
+                                                          (if (fx<= t-from t-to)
+                                                              stride
+                                                              (fx- stride)))))
                                                   #'(if (<= t-from t-to)
                                                         1
                                                         -1))])
@@ -639,7 +647,13 @@
                        #`(if (fx<= t-from t-to)
                              (fx>= t-i t-to)
                              (fx<= t-i t-to))
-                       #`(fx+ t-i t-step)
+                       #`(if (fx> t-step 0)
+                               (if (fx>= t-step (fx- t-to t-i))
+                                   t-to
+                                   (fx+ t-i t-step))
+                               (if (fx<= t-step (fx- t-to t-i))
+                                   t-to
+                                   (fx+ t-i t-step)))
                        (lambda (e)
                          #`(let ([#,v (string-ref t-vec t-i)])
                              #,e))))))]
@@ -682,9 +696,10 @@
                                                     #`(let ([s #,s])
                                                         (unless (positive-natural? s)
                                                           (errorf ':fxvector "step has to be a positive natural number: ~a" s))
-                                                        (if (<= t-from t-to)
-                                                            s
-                                                            (- s))))
+                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
+                                                          (if (fx<= t-from t-to)
+                                                              stride
+                                                              (fx- stride)))))
                                                   #'(if (<= t-from t-to)
                                                         1
                                                         -1))])
@@ -694,7 +709,13 @@
                        #`(if (fx<= t-from t-to)
                              (fx>= t-i t-to)
                              (fx<= t-i t-to))
-                       #`(fx+ t-i t-step)
+                       #`(if (fx> t-step 0)
+                               (if (fx>= t-step (fx- t-to t-i))
+                                   t-to
+                                   (fx+ t-i t-step))
+                               (if (fx<= t-step (fx- t-to t-i))
+                                   t-to
+                                   (fx+ t-i t-step)))
                        (lambda (e)
                          #`(let ([#,v (fxvector-ref t-vec t-i)])
                              #,e))))))]
@@ -737,9 +758,10 @@
                                                     #`(let ([s #,s])
                                                         (unless (positive-natural? s)
                                                           (errorf ':flvector "step has to be a positive natural number: ~a" s))
-                                                        (if (<= t-from t-to)
-                                                            s
-                                                            (- s))))
+                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
+                                                          (if (fx<= t-from t-to)
+                                                              stride
+                                                              (fx- stride)))))
                                                   #'(if (<= t-from t-to)
                                                         1
                                                         -1))])
@@ -749,7 +771,13 @@
                        #`(if (fx<= t-from t-to)
                              (fx>= t-i t-to)
                              (fx<= t-i t-to))
-                       #`(fx+ t-i t-step)
+                       #`(if (fx> t-step 0)
+                               (if (fx>= t-step (fx- t-to t-i))
+                                   t-to
+                                   (fx+ t-i t-step))
+                               (if (fx<= t-step (fx- t-to t-i))
+                                   t-to
+                                   (fx+ t-i t-step)))
                        (lambda (e)
                          #`(let ([#,v (flvector-ref t-vec t-i)])
                              #,e))))))]
@@ -831,9 +859,13 @@
                                                       #`(let ([s #,s])
                                                           (unless (positive-natural? s)
                                                             (errorf ':bytevector "step has to be a positive natural number: ~a" s))
-                                                          (if (<= t-from t-to)
-                                                              (fx* s #,size)
-                                                              (- (fx* s #,size)))))
+                                                          (let* ([distance (abs (fx- t-to t-from))]
+                                                                 [stride (if (> s (fxquotient distance #,size))
+                                                                             distance
+                                                                             (fx* s #,size))])
+                                                            (if (fx<= t-from t-to)
+                                                                stride
+                                                                (fx- stride)))))
                                                     #`(if (<= t-from t-to)
                                                           (fx*  1 #,size)
                                                           (fx* -1 #,size)))])
@@ -843,7 +875,13 @@
                          #`(if (fx<= t-from t-to)
                                (fx>= (fx+ t-i #,size -1) t-to)
                                (fx<= (fx- t-i #,size -1) t-to))
-                         #`(fx+ t-i t-step)
+                         #`(if (fx> t-step 0)
+                               (if (fx>= t-step (fx- t-to t-i))
+                                   t-to
+                                   (fx+ t-i t-step))
+                               (if (fx<= t-step (fx- t-to t-i))
+                                   t-to
+                                   (fx+ t-i t-step)))
                          (if (memq op-type '(u8 s8))
                              (lambda (e)
                                #`(let ([#,v (#,vref t-vec t-i)])
