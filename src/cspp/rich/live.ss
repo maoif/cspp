@@ -240,8 +240,9 @@
               ($rich-live-refresh-rate live))))
 
   #|proc:rich-live-refresh-rate-set!
-  The `rich-live-refresh-rate-set!` procedure sets refreshes per second for
-  `live`.
+  The `rich-live-refresh-rate-set!` procedure sets nonnegative refreshes per second
+  `refresh-rate` for `live` and returns unspecified. Zero pauses an existing worker;
+  a positive rate resumes it. A display started at zero has no automatic worker.
   |#
   (define rich-live-refresh-rate-set!
     (lambda (live refresh-rate)
@@ -307,9 +308,12 @@
                             (lambda ()
                               (let loop ()
                                 (unless ($rich-live-stop? live)
-                                  ((rich-sleep) (/ 1 (rich-live-refresh-rate live)))
+                                  (let ([rate (rich-live-refresh-rate live)])
+                                    ;; Poll a paused worker so a later positive rate resumes it.
+                                    ((rich-sleep) (if (positive? rate) (/ 1 rate) 0.05)))
                                   (unless ($rich-live-stop? live)
-                                    (rich-live-refresh! live)
+                                    (when (positive? (rich-live-refresh-rate live))
+                                      (rich-live-refresh! live))
                                     (loop))))))])
                       ($rich-live-thread-set! live thread)))))
               live)))
