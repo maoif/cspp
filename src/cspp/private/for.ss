@@ -47,6 +47,7 @@
   (define (valid-iter-ty? ty)
     (let ([ty (syntax->datum ty)])
       (or (eq? ty ':iota)
+          (eq? ty ':fxiota)
           (eq? ty ':nums)
           (eq? ty ':fixnums)
           (eq? ty ':string)
@@ -434,6 +435,20 @@
                    #`[#,v 0]
                    #`(= #,v t-stop)
                    #`(+ #,v 1)
+                   #f))]
+          [:fxiota
+           (unless (= 1 nops)
+             (syntax-error op* "invalid number of options for iter type `:fxiota`:"))
+           (with-syntax ([(t-stop) (generate-temporaries '(t-stop))])
+             (list (lambda (e)
+                     #`(let ([t-stop #,(car op*)])
+                         (unless (and (fixnum? t-stop) (fx>= t-stop 0))
+                           (errorf ':fxiota "not a nonnegative fixnum: ~a" t-stop))
+                         #,e))
+                   #`[#,v 0]
+                   #`(fx= #,v t-stop)
+                   ;; The last increment reaches the representable exclusive bound.
+                   #`(fx1+ #,v)
                    #f))]
           [:nums
            (when (not (<= 1 nops 3))
@@ -1047,7 +1062,7 @@
                              #,(bind-index body))))))))))
     (define (single-fragment variable type arguments)
       (cond
-       [(memq type '(:iota :nums :fixnums))
+       [(memq type '(:iota :fxiota :nums :fixnums))
         (numeric-fragment variable
                           (lambda (state) (process-single-var-iter-clause state type arguments)))]
        [(and (eq? type ':list) (> (length arguments) 1))

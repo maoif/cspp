@@ -1298,6 +1298,70 @@
 
      )
 
+(mat fxiota
+     (equal? '(0 1 2 3) (for/list ([x :fxiota 4]) x))
+
+     (equal? '() (for/list ([x :fxiota 0]) x))
+
+     (equal? '#(0 1 2) (for/vector ([x :fxiota 3]) x))
+
+     (= 6 (for/fold ([:init sum 0] [:finish sum] [x :fxiota 4]) (+ sum x)))
+
+     (let ([sum 0])
+       (for ([x :fxiota 4]) (set! sum (+ sum x)))
+       (= sum 6))
+
+     (equal? '((1 0) (2 0) (2 1))
+             (for*/list ([x :fxiota 3] [y :fxiota x]) (list x y)))
+
+     (equal? '#((1 0) (2 0) (2 1))
+             (for*/vector ([x :fxiota 3] [y :fxiota x]) (list x y)))
+
+     (= 1 (for*/fold ([:init sum 0] [:finish sum]
+                       [x :fxiota 3] [y :fxiota x]) (+ sum y)))
+
+     (let ([sum 0])
+       (for* ([x :fxiota 3] [y :fxiota x]) (set! sum (+ sum y)))
+       (= sum 1))
+
+     (equal? '((1 1 a) (3 3 b))
+             (for/list ([x :fxiota 5 :index j :guard (odd? x)]
+                        [y :list '(a b c)]) (list x j y)))
+
+     (let ([calls 0])
+       (and (equal? '(0 1 2)
+                    (for/list ([x :fxiota (begin (set! calls (+ calls 1)) 3)]) x))
+            (= calls 1)))
+
+     ;; The largest fixnum is a valid exclusive bound; break keeps the test short.
+     (equal? '(0 1 2)
+             (for/list ([x :fxiota (most-positive-fixnum)] [:break (= x 3)]) x))
+
+     ;; Public bindings must not capture private induction state.
+     (equal? '(100 100 100)
+             (for/list ([x :fxiota 3] [:let x 100]) x))
+
+     (equal? '(0 1 0 1 0 1)
+             (for*/list ([x :fxiota 3] [x :fxiota 2]) x))
+
+     ;; Negative, inexact, nonnumeric, and bignum bounds must be rejected.
+     (error? (for/list ([x :fxiota -1]) x))
+
+     (error? (for/list ([x :fxiota 3.0]) x))
+
+     (error? (for/list ([x :fxiota 'three]) x))
+
+     (error? (for/list ([x :fxiota (+ 1 (most-positive-fixnum))]) x))
+
+     ;; Exactly one bound and one item binding are required; slicing is unsupported.
+     (error? (eval '(for/list ([x :fxiota]) x)))
+
+     (error? (eval '(for/list ([x :fxiota 1 2]) x)))
+
+     (error? (eval '(for/list ([(x y) :fxiota 3]) x)))
+
+     (error? (eval '(for/list ([x :fxiota 3 :step 2]) x))))
+
 (mat numeric-range-boundaries
      ;; Fractional bounds must stop after crossing the exclusive upper bound.
      (equal? '(0 1 2)

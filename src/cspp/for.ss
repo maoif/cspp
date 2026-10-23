@@ -28,6 +28,7 @@
               |  [<var>    <literal>]             ; cannot have options, and binds only one <var>
 
 <iter-type> := :iota <expr>
+            |  :fxiota <expr>
             |  :nums <expr> <expr> <expr>
             |  :fixnums <expr> <expr> <expr>
             |  :string <expr>
@@ -87,6 +88,10 @@
   Sequence positions survive `:from`, `:to`, `:step`, and `:rev`; typed bytevector positions are
   byte offsets. Numeric ranges, hashtables, and iterators count source items starting from zero.
   Lists support the sequence traversal options; sliced or reversed list traversal uses O(n) space.
+  `[var :iota bound]` visits integers from zero up to, but excluding, the natural number `bound`.
+  `[var :fxiota bound]` requires a nonnegative fixnum bound and uses fixnum arithmetic.
+  Both forms evaluate `bound` once per source setup and accept only `:guard` and `:index` options.
+  All `for` variants support these sources; nested variants set up each source per outer item.
   |#
   (define-syntax for/fold
     (lambda (stx)
