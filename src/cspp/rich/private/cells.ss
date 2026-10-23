@@ -39,7 +39,8 @@
                  (cond [(= index len) #f]
                        [(char=? (string-ref text index) #\m) (+ index 1)]
                        [(or (char<=? #\0 (string-ref text index) #\9)
-                            (char=? (string-ref text index) #\;))
+                            (char=? (string-ref text index) #\;)
+                            (char=? (string-ref text index) #\:))
                         (scan (+ index 1))]
                        [else #f])))))))
 

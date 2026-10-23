@@ -1834,3 +1834,21 @@
      (equal? '("a" "b") (rich-layout-items (rich-layout :items ("a" "b"))))
 
      )
+
+(mat rich-colon-sgr
+
+     (equal? "X" (rich-strip-ansi "\033[38:2::255:0:0mX\033[0m"))
+
+     (= 1 (rich-segment-width (rich-segment "\033[38:2::255:0:0mX\033[0m")))
+
+     (= 2 (rich-segment-width (rich-segment "\033[4:3m界\033[0m")))
+
+     (equal? '("\033[38:2::255:0:0mX" "Y\033[0m")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "\033[38:2::255:0:0mXY\033[0m")) 1)))
+
+     (equal? "\033[38:2::255:0:0m界"
+             (rich-segments->plain
+              (rich-segment-crop (list (rich-segment "\033[38:2::255:0:0m界X")) 2)))
+
+     )
