@@ -2123,3 +2123,21 @@
          (lambda () (close-port main) (close-port side))))
 
      )
+
+(mat rich-deep-tree-allocation
+
+     ;; At a bounded width, each deeper node must not copy every descendant line.
+     (let* ([depth 500]
+            [tree (let loop ([left depth] [tree (make-rich-tree "x")])
+                    (if (zero? left) tree
+                        (loop (- left 1) (make-rich-tree "x" (list tree)))))]
+            [console (rich-console :width 10)])
+       (collect)
+       (let* ([before (statistics)] [lines (rich-render console tree)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and (< allocated (* depth 8192)) (= (+ depth 1) (length lines))
+              (andmap (lambda (line)
+                        (and (<= (rich-segments-width line) 10)
+                             (string-contains? (rich-segments->plain line) "x"))) lines))))
+
+     )

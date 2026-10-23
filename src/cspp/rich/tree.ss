@@ -153,35 +153,36 @@
                         (cons (cons (rich-segment (prefix (if first? first-prefix rest-prefix)))
                                     (car lines)) out))))))))
 
+  ;; Guides are one-cell characters. Once they exceed the available prefix budget,
+  ;; later guide suffixes are invisible and need not be carried through descendants.
+  (define $bounded-guide
+    (lambda (prefix suffix)
+      (let* ([text (string-append prefix suffix)]
+             [length (min (string-length text) (- (rich-render-width) 1))])
+        (substring text 0 length))))
+
   (define $render-node-children
-    (lambda (children prefix guides)
-      (let loop ([children children] [out '()])
-        (if (null? children)
-            (reverse out)
-            (let* ([child (car children)]
-                   [last? (null? (cdr children))]
-                   [child-prefix (string-append
-                                  prefix
-                                  ($guide-child-prefix guides last?))]
-                   [label-lines ($prefix-label-lines
-                                 (rich-tree-label child)
-                                 (string-append prefix
-                                                ($guide-branch guides last?))
-                                 child-prefix)]
-                   [child-lines ($render-node-children
-                                 ($rich-tree-children child)
-                                 child-prefix
-                                 guides)])
-              (loop (cdr children)
-                    (rich-reverse-append child-lines
-                                         (rich-reverse-append label-lines out))))))))
+    (lambda (children prefix guides emit)
+      (let loop ([children children])
+        (unless (null? children)
+          (let* ([child (car children)]
+                 [last? (null? (cdr children))]
+                 [child-prefix ($bounded-guide prefix ($guide-child-prefix guides last?))])
+            (for-each emit
+                      ($prefix-label-lines (rich-tree-label child)
+                                           ($bounded-guide prefix ($guide-branch guides last?))
+                                           child-prefix))
+            ($render-node-children ($rich-tree-children child) child-prefix guides emit)
+            (loop (cdr children)))))))
 
   (define $rich-tree-render/guides
     (lambda (tree guides)
       (parameterize ([rich-layout-render-cache
                       (or (rich-layout-render-cache) (make-eq-hashtable))])
-        (append ($prefix-label-lines (rich-tree-label tree) "" "")
-                ($render-node-children ($rich-tree-children tree) "" guides)))))
+        (let ([lines (make-list-builder)])
+          (for-each lines ($prefix-label-lines (rich-tree-label tree) "" ""))
+          ($render-node-children ($rich-tree-children tree) "" guides lines)
+          (lines)))))
 
   ;;;;===----------------------------------------------------------------------===
   ;;;; Tree
