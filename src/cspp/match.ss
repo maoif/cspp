@@ -73,6 +73,28 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
       (define process-pattern
         (lambda (rho expr-id pat body fk)
+          ;; Conservatively include embedded expressions as well as backreferences.
+          (define mentions-variable?
+            (lambda (pattern variable)
+              (syntax-case pattern ()
+                [(head . tail)
+                 (or (mentions-variable? #'head variable)
+                     (mentions-variable? #'tail variable))]
+                [#(items ...) (exists (lambda (item) (mentions-variable? item variable))
+                                     #'(items ...))]
+                [name (identifier? #'name) (free-identifier=? #'name variable)]
+                [_ #f])))
+          (define bind-suffix-captures
+            (lambda (variables accumulators suffix success generate)
+              (let loop ([variables variables] [accumulators accumulators]
+                         [early '()] [late '()])
+                (if (null? variables)
+                    #`(let (#,@(reverse early))
+                        #,(generate #`(let (#,@(reverse late)) #,success)))
+                    (let ([binding #`[#,(car variables) (reverse #,(car accumulators))]])
+                      (if (mentions-variable? suffix (car variables))
+                          (loop (cdr variables) (cdr accumulators) (cons binding early) late)
+                          (loop (cdr variables) (cdr accumulators) early (cons binding late))))))))
           (define with-pattern-vars
             (lambda (pattern generate)
               (define walk-list
@@ -150,8 +172,10 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                                                                #'(viter (fx1+ i) (cons patvars bindings) ...)
                                                                fk))
                                           (#,fk)))])
-                               (let ([patvars (reverse bindings)] ...)
-                                 #,(process-vector-pats vecid vlen #'i #'pat1 body #'new-fk))))))))]
+                               #,(bind-suffix-captures
+                                  variables #'(bindings ...) #'pat1 body
+                                  (lambda (success)
+                                    (process-vector-pats vecid vlen #'i #'pat1 success #'new-fk)))))))))]
                 [(pat0 pat1 ...)
                  (with-syntax ([(vitem) (generate-temporaries '(vitem))])
                    #`(if (fx< #,veci #,vlen)
@@ -248,8 +272,10 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                                                            fk))
                                       (#,fk)))])
                            ;; Prefer the suffix, extending the repeated prefix on failure.
-                           (let ([patvars (reverse bindings)] ...)
-                             #,(process-pattern rho #'ls #'pat1 body #'new-fk)))))))]
+                           #,(bind-suffix-captures
+                              variables #'(bindings ...) #'pat1 body
+                              (lambda (success)
+                                (process-pattern rho #'ls #'pat1 success #'new-fk))))))))]
               ;; encapsulates (pat ...), (pat . pat), (pat ... . pat)
               [(pat0 . pat1)
                (with-syntax ([(first rest) (generate-temporaries '(first rest))])

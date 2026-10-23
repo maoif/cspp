@@ -932,3 +932,31 @@
                             (list (make-DynamicLiteral 'marker) (make-DynamicValue 20)))
                  [((,(DynamicLiteral (unquote marker)) ,(DynamicValue ,x)) ...) x]
                  [else #f]))))
+
+(mat middle-ellipsis-materialization
+     ;; A fixed literal suffix must not repeatedly materialize all prefix captures.
+     (let* ([source (append (iota 2000) '(stop))]
+            [before (statistics)]
+            [result (match source [(,x ... stop) (length x)] [else #f])]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= result 2000) (< allocated 1000000)))
+
+     (let* ([source (list->vector (append (iota 2000) '(stop)))]
+            [before (statistics)]
+            [result (match source [#(,x ... stop) (length x)] [else #f])]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= result 2000) (< allocated 1000000)))
+
+     ;; Embedded suffix expressions can read prefix captures before body selection.
+     (equal? '(1 2)
+             (match '(1 2 #&2)
+               [(,x ... ,(box `x)) 'wrong]
+               [(,x ... ,(box ,y)) (guard (= y (length x))) x]
+               [else #f]))
+
+     (equal? '(1 2)
+             (match '(1 2 (1 2)) [(,x ... `x) x] [else #f]))
+
+     ;; Selected captures retain ordinary mutable variable semantics.
+     (equal? '(changed)
+             (match '(1 2 stop) [(,x ... stop) (set! x '(changed)) x] [else #f])))
