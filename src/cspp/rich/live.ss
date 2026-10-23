@@ -49,7 +49,9 @@
             (mutable previous-port $rich-live-previous-port $rich-live-previous-port-set!)
             (mutable thread $rich-live-thread $rich-live-thread-set!)
             (mutable stop? $rich-live-stop? $rich-live-stop?-set!)
-            (mutable failure $rich-live-failure $rich-live-failure-set!)))
+            (mutable failure $rich-live-failure $rich-live-failure-set!)
+            (immutable wake-lock $rich-live-wake-lock)
+            (immutable wake-condition $rich-live-wake-condition)))
 
   (define-record-type (rich-status-record $make-rich-status-record $rich-status?)
     (fields (mutable message $rich-status-message $rich-status-message-set!)
@@ -64,11 +66,11 @@
 
   (define $real-nonnegative?
     (lambda (x)
-      (and (real? x) (not (negative? x)))))
+      (and (real? x) (finite? x) (>= x 0))))
 
   (define $real-positive?
     (lambda (x)
-      (and (real? x) (positive? x))))
+      (and (real? x) (finite? x) (positive? x))))
 
   (define $status-message?
     (lambda (x)
@@ -92,13 +94,30 @@
             rounded
             (inexact->exact rounded)))))
 
-  (define $default-sleep
+  (define $sleep-duration
     (lambda (seconds)
-      ($sleep
-       (let* ([milliseconds (max 0 ($round->exact (* seconds 1000)))]
-              [sec (quotient milliseconds 1000)]
-              [nsec (* 1000000 (remainder milliseconds 1000))])
-         (make-time 'time-duration nsec sec)))))
+      (let* ([milliseconds (max 0 ($round->exact (* seconds 1000)))]
+             [sec (quotient milliseconds 1000)]
+             [nsec (* 1000000 (remainder milliseconds 1000))])
+        (make-time 'time-duration nsec sec))))
+
+  (define $default-sleep
+    (lambda (seconds) ($sleep ($sleep-duration seconds))))
+
+  ;; Return true on expiry, false when a setter or shutdown wakes the worker.
+  ;; Custom sleep hooks remain responsible for returning promptly themselves.
+  (define $wait-live
+    (lambda (live)
+      (if (eq? (rich-sleep) $default-sleep)
+          (with-mutex ($rich-live-wake-lock live)
+            (and (not ($rich-live-stop? live))
+                 (let ([rate (rich-live-refresh-rate live)])
+                   (not (condition-wait ($rich-live-wake-condition live)
+                                        ($rich-live-wake-lock live)
+                                        (and (positive? rate) ($sleep-duration (/ 1 rate))))))))
+          (let ([rate (rich-live-refresh-rate live)])
+            ((rich-sleep) (if (positive? rate) (/ 1 rate) 0.05))
+            #t))))
 
   (define $frame-line-count
     (lambda (frame width)
@@ -192,13 +211,15 @@
   (define make-rich-live
     (case-lambda
       [(renderable)
-       ($make-rich-live-record renderable (make-rich-console) 4 #f #f #f #f #f #f #f)]
+       ($make-rich-live-record renderable (make-rich-console) 4 #f #f #f #f #f #f #f
+                               (make-mutex) (make-condition))]
       [(renderable console refresh-rate transient?)
        (pcheck ([rich-console? console]
                 [$real-nonnegative? refresh-rate]
                 [boolean? transient?])
                ($make-rich-live-record renderable console refresh-rate
-                                       transient? #f #f #f #f #f #f))]))
+                                       transient? #f #f #f #f #f #f
+                                       (make-mutex) (make-condition)))]))
 
   #|proc:rich-live-renderable
   The `rich-live-renderable` procedure returns the renderable for `live`.
@@ -249,7 +270,9 @@
   (define rich-live-refresh-rate-set!
     (lambda (live refresh-rate)
       (pcheck ([rich-live? live] [$real-nonnegative? refresh-rate])
-              ($rich-live-refresh-rate-set! live refresh-rate))))
+              (with-mutex ($rich-live-wake-lock live)
+                ($rich-live-refresh-rate-set! live refresh-rate)
+                (condition-signal ($rich-live-wake-condition live))))))
 
   #|proc:rich-live-transient?
   The `rich-live-transient?` procedure returns whether `live` clears output on
@@ -322,25 +345,27 @@
                                        ($rich-live-stop?-set! live #t)
                                        ($rich-live-started?-set! live #f)])
                                 (let loop ()
-                                (unless ($rich-live-stop? live)
-                                  (let ([rate (rich-live-refresh-rate live)])
-                                    ;; Poll a paused worker so a later positive rate resumes it.
-                                    ((rich-sleep) (if (positive? rate) (/ 1 rate) 0.05)))
                                   (unless ($rich-live-stop? live)
-                                    (when (positive? (rich-live-refresh-rate live))
-                                      (rich-live-refresh! live))
-                                    (loop)))))))])
+                                    (let ([expired? ($wait-live live)])
+                                      (unless ($rich-live-stop? live)
+                                        (when (and expired?
+                                                   (positive? (rich-live-refresh-rate live)))
+                                          (rich-live-refresh! live))
+                                        (loop))))))))])
                       ($rich-live-thread-set! live thread)))))
               live)))
 
   #|proc:rich-live-stop!
   The `rich-live-stop!` procedure stops refreshing `live` and returns `live`.
-  If its worker failed, cleanup finishes before the saved condition is raised once.
+  The default wait is interrupted immediately; custom `rich-sleep` hooks must return
+  themselves. If its worker failed, cleanup finishes before its condition is raised once.
   |#
   (define rich-live-stop!
     (lambda (live)
       (pcheck ([rich-live? live])
-        ($rich-live-stop?-set! live #t)
+        (with-mutex ($rich-live-wake-lock live)
+          ($rich-live-stop?-set! live #t)
+          (condition-signal ($rich-live-wake-condition live)))
         (when ($rich-live-thread live)
           (thread-join ($rich-live-thread live))
           ($rich-live-thread-set! live #f))

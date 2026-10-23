@@ -70,9 +70,24 @@ FAILURE = RECOVERY[:RECOVERY.index("(set! fail? #f)")] + r'''
 '''
 
 
+STOP = r'''
+(import (cspp))
+(define output (open-output-string))
+(define live (make-rich-live "x" (rich-console :output-port output) 1/10 #f))
+(rich-live-start! live)
+((rich-sleep) 0.05)
+(define before (current-time 'time-monotonic))
+(rich-live-stop! live)
+(define duration (time-difference (current-time 'time-monotonic) before))
+(close-port output)
+(unless (< (+ (time-second duration) (/ (time-nanosecond duration) 1e9)) 0.5)
+  (error 'live-stop "shutdown waited for the refresh interval"))
+'''
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-live-") as directory:
-        for name, source in (("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE)):
+        for name, source in (("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE), ("stop", STOP)):
             probe = Path(directory) / (name + ".ss")
             probe.write_text(source)
             result = subprocess.run([str(ROOT / "cspp"), "--script=" + str(probe)],
