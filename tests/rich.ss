@@ -1721,3 +1721,22 @@
      (error? (rich-test-confirm "MAYBE\n" #t))
 
      )
+
+(mat rich-prompt-flush
+
+     (let* ([chunks (make-list-builder)]
+            [output (make-custom-textual-output-port
+                     "rich-prompt-flush"
+                     (lambda (text start count)
+                       (chunks (substring text start (+ start count))) count)
+                     #f #f #f)]
+            [input (open-input-string "Bob\n")])
+       (dynamic-wind
+         void
+         (lambda ()
+           (and (equal? "Bob" (rich-prompt
+                              (rich-console :output-port output :input-port input) "Name"))
+                (equal? '("Name: ") (chunks))))
+         (lambda () (close-port input) (close-port output))))
+
+     )

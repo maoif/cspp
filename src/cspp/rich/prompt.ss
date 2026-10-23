@@ -50,6 +50,7 @@
                [$default? default]
                [$choices? choices])
               (rich-print console message ": ")
+              (flush-output-port (rich-console-output-port console))
               (let* ([line ($read-line (rich-console-input-port console))]
                      [value (if (and (string=? line "") default)
                                 default
@@ -115,6 +116,7 @@
                         (errorf 'rich-password
                                 "terminal no-echo input is not supported"))
                       (rich-print console message ": ")
+                      (flush-output-port (rich-console-output-port console))
                       (let ([password
                              (dynamic-wind
                                (lambda ()
