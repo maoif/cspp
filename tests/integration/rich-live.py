@@ -85,9 +85,28 @@ STOP = r'''
 '''
 
 
+STATUS = r'''
+(import (cspp))
+(define first (open-output-string))
+(define second (open-output-string))
+(define status (make-rich-status "Working" (rich-console :output-port first) '("*") 10))
+(rich-status-start! status)
+((rich-sleep) 0.02)
+(rich-status-console-set! status (rich-console :output-port second))
+(rich-status-interval-set! status 0.005)
+((rich-sleep) 0.05)
+(rich-status-stop! status)
+(define result (get-output-string second))
+(close-port first)
+(close-port second)
+(unless (string-contains? result "* Working")
+  (error 'status-setters "active status ignored its new console or interval"))
+'''
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-live-") as directory:
-        for name, source in (("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE), ("stop", STOP)):
+        for name, source in (("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE), ("stop", STOP), ("status", STATUS)):
             probe = Path(directory) / (name + ".ss")
             probe.write_text(source)
             result = subprocess.run([str(ROOT / "cspp"), "--script=" + str(probe)],

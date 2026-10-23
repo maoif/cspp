@@ -494,12 +494,15 @@
               ($rich-status-console status))))
 
   #|proc:rich-status-console-set!
-  The `rich-status-console-set!` procedure sets the console for `status`.
+  The `rich-status-console-set!` procedure sets `console` for `status` and its active
+  live display, if any. Returns unspecified.
   |#
   (define rich-status-console-set!
     (lambda (status console)
       (pcheck ([rich-status? status] [rich-console? console])
-              ($rich-status-console-set! status console))))
+              ($rich-status-console-set! status console)
+              (when ($rich-status-live status)
+                (rich-live-console-set! ($rich-status-live status) console)))))
 
   #|proc:rich-status-frames
   The `rich-status-frames` procedure returns the spinner frames for `status`.
@@ -527,13 +530,15 @@
               ($rich-status-interval status))))
 
   #|proc:rich-status-interval-set!
-  The `rich-status-interval-set!` procedure sets the spinner frame interval for
-  `status`.
+  The `rich-status-interval-set!` procedure sets finite positive `interval` in seconds
+  for `status`, also changing its active refresh rate. Returns unspecified.
   |#
   (define rich-status-interval-set!
     (lambda (status interval)
       (pcheck ([rich-status? status] [$real-positive? interval])
-              ($rich-status-interval-set! status interval))))
+              ($rich-status-interval-set! status interval)
+              (when ($rich-status-live status)
+                (rich-live-refresh-rate-set! ($rich-status-live status) (/ 1 interval))))))
 
   #|proc:rich-status-render
   The `rich-status-render` procedure renders `status` as one segment line.
