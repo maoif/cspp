@@ -1953,3 +1953,24 @@
                (rich-progress-advance! progress id 1e308)))
 
      )
+
+(mat rich-empty-live-frame
+
+     (equal? "unrelatednext"
+             (rich-string-output
+              (lambda (port)
+                (display "unrelated" port)
+                (let ([live (make-rich-live "" (rich-console :output-port port) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "next")
+                  (rich-live-refresh! live)))))
+
+     (equal? "unrelated"
+             (rich-string-output
+              (lambda (port)
+                (display "unrelated" port)
+                (let ([live (make-rich-live "" (rich-console :output-port port) 0 #t)])
+                  (rich-live-start! live)
+                  (rich-live-stop! live)))))
+
+     )

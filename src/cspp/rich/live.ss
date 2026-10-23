@@ -101,7 +101,7 @@
 
   (define $frame-line-count
     (lambda (frame width)
-      (if (not frame)
+      (if (or (not frame) (string=? frame ""))
           0
           (let ([len (string-length frame)])
             (let loop ([i 0] [column 0] [rows 1])
