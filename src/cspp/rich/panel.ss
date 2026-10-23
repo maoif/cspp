@@ -350,8 +350,7 @@
                [initial-budget (max 1 (- available (* 2 initial-padding) 2))]
                [raw (parameterize
                      ([rich-render-width
-                       (if fixed initial-budget
-                           (max initial-budget (min 2 available)))])
+                       (max initial-budget (if fixed 2 (min 2 available)))])
                       ($panel-body-lines panel))]
                [minimum (rich-lines-min-width raw)]
                [padding (if fixed initial-padding

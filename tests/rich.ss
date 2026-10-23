@@ -1511,3 +1511,17 @@
          (and (< calls 100) (string-contains? output "x"))))
 
      )
+
+(mat rich-explicit-panel-nested-glyphs
+
+     (equal? "+----+\n| 界 |\n+----+"
+             (rich-test-render-text
+              (rich-console :width 80)
+              (rich-panel :width 3 :body (rich-align :body "界"))))
+
+     (equal? "+----+\n| 界 |\n+----+"
+             (rich-test-render-text
+              (rich-console :width 80)
+              (rich-panel :width 3 :body (rich-panel :body "界"))))
+
+     )
