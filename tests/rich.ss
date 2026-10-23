@@ -1974,3 +1974,19 @@
                   (rich-live-stop! live)))))
 
      )
+
+(mat rich-transient-stop-idempotent
+
+     (let* ([port (open-output-string)]
+            [live (make-rich-live "x" (rich-console :output-port port) 0 #t)])
+       (close-port port)
+       (eq? live (rich-live-stop! live)))
+
+     (let* ([port (open-output-string)]
+            [live (make-rich-live "x" (rich-console :output-port port) 0 #t)])
+       (rich-live-start! live)
+       (rich-live-stop! live)
+       (close-port port)
+       (eq? live (rich-live-stop! live)))
+
+     )

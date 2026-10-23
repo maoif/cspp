@@ -341,7 +341,7 @@
                             (lambda ()
                               (guard (condition
                                       [else
-                                       ($rich-live-failure-set! live condition)
+                                       ($rich-live-failure-set! live (list condition))
                                        ($rich-live-stop?-set! live #t)
                                        ($rich-live-started?-set! live #f)])
                                 (let loop ()
@@ -369,7 +369,7 @@
         (when ($rich-live-thread live)
           (thread-join ($rich-live-thread live))
           ($rich-live-thread-set! live #f))
-        (when (rich-live-transient? live)
+        (when (and (rich-live-transient? live) ($rich-live-previous-frame live))
           (let ([port (rich-console-output-port (rich-live-console live))])
             (when (eq? port ($rich-live-previous-port live))
               ($clear-live-output
@@ -381,7 +381,7 @@
         ($rich-live-started?-set! live #f)
         (let ([failure ($rich-live-failure live)])
           ($rich-live-failure-set! live #f)
-          (when failure (raise failure)))
+          (when failure (raise (car failure))))
         live)))
 
   #|macro:rich-live

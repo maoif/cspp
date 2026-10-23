@@ -106,7 +106,9 @@ STATUS = r'''
 
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-live-") as directory:
-        for name, source in (("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE), ("stop", STOP), ("status", STATUS)):
+        for name, source in (("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE),
+                             ("false-failure", FAILURE.replace(
+                                 '(error \'worker-recovery "later frame failed")', "(raise #f)")), ("stop", STOP), ("status", STATUS)):
             probe = Path(directory) / (name + ".ss")
             probe.write_text(source)
             result = subprocess.run([str(ROOT / "cspp"), "--script=" + str(probe)],
