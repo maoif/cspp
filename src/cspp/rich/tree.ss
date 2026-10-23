@@ -135,13 +135,18 @@
              [prefix-width (min (rich-segment-width (rich-segment first-prefix))
                                 (- available 1))]
              [width (- available prefix-width)]
-             [raw (parameterize ([rich-render-width (max width (min 2 available))])
+             [measure-width (max width (min 2 available))]
+             [raw (parameterize ([rich-render-width measure-width])
                     ($value->segment-lines label))]
              [prefix-width (min prefix-width (max 0 (- available (rich-lines-min-width raw))))]
+             [child-width (- available prefix-width)]
+             [raw (if (= child-width measure-width) raw
+                      (parameterize ([rich-render-width child-width])
+                        ($value->segment-lines label)))]
              [prefix (lambda (text)
                        (rich-segments->plain
                         (rich-segment-crop (list (rich-segment text)) prefix-width)))]
-             [lines (rich-lines-wrap raw (- available prefix-width))])
+             [lines (rich-lines-wrap raw child-width)])
         (if (null? lines)
             (list (list (rich-segment (prefix first-prefix))))
             (let loop ([lines lines] [first? #t] [out '()])
@@ -176,8 +181,10 @@
 
   (define $rich-tree-render/guides
     (lambda (tree guides)
-      (append ($prefix-label-lines (rich-tree-label tree) "" "")
-            ($render-node-children (rich-tree-children tree) "" guides))))
+      (parameterize ([rich-layout-render-cache
+                      (or (rich-layout-render-cache) (make-eq-hashtable))])
+        (append ($prefix-label-lines (rich-tree-label tree) "" "")
+                ($render-node-children (rich-tree-children tree) "" guides)))))
 
   ;;;;===----------------------------------------------------------------------===
   ;;;; Tree

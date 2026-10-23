@@ -502,19 +502,26 @@
   (define rich-padding-render
     (lambda (padding)
       (pcheck ([rich-padding? padding])
-        (let* ([available (rich-render-width)]
-               [left (min (rich-padding-left padding) (- available 1))]
-               [right (min (rich-padding-right padding) (- available left 1))]
-               [width (- available left right)]
-               [raw (parameterize ([rich-render-width (max width (min 2 available))])
-                      ($value->segment-lines (rich-padding-body padding)))]
-               [minimum (min available (rich-lines-min-width raw))]
-               [left (min left (- available minimum))]
-               [right (min right (- available left minimum))]
-               [lines (rich-lines-wrap raw (- available left right))])
-          (append ($blank-lines (rich-padding-top padding))
-                  (map (lambda (line) ($pad-line line left right)) lines)
-                  ($blank-lines (rich-padding-bottom padding)))))))
+        (parameterize ([rich-layout-render-cache
+                        (or (rich-layout-render-cache) (make-eq-hashtable))])
+          (let* ([available (rich-render-width)]
+                 [left (min (rich-padding-left padding) (- available 1))]
+                 [right (min (rich-padding-right padding) (- available left 1))]
+                 [width (- available left right)]
+                 [measure-width (max width (min 2 available))]
+                 [raw (parameterize ([rich-render-width measure-width])
+                        ($value->segment-lines (rich-padding-body padding)))]
+                 [minimum (min available (rich-lines-min-width raw))]
+                 [left (min left (- available minimum))]
+                 [right (min right (- available left minimum))]
+                 [child-width (- available left right)]
+                 [raw (if (= child-width measure-width) raw
+                          (parameterize ([rich-render-width child-width])
+                            ($value->segment-lines (rich-padding-body padding))))]
+                 [lines (rich-lines-wrap raw child-width)])
+            (append ($blank-lines (rich-padding-top padding))
+                    (map (lambda (line) ($pad-line line left right)) lines)
+                    ($blank-lines (rich-padding-bottom padding))))))))
 
   #|macro:rich-padding
   The `rich-padding` macro constructs and returns a padding renderable.
@@ -908,22 +915,28 @@
   (define rich-layout-render
     (lambda (layout)
       (pcheck ([rich-layout? layout])
-        (let* ([items (rich-layout-items layout)] [count (length items)]
-               [available (rich-render-width)]
-               [row? (and (eq? (rich-layout-direction layout) 'row)
-                          (>= available (- (* 2 count) 1)))]
-               [width (if (and row? (positive? count))
-                          (max 1 (quotient (- available (- count 1)) count)) available)]
-               [raw (parameterize ([rich-render-width (max width (min 2 available))])
-                      (map $value->segment-lines items))]
-               [row? (and row? (andmap (lambda (lines) (<= (rich-lines-min-width lines) width))
-                                      raw))])
-          (if row?
-              ($render-horizontal-blocks
-               (map (lambda (lines)
-                      (let ([lines (rich-lines-wrap lines width)])
-                        (cons lines ($segment-lines-width lines)))) raw) 1)
-              (apply append (map (lambda (lines) (rich-lines-wrap lines available)) raw)))))))
+        (parameterize ([rich-layout-render-cache
+                        (or (rich-layout-render-cache) (make-eq-hashtable))])
+          (let* ([items (rich-layout-items layout)] [count (length items)]
+                 [available (rich-render-width)]
+                 [row? (and (eq? (rich-layout-direction layout) 'row)
+                            (>= available (- (* 2 count) 1)))]
+                 [width (if (and row? (positive? count))
+                            (max 1 (quotient (- available (- count 1)) count)) available)]
+                 [measure-width (max width (min 2 available))]
+                 [raw (parameterize ([rich-render-width measure-width])
+                        (map $value->segment-lines items))]
+                 [row? (and row? (andmap (lambda (lines) (<= (rich-lines-min-width lines) width))
+                                        raw))]
+                 [raw (if (or (not row?) (= width measure-width)) raw
+                          (parameterize ([rich-render-width width])
+                            (map $value->segment-lines items)))])
+            (if row?
+                ($render-horizontal-blocks
+                 (map (lambda (lines)
+                        (let ([lines (rich-lines-wrap lines width)])
+                          (cons lines ($segment-lines-width lines)))) raw) 1)
+                (apply append (map (lambda (lines) (rich-lines-wrap lines available)) raw))))))))
 
   #|macro:rich-layout
   The `rich-layout` macro constructs and returns a layout renderable. The

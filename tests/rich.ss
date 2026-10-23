@@ -1525,3 +1525,42 @@
               (rich-panel :width 3 :body (rich-panel :body "界"))))
 
      )
+
+(mat rich-container-final-child-width
+
+     (equal? "+-+\n|-|\n+-+"
+             (rich-test-render-text (rich-console :width 3)
+                                    (rich-panel :body (make-rich-rule))))
+
+     (equal? "  -"
+             (rich-test-render-text (rich-console :width 3)
+                                    (rich-padding :left 2 :body (make-rich-rule))))
+
+     (let ([tree (make-rich-tree "a")])
+       (rich-tree-add! tree (make-rich-rule))
+       (equal? "a\n└── -" (rich-test-render-text (rich-console :width 5) tree)))
+
+     (equal? "- -"
+             (rich-test-render-text
+              (rich-console :width 3)
+              (make-rich-layout 'row (list (make-rich-rule) (make-rich-rule)))))
+
+     (let ([calls 0] [value (vector 'final-child-width-once)])
+       (rich-register-renderer!
+        (lambda (candidate) (eq? candidate value))
+        (lambda (value) (set! calls (+ calls 1)) "ab"))
+       (let ([panel (rich-panel :body value)]
+             [padding (rich-padding :left 2 :body value)]
+             [tree (make-rich-tree "a")]
+             [layout (make-rich-layout 'row (list value "x"))])
+         (rich-tree-add! tree value)
+         (andmap
+          (lambda (value width expected)
+            (set! calls 0)
+            (and (equal? expected (rich-test-render-text (rich-console :width width) value))
+                 (= calls 1)))
+          (list panel padding tree layout)
+          '(3 3 5 3)
+          '("+-+\n|a|\n|b|\n+-+" "  a\n  b" "a\n└── a\n    b" "a x\nb "))))
+
+     )

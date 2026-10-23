@@ -342,39 +342,46 @@
   (define rich-panel-render
     (lambda (panel)
       (pcheck ([rich-panel? panel])
-        (let* ([fixed (rich-panel-width panel)]
-               [available (or fixed (rich-render-width))]
-               [initial-padding (if fixed (rich-panel-padding panel)
-                                    (min (rich-panel-padding panel)
-                                         (max 0 (quotient (- available 3) 2))))]
-               [initial-budget (max 1 (- available (* 2 initial-padding) 2))]
-               [raw (parameterize
-                     ([rich-render-width
-                       (max initial-budget (if fixed 2 (min 2 available)))])
-                      ($panel-body-lines panel))]
-               [minimum (rich-lines-min-width raw)]
-               [padding (if fixed initial-padding
-                            (min initial-padding (max 0 (quotient (- available 2 minimum) 2))))]
-               [budget (max 1 (- available (* 2 padding) 2))]
-               [lines (if fixed raw (rich-lines-wrap raw budget))]
-               [natural-total-width (+ ($segment-lines-width lines) (* padding 2) 2)]
-               [total-width (if fixed (max fixed natural-total-width)
-                                (min available natural-total-width))]
-               [content-width (max 0 (- total-width (* padding 2) 2))]
-               [natural-total-height (+ (length lines) 2)]
-               [total-height (if (rich-panel-height panel)
-                                 (max (rich-panel-height panel) natural-total-height)
-                                 natural-total-height)]
-               [chars (rich-box-chars (rich-panel-box panel))])
-          (if (and (not fixed) (< available (+ 2 minimum)))
-              (rich-lines-wrap raw available)
-              (append
-               (list ($border-line chars (vector-ref chars 0) (vector-ref chars 1)
-                                   (- total-width 2)))
-               (map (lambda (line) ($content-line chars line content-width padding))
-                    (append lines ($blank-lines (- total-height natural-total-height))))
-               (list ($border-line chars (vector-ref chars 2) (vector-ref chars 3)
-                                   (- total-width 2)))))))))
+        (parameterize ([rich-layout-render-cache
+                        (or (rich-layout-render-cache) (make-eq-hashtable))])
+          (let* ([fixed (rich-panel-width panel)]
+                 [available (or fixed (rich-render-width))]
+                 [initial-padding (if fixed (rich-panel-padding panel)
+                                      (min (rich-panel-padding panel)
+                                           (max 0 (quotient (- available 3) 2))))]
+                 [initial-budget (max 1 (- available (* 2 initial-padding) 2))]
+                 [measure-width (max initial-budget (if fixed 2 (min 2 available)))]
+                 [raw (parameterize
+                       ([rich-render-width measure-width])
+                        ($panel-body-lines panel))]
+                 [minimum (rich-lines-min-width raw)]
+                 [padding (if fixed initial-padding
+                              (min initial-padding (max 0 (quotient (- available 2 minimum) 2))))]
+                 [budget (max 1 (- available (* 2 padding) 2))]
+                 [unboxed? (and (not fixed) (< available (+ 2 minimum)))]
+                 [child-width (if unboxed? available budget)]
+                 [raw (if (or fixed (= child-width measure-width)) raw
+                          (parameterize ([rich-render-width child-width])
+                            ($panel-body-lines panel)))]
+                 [lines (if fixed raw (rich-lines-wrap raw budget))]
+                 [natural-total-width (+ ($segment-lines-width lines) (* padding 2) 2)]
+                 [total-width (if fixed (max fixed natural-total-width)
+                                  (min available natural-total-width))]
+                 [content-width (max 0 (- total-width (* padding 2) 2))]
+                 [natural-total-height (+ (length lines) 2)]
+                 [total-height (if (rich-panel-height panel)
+                                   (max (rich-panel-height panel) natural-total-height)
+                                   natural-total-height)]
+                 [chars (rich-box-chars (rich-panel-box panel))])
+            (if unboxed?
+                (rich-lines-wrap raw available)
+                (append
+                 (list ($border-line chars (vector-ref chars 0) (vector-ref chars 1)
+                                     (- total-width 2)))
+                 (map (lambda (line) ($content-line chars line content-width padding))
+                      (append lines ($blank-lines (- total-height natural-total-height))))
+                 (list ($border-line chars (vector-ref chars 2) (vector-ref chars 3)
+                                     (- total-width 2))))))))))
 
   #|macro:rich-panel
   The `rich-panel` macro constructs and returns a panel. The `:body` field is
