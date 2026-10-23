@@ -2087,3 +2087,19 @@
        (equal? (list first) children))
 
      )
+
+(mat rich-progress-insertion-allocation
+
+     ;; Task creation must not repeatedly copy the existing task list.
+     (let ([progress (make-rich-progress #f '(description))] [size 2000])
+       (collect)
+       (let ([before (statistics)])
+         (do ([index 0 (+ index 1)]) ((= index size))
+           (rich-progress-add-task! progress (number->string index) 10))
+         (let* ([allocated (sstats-bytes (sstats-difference (statistics) before))]
+                [lines (map rich-segments->plain (rich-progress-render progress))])
+           (and (< allocated (* size 4096)) (= size (length lines))
+                (equal? "0   " (car lines))
+                (equal? "1999" (list-ref lines (- size 1)))))))
+
+     )

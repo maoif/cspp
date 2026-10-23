@@ -22,6 +22,7 @@
           rich-progress-task-visible?-set!)
   (import (cspp chez)
           (cspp utils)
+          (only (cspp list) make-list-builder)
           (cspp rich private common)
           (cspp rich segment)
           (cspp rich renderable)
@@ -31,7 +32,7 @@
     (fields (mutable next-id $rich-progress-next-id $rich-progress-next-id-set!)
             (mutable width $rich-progress-width $rich-progress-width-set!)
             (mutable columns $rich-progress-columns $rich-progress-columns-set!)
-            (mutable tasks $rich-progress-tasks $rich-progress-tasks-set!)
+            (immutable tasks $rich-progress-task-builder)
             (mutable live $rich-progress-live $rich-progress-live-set!)))
 
   (define-record-type (rich-progress-task-record $make-rich-progress-task-record $rich-progress-task?)
@@ -63,12 +64,8 @@
                                   spinner)) #t))
             x))))
 
-  (define $append-one
-    (lambda (ls value)
-      (let loop ([ls ls] [out '()])
-        (if (null? ls)
-            (rich-reverse-append out (list value))
-            (loop (cdr ls) (cons (car ls) out))))))
+  (define $rich-progress-tasks
+    (lambda (progress) (($rich-progress-task-builder progress))))
 
   (define $progress-task-ref
     (lambda (progress id who)
@@ -325,10 +322,10 @@
   (define make-rich-progress
     (case-lambda
       [()
-       ($make-rich-progress-record 0 #f (rich-progress-default-columns) '() #f)]
+       ($make-rich-progress-record 0 #f (rich-progress-default-columns) (make-list-builder) #f)]
       [(width columns)
        (pcheck ([rich-optional-width? width] [$columns? columns])
-               ($make-rich-progress-record 0 width columns '() #f))]))
+               ($make-rich-progress-record 0 width columns (make-list-builder) #f))]))
 
   (define $rich-progress-width-set!/checked
     (lambda (progress width)
@@ -354,9 +351,7 @@
                      [task ($make-rich-progress-task-record
                             id description total 0 #t ((rich-current-time)) #f)])
                 ($rich-progress-next-id-set! progress (+ id 1))
-                ($rich-progress-tasks-set!
-                 progress
-                 ($append-one ($rich-progress-tasks progress) task))
+                (($rich-progress-task-builder progress) task)
                 id))))
 
   #|proc:rich-progress-update!
