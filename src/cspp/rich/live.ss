@@ -48,7 +48,8 @@
             (mutable previous-frame $rich-live-previous-frame $rich-live-previous-frame-set!)
             (mutable previous-port $rich-live-previous-port $rich-live-previous-port-set!)
             (mutable thread $rich-live-thread $rich-live-thread-set!)
-            (mutable stop? $rich-live-stop? $rich-live-stop?-set!)))
+            (mutable stop? $rich-live-stop? $rich-live-stop?-set!)
+            (mutable failure $rich-live-failure $rich-live-failure-set!)))
 
   (define-record-type (rich-status-record $make-rich-status-record $rich-status?)
     (fields (mutable message $rich-status-message $rich-status-message-set!)
@@ -191,13 +192,13 @@
   (define make-rich-live
     (case-lambda
       [(renderable)
-       ($make-rich-live-record renderable (make-rich-console) 4 #f #f #f #f #f #f)]
+       ($make-rich-live-record renderable (make-rich-console) 4 #f #f #f #f #f #f #f)]
       [(renderable console refresh-rate transient?)
        (pcheck ([rich-console? console]
                 [$real-nonnegative? refresh-rate]
                 [boolean? transient?])
                ($make-rich-live-record renderable console refresh-rate
-                                       transient? #f #f #f #f #f))]))
+                                       transient? #f #f #f #f #f #f))]))
 
   #|proc:rich-live-renderable
   The `rich-live-renderable` procedure returns the renderable for `live`.
@@ -292,11 +293,17 @@
   #|proc:rich-live-start!
   The `rich-live-start!` procedure starts refreshing `live` and returns `live`.
   If the first refresh fails, the error is raised and `live` remains ready to retry.
+  A later worker failure stops refreshing and allows restart after its cause is repaired.
+  Stopping a failed display raises its saved failure after cleanup.
   |#
   (define rich-live-start!
     (lambda (live)
       (pcheck ([rich-live? live])
               (unless ($rich-live-started? live)
+                (when ($rich-live-thread live)
+                  (thread-join ($rich-live-thread live))
+                  ($rich-live-thread-set! live #f))
+                ($rich-live-failure-set! live #f)
                 (guard (condition
                         [else
                          ($rich-live-stop?-set! live #t)
@@ -309,7 +316,12 @@
                     (let ([thread
                            (fork-thread
                             (lambda ()
-                              (let loop ()
+                              (guard (condition
+                                      [else
+                                       ($rich-live-failure-set! live condition)
+                                       ($rich-live-stop?-set! live #t)
+                                       ($rich-live-started?-set! live #f)])
+                                (let loop ()
                                 (unless ($rich-live-stop? live)
                                   (let ([rate (rich-live-refresh-rate live)])
                                     ;; Poll a paused worker so a later positive rate resumes it.
@@ -317,32 +329,35 @@
                                   (unless ($rich-live-stop? live)
                                     (when (positive? (rich-live-refresh-rate live))
                                       (rich-live-refresh! live))
-                                    (loop))))))])
+                                    (loop)))))))])
                       ($rich-live-thread-set! live thread)))))
               live)))
 
   #|proc:rich-live-stop!
   The `rich-live-stop!` procedure stops refreshing `live` and returns `live`.
+  If its worker failed, cleanup finishes before the saved condition is raised once.
   |#
   (define rich-live-stop!
     (lambda (live)
       (pcheck ([rich-live? live])
-              (when ($rich-live-started? live)
-                ($rich-live-stop?-set! live #t)
-                (when ($rich-live-thread live)
-                  (thread-join ($rich-live-thread live))
-                  ($rich-live-thread-set! live #f))
-                (when (rich-live-transient? live)
-                  (let ([port (rich-console-output-port (rich-live-console live))])
-                    (when (eq? port ($rich-live-previous-port live))
-                      ($clear-live-output
-                       port ($frame-line-count ($rich-live-previous-frame live)
-                                               (rich-console-output-width (rich-live-console live)))))
-                    (flush-output-port port)
-                    ($rich-live-previous-frame-set! live #f)
-                    ($rich-live-previous-port-set! live #f)))
-                ($rich-live-started?-set! live #f))
-              live)))
+        ($rich-live-stop?-set! live #t)
+        (when ($rich-live-thread live)
+          (thread-join ($rich-live-thread live))
+          ($rich-live-thread-set! live #f))
+        (when (rich-live-transient? live)
+          (let ([port (rich-console-output-port (rich-live-console live))])
+            (when (eq? port ($rich-live-previous-port live))
+              ($clear-live-output
+               port ($frame-line-count ($rich-live-previous-frame live)
+                                       (rich-console-output-width (rich-live-console live)))))
+            (flush-output-port port)
+            ($rich-live-previous-frame-set! live #f)
+            ($rich-live-previous-port-set! live #f)))
+        ($rich-live-started?-set! live #f)
+        (let ([failure ($rich-live-failure live)])
+          ($rich-live-failure-set! live #f)
+          (when failure (raise failure)))
+        live)))
 
   #|macro:rich-live
   The `rich-live` macro constructs and returns a live display. The
