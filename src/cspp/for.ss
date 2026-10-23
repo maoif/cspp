@@ -138,19 +138,20 @@
                                    (cons conf (car (generate-temporaries '(guard-index))))]
                                   [_ #f]))
                               (or frag-config '())))])
-           (with-syntax ([(for-loop t-acc t-finish) (generate-temporaries '(for-loop t-acc t-finish))])
+           (with-syntax ([(for-loop t-acc t-finish state-acc state-index)
+                          (generate-temporaries '(for-loop t-acc t-finish state-acc state-index))])
              (let* ([iter-frags (process-iter-clauses (hashtable-ref fragments 'iter #f))]
                     [init-def (if frag-init
-                                  (syntax-case frag-init () [(_ v e) #'[v e]])
+                                  (syntax-case frag-init () [(_ v e) #'[state-acc e]])
                                   #f)]
                     [index-def (if frag-index
-                                   (syntax-case frag-index () [(_ v) #'[v 0]])
+                                   (syntax-case frag-index () [(_ v) #'[state-index 0]])
                                    #f)]
                     [init-var (if frag-init
-                                  (syntax-case frag-init () [(_ v e) #'v])
+                                  #'state-acc
                                   #f)]
                     [index-var (if frag-index
-                                   (syntax-case frag-index () [(_ v) #'v])
+                                   #'state-index
                                    #f)]
                     [gen-preloops (fold-left (lambda (res x*)
                                                (if (list-ref x* 0)
@@ -166,12 +167,21 @@
                     [updates (let ([res (map (lambda (x*) (list-ref x* 3)) iter-frags)])
                                (when frag-index
                                  (set! res (cons (syntax-case frag-index ()
-                                                   [(_ v) #'(fx1+ v)])
+                                                   [(_ v) #'(fx1+ state-index)])
                                                  res)))
                                (when frag-init
                                  (set! res (cons #'t-acc res)))
                                res)]
-                    [gen-getters (map (lambda (x*) (list-ref x* 4)) iter-frags)]
+                    [gen-getters
+                     (cons (lambda (body)
+                             #`(let (#,@(if frag-init
+                                            (list #`[#,(syntax-case frag-init () [(_ v e) #'v]) state-acc])
+                                            '())
+                                     #,@(if frag-index
+                                            (list #`[#,(syntax-case frag-index () [(_ v) #'v]) state-index])
+                                            '()))
+                                 #,body))
+                           (map (lambda (x*) (list-ref x* 4)) iter-frags))]
                     [call/finish-proc (if frag-finish
                                           (let ([params '()])
                                             (when frag-index
@@ -183,7 +193,8 @@
                                                                    [(_ v _) #'v])
                                                                  params)))
                                             ;; code to call `t-finish` and its def
-                                            (list #`(t-finish #,@params)
+                                            (list #`(t-finish #,@(if frag-init (list #'state-acc) '())
+                                                                  #,@(if frag-index (list #'state-index) '()))
                                                   #`(lambda #,params
                                                       #,(syntax-case frag-finish ()
                                                           [(_ e) #'e]))))
@@ -244,8 +255,7 @@
                                                         #`(if e
                                                               #,(lp-configs (cdr configs))
                                                               #,(if frag-init
-                                                                    #`(let ([t-acc #,(syntax-case frag-init ()
-                                                                                       [(_ v e) #'v])])
+                                                                    #`(let ([t-acc state-acc])
                                                                         (for-loop #,@updates))
                                                                     #`(for-loop #,@updates)))]
                                                        [(:let v e)
@@ -347,25 +357,26 @@
                 [frag-index       (hashtable-ref fragments 'index #f)]
                 [frag-finish      (hashtable-ref fragments 'finish #f)]
                 [frag-iter/config (hashtable-ref fragments 'iter/config #f)])
-           (with-syntax ([(t-acc t-finish) (generate-temporaries '(t-acc t-finish))])
+           (with-syntax ([(t-acc t-finish state-acc state-index)
+                          (generate-temporaries '(t-acc t-finish state-acc state-index))])
              (let* ([init-def (if frag-init
-                                  (syntax-case frag-init () [(_ v e) #'[v e]])
+                                  (syntax-case frag-init () [(_ v e) #'[state-acc e]])
                                   #f)]
                     [index-def (if frag-index
-                                   (syntax-case frag-index () [(_ v) #'[v 0]])
+                                   (syntax-case frag-index () [(_ v) #'[state-index 0]])
                                    #f)]
                     [init-var (if frag-init
-                                  (syntax-case frag-init () [(_ v e) #'v])
+                                  #'state-acc
                                   #f)]
                     [index-var (if frag-index
-                                   (syntax-case frag-index () [(_ v) #'v])
+                                   #'state-index
                                    #f)]
                     [init/index-vars (let* ([vars (if frag-index (list index-var)    '())]
                                             [vars (if frag-init  (cons init-var vars) vars)])
                                        vars)]
                     ;; (((gen-preloop loop-var tycheck term-check update gen-getter) config0 config1 ...) ...)
                     [iters/configs (map (lambda (i/c)
-                                          (cons (process-iter-clause (car i/c))
+                                          (cons (cons (process-iter-clause (car i/c)) (car i/c))
                                                 (cdr i/c)))
                                         frag-iter/config)]
                     [call/finish-proc (if frag-finish
@@ -379,7 +390,8 @@
                                                                    [(_ v _) #'v])
                                                                  params)))
                                             ;; code to call `t-finish` and its def
-                                            (list #`(t-finish #,@params)
+                                            (list #`(t-finish #,@(if frag-init (list #'state-acc) '())
+                                                                  #,@(if frag-index (list #'state-index) '()))
                                                   #`(lambda #,params
                                                       #,(syntax-case frag-finish ()
                                                           [(_ e) #'e]))))
@@ -391,7 +403,7 @@
                ;; (printf "index-var: ~a~n" index-var)
                ;; (println "for* -------------------------")
                #`(let ([t-finish #,(cadr call/finish-proc)])
-                   #,(let lp-for-loop ([i/c* iters/configs] [last-forloop #f] [last-update #f])
+                   #,(let lp-for-loop ([i/c* iters/configs] [last-forloop #f] [last-update #f] [shadowed '()])
                      (let ([call-lastforloop #`(#,last-forloop #,@init/index-vars #,last-update)])
                        (if (null? i/c*)
                            (let ([call-loop (lambda (init?)
@@ -404,7 +416,10 @@
                                  #`(begin body* ...
                                           #,(call-loop '()))))
                            (with-syntax ([(forloop) (generate-temporaries '(forloop))])
-                             (let* ([i/c (car i/c*)] [iter-cl (car i/c)] [configs (cdr i/c)]
+                             (let* ([i/c (car i/c*)] [iter-cl (caar i/c)] [configs (cdr i/c)]
+                                    [exposed (syntax-case (cdar i/c) ()
+                                               [((v ...) ty op ...) #'(v ...)]
+                                               [(v rest ...) (list #'v)])]
                                     [guard-indices
                                      (filter id
                                              (map (lambda (conf)
@@ -442,11 +457,25 @@
                                              call-lastforloop
                                              ;; already outermost loop, stop
                                              (car call/finish-proc))
-                                       #,(let ([gen-getter (lambda (e) (if gen-getter (gen-getter e) e))])
+                                       #,(let ([gen-getter
+                                              (lambda (body)
+                                                #`(let (#,@(if (and frag-init
+                                                                    (not (exists (lambda (v) (bound-identifier=? v
+                                                                             (syntax-case frag-init () [(_ n e) #'n])))
+                                                                                 shadowed)))
+                                                               (list #`[#,(syntax-case frag-init () [(_ n e) #'n]) state-acc])
+                                                               '())
+                                                        #,@(if (and frag-index
+                                                                    (not (exists (lambda (v) (bound-identifier=? v
+                                                                             (syntax-case frag-index () [(_ n) #'n])))
+                                                                                 shadowed)))
+                                                               (list #`[#,(syntax-case frag-index () [(_ n) #'n]) state-index])
+                                                               '()))
+                                                    #,(if gen-getter (gen-getter body) body)))])
                                            (gen-getter
-                                            (let lp-configs ([configs (if configs configs '())])
+                                            (let lp-configs ([configs (if configs configs '())] [shadowed (append exposed shadowed)])
                                               (if (null? configs)
-                                                  (lp-for-loop (cdr i/c*) #'forloop update)
+                                                  (lp-for-loop (cdr i/c*) #'forloop update shadowed)
                                                   (let ([conf (car configs)])
                                                     (syntax-case conf ()
                                                       [(:break e)
@@ -456,24 +485,24 @@
                                                                    call-lastforloop
                                                                    ;; already outermost loop, stop
                                                                    #`(void))
-                                                             #,(lp-configs (cdr configs)))]
+                                                             #,(lp-configs (cdr configs) shadowed))]
                                                       [(:stop e1 e2)
                                                        (kw:stop? #':stop)
                                                        #`(if e1
                                                              e2
-                                                             #,(lp-configs (cdr configs)))]
+                                                             #,(lp-configs (cdr configs) shadowed))]
                                                       [(:guard e :index v)
                                                        (kw:guard? #':guard)
                                                        (let ([counter (cdr (assq conf guard-indices))])
                                                          #`(if e
                                                                (let ([v #,counter])
                                                                  (set! #,counter (fx1+ #,counter))
-                                                                 #,(lp-configs (cdr configs)))
+                                                                 #,(lp-configs (cdr configs) (cons #'v shadowed)))
                                                                (forloop #,@init/index-vars #,update)))]
                                                       [(:guard e)
                                                        (kw:guard? #':guard)
                                                        #`(if e
-                                                             #,(lp-configs (cdr configs))
+                                                             #,(lp-configs (cdr configs) shadowed)
                                                              (forloop #,@init/index-vars #,update))]
                                                       [(:let v e)
                                                        (memq (datum :let) '(:let :let* :letrec :letrec*))
@@ -483,11 +512,11 @@
                                                                [(:letrec) #'letrec]
                                                                [(:letrec*) #'letrec*])
                                                             ([v e])
-                                                           #,(lp-configs (cdr configs)))]
+                                                           #,(lp-configs (cdr configs) (cons #'v shadowed)))]
                                                       [(:let-values (v* ...) e)
                                                        (memq (datum :let-values) '(:let-values :let*-values))
                                                        #`(let-values ([(v* ...) e])
-                                                           #,(lp-configs (cdr configs)))]
+                                                           #,(lp-configs (cdr configs) (append #'(v* ...) shadowed)))]
                                                       [_ (syntax-error conf "unknown config clause:")]))))))))))))))))))])))
 
 

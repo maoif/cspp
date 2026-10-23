@@ -932,14 +932,26 @@
                          #`(let ([#,v (vector-ref t-vec t-i)])
                              #,e))))]
               [else (syntax-error lit "bad iter literal type:")])))
+    ;; Numeric induction state must remain distinct from the exposed item binding.
+    (define (numeric-fragment variable generate)
+      (let* ([state (car (generate-temporaries '(numeric-state)))]
+             [fragment (generate state)])
+        (append (list-head fragment 4)
+                (list (lambda (body) #`(let ([#,variable #,state]) #,body))))))
     (syntax-case cl ()
       ;; no guards here, already checked
       [(v lit)
-       (process-literal-iter-clause #'v (datum lit))]
+       (if (natural? (->literal #'lit))
+           (numeric-fragment #'v (lambda (state) (process-literal-iter-clause state (datum lit))))
+           (process-literal-iter-clause #'v (datum lit)))]
       [((v* ...) iter-ty op* ...)
        (process-multi-var-iter-clause #'(v* ...) (datum iter-ty) #'(op* ...))]
       [(v iter-ty op* ...)
-       (process-single-var-iter-clause #'v (datum iter-ty) #'(op* ...))]
+       (if (memq (datum iter-ty) '(:iota :nums :fixnums))
+           (numeric-fragment #'v
+                             (lambda (state)
+                               (process-single-var-iter-clause state (datum iter-ty) #'(op* ...))))
+           (process-single-var-iter-clause #'v (datum iter-ty) #'(op* ...)))]
       [_ (syntax-error cl "unknown iter clause:")]))
 
 

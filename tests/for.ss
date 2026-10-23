@@ -1454,3 +1454,49 @@
 
      (equal? '((0 0) (0 1))
              (for*/list ([x 3] [y 4] [:stop (= y 2)]) (list x y))))
+
+(mat hygienic-loop-state
+     ;; Later bindings must not replace the numeric induction state.
+     (equal? '(100 100 100)
+             (for/list ([x 3] [:break (> x 5)] [:let x 100]) x))
+
+     (equal? '(100 100 100)
+             (for/list ([x :iota 3] [:break (> x 5)] [:let x 100]) x))
+
+     (equal? '(100 100 100)
+             (for/list ([x :nums 3] [:break (> x 5)] [:let x 100]) x))
+
+     (equal? '(100 100 100)
+             (for/list ([x :fixnums 3] [:break (> x 5)] [:let x 100]) x))
+
+     (equal? '(0 1 0 1 0 1) (for*/list ([x 3] [x 2]) x))
+
+     ;; A rejected guard preserves the accumulator even when its public name is shadowed.
+     (= 0 (for/fold ([:init sum 0] [:finish sum] [x 3]
+                     [:let sum 100] [:guard #f]) (+ sum x)))
+
+     (= 0 (for*/fold ([:init sum 0] [:finish sum] [x 3]
+                      [:let sum 100] [:guard #f] [y 2]) (+ sum y)))
+
+     (= 3 (for/fold ([:index i] [:finish i] [x 3] [:let i 100]) i))
+
+     (= 6 (for*/fold ([:index i] [:finish i] [x 3] [y 2] [:let i 100]) i))
+
+     ;; Mutating the exposed item does not mutate the private induction variable.
+     (equal? '(0 1 2)
+             (for/list ([x 3] [:break (> x 5)])
+               (let ([original x]) (set! x 100) original)))
+
+     ;; Global state can be shadowed by the innermost iterator without losing progress.
+     (= 6 (for*/fold ([:index i] [:finish i] [x 3] [i 2]) (void))))
+
+(mat nested-state-binding-scope
+     (equal? '(100 100 100 100)
+             (for*/list ([:index i] [x 2] [:let i 100] [y 2]) i))
+
+     (= 100 (for*/fold ([:init sum 0] [:finish sum] [x 2]
+                        [:let sum 100] [y 2]) (+ sum 0)))
+
+     ;; Outer binding clauses keep their lexical scope inside inner iterators.
+     (equal? '(100 100 100 100)
+             (for*/list ([:index i] [x 2] [:let-values (i) (values 100)] [y 2]) i)))
