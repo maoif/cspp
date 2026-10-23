@@ -1780,3 +1780,27 @@
      (= 101 (for*/fold ([:init sum 0] [:finish sum]
                         [x :fxiota 2] [y :fxiota 2] [:let sum 100]
                         [:break (= y 1) (+ sum x)]) 1)))
+
+(mat index-only-sources
+     (equal? '((0 0) (1 1) (2 2))
+             (for/list ([x :fxiota 3 :index i]) (list x i)))
+
+     (equal? '((10 0) (12 1) (14 2))
+             (for/list ([x :nums 10 16 2 :index i]) (list x i)))
+
+     (equal? '((a 0) (b 1))
+             (for/list ([x :list '(a b) :index i]) (list x i)))
+
+     (equal? '((a 0) (b 1))
+             (for/list ([x :iter (list->iter '(a b)) :index i]) (list x i)))
+
+     ;; Mutation and shadowing of public indexes must not change the source position.
+     (equal? '(0 1 2)
+             (for/list ([x :iota 3 :index i])
+               (let ([original i]) (set! i 100) original)))
+
+     (equal? '(0 1 2)
+             (for/list ([x :fxiota 3 :index i] [:let i 100]) x))
+
+     (equal? '((0 0) (0 1) (1 0) (1 1))
+             (for*/list ([x :fxiota 2] [y :fxiota 2 :index i]) (list x i))))

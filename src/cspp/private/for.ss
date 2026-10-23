@@ -1009,11 +1009,12 @@
                              #,e))))]
               [else (syntax-error lit "bad iter literal type:")])))
     ;; Numeric induction state must remain distinct from the exposed item binding.
-    (define (numeric-fragment variable generate)
+    (define (numeric-fragment variable indexed? generate)
       (let* ([state (car (generate-temporaries '(numeric-state)))]
              [fragment (generate state)])
         (append (list-head fragment 4)
-                (list (lambda (body) #`(let ([#,variable #,state]) #,body))))))
+                (list (lambda (body) #`(let ([#,variable #,state]) #,body)))
+                (if indexed? (list state) '()))))
     ;; Common options filter each iterator independently. Sequence indexes describe
     ;; source positions; other iterators count their unfiltered source values from zero.
     (define (split-common-options options)
@@ -1039,8 +1040,25 @@
              [exposed (if index (append variables (list index)) variables)])
         (define (finish fragment)
           (append (list-head fragment 5) (list source-index exposed raw-termination)))
-        (if (not (or predicate index))
-            (finish fragment)
+        (cond
+         [(not (or predicate index)) (finish fragment)]
+         [(not predicate)
+          ;; Index-only sources need neither filtering nor accepted-item caches.
+          (with-syntax ([(position) (generate-temporaries '(position))])
+            (let ([preloop (or (car fragment) (lambda (body) body))]
+                  [getter (or (list-ref fragment 4) (lambda (body) body))])
+              (finish
+               (list (if source-index
+                         (car fragment)
+                         (lambda (body) (preloop #`(let ([position 0]) #,body))))
+                     (list-ref fragment 1)
+                     (list-ref fragment 2)
+                     (if source-index
+                         (list-ref fragment 3)
+                         #`(begin (set! position (+ position 1)) #,(list-ref fragment 3)))
+                     (lambda (body)
+                       (getter #`(let ([#,index #,(or source-index #'position)]) #,body)))))))]
+         [else
             (with-syntax ([(position seek) (generate-temporaries '(position seek))]
                           [(cache ...) (generate-temporaries variables)]
                           [(variable ...) variables])
@@ -1076,11 +1094,11 @@
                        advance
                        (lambda (body)
                          #`(let ([variable cache] ...)
-                             #,(bind-index body))))))))))
+                             #,(bind-index body)))))))])))
     (define (single-fragment variable type arguments)
       (cond
        [(memq type '(:iota :fxiota :nums :fixnums))
-        (numeric-fragment variable
+        (numeric-fragment variable (memq type '(:iota :fxiota))
                           (lambda (state) (process-single-var-iter-clause state type arguments)))]
        [(and (eq? type ':list) (> (length arguments) 1))
         ;; Sliced/reversed list traversal uses a preallocated vector to preserve
@@ -1096,7 +1114,7 @@
       [(v lit)
        (decorate-fragment
         (if (natural? (->literal #'lit))
-            (numeric-fragment #'v (lambda (state) (process-literal-iter-clause state (datum lit))))
+            (numeric-fragment #'v #t (lambda (state) (process-literal-iter-clause state (datum lit))))
             (process-literal-iter-clause #'v (datum lit)))
         (list #'v) #f #f)]
       [((v* ...) iter-ty op* ...)
