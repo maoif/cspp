@@ -181,10 +181,13 @@
 
   (define $columns-render-row
     (lambda (blocks gap)
-      (let ([height (let loop ([blocks blocks] [height 0])
+      ;; Convert line lists once so each output row uses constant-time indexing.
+      (let* ([blocks (map (lambda (block) (cons (list->vector (car block)) (cdr block)))
+                          blocks)]
+             [height (let loop ([blocks blocks] [height 0])
                       (if (null? blocks)
                           height
-                          (loop (cdr blocks) (max height (length (caar blocks))))))]
+                          (loop (cdr blocks) (max height (vector-length (caar blocks))))))]
             [gap-text (make-string gap #\space)])
         (let loop-lines ([i 0] [out '()])
           (if (= i height)
@@ -195,7 +198,7 @@
                                 (cons (apply append (reverse pieces)) out))
                     (let* ([lines (caar blocks)]
                            [width (cdar blocks)]
-                           [line (if (< i (length lines)) (list-ref lines i) '())]
+                           [line (if (< i (vector-length lines)) (vector-ref lines i) '())]
                            [last? (null? (cdr blocks))]
                            [padded (if last? line ($line-pad-right-to line width))])
                       (loop-blocks (cdr blocks)

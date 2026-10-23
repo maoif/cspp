@@ -116,12 +116,6 @@
 
   (define $segment-lines-width rich-lines-width)
 
-  (define $line-at
-    (lambda (lines index)
-      (if (< index (length lines))
-          (list-ref lines index)
-          '())))
-
   (define $line-pad-to
     (lambda (line width justify)
       (let ([current (rich-segments-width line)])
@@ -146,7 +140,7 @@
       (let loop ([blocks blocks] [height 0])
         (if (null? blocks)
             height
-            (loop (cdr blocks) (max height (length (car blocks))))))))
+            (loop (cdr blocks) (max height (vector-length (car blocks))))))))
 
   (define $cell-segments
     (lambda (line width padding justify)
@@ -222,8 +216,10 @@
 
   (define $render-table-row
     (lambda (blocks columns widths padding chars header?)
-      (let ([height ($row-height blocks)]
-            [v (vector-ref chars 5)])
+      ;; Index each cell's lines once, avoiding repeated list traversal for tall rows.
+      (let* ([blocks (map list->vector blocks)]
+             [height ($row-height blocks)]
+             [v (vector-ref chars 5)])
         (let loop-lines ([index 0] [out '()])
           (if (= index height)
               (reverse out)
@@ -236,7 +232,8 @@
                     (let* ([justify (if header?
                                         'left
                                         ($rich-table-column-justify (car columns)))]
-                           [line ($line-at (car blocks) index)]
+                           [line (if (< index (vector-length (car blocks)))
+                                     (vector-ref (car blocks) index) '())]
                            [cell ($cell-segments line (car widths) padding justify)])
                       (loop-cells (cdr blocks)
                                   (cdr columns)

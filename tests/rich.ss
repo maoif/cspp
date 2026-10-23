@@ -1884,3 +1884,24 @@
                 (equal? "| 1999 |" (list-ref lines size))))))
 
      )
+
+(mat rich-tall-container-rows
+
+     (let ([style (rich-style 'green)] [body (rich-text "a\nb\nc" (rich-style 'red))])
+       (equal? '("a x" "b y" "c ")
+               (map rich-segments->plain
+                    (rich-render (rich-console :width 9)
+                                 (make-rich-layout 'row (list body (rich-text "x\ny" style)))))))
+
+     (equal? '("a x" "b y" "c ")
+             (map rich-segments->plain
+                  (rich-render (rich-console :width 9)
+                               (make-rich-columns (list "a\nb\nc" "x\ny") #f 1))))
+
+     (equal? '("+---+---+" "| a | x |" "| b | y |" "| c |   |" "+---+---+")
+             (map rich-segments->plain
+                  (rich-table-render
+                   (rich-table :show-header? #f :columns ("A" "B")
+                               :rows (("a\nb\nc" "x\ny"))))))
+
+     )
