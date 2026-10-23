@@ -182,7 +182,7 @@
     :box 'heavy))
 (define service-cards
   (rich-columns
-    :items (api-panel queue-panel cache-panel deploy-panel alert-panel)
+    :items (list api-panel queue-panel cache-panel deploy-panel alert-panel)
     :gap 2))
 (rich-print console service-cards "\n")
 

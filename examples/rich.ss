@@ -189,7 +189,7 @@
     :box 'double))
 (define box-columns
   (rich-columns
-    :items (ascii-panel rounded-panel heavy-panel double-panel)
+    :items (list ascii-panel rounded-panel heavy-panel double-panel)
     :gap 3))
 (rich-print console box-columns "\n")
 

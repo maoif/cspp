@@ -1812,3 +1812,25 @@
       (list (string-copy "primitive-renderer") 'primitive-renderer 617289 #\λ))
 
      )
+
+(mat rich-container-items-expressions
+
+     (equal? '("b" "a")
+             (rich-columns-items (rich-columns :items (reverse '("a" "b")))))
+
+     (equal? '("b" "a")
+             (rich-layout-items (rich-layout :items (reverse '("a" "b")))))
+
+     (equal? '("a!" "b!")
+             (rich-columns-items
+              (rich-columns :items (map (lambda (item) (string-append item "!")) '("a" "b")))))
+
+     (equal? '("a" "b")
+             (rich-layout-items (rich-layout :items (let ([first "a"]) (list first "b")))))
+
+     (let ([first "a"] [second "b"])
+       (equal? '("a" "b") (rich-columns-items (rich-columns :items (list first second)))))
+
+     (equal? '("a" "b") (rich-layout-items (rich-layout :items ("a" "b"))))
+
+     )

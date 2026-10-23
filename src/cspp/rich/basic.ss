@@ -798,8 +798,9 @@
 
   #|macro:rich-columns
   The `rich-columns` macro constructs and returns a columns renderable. The
-  `:items` field accepts either an expression or a parenthesized literal item
-  list such as `("a" "b")`.
+  `:items` field accepts an expression or a parenthesized literal item list such as
+  `("a" "b")`. A form beginning with an identifier is evaluated as an expression;
+  use `(list first second)` to collect item variables. Returns the new renderable.
   |#
   (define-syntax rich-columns
     (lambda (stx)
@@ -818,8 +819,7 @@
                 [() #''()]
                 [(head item ...)
                  (let ([head-datum (syntax->datum #'head)])
-                   (if (and (symbol? head-datum)
-                            (memq head-datum '(list quote quasiquote cons append)))
+                   (if (symbol? head-datum)
                        value
                        (with-syntax ([first-item #'head])
                          #'(list first-item item ...))))]
@@ -941,8 +941,9 @@
 
   #|macro:rich-layout
   The `rich-layout` macro constructs and returns a layout renderable. The
-  `:items` field accepts either an expression or a parenthesized literal item
-  list such as `("a" "b")`.
+  `:items` field accepts an expression or a parenthesized literal item list such as
+  `("a" "b")`. A form beginning with an identifier is evaluated as an expression;
+  use `(list first second)` to collect item variables. Returns the new renderable.
   |#
   (define-syntax rich-layout
     (lambda (stx)
@@ -960,8 +961,7 @@
                 [() #''()]
                 [(head item ...)
                  (let ([head-datum (syntax->datum #'head)])
-                   (if (and (symbol? head-datum)
-                            (memq head-datum '(list quote quasiquote cons append)))
+                   (if (symbol? head-datum)
                        value
                        (with-syntax ([first-item #'head])
                          #'(list first-item item ...))))]
