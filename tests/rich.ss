@@ -1928,3 +1928,28 @@
      (equal? "-- A B ---" (rich-export-text (rich-rule :title "A\tB" :width 10)))
 
      )
+
+(mat rich-progress-finite-counts
+
+     ;; Non-finite updates must fail before they corrupt task state.
+     (error? (let* ([progress (make-rich-progress)]
+                   [id (rich-progress-add-task! progress "build" 10)])
+               (rich-progress-update! progress id +nan.0)))
+
+     ;; Infinite counts cannot be represented by progress bars or percentages.
+     (error? (let* ([progress (make-rich-progress)]
+                   [id (rich-progress-add-task! progress "build" 10)])
+               (rich-progress-update! progress id +inf.0)))
+
+     ;; Advancing by an infinite amount must fail at the API boundary.
+     (error? (let* ([progress (make-rich-progress)]
+                   [id (rich-progress-add-task! progress "build" 10)])
+               (rich-progress-advance! progress id +inf.0)))
+
+     ;; Two finite amounts must not overflow the stored count to infinity.
+     (error? (let* ([progress (make-rich-progress)]
+                   [id (rich-progress-add-task! progress "build" 10)])
+               (rich-progress-update! progress id 1e308)
+               (rich-progress-advance! progress id 1e308)))
+
+     )

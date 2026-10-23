@@ -52,7 +52,7 @@
 
   (define $nonnegative-real?
     (lambda (x)
-      (and (real? x) (not (negative? x)))))
+      (and (real? x) (finite? x) (>= x 0))))
 
   (define $columns?
     (lambda (x)
@@ -359,8 +359,8 @@
                 id))))
 
   #|proc:rich-progress-update!
-  The `rich-progress-update!` procedure sets the completed count for a progress
-  task and returns `progress`.
+  The `rich-progress-update!` procedure sets the finite nonnegative completed count
+  `completed` for task `id` in `progress` and returns `progress`.
   |#
   (define rich-progress-update!
     (lambda (progress id completed)
@@ -372,8 +372,9 @@
                 progress))))
 
   #|proc:rich-progress-advance!
-  The `rich-progress-advance!` procedure increments the completed count for a
-  progress task and returns `progress`.
+  The `rich-progress-advance!` procedure increments task `id` in `progress` by finite
+  nonnegative `amount` (default one), returning `progress`. An overflow raises an error
+  before the stored count changes.
   |#
   (define rich-progress-advance!
     (case-lambda
@@ -384,9 +385,9 @@
                 [rich-nonnegative-integer? id]
                 [$nonnegative-real? amount])
                (let ([task ($progress-task-ref progress id 'rich-progress-advance!)])
-                 ($rich-progress-task-completed-set!
-                  task
-                  (+ ($rich-progress-task-completed task) amount))
+                 (let ([completed (+ ($rich-progress-task-completed task) amount)])
+                   (pcheck ([$nonnegative-real? completed])
+                     ($rich-progress-task-completed-set! task completed)))
                  progress))]))
 
   #|proc:rich-progress-complete!
