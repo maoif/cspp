@@ -46,23 +46,34 @@
                     (if (rich-segment-control? segment) "" (rich-segment-text segment)))
                   segments))))
 
-  ;; Consume a character prefix while preserving the source styles and control segments.
+  ;; Return the consumed pieces and a cursor into the original segment stream.
+  ;; Keeping an offset avoids copying the entire remaining string at each line break.
   (define $take-segment-chars
-    (lambda (segments count)
-      (let loop ([segments segments] [count count] [out '()])
+    (lambda (segments offset count)
+      (let loop ([segments segments] [offset offset] [count count] [out '()])
         (cond
-          [(null? segments) (values (reverse out) '())]
+          [(null? segments) (values (reverse out) '() 0)]
           [(rich-segment-control? (car segments))
-           (loop (cdr segments) count (cons (car segments) out))]
-          [(zero? count) (values (reverse out) segments)]
+           (loop (cdr segments) 0 count (cons (car segments) out))]
+          [(zero? count) (values (reverse out) segments offset)]
           [else
            (let* ([segment (car segments)] [text (rich-segment-text segment)]
-                  [len (string-length text)])
-             (if (<= len count)
-                 (loop (cdr segments) (- count len) (cons segment out))
-                 (values (reverse (cons ($segment-copy segment (substring text 0 count)) out))
-                         (cons ($segment-copy segment (substring text count len))
-                               (cdr segments)))))]))))
+                  [len (string-length text)] [available (fx- len offset)])
+             (if (<= available count)
+                 (loop (cdr segments) 0 (- count available)
+                       (cons (if (fxzero? offset) segment
+                                 ($segment-copy segment (substring text offset len))) out))
+                 (let ([end (+ offset count)])
+                   (values (reverse (cons ($segment-copy segment (substring text offset end)) out))
+                           segments end))))]))))
+
+  (define $remaining-segments
+    (lambda (segments offset)
+      (if (fxzero? offset)
+          segments
+          (let* ([segment (car segments)] [text (rich-segment-text segment)])
+            (cons ($segment-copy segment (substring text offset (string-length text)))
+                  (cdr segments))))))
 
   (define $oversize-placeholder
     (lambda (segments)
@@ -183,23 +194,25 @@
     (lambda (segments width)
       (pcheck ([$rich-segment-list? segments] [rich-positive-integer? width])
         (let* ([text ($visible-text segments)] [len (string-length text)])
-          (let loop ([index 0] [start 0] [used 0] [segments segments] [lines '()])
+          (let loop ([index 0] [start 0] [used 0] [segments segments] [offset 0] [lines '()])
             (if (= index len)
-                (reverse (cons segments lines))
+                (reverse (cons ($remaining-segments segments offset) lines))
                 (let-values ([(end cells) (rich-cell-next text index)])
                   (cond
                     [(<= (+ used cells) width)
-                     (loop end start (+ used cells) segments lines)]
+                     (loop end start (+ used cells) segments offset lines)]
                     [(positive? used)
-                     (let-values ([(line rest) ($take-segment-chars segments (- index start))])
-                       (loop index index 0 rest (cons line lines)))]
+                     (let-values ([(line rest offset)
+                                   ($take-segment-chars segments offset (- index start))])
+                       (loop index index 0 rest offset (cons line lines)))]
                     [else
                      ;; A two-cell glyph cannot fit a one-cell line. Consume it safely.
-                     (let-values ([(pieces rest) ($take-segment-chars segments (- end start))])
+                     (let-values ([(pieces rest offset)
+                                   ($take-segment-chars segments offset (- end start))])
                        (let ([lines (cons ($oversize-placeholder pieces) lines)])
                          (if (= end len)
                              (reverse lines)
-                             (loop end end 0 rest lines))))]))))))))
+                             (loop end end 0 rest offset lines))))]))))))))
 
   #|proc:rich-segment-crop
   The `rich-segment-crop` procedure crops `segments` to at most `width`
@@ -209,7 +222,7 @@
     (lambda (segments width)
       (pcheck ([$rich-segment-list? segments] [rich-nonnegative-integer? width])
         (let-values ([(end cells) (rich-cell-prefix ($visible-text segments) 0 width)])
-          (let-values ([(prefix rest) ($take-segment-chars segments end)])
+          (let-values ([(prefix rest offset) ($take-segment-chars segments 0 end)])
             prefix)))))
 
   #|proc:rich-segment-pad-right

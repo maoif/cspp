@@ -1852,3 +1852,17 @@
               (rich-segment-crop (list (rich-segment "\033[38:2::255:0:0m界X")) 2)))
 
      )
+
+(mat rich-wrap-linear-allocation
+
+     ;; Wrapping one long source span must not repeatedly copy the unconsumed suffix.
+     (let* ([size 20000] [source (make-string size #\x)]
+            [segments (list (rich-segment source))])
+       (collect)
+       (let* ([before (statistics)] [lines (rich-segment-wrap segments 80)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and (= 250 (length lines))
+              (equal? source (apply string-append (map rich-segments->plain lines)))
+              (< allocated (* 128 size)))))
+
+     )
