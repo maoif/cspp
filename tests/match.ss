@@ -829,3 +829,30 @@
        (= 10 (match (make-SyntaxField 10)
                [,(SyntaxField (unquote ,x)) x]
                [else #f]))))
+
+(mat ellipsis-suffix-backreferences
+     (equal? '(1 2)
+             (match '(1 2 stop (1 2)) [(,x ... stop `x) x] [else #f]))
+
+     (equal? '(1 2)
+             (match '#(1 2 stop (1 2)) [#(,x ... stop `x) x] [else #f]))
+
+     ;; A suffix reference must use the capture, not an unrelated outer binding.
+     (let ([x '(wrong)])
+       (match '(1 2 stop (wrong)) [(,x ... stop `x) #f] [else #t]))
+
+     (let ([x '(wrong)])
+       (match '#(1 2 stop (wrong)) [#(,x ... stop `x) #f] [else #t]))
+
+     (equal? '() (match '(stop ()) [(,x ... stop `x) x] [else #f]))
+
+     (equal? '() (match '#(stop ()) [#(,x ... stop `x) x] [else #f]))
+
+     ;; A failed suffix must allow the repeated prefix to consume another item.
+     (equal? '(stop nope)
+             (match '(stop nope stop (stop nope))
+               [(,x ... stop `x) x] [else #f]))
+
+     (equal? '(stop nope)
+             (match '#(stop nope stop (stop nope))
+               [#(,x ... stop `x) x] [else #f])))

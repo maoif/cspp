@@ -113,10 +113,8 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                                                            #'(viter (fx1+ i) (cons patvars bindings) ...)
                                                            fk))
                                       (#,fk)))])
-                           #,(process-vector-pats vecid vlen #'i #'pat1
-                                                  #`(let ([patvars (reverse bindings)] ...)
-                                                      #,body)
-                                                  #'new-fk)))))]
+                           (let ([patvars (reverse bindings)] ...)
+                             #,(process-vector-pats vecid vlen #'i #'pat1 body #'new-fk))))))]
                 [(pat0 pat1 ...)
                  (with-syntax ([(vitem) (generate-temporaries '(vitem))])
                    #`(if (fx< #,veci #,vlen)
@@ -211,10 +209,8 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                          ;; Match the input directly with `pat1` first, if it matches,
                          ;; `pat0` or all pats vars inside `pat0` is '().
                          ;; If the input fails to match `pat1`, call `new-fk`,
-                         #,(process-pattern rho #'ls #'pat1
-                                            #`(let ([patvars (reverse bindings)] ...)
-                                                #,body)
-                                            #'new-fk)))))]
+                         (let ([patvars (reverse bindings)] ...)
+                           #,(process-pattern rho #'ls #'pat1 body #'new-fk))))))]
               ;; encapsulates (pat ...), (pat . pat), (pat ... . pat)
               [(pat0 . pat1)
                (with-syntax ([(first rest) (generate-temporaries '(first rest))])
