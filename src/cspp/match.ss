@@ -63,22 +63,45 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
       (define process-pattern
         (lambda (rho expr-id pat body fk)
-          (define extract-pat-vars
-            (lambda (pat)
-              (let loop ([pat pat] [patvars '()])
-                (syntax-case pat (unquote unquote-splicing quasisyntax)
-                  [,var  (identifier? #'var) (cons #'var patvars)]
-                  [,@var (identifier? #'var) (cons #'var patvars)]
-                  [,@[,vars ...]
-                   (andmap identifier? #'(vars ...))
-                   (append #'(vars ...) patvars)]
-                  [,@[proc -> ,vars ...]
-                   (and (andmap identifier? #'(vars ...)) (identifier? #'proc) (eq? '-> (datum ->)))
-                   (append #'(vars ...) patvars)]
-                  [(#`nref pat) (identifier? #'nref) (cons #'nref (loop #'pat patvars))]
-                  [(pat0 . pat1) (loop #'pat0 (loop #'pat1 patvars))]
-                  [#(pat0 pat1 ...) (loop #'pat0 (loop #'(pat1 ...) patvars))]
-                  [_ patvars]))))
+          (define with-pattern-vars
+            (lambda (pattern generate)
+              (define walk-list
+                (lambda (patterns variables next)
+                  (if (null? patterns)
+                      (next variables)
+                      (walk (car patterns) variables
+                            (lambda (variables)
+                              (walk-list (cdr patterns) variables next))))))
+              (define walk
+                (lambda (pattern variables next)
+                  (syntax-case pattern (unquote unquote-splicing quasisyntax)
+                    [,variable (identifier? #'variable) (next (cons #'variable variables))]
+                    [,@variable (identifier? #'variable) (next (cons #'variable variables))]
+                    [,@[,names ...]
+                     (andmap identifier? #'(names ...))
+                     (next (append #'(names ...) variables))]
+                    [,@[procedure -> ,names ...]
+                     (and (andmap identifier? #'(names ...))
+                          (identifier? #'procedure) (eq? (datum ->) '->))
+                     (next (append #'(names ...) variables))]
+                    [(#`name subpattern)
+                     (identifier? #'name)
+                     (walk #'subpattern (cons #'name variables) next)]
+                    [,(extension arguments ...)
+                     (identifier? #'extension)
+                     (let ([branches (extension-pattern-branches rho #'(extension arguments ...))])
+                       (let generate-branches ([branches branches])
+                         (if (null? (cdr branches))
+                             (walk-list (cadar branches) variables next)
+                             #`(if #,(caar branches)
+                                   #,(walk-list (cadar branches) variables next)
+                                   #,(generate-branches (cdr branches))))))]
+                    [(head . tail)
+                     (walk #'head variables
+                           (lambda (variables) (walk #'tail variables next)))]
+                    [#(items ...) (walk-list #'(items ...) variables next)]
+                    [_ (next variables)])))
+              (walk pattern '() generate)))
           (define process-vector-pats
             (lambda (vecid vlen veci pats body fk)
               (syntax-case pats ()
@@ -88,33 +111,37 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                        (#,fk))]
                 [(pat dots)
                  (eq? (datum dots) '...)
-                 (with-syntax ([(patvars ...) (extract-pat-vars #'pat)])
-                   (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
-                                 [(i viter vitem) (generate-temporaries '(i viter vitem))])
-                     #`(let viter ([i #,veci] [bindings '()] ...)
-                         (if (fx= i #,vlen)
-                             (let ([patvars (reverse bindings)] ...)
-                               #,body)
-                             (let ([vitem (vector-ref #,vecid i)])
-                               #,(process-pattern rho #'vitem #'pat
-                                                  #'(viter (fx1+ i) (cons patvars bindings) ...)
-                                                  fk))))))]
+                 (with-pattern-vars #'pat
+                   (lambda (variables)
+                     (with-syntax ([(patvars ...) variables])
+                       (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
+                                     [(i viter vitem) (generate-temporaries '(i viter vitem))])
+                         #`(let viter ([i #,veci] [bindings '()] ...)
+                             (if (fx= i #,vlen)
+                                 (let ([patvars (reverse bindings)] ...)
+                                   #,body)
+                                 (let ([vitem (vector-ref #,vecid i)])
+                                   #,(process-pattern rho #'vitem #'pat
+                                                      #'(viter (fx1+ i) (cons patvars bindings) ...)
+                                                      fk))))))))]
                 [(pat0 dots . pat1)
                  (eq? (datum dots) '...)
-                 (with-syntax ([(patvars ...) (extract-pat-vars #'pat0)])
-                   (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
-                                 [(i viter vitem new-fk) (generate-temporaries '(i viter vitem new-fk))])
-                     #`(let viter ([i #,veci] [bindings '()] ...)
-                         (let ([new-fk
-                                (lambda ()
-                                  (if (fx< i #,vlen)
-                                      (let ([vitem (vector-ref #,vecid i)])
-                                        #,(process-pattern rho #'vitem #'pat0
-                                                           #'(viter (fx1+ i) (cons patvars bindings) ...)
-                                                           fk))
-                                      (#,fk)))])
-                           (let ([patvars (reverse bindings)] ...)
-                             #,(process-vector-pats vecid vlen #'i #'pat1 body #'new-fk))))))]
+                 (with-pattern-vars #'pat0
+                   (lambda (variables)
+                     (with-syntax ([(patvars ...) variables])
+                       (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
+                                     [(i viter vitem new-fk) (generate-temporaries '(i viter vitem new-fk))])
+                         #`(let viter ([i #,veci] [bindings '()] ...)
+                             (let ([new-fk
+                                    (lambda ()
+                                      (if (fx< i #,vlen)
+                                          (let ([vitem (vector-ref #,vecid i)])
+                                            #,(process-pattern rho #'vitem #'pat0
+                                                               #'(viter (fx1+ i) (cons patvars bindings) ...)
+                                                               fk))
+                                          (#,fk)))])
+                               (let ([patvars (reverse bindings)] ...)
+                                 #,(process-vector-pats vecid vlen #'i #'pat1 body #'new-fk))))))))]
                 [(pat0 pat1 ...)
                  (with-syntax ([(vitem) (generate-temporaries '(vitem))])
                    #`(if (fx< #,veci #,vlen)
@@ -174,7 +201,9 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                      ;; Get all pat vars in `pat`,
                      ;; iterate through the input list, for each item,
                      ;; destructure it and accumulate matched components in `bindings ...`.
-                     #,(with-syntax ([(patvars ...) (extract-pat-vars #'pat)])
+                     #,(with-pattern-vars #'pat
+                   (lambda (variables)
+                     (with-syntax ([(patvars ...) variables])
                          (with-syntax ([(lbs ...)      (generate-temporaries #'(patvars ...))]
                                        [(iter first rest) (generate-temporaries '(iter first rest))])
                            #`(let ([lbs (make-list-builder)] ...)
@@ -189,12 +218,14 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                                                         #'(begin (lbs patvars) ...
                                                                  (iter rest))
                                                         fk))]
-                                  [else (#,fk)])))))
+                                  [else (#,fk)])))))))
                      (#,fk))]
               ;; ... in the middle, prefer `pat1`
               [(pat0 dots . pat1)
                (eq? (datum dots) '...)
-               (with-syntax ([(patvars ...) (extract-pat-vars #'pat0)])
+               (with-pattern-vars #'pat0
+                   (lambda (variables)
+                     (with-syntax ([(patvars ...) variables])
                  (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
                                [(iter ls first rest new-fk) (generate-temporaries '(iter ls first rest new-fk))])
                    #`(let iter ([ls expr-id] [bindings '()] ...)
@@ -210,7 +241,7 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                          ;; `pat0` or all pats vars inside `pat0` is '().
                          ;; If the input fails to match `pat1`, call `new-fk`,
                          (let ([patvars (reverse bindings)] ...)
-                           #,(process-pattern rho #'ls #'pat1 body #'new-fk))))))]
+                           #,(process-pattern rho #'ls #'pat1 body #'new-fk))))))))]
               ;; encapsulates (pat ...), (pat . pat), (pat ... . pat)
               [(pat0 . pat1)
                (with-syntax ([(first rest) (generate-temporaries '(first rest))])

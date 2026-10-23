@@ -856,3 +856,79 @@
      (equal? '(stop nope)
              (match '#(stop nope stop (stop nope))
                [#(,x ... stop `x) x] [else #f])))
+
+(mat extension-capture-boundaries
+     (eq? 'hit
+          (match '("a" "a")
+            [(,(regex (let ([piece "a"]) `(: ,piece))) ...) 'hit]
+            [else 'miss]))
+
+     (eq? 'hit
+          (match '#("a" "a")
+            [#(,(regex (let ([piece "a"]) `(: ,piece))) ...) 'hit]
+            [else 'miss]))
+
+     (equal? '("a" "b")
+             (match '("a" "b")
+               [(,(regex (let ([piece 'any]) `(: ,piece)) (0 ,text)) ...) text]
+               [else #f]))
+
+     ;; A named field is syntax, and its literal value is not a capture variable.
+     (let ()
+       (define-record-type SyntaxLiteral (fields unquote))
+       (match (list (make-SyntaxLiteral 'marker) (make-SyntaxLiteral 'marker))
+         [(,(SyntaxLiteral (unquote marker)) ...) #t]
+         [else #f]))
+
+     (let ()
+       (define-record-type SyntaxLiteral (fields unquote))
+       (match (vector (make-SyntaxLiteral 'marker))
+         [#(,(SyntaxLiteral (unquote marker)) ...) #t]
+         [else #f]))
+
+     (let ()
+       (define-record-type SyntaxLiteral (nongenerative round4-syntax-literal) (fields unquote))
+       (match (list (make-SyntaxLiteral 'marker))
+         [(,(SyntaxLiteral (unquote marker)) ...) #t]
+         [else #f]))
+
+     ;; The same surface syntax is a positional capture for a differently named field.
+     (let ()
+       (define-record-type Positional (fields value))
+       (equal? '(10 20)
+               (match (list (make-Positional 10) (make-Positional 20))
+                 [(,(Positional ,item) ...) item]
+                 [else #f]))))
+
+(mat extension-capture-composition
+     (equal? '(10 20)
+             (match (list (box 10) (box 20) 'end)
+               [(,(box ,x) ... end) x] [else #f]))
+
+     (let ()
+       (record CaptureRecord (value))
+       (equal? '(10 20)
+               (match (list (CaptureRecord 10) (CaptureRecord 20))
+                 [(,(CaptureRecord (value ,x)) ...) x] [else #f])))
+
+     (let ()
+       (datatype CaptureType [Item value])
+       (equal? '(10 20)
+               (match (vector (Item 10) (Item 20))
+                 [#(,(CaptureType Item (value ,x)) ...) x] [else #f])))
+
+     (let ()
+       (define-record-type DynamicCapture (fields unquote))
+       (equal? '(10 20)
+               (match (list (make-DynamicCapture 10) (make-DynamicCapture 20))
+                 [(,(DynamicCapture (unquote ,x)) ...) x] [else #f])))
+
+     ;; Two descriptors with different named/positional interpretations may coexist.
+     (let ()
+       (define-record-type DynamicLiteral (fields unquote))
+       (define-record-type DynamicValue (fields value))
+       (equal? '(10 20)
+               (match (list (list (make-DynamicLiteral 'marker) (make-DynamicValue 10))
+                            (list (make-DynamicLiteral 'marker) (make-DynamicValue 20)))
+                 [((,(DynamicLiteral (unquote marker)) ,(DynamicValue ,x)) ...) x]
+                 [else #f]))))

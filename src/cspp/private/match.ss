@@ -2,6 +2,7 @@
 (library (cspp private match)
   (export system-record-expander record-expander datatype-expander
           box-expander regex-expander hash-expander
+          extension-pattern-branches
           valid-record-type?
           define-match-expander)
   (import (cspp chez)
@@ -75,6 +76,74 @@
   (define by-name-datatype-pats?
     (lambda (rho variant pats)
       (by-name-record-pats? rho variant pats)))
+
+
+  (define pattern-value
+    (lambda (pattern)
+      (syntax-case pattern () [(_ value) #'value])))
+
+  ;; A branch pairs a runtime descriptor test with the actual subpatterns.
+  ;; Generative native records defer named/positional disambiguation until runtime.
+  (define record-pattern-branches
+    (lambda (compile-environment record-name patterns)
+      (let ([descriptor (get-type-descriptor compile-environment record-name)])
+        (if (record-type-descriptor? descriptor)
+            (list (list #'#t
+                        (if (and (pair? patterns)
+                                 (by-name-record-pats? compile-environment record-name patterns))
+                            (map pattern-value patterns)
+                            patterns)))
+            (if (and (pair? patterns)
+                     (andmap (lambda (pattern)
+                               (syntax-case pattern ()
+                                 [(name value) (identifier? #'name) #t]
+                                 [_ #f]))
+                             patterns))
+                (list
+                 (list #`(let ([fields (record-type-field-names
+                                       (record-type-descriptor #,record-name))])
+                           (andmap (lambda (name) (number? (vmemq name fields)))
+                                   '#,(datum->syntax record-name (map (lambda (p)
+                                                                      (syntax-case p () [(name value) (datum name)]))
+                                                                    patterns))))
+                       (map pattern-value patterns))
+                 (list #'#t patterns))
+                (list (list #'#t patterns)))))))
+
+  #|proc:extension-pattern-branches
+  The `extension-pattern-branches` procedure identifies pattern positions in an extension.
+  `compile-environment` maps syntax identifiers to their compile-time bindings, and `pattern`
+  is the extension syntax without its leading unquote. The result is a list of branches, each
+  containing a descriptor-test expression and a list of subpatterns. The final test is `#t`.
+  Embedded Scheme expressions and record field names are excluded from the subpatterns.
+  |#
+  (define extension-pattern-branches
+    (lambda (compile-environment pattern)
+      (pcheck ([procedure? compile-environment] [list? pattern])
+        (let* ([extension (car pattern)]
+               [arguments (cdr pattern)]
+               [info (compile-environment ($construct-name extension extension "-expander"))]
+               [expander (and (pair? info) (eq? (car info) '*MATCH-EXPANDER*) (cdr info))])
+          (cond
+           [(eq? expander record-expander)
+            (record-pattern-branches compile-environment
+                                     ($construct-name extension "$record-" extension)
+                                     arguments)]
+           [(eq? expander datatype-expander)
+            (if (and (= 1 (length arguments)) (identifier? (car arguments)))
+                (list (list #'#t '()))
+                (record-pattern-branches compile-environment
+                                         ($construct-name extension "$datatype-" extension "-"
+                                                          (car arguments))
+                                         (cdr arguments)))]
+           [(valid-record-type? compile-environment extension)
+            (record-pattern-branches compile-environment extension arguments)]
+           [(and (not expander) (eq? (syntax->datum extension) 'regex))
+            (list (list #'#t (map pattern-value (cdr arguments))))]
+           [(and (not expander) (eq? (syntax->datum extension) 'hash))
+            (list (list #'#t (map pattern-value arguments)))]
+           ;; Box patterns and other expanders use their arguments as subpatterns.
+           [else (list (list #'#t arguments))])))))
 
 
   (define-syntax define-match-expander
