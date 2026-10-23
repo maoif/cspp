@@ -82,6 +82,20 @@
     (lambda (pattern)
       (syntax-case pattern () [(_ value) #'value])))
 
+  ;; Ordinary named-field syntax is also a two-element positional list pattern.
+  ;; Both interpretations have the same captures, so their submatchers can be shared.
+  (define ordinary-named-patterns?
+    (lambda (patterns)
+      (and (pair? patterns)
+           (for-all (lambda (pattern)
+                      (syntax-case pattern ()
+                        [(name value)
+                         (and (identifier? #'name)
+                              (not (memq (syntax->datum #'name)
+                                         '(unquote quasiquote unquote-splicing))))]
+                        [_ #f]))
+                    patterns))))
+
   ;; A branch pairs a runtime descriptor test with the actual subpatterns.
   ;; Generative native records defer named/positional disambiguation until runtime.
   (define record-pattern-branches
@@ -93,7 +107,9 @@
                                  (by-name-record-pats? compile-environment record-name patterns))
                             (map pattern-value patterns)
                             patterns)))
-            (if (and (pair? patterns)
+            (if (ordinary-named-patterns? patterns)
+                (list (list #'#t patterns))
+                (if (and (pair? patterns)
                      (andmap (lambda (pattern)
                                (syntax-case pattern ()
                                  [(name value) (identifier? #'name) #t]
@@ -108,7 +124,7 @@
                                                                     patterns))))
                        (map pattern-value patterns))
                  (list #'#t patterns))
-                (list (list #'#t patterns)))))))
+                (list (list #'#t patterns))))))))
 
   #|proc:extension-pattern-branches
   The `extension-pattern-branches` procedure identifies pattern positions in an extension.
@@ -161,62 +177,112 @@
 
   ;; Local generative records carry a descriptor identifier in the expansion
   ;; environment; their field names and field count are only known at runtime.
+  (define small-record-body?
+    (lambda (body)
+      (let loop ([pending (list body)] [budget 64])
+        (cond [(null? pending) #t]
+              [(zero? budget) #f]
+              [else
+               (syntax-case (car pending) ()
+                 [(head . tail) (loop (cons #'head (cons #'tail (cdr pending))) (- budget 1))]
+                 [#(items ...) (loop (append #'(items ...) (cdr pending)) (- budget 1))]
+                 [_ (loop (cdr pending) (- budget 1))])]))))
+
   (define system-record-expander
-    (lambda (pp rho expr-id pat body fk)
-      (syntax-case pat ()
-        [(dt pats ...)
-         (if (record-type-descriptor? (get-type-descriptor rho #'dt))
-             (static-system-record-expander pp rho expr-id pat body fk)
-             (with-syntax ([(rtd fields indices) (generate-temporaries '(rtd fields indices))])
-               (let* ([pats #'(pats ...)]
-                      [named? (and (pair? pats) (andmap
-                               (lambda (p)
-                                 (syntax-case p ()
-                                   [(name value) (identifier? #'name) #t]
-                                   [_ #f]))
-                               pats))]
-                      [generate-fields
-                       (lambda (patterns named?)
-                         (let loop ([patterns patterns] [i 0])
-                           (if (null? patterns)
-                               body
-                               (with-syntax ([(field) (generate-temporaries '(field))])
-                                 #`(let ([field ((record-accessor rtd
-                                                  #,(if named?
-                                                        #`(list-ref indices #,i)
-                                                        i))
-                                                #,expr-id)])
-                                     #,(pp rho #'field (car patterns)
-                                           (loop (cdr patterns) (fx1+ i)) fk))))))])
-                 #`(let ([rtd (record-type-descriptor dt)])
-                     (if ((record-predicate rtd) #,expr-id)
-                         (let* ([fields (record-type-field-names rtd)]
-                                [indices #,(if named?
-                                              #`(map (lambda (name) (vmemq name fields))
-                                                     '#,(datum->syntax #'dt
-                                                        (map (lambda (p) (syntax-case p ()
-                                                                          [(name value) (datum name)]))
-                                                             pats)))
-                                              #'#f)])
-                           (cond
-                            #,@(if named?
-                                   (list #`[(andmap number? indices)
-                                            #,(generate-fields
-                                               (map (lambda (p) (syntax-case p ()
-                                                                  [(name value) #'value])) pats)
-                                               #t)])
-                                   '())
-                            [(fx= (vector-length fields) #,(length pats))
-                             #,(if named?
-                                   ;; An ambiguous named pattern may have no valid positional
-                                   ;; interpretation, e.g. a field named `unquote`.
-                                   (guard (condition
-                                           [(syntax-violation? condition)
-                                            #`(errorf 'match "invalid record pattern: ~s" '#,pat)])
-                                     (generate-fields pats #f))
-                                   (generate-fields pats #f))]
-                            [else (errorf 'match "invalid record pattern: ~s" '#,pat)]))
-                         (#,fk))))))])))
+    (case-lambda
+      [(pp rho expr-id pat body fk)
+       (system-record-expander pp rho expr-id pat body fk
+                               (lambda (pattern body generate) (generate body)))]
+      [(pp rho expr-id pat body fk share-body)
+       (syntax-case pat ()
+         [(dt pats ...)
+          (if (record-type-descriptor? (get-type-descriptor rho #'dt))
+              (static-system-record-expander pp rho expr-id pat body fk)
+              (with-syntax ([(rtd fields indices named-mode)
+                             (generate-temporaries '(rtd fields indices named-mode))])
+                (let* ([pats #'(pats ...)]
+                       [named? (and (pair? pats) (andmap
+                                (lambda (p)
+                                  (syntax-case p ()
+                                    [(name value) (identifier? #'name) #t]
+                                    [_ #f]))
+                                pats))]
+                       [ordinary? (ordinary-named-patterns? pats)]
+                       [generate-shared-fields
+                        (lambda (success)
+                          (let loop ([patterns pats] [i 0])
+                            (if (null? patterns)
+                                success
+                                (syntax-case (car patterns) ()
+                                  [(name value)
+                                   (with-syntax ([(field item) (generate-temporaries '(field item))])
+                                     #`(let ([field ((record-accessor rtd
+                                                      (if named-mode (list-ref indices #,i) #,i))
+                                                    #,expr-id)])
+                                         (if (or named-mode
+                                                 (and (pair? field)
+                                                      #,(if (eq? (datum name) '_) #'#t
+                                                            #`(eq? (car field) 'name))
+                                                      (pair? (cdr field)) (null? (cddr field))))
+                                             (let ([item (if named-mode field (cadr field))])
+                                               #,(pp rho #'item #'value
+                                                     (loop (cdr patterns) (fx1+ i)) fk))
+                                             (#,fk))))]))))]
+                       [generate-fields
+                        (lambda (patterns named? success)
+                          (let loop ([patterns patterns] [i 0])
+                            (if (null? patterns)
+                                success
+                                (with-syntax ([(field) (generate-temporaries '(field))])
+                                  #`(let ([field ((record-accessor rtd
+                                                   #,(if named?
+                                                         #`(list-ref indices #,i)
+                                                         i))
+                                                 #,expr-id)])
+                                      #,(pp rho #'field (car patterns)
+                                            (loop (cdr patterns) (fx1+ i)) fk))))))])
+                 (let ([generate
+                        (lambda (success)
+                           #`(let ([rtd (record-type-descriptor dt)])
+                               (if ((record-predicate rtd) #,expr-id)
+                                   (let* ([fields (record-type-field-names rtd)]
+                                          [indices #,(if named?
+                                                        #`(map (lambda (name) (vmemq name fields))
+                                                               '#,(datum->syntax #'dt
+                                                                  (map (lambda (p) (syntax-case p ()
+                                                                                    [(name value) (datum name)]))
+                                                                       pats)))
+                                                        #'#f)])
+                                     #,(if ordinary?
+                                           #`(let ([named-mode (andmap number? indices)])
+                                               (unless (or named-mode
+                                                           (fx= (vector-length fields) #,(length pats)))
+                                                 (errorf 'match "invalid record pattern: ~s" '#,pat))
+                                               #,(generate-shared-fields success))
+                                     #`(cond
+                                      #,@(if named?
+                                             (list #`[(andmap number? indices)
+                                                      #,(generate-fields
+                                                         (map (lambda (p) (syntax-case p ()
+                                                                            [(name value) #'value])) pats)
+                                                         #t success)])
+                                             '())
+                                      [(fx= (vector-length fields) #,(length pats))
+                                       #,(if named?
+                                             ;; An ambiguous named pattern may have no valid positional
+                                             ;; interpretation, e.g. a field named `unquote`.
+                                             (guard (condition
+                                                     [(syntax-violation? condition)
+                                                      #`(errorf 'match "invalid record pattern: ~s" '#,pat)])
+                                               (generate-fields pats #f success))
+                                             (generate-fields pats #f success))]
+                                      [else (errorf 'match "invalid record pattern: ~s" '#,pat)])))
+                                   (#,fk))))])
+                   ;; Share substantial continuations; duplicating a small leaf avoids
+                   ;; access closures and boxing when a read-only capture stays local.
+                   (if (and named? (not ordinary?) (not (small-record-body? body)))
+                       (share-body pat body generate)
+                       (generate body))))))])]))
 
   (define static-system-record-expander
     (lambda (pp rho expr-id pat body fk)

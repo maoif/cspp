@@ -960,3 +960,151 @@
      ;; Selected captures retain ordinary mutable variable semantics.
      (equal? '(changed)
              (match '(1 2 stop) [(,x ... stop) (set! x '(changed)) x] [else #f])))
+
+(mat record-pattern-expansion-growth
+     ;; Four sibling local records must not duplicate the remaining matcher exponentially.
+     (let* ([before (statistics)]
+            [expanded
+             (expand '(lambda ()
+                        (define-record-type P (fields value))
+                        (match '()
+                          [((,(P ,a) ,(P ,b) ,(P ,c) ,(P ,d)) ...) #t]
+                          [else #f])))]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (pair? expanded) (< allocated 10000000))))
+
+(mat conditional-record-capture-scope
+     (let ([marker 'outer])
+       (define-record-type LiteralCapture (fields unquote))
+       (and (eq? 'outer
+                 (match (list (make-LiteralCapture 'marker))
+                   [(,(LiteralCapture (unquote marker)) ...) marker]))
+            (eq? 'changed
+                 (match (list (make-LiteralCapture 'marker))
+                   [(,(LiteralCapture (unquote marker)) ...) (set! marker 'changed) marker]))
+            (eq? marker 'changed)))
+
+     ;; An inactive capture keeps its outer binding visible to later backreferences.
+     (let ([marker 'outer])
+       (define-record-type LiteralCapture (fields unquote))
+       (match (list (list (make-LiteralCapture 'marker) 'outer))
+         [((,(LiteralCapture (unquote marker)) `marker) ...) #t]
+         [else #f]))
+
+     (let ([x 99])
+       (define-record-type ValueCapture (fields value))
+       (and (equal? '(10 20)
+                    (match (list (list (make-ValueCapture 10) 10)
+                                 (list (make-ValueCapture 20) 20))
+                      [((,(ValueCapture ,x) `x) ...) x] [else #f]))
+            (equal? '(changed)
+                    (match (list (make-ValueCapture 10))
+                      [(,(ValueCapture ,x) ...) (set! x '(changed)) x]))
+            (= x 99)))
+
+     (let ()
+       (define-record-type ValueCapture (fields value))
+       (equal? '((10 20) (30))
+               (match (list (list (make-ValueCapture 10) (make-ValueCapture 20))
+                            (list (make-ValueCapture 30)))
+                 [((,(ValueCapture ,x) ...) ...) x] [else #f]))))
+
+(mat record-pattern-shared-continuations
+     ;; A seven-record tuple should produce a modest expansion, including capture consumers.
+     (letrec ([size (lambda (tree)
+                      (cond [(pair? tree) (+ 1 (size (car tree)) (size (cdr tree)))]
+                            [(vector? tree) (fold-left (lambda (n x) (+ n (size x))) 1
+                                                       (vector->list tree))]
+                            [else 1]))])
+       (< (size (expand '(lambda ()
+                          (define-record-type P (fields value))
+                          (match '()
+                            [((,(P ,a) ,(P ,b) ,(P ,c) ,(P ,d)
+                               ,(P ,e) ,(P ,f) ,(P ,g)) ...)
+                             (list a b c d e f g)]
+                            [else #f]))))
+          20000)))
+
+(mat record-capture-location
+     ;; Closures created in later pattern expressions share capture assignment with the body.
+     (let ([saved #f])
+       (define-record-type LocationRecord (fields a b))
+       (equal? '(20 20)
+               (match (make-LocationRecord 10 "a")
+                 [,(LocationRecord (a ,x)
+                                   (b ,(regex (begin (set! saved (lambda () x)) "a"))))
+                  (set! x 20)
+                  (list x (saved))]
+                 [else #f]))))
+
+(mat macro-introduced-suffix-reference
+     ;; A suffix macro can introduce a reference absent from its surface syntax.
+     (let ([saved #f] [x 'outer])
+       (define-syntax capture-regex
+         (lambda (stx)
+           (syntax-case stx ()
+             [(keyword)
+              (with-syntax ([x (datum->syntax #'keyword 'x)])
+                #'(begin (set! saved x) "a"))])))
+       (and (equal? '(1 2)
+                    (match '(1 2 "a") [(,x ... ,(regex (capture-regex))) x] [else #f]))
+            (equal? '(1 2) saved))))
+
+(mat library-record-captures
+     ;; Library expansion rejects unbound fallbacks and assignments to immutable imports.
+     (begin
+       (eval '(library (match-tests local-record-capture)
+                (export run)
+                (import (cspp))
+                (define run
+                  (lambda ()
+                    (define-record-type P (fields value))
+                    (list (match (make-P 10) [,(P ,map) map])
+                          (match (list (make-P 20)) [(,(P ,x) ...) x])))))
+             (copy-environment (environment '(cspp)) #t))
+       (equal? '(10 (20))
+               ((eval 'run (environment '(match-tests local-record-capture)))))))
+
+(mat shared-named-record-fields
+     (let ()
+       (define-record-type NamedRecord (fields a))
+       (= 10 (match (make-NamedRecord 10) [,(NamedRecord (a ,x)) x] [else #f])))
+
+     ;; Without a matching field name the original two-element list pattern is positional.
+     (let ()
+       (define-record-type PositionalRecord (fields value))
+       (= 10 (match (make-PositionalRecord '(a 10))
+               [,(PositionalRecord (a ,x)) x] [else #f])))
+
+     (let ()
+       (define-record-type PositionalRecord (fields value))
+       (match (make-PositionalRecord '(b 10))
+         [,(PositionalRecord (a ,x)) #f] [else #t]))
+
+     ;; The wildcard head retains its positional meaning when it is not a field name.
+     (let ()
+       (define-record-type PositionalRecord (fields value))
+       (= 10 (match (make-PositionalRecord '(b 10))
+               [,(PositionalRecord (_ ,x)) x] [else #f]))))
+
+(mat nested-record-pattern-expansion-growth
+     ;; Nested named fields share the same inner matcher for named and positional inputs.
+     (let* ([pattern (let loop ([depth 6])
+                       (if (= depth 0) '(unquote x)
+                           (list 'unquote (list 'P (list 'a (loop (- depth 1)))))))]
+            [before (statistics)]
+            [expanded (expand `(lambda ()
+                                 (define-record-type P (fields a))
+                                 (match #f [,pattern x] [else #f])))]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (pair? expanded) (< allocated 10000000))))
+
+(mat local-record-capture-allocation
+     ;; A short read-only repetition must not box each capture for an unused setter.
+     (let ()
+       (define-record-type AllocationRecord (fields value))
+       (let* ([source (map make-AllocationRecord (iota 1000))]
+              [before (statistics)]
+              [result (match source [(,(AllocationRecord ,x) ...) (length x)] [else #f])]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and (= result 1000) (< allocated 60000)))))
