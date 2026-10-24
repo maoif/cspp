@@ -1804,3 +1804,22 @@
 
      (equal? '((0 0) (0 1) (1 0) (1 1))
              (for*/list ([x :fxiota 2] [y :fxiota 2 :index i]) (list x i))))
+
+(mat numeric-unordered-progress
+     ;; Opposing infinities must raise an error rather than produce NaN forever.
+     ;; The visit limits keep the witnesses finite without progress validation.
+     (error? (let ([visits 0])
+               (for ([x :nums -inf.0 0 +inf.0] [:break (= visits 3)])
+                 (set! visits (+ visits 1)))))
+
+     (error? (let ([visits 0])
+               (for* ([x :nums +inf.0 0 -inf.0] [:break (= visits 3)])
+                 (set! visits (+ visits 1)))))
+
+     ;; Infinite bounds and infinite steps that cross their bound remain supported.
+     (equal? '(0 1 2)
+             (for/list ([x :nums +inf.0] [:break (= x 3)]) x))
+
+     (equal? '(0) (for/list ([x :nums 0 1 +inf.0]) x))
+
+     (equal? '(0) (for/list ([x :nums 0 -1 -inf.0]) x)))

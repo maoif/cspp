@@ -434,7 +434,8 @@
     (define (process-single-var-iter-clause v ty op*)
       (define (numeric-next step)
         #`(let ([next (+ #,v #,step)])
-            (when (= next #,v)
+            ;; Ordered comparison also rejects NaN from opposing infinities.
+            (unless (or (< next #,v) (> next #,v))
               (errorf ':nums "step does not advance source value: ~a, step ~a" #,v #,step))
             next))
       (let ([nops (length op*)])
