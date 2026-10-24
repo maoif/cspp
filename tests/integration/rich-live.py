@@ -136,12 +136,41 @@ SELF_STOP = r'''
 '''
 
 
+
+STATUS_RECOVERY = r'''
+(import (cspp))
+(define calls 0)
+(define fail? #t)
+(define status #f)
+;; A later worker failure must be reported once without preventing a status restart.
+(rich-register-renderer! (lambda (candidate) (eq? candidate status))
+  (lambda (value)
+    (set! calls (+ calls 1))
+    (if (and fail? (> calls 1)) (raise 'status-worker-failure) "ok")))
+(call-with-port (open-output-string)
+  (lambda (output)
+    (set! status (make-rich-status "Working" (rich-console :output-port output) '("*") 0.005))
+    (rich-status-start! status)
+    (let wait ([remaining 1000])
+      (when (and (< calls 2) (positive? remaining))
+        (milisleep 1) (wait (- remaining 1))))
+    (let ([failure (guard (condition [else condition]) (rich-status-stop! status) #f)])
+      (unless (eq? failure 'status-worker-failure)
+        (error 'status-recovery "worker failure was not reported")))
+    (set! fail? #f)
+    (rich-status-start! status)
+    (rich-status-stop! status)
+    (unless (>= calls 3) (error 'status-recovery "status did not restart"))))
+'''
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-live-") as directory:
         cases = (("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE),
                  ("false-failure", FAILURE.replace(
                      '(error \'worker-recovery "later frame failed")', "(raise #f)")),
-                 ("stop", STOP), ("status", STATUS), ("self-stop", SELF_STOP))
+                 ("stop", STOP), ("status", STATUS), ("self-stop", SELF_STOP),
+                 ("status-recovery", STATUS_RECOVERY))
         for name, source in cases:
             probe = Path(directory) / (name + ".ss")
             probe.write_text(source)

@@ -605,9 +605,10 @@
   (define rich-status-stop!
     (lambda (status)
       (pcheck ([rich-status? status])
-              (when ($rich-status-live status)
-                (rich-live-stop! ($rich-status-live status))
-                ($rich-status-live-set! status #f))
+              (let ([live ($rich-status-live status)])
+                (when live
+                  ($rich-status-live-set! status #f)
+                  (rich-live-stop! live)))
               status)))
 
   #|macro:rich-status
