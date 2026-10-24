@@ -2222,3 +2222,13 @@
        (and (eq? clock (rich-current-time)) (eq? sleeper (rich-sleep))))
 
      )
+
+(mat rich-extreme-status-interval
+
+     ;; Accepted finite intervals must not overflow the spinner's elapsed/interval ratio.
+     (parameterize ([rich-current-time (lambda () 0)])
+       (let ([status (make-rich-status "test" (make-rich-console) '("A") 1e-320)])
+         (parameterize ([rich-current-time (lambda () 1)])
+           (string=? "A test" (rich-export-text status)))))
+
+     )

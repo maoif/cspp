@@ -100,7 +100,8 @@
 
   (define $sleep-duration
     (lambda (seconds)
-      (let* ([milliseconds (max 0 ($round->exact (* seconds 1000)))]
+      (let* ([milliseconds (max (if (positive? seconds) 1 0)
+                                ($round->exact (* (inexact->exact seconds) 1000)))]
              [sec (quotient milliseconds 1000)]
              [nsec (* 1000000 (remainder milliseconds 1000))])
         (make-time 'time-duration nsec sec))))
@@ -116,11 +117,23 @@
           (with-mutex ($rich-live-wake-lock live)
             (and (not ($rich-live-stop? live))
                  (let ([rate (rich-live-refresh-rate live)])
-                   (not (condition-wait ($rich-live-wake-condition live)
-                                        ($rich-live-wake-lock live)
-                                        (and (positive? rate) ($sleep-duration (/ 1 rate))))))))
+                   (if (zero? rate)
+                       (begin
+                         (condition-wait ($rich-live-wake-condition live) ($rich-live-wake-lock live))
+                         #f)
+                       ;; Keep native timeouts bounded without refreshing before a long
+                       ;; interval expires. Setters and shutdown interrupt any chunk.
+                       (let wait ([remaining (/ 1 (inexact->exact rate))])
+                         (let ([chunk (min 86400 remaining)])
+                           (if (condition-wait ($rich-live-wake-condition live)
+                                               ($rich-live-wake-lock live)
+                                               ($sleep-duration chunk))
+                               #f
+                               (if (> remaining chunk)
+                                   (wait (- remaining chunk))
+                                   #t))))))))
           (let ([rate (rich-live-refresh-rate live)])
-            ((rich-sleep) (if (positive? rate) (/ 1 rate) 0.05))
+            ((rich-sleep) (if (positive? rate) (/ 1 (inexact->exact rate)) 0.05))
             #t))))
 
   (define $frame-line-count
@@ -275,6 +288,7 @@
   The `rich-live-refresh-rate-set!` procedure sets nonnegative refreshes per second
   `refresh-rate` for `live` and returns unspecified. Zero pauses an existing worker;
   a positive rate resumes it. A display started at zero has no automatic worker.
+  The default worker waits at least one millisecond between frames.
   |#
   (define rich-live-refresh-rate-set!
     (lambda (live refresh-rate)
@@ -566,7 +580,7 @@
       (pcheck ([rich-status? status] [$real-positive? interval])
               ($rich-status-interval-set! status interval)
               (when ($rich-status-live status)
-                (rich-live-refresh-rate-set! ($rich-status-live status) (/ 1 interval))))))
+                (rich-live-refresh-rate-set! ($rich-status-live status) (/ 1 (inexact->exact interval)))))))
 
   #|proc:rich-status-render
   The `rich-status-render` procedure renders `status` as one segment line.
@@ -575,11 +589,10 @@
     (lambda (status)
       (pcheck ([rich-status? status])
               (let* ([frames (rich-status-frames status)]
-                     [elapsed (max 0 (- ((rich-current-time))
-                                        ($rich-status-start-time status)))]
-                     [index (modulo (inexact->exact
-                                     (floor (/ elapsed
-                                               (rich-status-interval status))))
+                     [elapsed (max 0 (- (inexact->exact ((rich-current-time)))
+                                        (inexact->exact ($rich-status-start-time status))))]
+                     [index (modulo (floor (/ elapsed
+                                              (inexact->exact (rich-status-interval status))))
                                     (length frames))]
                      [frame (list-ref frames index)])
                 (list (list (rich-segment frame)
@@ -598,7 +611,7 @@
                 ($rich-status-start-time-set! status ((rich-current-time)))
                 (let ([live (make-rich-live status
                                             (rich-status-console status)
-                                            (/ 1 (rich-status-interval status))
+                                            (/ 1 (inexact->exact (rich-status-interval status)))
                                             #f)])
                   (rich-live-start! live)
                   ($rich-status-live-set! status live)))

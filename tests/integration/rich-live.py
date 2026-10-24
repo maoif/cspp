@@ -164,13 +164,36 @@ STATUS_RECOVERY = r'''
 '''
 
 
+
+EXTREME_TIMING = r'''
+(import (cspp))
+(call-with-port (open-output-string)
+  (lambda (output)
+    (let ([console (rich-console :output-port output)])
+      ;; These finite rates formerly overflowed the reciprocal or millisecond scaling.
+      (for-each
+       (lambda (rate)
+         (let ([live (make-rich-live "ok" console rate #f)])
+           (rich-live-start! live)
+           (milisleep 10)
+           (rich-live-stop! live)))
+       '(1e-320 1e-308 1e308))
+      (let ([status (make-rich-status "test" console '("A") 0.01)])
+        (rich-status-start! status)
+        (rich-status-interval-set! status 1e-320)
+        (milisleep 10)
+        (rich-status-stop! status)))))
+'''
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-live-") as directory:
         cases = (("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE),
                  ("false-failure", FAILURE.replace(
                      '(error \'worker-recovery "later frame failed")', "(raise #f)")),
                  ("stop", STOP), ("status", STATUS), ("self-stop", SELF_STOP),
-                 ("status-recovery", STATUS_RECOVERY))
+                 ("status-recovery", STATUS_RECOVERY),
+                 ("extreme-timing", EXTREME_TIMING))
         for name, source in cases:
             probe = Path(directory) / (name + ".ss")
             probe.write_text(source)
