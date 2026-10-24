@@ -2232,3 +2232,30 @@
            (string=? "A test" (rich-export-text status)))))
 
      )
+
+(mat rich-progress-many-task-updates
+
+     ;; IDs remain stable through index growth and rendering retains insertion order.
+     (let ([progress (make-rich-progress 4 '(description completed))])
+       (do ([id 0 (+ id 1)]) ((= id 300))
+         (rich-progress-add-task! progress (number->string id) 10))
+       (do ([id 299 (- id 1)]) ((negative? id))
+         (rich-progress-update! progress id 2)
+         (rich-progress-advance! progress id 1))
+       (rich-progress-task-visible?-set! progress 1 #f)
+       (rich-progress-task-description-set! progress 150 "middle")
+       (rich-progress-task-total-set! progress 150 4)
+       (rich-progress-complete! progress 299)
+       (let ([lines (map rich-segments->plain (rich-progress-render progress))])
+         (and (= (length lines) 299)
+              (string=? (car lines) "0 3/10")
+              (string=? (cadr lines) "2 3/10")
+              (string=? (list-ref lines 149) "middle 3/4")
+              (string=? (list-ref lines 298) "299 10/10"))))
+
+     ;; An absent bignum ID must be rejected by the index without changing valid tasks.
+     (error? (let ([progress (make-rich-progress)])
+               (rich-progress-add-task! progress "build" 10)
+               (rich-progress-update! progress (expt 10 30) 2)))
+
+     )

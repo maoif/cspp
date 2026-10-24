@@ -33,6 +33,7 @@
             (mutable width $rich-progress-width $rich-progress-width-set!)
             (mutable columns $rich-progress-columns $rich-progress-columns-set!)
             (immutable tasks $rich-progress-task-builder)
+            (immutable task-index $rich-progress-task-index)
             (mutable live $rich-progress-live $rich-progress-live-set!)))
 
   (define-record-type (rich-progress-task-record $make-rich-progress-task-record $rich-progress-task?)
@@ -69,13 +70,8 @@
 
   (define $progress-task-ref
     (lambda (progress id who)
-      (let loop ([tasks ($rich-progress-tasks progress)])
-        (cond [(null? tasks)
-               (errorf who "unknown progress task id: ~a" id)]
-              [(= id ($rich-progress-task-id (car tasks)))
-               (car tasks)]
-              [else
-               (loop (cdr tasks))]))))
+      (or (hashtable-ref ($rich-progress-task-index progress) id #f)
+          (errorf who "unknown progress task id: ~a" id))))
 
   (define $string-repeat
     (lambda (text count)
@@ -323,10 +319,11 @@
   (define make-rich-progress
     (case-lambda
       [()
-       ($make-rich-progress-record 0 #f (rich-progress-default-columns) (make-list-builder) #f)]
+       ($make-rich-progress-record 0 #f (rich-progress-default-columns)
+                                   (make-list-builder) (make-eqv-hashtable) #f)]
       [(width columns)
        (pcheck ([rich-optional-width? width] [$columns? columns])
-               ($make-rich-progress-record 0 width columns (make-list-builder) #f))]))
+               ($make-rich-progress-record 0 width columns (make-list-builder) (make-eqv-hashtable) #f))]))
 
   (define $rich-progress-width-set!/checked
     (lambda (progress width)
@@ -352,6 +349,7 @@
                      [task ($make-rich-progress-task-record
                             id description total 0 #t ((rich-current-time)) #f)])
                 ($rich-progress-next-id-set! progress (+ id 1))
+                (hashtable-set! ($rich-progress-task-index progress) id task)
                 (($rich-progress-task-builder progress) task)
                 id))))
 

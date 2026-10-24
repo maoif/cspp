@@ -87,3 +87,16 @@
                     [console (rich-console :width 10)])
                 (lambda () (= (+ size 1) (length (rich-render console tree))))))))
  '(500 1000 2000 4000))
+
+(for-each
+ (lambda (size)
+   (measure 'update-all-tasks size
+            (lambda ()
+              (let ([progress (make-rich-progress)] [ids (make-list-builder)])
+                (do ([index 0 (+ index 1)]) ((= index size))
+                  (ids (rich-progress-add-task! progress "x" 10)))
+                (let ([ids (ids)])
+                  (lambda ()
+                    (for-each (lambda (id) (rich-progress-update! progress id 1)) ids)
+                    #t))))))
+ '(1000 2000 4000 8000))
