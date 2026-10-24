@@ -142,6 +142,42 @@ CHILD_STOP = SELF_STOP.replace(
     '(thread-join (fork-thread (lambda () (rich-live-stop! live)))) (set! stopped? #t)')
 
 
+INITIAL_STOP = r'''
+(import (cspp))
+(for-each
+ (lambda (rate)
+   (for-each
+    (lambda (child?)
+      (for-each
+       (lambda (transient?)
+         (let ([calls 0] [value (vector 'initial-stop)] [live #f])
+           (rich-register-renderer! (lambda (candidate) (eq? candidate value))
+             (lambda (value)
+               (set! calls (+ calls 1))
+               (if child?
+                   (thread-join (fork-thread (lambda () (rich-live-stop! live))))
+                   (rich-live-stop! live))
+               "ok"))
+           (call-with-port (open-output-string)
+             (lambda (output)
+               (set! live (make-rich-live value (rich-console :output-port output)
+                                          rate transient?))
+               (rich-live-start! live)
+               (unless (string=? (if transient? "ok\r\033[2K" "ok")
+                                  (get-output-string output))
+                 (error 'initial-stop "initial frame was not cleaned up"))
+               (rich-live-stop! live)
+               (unless (string=? "" (get-output-string output))
+                 (error 'initial-stop "second stop repeated cleanup"))
+               (rich-live-start! live)
+               (unless (= calls 2) (error 'initial-stop "display did not restart"))
+               (rich-live-stop! live)))))
+       '(#f #t)))
+    '(#f #t)))
+ '(0 100))
+'''
+
+
 CLEANUP_CHILD_STOP = r'''
 (import (cspp))
 (define calls 0)
@@ -278,7 +314,7 @@ def main():
                  ("false-failure", FAILURE.replace(
                      '(error \'worker-recovery "later frame failed")', "(raise #f)")),
                  ("stop", STOP), ("status", STATUS), ("self-stop", SELF_STOP),
-                 ("child-stop", CHILD_STOP), ("cleanup-child-stop", CLEANUP_CHILD_STOP),
+                 ("initial-stop", INITIAL_STOP), ("child-stop", CHILD_STOP), ("cleanup-child-stop", CLEANUP_CHILD_STOP),
                  ("stale-child-stop", STALE_CHILD_STOP),
                  ("status-recovery", STATUS_RECOVERY),
                  ("extreme-timing", EXTREME_TIMING))

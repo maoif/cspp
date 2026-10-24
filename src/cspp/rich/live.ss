@@ -62,7 +62,7 @@
             (mutable start-time $rich-status-start-time $rich-status-start-time-set!)
             (mutable live $rich-status-live $rich-status-live-set!)))
 
-  ;; A worker context records its live display, active lifetime, and stop request.
+  ;; A refresh context records its live display, active lifetime, and stop request.
   ;; Renderer children inherit it: joining the worker there can deadlock the renderer.
   (define $worker-context (make-parameter #f))
 
@@ -358,8 +358,20 @@
                          (raise condition)])
                   ($rich-live-started?-set! live #t)
                   ($rich-live-stop?-set! live #f)
-                  (rich-live-refresh! live)
-                  (when (positive? (rich-live-refresh-rate live))
+                  ;; The synchronous first frame needs the same deferred-stop behavior
+                  ;; as worker frames, including renderer children and cleanup callbacks.
+                  (let ([context (vector live #t #f)])
+                    (dynamic-wind
+                      void
+                      (lambda ()
+                        (parameterize ([$worker-context context])
+                          (rich-live-refresh! live)
+                          (when (vector-ref context 2) ($finish-live-stop! live))))
+                      (lambda ()
+                        (with-mutex ($rich-live-wake-lock live)
+                          (vector-set! context 1 #f)))))
+                  (when (and (not ($rich-live-stop? live))
+                             (positive? (rich-live-refresh-rate live)))
                     (let ([thread
                            (fork-thread
                             (lambda ()
@@ -416,8 +428,8 @@
   #|proc:rich-live-stop!
   The `rich-live-stop!` procedure stops refreshing `live` and returns `live`.
   The default wait is interrupted immediately; custom `rich-sleep` hooks must return
-  themselves. Calls from its worker or renderer child threads request shutdown after the
-  current frame finishes; callers outside that active worker context wait for shutdown.
+  themselves. Calls during its initial refresh or from its worker and renderer child threads
+  request shutdown after the current frame finishes; other callers wait for shutdown.
   If its worker failed, cleanup finishes before its condition is raised once.
   |#
   (define rich-live-stop!
