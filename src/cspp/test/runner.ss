@@ -228,31 +228,24 @@ association-list filters as `test-select`.
       (let ([rule (test-metadata-ref metadata key #f)])
         (if rule (cdr rule) ""))))
 
-  (define $setup-fixtures
-    (lambda (metadata)
-      (map (lambda (fixture)
-             (cons (car fixture) ((cdr fixture))))
-           (test-metadata-ref metadata 'fixtures '()))))
-
-  (define $teardown-fixtures
-    (lambda (metadata fixture-values)
-      (let ([after (test-metadata-ref metadata 'after #f)])
-        (when after
-          (after fixture-values)))))
-
   (define $run-body-with-fixtures
     (lambda (metadata body parameters)
       (let ([fixture-values '()])
         (dynamic-wind
+          (lambda () (void))
           (lambda ()
-            (set! fixture-values ($setup-fixtures metadata))
-            (let ([before (test-metadata-ref metadata 'before #f)])
-              (when before
-                (before fixture-values))))
+            (for-each
+             (lambda (fixture)
+               (let ([value ((cdr fixture))])
+                 (set! fixture-values (cons (cons (car fixture) value) fixture-values))))
+             (test-metadata-ref metadata 'fixtures '()))
+            (let ([fixtures (reverse fixture-values)]
+                  [before (test-metadata-ref metadata 'before #f)])
+              (when before (before fixtures))
+              ($call-body body (append fixtures parameters))))
           (lambda ()
-            ($call-body body (append fixture-values parameters)))
-          (lambda ()
-            ($teardown-fixtures metadata fixture-values))))))
+            (let ([after (test-metadata-ref metadata 'after #f)])
+              (when after (after (reverse fixture-values)))))))))
 
   (define $case-result
     (lambda (concrete-case status message condition stdout stderr)
@@ -319,94 +312,100 @@ association-list filters as `test-select`.
         (and message
              ($case-result concrete-case 'skipped message #f "" "")))))
 
-  (define $run-runtime-case
-    (lambda (concrete-case config)
-      (let* ([metadata (test-concrete-case-metadata concrete-case)]
-             [parameters (test-concrete-case-parameters concrete-case)])
-        (cond
-         [($requirement-result concrete-case metadata)]
-         [($rule-active? metadata 'skip-when parameters)
-          ($case-result concrete-case 'skipped ($rule-message metadata 'skip-when) #f "" "")]
-         [else
-          (let ([xfail? ($rule-active? metadata 'xfail-when parameters)]
-                [xfail-message ($rule-message metadata 'xfail-when)])
-            (guard (condition
-                    [else
-                     ($condition-result concrete-case
-                                        metadata
-                                        condition
-                                        xfail?
-                                        xfail-message
-                                        ""
-                                        "")])
-              (let ([capture-mode (test-metadata-ref metadata 'capture #f)]
-                    [body (lambda ()
-                            ($run-body-with-fixtures
-                             metadata
-                             (test-descriptor-body (test-concrete-case-descriptor concrete-case))
-                             parameters))])
-                (if capture-mode
-                    (call-with-values
-                      (lambda ()
-                        (test-capture-ports capture-mode body))
-                      (lambda (values-list stdout stderr)
-                        (test-check-output-expectations metadata stdout stderr)
-                        (if xfail?
-                            ($case-result concrete-case 'xpass xfail-message #f stdout stderr)
-                            ($case-result concrete-case 'passed "" #f stdout stderr))))
-                    (begin
-                      (body)
-                      (test-check-output-expectations metadata "" "")
-                      (if xfail?
-                          ($case-result concrete-case 'xpass xfail-message #f "" "")
-                          ($case-result concrete-case 'passed "" #f "" "")))))))]))))
-
   (define $expected-condition-predicate
     (lambda (metadata)
       (let ([predicate (test-metadata-ref metadata 'raises #f)])
         (cond
          [(procedure? predicate) predicate]
-         [(symbol? predicate) (eval predicate (environment '(chezscheme)))]
          [predicate (eval predicate (environment '(chezscheme)))]
          [else #f]))))
 
   (define $run-with-expected-condition
-    (lambda (concrete-case thunk)
-      (let* ([metadata (test-concrete-case-metadata concrete-case)]
-             [predicate ($expected-condition-predicate metadata)])
+    (lambda (metadata thunk)
+      (let ([predicate ($expected-condition-predicate metadata)])
         (if predicate
-            (guard (condition
-                    [else
-                     (if (predicate condition)
-                         ($case-result concrete-case 'passed "" condition "" "")
-                         ($condition-result concrete-case
-                                            metadata
-                                            condition
-                                            #f
-                                            ""
-                                            ""
-                                            ""))])
-              (thunk)
-              ($case-result concrete-case 'failed "expected condition was not raised" #f "" ""))
-            (guard (condition
-                    [else
-                     ($condition-result concrete-case
-                                        metadata
-                                        condition
-                                        #f
-                                        ""
-                                        ""
-                                        "")])
-              (thunk)
-              ($case-result concrete-case 'passed "" #f "" ""))))))
+            (test-assert-raises predicate thunk "expected matching condition")
+            (thunk)))))
 
-  (define $run-expand-case
+  (define $run-phase-body
+    (lambda (concrete-case)
+      (let* ([descriptor (test-concrete-case-descriptor concrete-case)]
+             [metadata (test-concrete-case-metadata concrete-case)])
+        (case (test-descriptor-phase descriptor)
+          [(runtime)
+           ($run-body-with-fixtures metadata (test-descriptor-body descriptor)
+                                    (test-concrete-case-parameters concrete-case))]
+          [(expand)
+           ($run-with-expected-condition
+            metadata (lambda () (expand (test-descriptor-body descriptor))))]
+          [(compile)
+           ($run-with-expected-condition metadata
+             (lambda () ($compile-case descriptor)))]
+          [else (errorf 'test-run "unsupported test phase: ~a"
+                        (test-descriptor-phase descriptor))]))))
+
+  (define $run-allowing-warnings
+    (lambda (metadata thunk)
+      (with-exception-handler
+        (lambda (condition)
+          (if (and (warning? condition)
+                   (not (test-metadata-ref metadata 'condition-handler #f))
+                   (not (eq? (test-metadata-ref metadata 'warnings 'allow) 'error)))
+              (void)
+              (raise condition)))
+        thunk)))
+
+  (define $strict-xpass-result
+    (lambda (concrete-case config result)
+      (if (and (eq? (test-result-status result) 'xpass)
+               (test-metadata-ref (test-concrete-case-metadata concrete-case)
+                                  'xfail-strict (test-config-xfail-strict? config)))
+          ($case-result concrete-case 'failed "unexpected pass (strict xfail)" #f
+                        (test-result-stdout result) (test-result-stderr result))
+          result)))
+
+  (define $run-case-with-policy
     (lambda (concrete-case config)
-      (or ($requirement-result concrete-case (test-concrete-case-metadata concrete-case))
-          ($run-with-expected-condition
-           concrete-case
-           (lambda ()
-             (expand (test-descriptor-body (test-concrete-case-descriptor concrete-case))))))))
+      (let* ([metadata (test-concrete-case-metadata concrete-case)]
+             [parameters (test-concrete-case-parameters concrete-case)]
+             [xfail? #f]
+             [xfail-message ""])
+        (guard (condition
+                [else ($case-result concrete-case 'errored "unexpected policy condition"
+                                    condition "" "")])
+          (cond
+           [($requirement-result concrete-case metadata)]
+           [($rule-active? metadata 'skip-when parameters)
+            ($case-result concrete-case 'skipped ($rule-message metadata 'skip-when) #f "" "")]
+           [else
+            (set! xfail? ($rule-active? metadata 'xfail-when parameters))
+            (set! xfail-message ($rule-message metadata 'xfail-when))
+            (let* ([captured
+                    (call-with-values
+                      (lambda ()
+                        (test-capture-ports
+                         (test-metadata-ref metadata 'capture #f)
+                         (lambda ()
+                           (guard (condition [else (list 'condition condition)])
+                             ($run-allowing-warnings metadata
+                               (lambda () ($run-phase-body concrete-case)))
+                             '(success)))))
+                      list)]
+                   [outcome (car (car captured))]
+                   [stdout (cadr captured)]
+                   [stderr (caddr captured)])
+              ($strict-xpass-result
+               concrete-case config
+               (guard (condition
+                       [else ($condition-result concrete-case metadata condition
+                                                xfail? xfail-message stdout stderr)])
+                 (if (eq? (car outcome) 'condition)
+                     ($condition-result concrete-case metadata (cadr outcome)
+                                        xfail? xfail-message stdout stderr)
+                     (begin
+                       (test-check-output-expectations metadata stdout stderr)
+                       ($case-result concrete-case (if xfail? 'xpass 'passed)
+                                     (if xfail? xfail-message "") #f stdout stderr))))))])))))
 
   (define $compile-temp-path
     (lambda ()
@@ -422,48 +421,34 @@ association-list filters as `test-select`.
             (string-append (substring path 0 (fx- length 3)) ".so")
             (string-append path ".so")))))
 
-  (define $run-compile-case
-    (lambda (concrete-case config)
-      (or ($requirement-result concrete-case (test-concrete-case-metadata concrete-case))
-          ($run-with-expected-condition
-           concrete-case
-           (lambda ()
-             (let ([path ($compile-temp-path)])
-               (dynamic-wind
-                 (lambda () #f)
-                 (lambda ()
-                   (call-with-output-file path
-                     (lambda (out)
-                       (for-each
-                        (lambda (form)
-                          (write form out)
-                          (newline out))
-                        (test-descriptor-body (test-concrete-case-descriptor concrete-case))))
-                     'replace)
-                   (compile-file path))
-                 (lambda ()
-                   (when (file-exists? path)
-                     (delete-file path))
-                   (let ([output-path ($compile-output-path path)])
-                     (when (file-exists? output-path)
-                       (delete-file output-path)))))))))))
-
-  (define $run-concrete-case
-    (lambda (concrete-case config)
-      (case (test-descriptor-phase (test-concrete-case-descriptor concrete-case))
-        [(runtime) ($run-runtime-case concrete-case config)]
-        [(expand) ($run-expand-case concrete-case config)]
-        [(compile) ($run-compile-case concrete-case config)]
-        [else ($case-result concrete-case 'errored "unsupported test phase" #f "" "")])))
+  (define $compile-case
+    (lambda (descriptor)
+      (let ([path ($compile-temp-path)])
+        (dynamic-wind
+          (lambda () (void))
+          (lambda ()
+            (call-with-output-file path
+              (lambda (out)
+                (for-each (lambda (form) (write form out) (newline out))
+                          (test-descriptor-body descriptor)))
+              'replace)
+            (parameterize ([compile-file-message #f]) (compile-file path)))
+          (lambda ()
+            (when (file-exists? path) (delete-file path))
+            (let ([output-path ($compile-output-path path)])
+              (when (file-exists? output-path) (delete-file output-path))))))))
 
   (define $stop-after-result?
     (lambda (config result)
       (and (test-config-stop-on-failure? config)
-           (memq (test-result-status result) '(failed errored xpass)))))
+           (memq (test-result-status result) '(failed errored)))))
 
   #|proc:test-run
 The `test-run` procedure executes test `descriptors` using runner `config` and
-returns a list of test result records.
+returns a list of test result records. Allowed continuable warnings resume
+the case body. Skip and expected-failure rules apply to every phase. An
+unexpected pass has status `failed` under effective strict xfail policy and
+`xpass` otherwise; only `failed` and `errored` stop a stop-on-failure run.
 |#
   (define test-run
     (lambda (descriptors config)
@@ -475,7 +460,7 @@ returns a list of test result records.
                       (let loop ([cases cases] [out '()])
                         (if (null? cases)
                             (reverse out)
-                            (let ([result ($run-concrete-case (car cases) config)])
+                            (let ([result ($run-case-with-policy (car cases) config)])
                               (if ($stop-after-result? config result)
                                   (reverse (cons result out))
                                   (loop (cdr cases) (cons result out))))))])
@@ -489,6 +474,7 @@ returns a list of test result records.
   #|proc:test-run-registry
 The `test-run-registry` procedure executes every descriptor registered in
 `registry` using runner `config` and returns a list of test result records.
+Case policies are the same as those described by `test-run`.
 |#
   (define test-run-registry
     (lambda (registry config)
@@ -545,7 +531,7 @@ process-style status code. `argv` is a list of strings; it accepts
                     (let ([results (test-run-files files config)])
                       (if (exists (lambda (result)
                                     (memq (test-result-status result)
-                                          '(failed errored xpass)))
+                                          '(failed errored)))
                                   results)
                           1
                           0))))))))

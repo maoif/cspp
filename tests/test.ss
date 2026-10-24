@@ -515,3 +515,165 @@
                       (test-select registry '((name-prefix . "child")))) '(2))
          (equal? (map test-result-id (test-run-registry registry (test-silent-config)))
                  '(0 1 2)))))
+
+(mat test-warning-continuation
+  ;; Allowed warnings must not skip a later failing assertion.
+  (let ([continued? #f])
+    (let ([result (car (test-run
+                        (list (make-test-case 'warning
+                                (lambda ()
+                                  (warningf 'warning "allowed")
+                                  (set! continued? #t)
+                                  (test-true #f)) '()))
+                        (test-silent-config)))])
+      (and continued? (eq? (test-result-status result) 'failed))))
+
+  (let ([continued? #f])
+    (let ([result (car (test-run
+                        (list (make-test-case 'warning
+                                (lambda ()
+                                  (warningf 'warning "allowed")
+                                  (set! continued? #t)) '()))
+                        (test-silent-config)))])
+      (and continued? (eq? (test-result-status result) 'passed)))))
+
+(mat test-failed-output-preservation
+  ;; Both streams must survive an assertion failure.
+  (let ([result (car (test-run
+                      (list (make-test-case 'output
+                              (lambda ()
+                                (display "before")
+                                (display "error" (current-error-port))
+                                (test-true #f))
+                              '((capture . (stdout stderr)))))
+                      (test-silent-config)))])
+    (and (eq? (test-result-status result) 'failed)
+         (string=? (test-result-stdout result) "before")
+         (string=? (test-result-stderr result) "error")))
+
+  ;; An output mismatch must preserve the actual captured output.
+  (let ([result (car (test-run
+                      (list (make-test-case 'output (lambda () (display "actual"))
+                              '((capture . stdout) (stdout . "expected"))))
+                      (test-silent-config)))])
+    (and (eq? (test-result-status result) 'failed)
+         (string=? (test-result-stdout result) "actual"))))
+
+(mat test-setup-error-cleanup
+  ;; Fixtures already acquired must be released if before raises.
+  (let ([cleaned '()])
+    (let ([result (car (test-run
+                        (list (make-test-case 'setup (lambda () #t)
+                                `((fixtures . ((one . ,(lambda () 'open))))
+                                  (before . ,(lambda (params) (error 'before "failed")))
+                                  (after . ,(lambda (params) (set! cleaned params))))))
+                        (test-silent-config)))])
+      (and (eq? (test-result-status result) 'errored)
+           (equal? cleaned '((one . open))))))
+
+  ;; A later fixture failure must still clean the earlier fixture.
+  (let ([cleaned '()])
+    (let ([result (car (test-run
+                        (list (make-test-case 'setup (lambda () #t)
+                                `((fixtures . ((one . ,(lambda () 'open))
+                                               (two . ,(lambda () (error 'two "failed")))))
+                                  (after . ,(lambda (params) (set! cleaned params))))))
+                        (test-silent-config)))])
+      (and (eq? (test-result-status result) 'errored)
+           (equal? cleaned '((one . open)))))))
+
+(mat test-phase-policies
+  ;; Skip and xfail policies apply to expansion and compilation errors too.
+  (let ([bad '(let ([x 1] [x 2]) x)])
+    (andmap
+      (lambda (constructor)
+        (let ([form (if (eq? constructor make-test-compile) (list bad) bad)])
+          (equal? (map test-result-status
+                       (test-run
+                         (list
+                           (constructor 'skip form
+                             `((skip-when . (,(lambda (params) #t) . "skip"))))
+                           (constructor 'xfail form
+                             `((xfail-when . (,(lambda (params) #t) . "known bug")))))
+                         (test-silent-config)))
+                  '(skipped xfail))))
+      (list make-test-expand make-test-compile))))
+
+(mat test-predicate-error-isolation
+  ;; A broken policy predicate must produce one error and allow later cases to run.
+  (let ([bad-rule (cons (lambda (params) (error 'rule "bad predicate")) "reason")])
+    (andmap
+      (lambda (key)
+        (guard (condition [else #f])
+          (equal? (map test-result-status
+                       (test-run
+                         (list
+                           (make-test-case 'bad (lambda () #t) (list (cons key bad-rule)))
+                           (make-test-case 'next (lambda () #t) '()))
+                         (test-silent-config)))
+                  '(errored passed))))
+      '(skip-when xfail-when))))
+
+(mat test-compile-quiet
+  (let ([text (call-with-string-output-port
+                (lambda (out)
+                  (parameterize ([current-output-port out] [current-error-port out])
+                    (test-run
+                      (list (make-test-compile 'compile '((define quiet-x 1) quiet-x) '()))
+                      (test-silent-config)))))])
+    (string=? text "")))
+
+(mat test-xfail-strictness
+  (andmap
+    (lambda (strict?)
+      (let ([config (test-config-with (test-silent-config)
+                      `((xfail-strict? . ,strict?) (stop-on-failure? . #t)))])
+        (equal? (map test-result-status
+                     (test-run
+                       (list
+                         (make-test-case 'xpass (lambda () #t)
+                           `((xfail-when . (,(lambda (params) #t) . "known bug"))))
+                         (make-test-case 'next (lambda () #t) '()))
+                       config))
+                (if strict? '(failed) '(xpass passed)))))
+    '(#f #t))
+
+  ;; Per-case strictness overrides the global policy in either direction.
+  (andmap
+    (lambda (strict?)
+      (let ([config (test-config-with (test-silent-config)
+                      `((xfail-strict? . ,(not strict?)) (stop-on-failure? . #t)))])
+        (parameterize ([current-test-registry (make-test-registry)])
+          (test-case expected :xfail "known bug" :xfail-strict strict? (test-true #t))
+          (let ([result (car (test-run-registry (current-test-registry) config))])
+            (and (eq? (test-result-status result) (if strict? 'failed 'xpass))
+                 (or (not strict?)
+                     (test-string-contains? (test-result-message result) "unexpected pass")))))))
+    '(#f #t))
+
+  (let ([path "tmp-cspp-test-strict-main.ss"])
+    (dynamic-wind
+      (lambda () (void))
+      (lambda ()
+        (andmap
+          (lambda (strict?)
+            (test-write-file path
+              (format "(import (cspp) (cspp test))\n(test-case x :xfail ~s :xfail-strict ~s #t)\n"
+                      "known bug" strict?))
+            (let ([status #f])
+              (call-with-string-output-port
+                (lambda (out)
+                  (parameterize ([current-output-port out])
+                    (set! status (test-main (list path))))))
+              (= status (if strict? 1 0))))
+          '(#f #t)))
+      (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat test-compile-form-list-contract
+  (let ([result (car (test-run
+                      (list (make-test-compile 'forms '((let ([x 1]) x)) '()))
+                      (test-silent-config)))])
+    (eq? (test-result-status result) 'passed))
+
+  ;; A compile body must be a proper list of forms.
+  (error? (make-test-compile 'invalid '#(1 2) '())))

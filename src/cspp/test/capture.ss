@@ -30,25 +30,23 @@ a list, captured stdout, and captured stderr.
       (pcheck ([procedure? thunk])
               (let ([stdout-port (open-output-string)]
                     [stderr-port (open-output-string)])
-                (let ([capture-stdout? ($capture-stdout? mode)]
-                      [capture-stderr? ($capture-stderr? mode)])
-                  (let ([values-list
-                         (parameterize ([current-output-port
-                                          (if capture-stdout?
-                                              stdout-port
-                                              (current-output-port))]
-                                         [current-error-port
-                                          (if capture-stderr?
-                                              (if (eq? mode 'combined)
-                                                  stdout-port
-                                                  stderr-port)
-                                              (current-error-port))])
-                           (call-with-values thunk list))])
-                    (values values-list
-                            (get-output-string stdout-port)
-                            (if (eq? mode 'combined)
-                                ""
-                                (get-output-string stderr-port)))))))))
+                (dynamic-wind
+                  (lambda () (void))
+                  (lambda ()
+                    (let ([values-list
+                           (parameterize
+                             ([current-output-port
+                               (if ($capture-stdout? mode) stdout-port (current-output-port))]
+                              [current-error-port
+                               (if ($capture-stderr? mode)
+                                   (if (eq? mode 'combined) stdout-port stderr-port)
+                                   (current-error-port))])
+                             (call-with-values thunk list))])
+                      (values values-list (get-output-string stdout-port)
+                              (if (eq? mode 'combined) "" (get-output-string stderr-port)))))
+                  (lambda ()
+                    (close-output-port stdout-port)
+                    (close-output-port stderr-port)))))))
 
   #|proc:test-check-output-expectations
 The `test-check-output-expectations` procedure checks captured `stdout` and

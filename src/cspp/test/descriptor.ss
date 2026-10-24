@@ -202,12 +202,12 @@ is an association list of descriptor metadata.
 
   #|proc:make-test-compile
 The `make-test-compile` procedure creates a compile test descriptor. `name` is
-the symbol naming the descriptor, `forms` is the source datum or list of source
-data to compile, and `metadata` is an association list of descriptor metadata.
+the symbol naming the descriptor, `forms` is a list of source data to compile,
+and `metadata` is an association list of descriptor metadata.
 |#
   (define make-test-compile
     (lambda (name forms metadata)
-      (pcheck ([symbol? name] [list? metadata])
+      (pcheck ([symbol? name] [list? forms metadata])
               ($make-test-descriptor 'compile name 'compile metadata '() forms))))
 
   #|proc:test-descriptor-name
@@ -259,7 +259,7 @@ descriptors this is source data; for suites this is `#f`.
   #|proc:make-test-config
 The `make-test-config` procedure creates a test runner configuration.
 `reporter` is a reporter object or `#f`, `output` is the output port or `#f`,
-`xfail-strict?` controls whether unexpected passes fail the run,
+`xfail-strict?` makes unexpected passes have status `failed` instead of `xpass`,
 `stop-on-failure?` controls whether the runner stops at the first failure, and
 `color` is `auto`, `always`, or `never`.
 |#

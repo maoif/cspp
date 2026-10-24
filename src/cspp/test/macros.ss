@@ -263,7 +263,8 @@
 The `test-case` macro defines and registers a runtime test descriptor named
 `name`. Config clauses may include `:tags`, `:parameterize`, `:skip-when`,
 `:xfail`, `:capture`, and output expectations. Body forms are evaluated by the
-runner.
+runner. Conditional rules can reference the case's named parameters.
+`:xfail-strict` overrides the configuration's strictness for this case.
 |#
   (define-syntax test-case
     (syntax-rules ()
