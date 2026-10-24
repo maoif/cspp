@@ -1137,3 +1137,42 @@
             [expanded (benchmark-expand benchmark (benchmark-test-config))]
             [result (benchmark-run-one (cadr expanded) (benchmark-test-config))])
        (and (not (benchmark-result-error result)) (eq? seen second))))
+
+(mat benchmark-comparison-excludes-unmeasured-runs
+     ;; An explicit zero-sample run must not look like an allocation improvement.
+     (let* ([baseline (benchmark-results-from-data
+                        '(((name . unmeasured)
+                           (summary . ((bytes . ((mean . 100))))))))]
+            [benchmark (make-benchmark 'unmeasured (lambda (state) (void)) '())]
+            [current (benchmark-run benchmark
+                       (benchmark-config-with (benchmark-test-config) '((samples . 0))))]
+            [path (benchmark-temp-file)])
+       (dynamic-wind
+         (lambda () (void))
+         (lambda ()
+           (benchmark-save-baseline current path)
+           (and (null? (benchmark-compare-results baseline current '((metric . bytes))))
+                (null? (benchmark-compare-results current baseline '((metric . bytes))))
+                (null? (benchmark-compare-results baseline (benchmark-load-baseline path)
+                         '((metric . bytes))))))
+         (lambda () (when (file-exists? path) (delete-file path)))))
+
+     ;; Summary-only historical data must stay comparable through save/load.
+     (let* ([results (benchmark-results-from-data
+                       '(((name . historical)
+                          (summary . ((bytes . ((mean . 0))))))))]
+            [path (benchmark-temp-file)])
+       (dynamic-wind
+         (lambda () (void))
+         (lambda ()
+           (benchmark-save-baseline results path)
+           (= (length (benchmark-compare-results results (benchmark-load-baseline path)
+                        '((metric . bytes)))) 1))
+         (lambda () (when (file-exists? path) (delete-file path)))))
+
+     ;; A sample that actually measured zero remains a valid comparison.
+     (let ([results (benchmark-results-from-data
+                      '(((name . measured-zero)
+                         (samples . (((iterations . 1) (bytes . 0))))
+                         (summary . ((bytes . ((mean . 0))))))))])
+       (= (length (benchmark-compare-results results results '((metric . bytes)))) 1)))

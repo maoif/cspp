@@ -89,6 +89,7 @@
     (fields iterations sstats cost-center counters))
 
   (define-record-type ($benchmark-result $mk-benchmark-result benchmark-result?)
+    ;; Internal samples #f preserves the absence of sample data in historical baselines.
     (fields name args template-args samples summary counters error))
 
   (define-record-type ($benchmark-config $mk-benchmark-config benchmark-config?)
@@ -504,6 +505,7 @@
   (define $comparison-metric-mean
     (lambda (result metric)
       (and (not (benchmark-result-error result))
+           (not (null? ($benchmark-result-samples result)))
            (let* ([entry (assq metric (benchmark-result-summary result))]
                   [mean (and entry ($alist-ref (cdr entry) 'mean #f))])
              (and (real? mean) (finite? mean) mean)))))
@@ -698,7 +700,9 @@
       `((name . ,(benchmark-result-name result))
         (args . ,(benchmark-result-args result))
         (template-args . ,(benchmark-result-template-args result))
-        (samples . ,(map $sample->datum (benchmark-result-samples result)))
+        ,@(if ($benchmark-result-samples result)
+              `((samples . ,(map $sample->datum (benchmark-result-samples result))))
+              '())
         (summary . ,(benchmark-result-summary result))
         (counters . ,(benchmark-result-counters result))
         (error . ,(and (benchmark-result-error result)
@@ -709,7 +713,8 @@
       ($mk-benchmark-result ($alist-ref datum 'name)
                             ($alist-ref datum 'args '())
                             ($alist-ref datum 'template-args '())
-                            (map $datum->sample ($alist-ref datum 'samples '()))
+                            (and (assq 'samples datum)
+                                 (map $datum->sample ($alist-ref datum 'samples)))
                             ($alist-ref datum 'summary '())
                             ($alist-ref datum 'counters '())
                             (let ([error-datum ($alist-ref datum 'error #f)])
@@ -997,7 +1002,7 @@ stored in benchmark `result`.
   (define benchmark-result-samples
     (lambda (result)
       (pcheck ([benchmark-result? result])
-              ($benchmark-result-samples result))))
+              (or ($benchmark-result-samples result) '()))))
 
   #|proc:benchmark-result-summary
 The `benchmark-result-summary` procedure returns the summary alist stored in
@@ -2289,7 +2294,9 @@ positive or negative infinity.
   results with `baseline` results. `options` is an alist supporting `metric`,
   `threshold-percent`, `threshold-absolute`, and `noise-threshold-percent`.
   The returned list excludes results with captured errors or without a finite real
-  mean for the selected metric. A measured mean of zero remains comparable.
+  mean for the selected metric. Runs with no samples are excluded, including after
+  baseline save/load. Historical baselines without sample data remain comparable;
+  their omission of sample data is preserved when saved. A measured zero is comparable.
   |#
   (define benchmark-compare-results
     (case-lambda
