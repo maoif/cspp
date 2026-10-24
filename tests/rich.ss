@@ -2259,6 +2259,18 @@
 
      )
 
+(mat rich-progress-finite-clock-range
+
+     ;; Finite clock endpoints must not overflow before elapsed-time conversion.
+     (let ([now -1e308])
+       (parameterize ([rich-current-time (lambda () now)])
+         (let ([progress (make-rich-progress #f '(description))])
+           (rich-progress-add-task! progress "build" #f)
+           (set! now 1e308)
+           (string=? "build" (rich-export-text progress)))))
+
+     )
+
 (mat rich-progress-huge-remaining
 
      ;; A finite inexact completed count must not overflow subtraction from an exact total.

@@ -132,8 +132,14 @@
     (lambda (task width column now)
       (let* ([completed ($rich-progress-task-completed task)]
              [total ($rich-progress-task-total task)]
-             [elapsed (max 0 (- (or ($rich-progress-task-stop-time task) now)
-                                ($rich-progress-task-start-time task)))]
+             [end-time (or ($rich-progress-task-stop-time task) now)]
+             [raw-elapsed (- end-time ($rich-progress-task-start-time task))]
+             ;; Preserve ordinary flonum rounding, but avoid converting an overflowed
+             ;; subtraction to exact infinity for finite clock endpoints.
+             [elapsed (max 0 (if (finite? raw-elapsed)
+                                 raw-elapsed
+                                 (- (inexact->exact end-time)
+                                    (inexact->exact ($rich-progress-task-start-time task)))))]
              [speed (if (positive? elapsed)
                         (/ (inexact->exact completed) (inexact->exact elapsed)) 0)])
         (case column
