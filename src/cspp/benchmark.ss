@@ -1493,13 +1493,20 @@ changed according to option alist `options`.
 
   (define $range-values
     (lambda (start end step geometric?)
-      (when (zero? step)
-        (errorf '$range-values "range step must not be zero"))
+      (unless (and (real? start) (finite? start)
+                   (real? end) (finite? end)
+                   (real? step) (finite? step)
+                   (if geometric?
+                       (and (> start 0) (> step 1))
+                       (> step 0)))
+        (errorf '$range-values "range must have finite bounds and an advancing positive step"))
       (let loop ([value start] [out '()])
         (if (> value end)
             (reverse out)
-            (loop (if geometric? (* value step) (+ value step))
-                  (cons value out))))))
+            (let ([next (if geometric? (* value step) (+ value step))])
+              (unless (> next value)
+                (errorf '$range-values "range step does not advance: ~s" value))
+              (loop next (cons value out)))))))
 
   (define $duplicate-symbol?
     (lambda (names)

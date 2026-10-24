@@ -545,3 +545,42 @@
        (and (benchmark-result? (car results))
             (not (benchmark-result-error (car results)))
             (if (benchmark-sample-sstats sample) #t #f))))
+
+(define benchmark-range-rejected?
+  (lambda (option)
+    ((make-engine
+       (lambda ()
+         (guard (exn [else #t])
+           (make-benchmark 'invalid-range (lambda (state value) (void)) (list option))
+           #f)))
+     10000
+     (lambda (ticks rejected?) rejected?)
+     (lambda (engine) #f))))
+
+(mat benchmark-range-progress
+     ;; Error: a geometric range starting at zero cannot advance.
+     (benchmark-range-rejected? '(arg-range n 0 8 2))
+
+     ;; Error: a geometric factor of one cannot advance.
+     (benchmark-range-rejected? '(arg-range n 1 8 1))
+
+     ;; Error: a decreasing dense range moves away from its upper endpoint.
+     (benchmark-range-rejected? '(dense-arg-range n 1 8 -1))
+
+     ;; Error: non-finite endpoints do not describe a finite range.
+     (benchmark-range-rejected? '(dense-arg-range n 1 +inf.0 1))
+
+     ;; Error: rounding must not leave an inexact range stuck on the same value.
+     (benchmark-range-rejected? '(dense-arg-range n 1e30 2e30 1))
+
+     (let ([benchmark (make-benchmark 'dense-zero (lambda (state n) (void))
+                        '((dense-arg-range n 0 2 1)))])
+       (equal? (map (lambda (expanded) (benchmark-state-arg (car expanded) 'n))
+                    (benchmark-expand benchmark (benchmark-test-config)))
+               '(0 1 2)))
+
+     (let ([benchmark (make-benchmark 'geometric (lambda (state n) (void))
+                        '((arg-range n 1 8 2)))])
+       (equal? (map (lambda (expanded) (benchmark-state-arg (car expanded) 'n))
+                    (benchmark-expand benchmark (benchmark-test-config)))
+               '(1 2 4 8))))
