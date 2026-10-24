@@ -104,12 +104,44 @@ STATUS = r'''
 '''
 
 
+
+SELF_STOP = r'''
+(import (cspp))
+(define calls 0)
+(define stopped? #f)
+(define value (vector 'self-stop))
+(define live #f)
+(rich-register-renderer! (lambda (candidate) (eq? candidate value))
+  (lambda (value)
+    (set! calls (+ calls 1))
+    ;; Stopping from a worker renderer must not join the current thread.
+    (when (= calls 2) (rich-live-stop! live) (set! stopped? #t))
+    "ok"))
+(call-with-port (open-output-string)
+  (lambda (output)
+    (set! live (make-rich-live value (rich-console :output-port output) 100 #t))
+    (rich-live-start! live)
+    (let wait ([remaining 1000])
+      (when (and (not stopped?) (positive? remaining))
+        (milisleep 1) (wait (- remaining 1))))
+    (rich-live-stop! live)
+    (unless (and stopped? (= calls 2)) (error 'self-stop "worker did not stop"))
+    ;; Its final frame must be cleaned up and the same live display must restart.
+    (unless (string-contains? (get-output-string output) "\033[2K")
+      (error 'self-stop "transient cleanup was skipped"))
+    (rich-live-refresh-rate-set! live 0)
+    (rich-live-start! live)
+    (rich-live-stop! live)
+    (unless (= calls 3) (error 'self-stop "display did not restart"))))
+'''
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-live-") as directory:
         cases = (("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE),
                  ("false-failure", FAILURE.replace(
                      '(error \'worker-recovery "later frame failed")', "(raise #f)")),
-                 ("stop", STOP), ("status", STATUS))
+                 ("stop", STOP), ("status", STATUS), ("self-stop", SELF_STOP))
         for name, source in cases:
             probe = Path(directory) / (name + ".ss")
             probe.write_text(source)

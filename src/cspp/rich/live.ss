@@ -61,6 +61,10 @@
             (mutable start-time $rich-status-start-time $rich-status-start-time-set!)
             (mutable live $rich-status-live $rich-status-live-set!)))
 
+  ;; A worker context records its live display, owning thread, and self-stop request.
+  ;; Check the thread id as parameters are inherited by threads spawned by renderers.
+  (define $worker-context (make-parameter #f))
+
   (define $default-status-frames
     '("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"))
 
@@ -339,36 +343,28 @@
                     (let ([thread
                            (fork-thread
                             (lambda ()
-                              (guard (condition
-                                      [else
-                                       ($rich-live-failure-set! live (list condition))
-                                       ($rich-live-stop?-set! live #t)
-                                       ($rich-live-started?-set! live #f)])
-                                (let loop ()
-                                  (unless ($rich-live-stop? live)
-                                    (let ([expired? ($wait-live live)])
+                              (let ([context (vector live (get-thread-id) #f)])
+                                (parameterize ([$worker-context context])
+                                  (guard (condition
+                                          [else
+                                           ($rich-live-failure-set! live (list condition))
+                                           ($rich-live-stop?-set! live #t)
+                                           ($rich-live-started?-set! live #f)])
+                                    (let loop ()
                                       (unless ($rich-live-stop? live)
-                                        (when (and expired?
-                                                   (positive? (rich-live-refresh-rate live)))
-                                          (rich-live-refresh! live))
-                                        (loop))))))))])
+                                        (let ([expired? ($wait-live live)])
+                                          (unless ($rich-live-stop? live)
+                                            (when (and expired?
+                                                       (positive? (rich-live-refresh-rate live)))
+                                              (rich-live-refresh! live))
+                                            (loop)))))
+                                    (when (vector-ref context 2) ($finish-live-stop! live)))))))])
                       ($rich-live-thread-set! live thread)))))
               live)))
 
-  #|proc:rich-live-stop!
-  The `rich-live-stop!` procedure stops refreshing `live` and returns `live`.
-  The default wait is interrupted immediately; custom `rich-sleep` hooks must return
-  themselves. If its worker failed, cleanup finishes before its condition is raised once.
-  |#
-  (define rich-live-stop!
+  ;; A worker that stops itself finishes the current frame before cleaning it up.
+  (define $finish-live-stop!
     (lambda (live)
-      (pcheck ([rich-live? live])
-        (with-mutex ($rich-live-wake-lock live)
-          ($rich-live-stop?-set! live #t)
-          (condition-signal ($rich-live-wake-condition live)))
-        (when ($rich-live-thread live)
-          (thread-join ($rich-live-thread live))
-          ($rich-live-thread-set! live #f))
         (when (and (rich-live-transient? live) ($rich-live-previous-frame live))
           (let ([port (rich-console-output-port (rich-live-console live))])
             (when (eq? port ($rich-live-previous-port live))
@@ -382,6 +378,29 @@
         (let ([failure ($rich-live-failure live)])
           ($rich-live-failure-set! live #f)
           (when failure (raise (car failure))))
+        (void)))
+
+  #|proc:rich-live-stop!
+  The `rich-live-stop!` procedure stops refreshing `live` and returns `live`.
+  The default wait is interrupted immediately; custom `rich-sleep` hooks must return
+  themselves. A call from its worker requests shutdown after the current frame finishes.
+  If its worker failed, cleanup finishes before its condition is raised once.
+  |#
+  (define rich-live-stop!
+    (lambda (live)
+      (pcheck ([rich-live? live])
+        (with-mutex ($rich-live-wake-lock live)
+          ($rich-live-stop?-set! live #t)
+          (condition-signal ($rich-live-wake-condition live)))
+        (let ([context ($worker-context)])
+          (if (and context (eq? live (vector-ref context 0))
+                   (eqv? (get-thread-id) (vector-ref context 1)))
+              (vector-set! context 2 #t)
+              (begin
+                (when ($rich-live-thread live)
+                  (thread-join ($rich-live-thread live))
+                  ($rich-live-thread-set! live #f))
+                ($finish-live-stop! live))))
         live)))
 
   #|macro:rich-live
