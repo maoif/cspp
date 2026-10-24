@@ -195,24 +195,12 @@ association-list filters as `test-select`.
       (pcheck ([test-registry? registry] [$test-selectors? selectors])
               (test-select registry selectors))))
 
-  (define $body-accepts-parameters?
-    (lambda (body)
-      (let ([arity (procedure-arity body)])
-        (cond
-         [(eq? arity #f) #t]
-         [(integer? arity) (not (fx= arity 0))]
-         [(list? arity) (or (memq 1 arity)
-                            (exists (lambda (entry)
-                                      (and (pair? entry)
-                                           (<= (car entry) 1)))
-                                    arity))]
-         [else #t]))))
-
   (define $call-body
     (lambda (body parameters)
-      (if ($body-accepts-parameters? body)
-          (body parameters)
-          (body))))
+      (let ([arity-mask (procedure-arity-mask body)])
+        (unless (or (logbit? 1 arity-mask) (logbit? 0 arity-mask))
+          (errorf 'test-run "body must accept zero or one argument: ~a" body))
+        (apply body (if (logbit? 1 arity-mask) (list parameters) '())))))
 
   (define $rule-active?
     (lambda (metadata key parameters)

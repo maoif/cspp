@@ -915,3 +915,22 @@
                         (test-config-with (default-test-config) '((output . #f)))))
                  '(skipped passed)))
       (environment '(cspp)))))
+
+(mat test-runtime-body-arities
+  (let ([seen '()])
+    (let ([results
+           (test-run
+             (map (lambda (body) (make-test-case 'arity body
+                                  '((parameterize . (((x) (7)))))))
+                  (list (lambda () (set! seen (cons 'zero seen)))
+                        (lambda (parameters) (set! seen (cons parameters seen)))
+                        (lambda arguments (set! seen (cons arguments seen)))
+                        (lambda (parameters . rest)
+                          (set! seen (cons (cons parameters rest) seen)))
+                        (case-lambda
+                          [() (set! seen (cons 'wrong seen))]
+                          [(parameters) (set! seen (cons parameters seen))])))
+             (test-silent-config))])
+      (and (equal? (map test-result-status results) '(passed passed passed passed passed))
+           (equal? (reverse seen)
+                   '(zero ((x . 7)) (((x . 7))) (((x . 7))) ((x . 7))))))))
