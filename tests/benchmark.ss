@@ -1081,3 +1081,37 @@
             [result (car (benchmark-run benchmark (benchmark-test-config)))])
        (and (benchmark-result-error result)
             (eq? (condition-who (benchmark-result-error result)) 'cleanup))))
+
+(mat benchmark-false-raised-values
+     ;; Error: false raised objects must stop runs and survive baseline serialization.
+     (let* ([later? #f]
+            [benchmark (make-benchmark 'false-error (lambda (state) (raise #f)) '())]
+            [later (make-benchmark 'later (lambda (state) (set! later? #t)) '())]
+            [results (benchmark-run (list benchmark later)
+                       (benchmark-config-with (benchmark-test-config)
+                         '((stop-on-error? . #t))))])
+       (and (= (length results) 1) (not later?)
+            (condition? (benchmark-result-error (car results)))
+            (null? (benchmark-compare-results results results))
+            (condition? (benchmark-roundtrip-raised #f))))
+
+     ;; Error: false suite setup errors still skip children and run cleanup with false.
+     (let ([called? #f] [cleaned? #f])
+       (define-benchmark false-suite-child () (lambda (state) (set! called? #t)))
+       (define-benchmark-suite false-setup-suite
+         (:suite-setup (lambda (state) (raise #f))
+          :suite-teardown (lambda (state value) (set! cleaned? (eq? value #f))))
+         false-suite-child)
+       (let ([results (benchmark-run-suite false-setup-suite (benchmark-test-config))])
+         (and (= (length results) 1) (not called?) cleaned?
+              (condition? (benchmark-result-error (car results))))))
+
+     ;; Error: false teardown errors must append a suite error after measured children.
+     (let ()
+       (define-benchmark false-teardown-child () (lambda (state) (void)))
+       (define-benchmark-suite false-teardown-suite
+         (:suite-teardown (lambda (state value) (raise #f))) false-teardown-child)
+       (let ([results (benchmark-run-suite false-teardown-suite (benchmark-test-config))])
+         (and (= (length results) 2)
+              (not (benchmark-result-error (car results)))
+              (condition? (benchmark-result-error (cadr results)))))))

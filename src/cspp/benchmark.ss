@@ -458,6 +458,13 @@
        [(list? datum) ($write-json-list datum out)]
        [else ($json-string ($write-string datum) out)])))
 
+  (define $captured-benchmark-error
+    (lambda (raised)
+      (or raised
+          (condition (make-error)
+                     (make-message-condition "benchmark raised #f")
+                     (make-irritants-condition (list #f))))))
+
   (define $condition->datum
     (lambda (exn)
       (if (condition? exn)
@@ -1012,7 +1019,8 @@ alist stored in benchmark `result`.
 
   #|proc:benchmark-result-error
 The `benchmark-result-error` procedure returns the captured exception stored in
-benchmark `result`, or `#f` when the run completed.
+benchmark `result`, or `#f` when the run completed. A raised `#f` is wrapped
+in an error condition whose irritants contain the original value.
 |#
   (define benchmark-result-error
     (lambda (result)
@@ -2041,7 +2049,7 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                                        '()
                                        (benchmark-summarize '())
                                        '()
-                                       exn)])
+                                       ($captured-benchmark-error exn))])
           ($warmup benchmark state values config)
           (let loop ([i 0] [samples '()])
             (if (< i (benchmark-config-samples config))
@@ -2104,14 +2112,14 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                 (dynamic-wind
                   (lambda () (void))
                   (lambda ()
-                    (guard (exn [else (set! failure exn)])
+                    (guard (exn [else (set! failure ($captured-benchmark-error exn))])
                       (set! setup-value (($benchmark-suite-setup suite) suite-state))
                       (set! results
                         (parameterize ([$current-suite-context ($benchmark-suite-name suite)]
                                        [$current-benchmark-report-collector collect-report!])
                           (benchmark-run ($benchmark-suite-benchmarks suite) config)))))
                   (lambda ()
-                    (guard (exn [else (unless failure (set! failure exn))])
+                    (guard (exn [else (unless failure (set! failure ($captured-benchmark-error exn)))])
                       (($benchmark-suite-teardown suite) suite-state setup-value))))
                 (when failure
                   (let ([result ($mk-benchmark-result ($benchmark-suite-name suite)
