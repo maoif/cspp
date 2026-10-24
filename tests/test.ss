@@ -445,3 +445,73 @@
       (lambda ()
         (when (file-exists? path)
           (delete-file path))))))
+
+(mat test-nested-registration
+  ;; A skipped suite must not leave an independently runnable child in the registry.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (let ([calls 0])
+      (test-suite outer :skip "disabled"
+        (test-suite inner
+          (test-case child (set! calls (fx+ calls 1)))))
+      (let ([results (test-run-registry (current-test-registry) (test-silent-config))])
+        (and (= (length (test-registry-descriptors (current-test-registry))) 1)
+             (equal? (map test-result-status results) '(skipped))
+             (= calls 0)))))
+
+  (parameterize ([current-test-registry (make-test-registry)])
+    (let ([calls 0])
+      (test-suite outer :tags (inherited)
+        (test-case child (set! calls (fx+ calls 1))))
+      (let ([selected (test-select (current-test-registry) '((include-tags . (inherited))))]
+            [results (test-run-registry (current-test-registry) (test-silent-config))])
+        (and (= (length selected) 1)
+             (= (length results) 1)
+             (= calls 1)))))
+
+  ;; A shared test group must apply its skip policy to its registered children.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (test :skip "disabled group" (test-case grouped (test-true #f)))
+    (equal? (map test-result-status
+                 (test-run-registry (current-test-registry) (test-silent-config)))
+            '(skipped))))
+
+(mat test-conditional-parameter-bindings
+  (parameterize ([current-test-registry (make-test-registry)])
+    (test-case conditional
+      :parameterize ([x] [1] [2])
+      :skip-when (= x 1) "skip first"
+      (test-= x 2))
+    (equal? (map test-result-status
+                 (test-run-registry (current-test-registry) (test-silent-config)))
+            '(skipped passed)))
+
+  (parameterize ([current-test-registry (make-test-registry)])
+    (test-case conditional
+      :parameterize ([x] [1] [2])
+      :only-when (= x 2) "only second"
+      (test-= x 2))
+    (equal? (map test-result-status
+                 (test-run-registry (current-test-registry) (test-silent-config)))
+            '(skipped passed)))
+
+  ;; Only the failing parameter row is expected to fail.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (test-case conditional
+      :parameterize ([x] [1] [2])
+      :xfail-when (= x 1) "known first-row failure"
+      (test-= x 2))
+    (equal? (map test-result-status
+                 (test-run-registry (current-test-registry) (test-silent-config)))
+            '(xfail passed))))
+
+(mat test-global-case-identifiers
+  (let ([registry (make-test-registry)])
+    (test-register! registry
+      (make-test-case 'first (lambda () #t) '((parameterize . (((x) (1) (2)))))))
+    (test-register! registry
+      (make-test-suite 'suite (list (make-test-case 'child (lambda () #t) '())) '()))
+    (and (equal? (map test-concrete-case-id (test-list registry '())) '(0 1 2))
+         (equal? (map test-concrete-case-id
+                      (test-select registry '((name-prefix . "child")))) '(2))
+         (equal? (map test-result-id (test-run-registry registry (test-silent-config)))
+                 '(0 1 2)))))

@@ -87,6 +87,15 @@
                                  metadata)
                                 out)))))))))
 
+  (define $expand-descriptors
+    (lambda (descriptors)
+      (let loop ([descriptors descriptors] [id 0] [out '()])
+        (if (null? descriptors)
+            (reverse out)
+            (let-values ([(cases next-id)
+                          ($expand-descriptor (car descriptors) '() id)])
+              (loop (cdr descriptors) next-id (append (reverse cases) out)))))))
+
   (define $string-prefix?
     (lambda (prefix string)
       (let ([prefix-length (string-length prefix)]
@@ -165,8 +174,7 @@ contain every listed tag.
     (lambda (registry selectors)
       (pcheck ([test-registry? registry] [$test-selectors? selectors])
               (let ([cases
-                     ($append-map test-expand-parameters
-                                  (test-registry-descriptors registry))])
+                     ($expand-descriptors (test-registry-descriptors registry))])
                 (let loop ([cases cases] [out '()])
                   (cond
                    [(null? cases) (reverse out)]
@@ -462,7 +470,7 @@ returns a list of test result records.
       (pcheck ([list? descriptors] [test-config? config])
               (unless (andmap test-descriptor? descriptors)
                 (errorf 'test-run "descriptors must all be test descriptors: ~a" descriptors))
-              (let* ([cases ($append-map test-expand-parameters descriptors)]
+              (let* ([cases ($expand-descriptors descriptors)]
                      [results
                       (let loop ([cases cases] [out '()])
                         (if (null? cases)

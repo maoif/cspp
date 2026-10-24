@@ -54,7 +54,7 @@
                 (loop rest (cons (cons (car items) args) options)))]
              [else (values (reverse options) items)]))))
       (define parse-option
-        (lambda (key rest)
+        (lambda (key rest parameter-ids)
           (let ([datum (syntax->datum key)])
             (case datum
               [(:tags)
@@ -81,11 +81,17 @@
               [(:skip-when)
                (unless (= (length rest) 2)
                  (syntax-error key ":skip-when expects expression and reason"))
-               #`(cons 'skip-when (cons (lambda (params) #,(car rest)) #,(cadr rest)))]
+               #`(cons 'skip-when
+                       (cons (lambda (params)
+                               #,(build-bindings parameter-ids (list (car rest))))
+                             #,(cadr rest)))]
               [(:only-when)
                (unless (= (length rest) 2)
                  (syntax-error key ":only-when expects expression and reason"))
-               #`(cons 'skip-when (cons (lambda (params) (not #,(car rest))) #,(cadr rest)))]
+               #`(cons 'skip-when
+                       (cons (lambda (params)
+                               (not #,(build-bindings parameter-ids (list (car rest)))))
+                             #,(cadr rest)))]
               [(:xfail)
                (unless (= (length rest) 1)
                  (syntax-error key ":xfail expects one reason"))
@@ -93,7 +99,10 @@
               [(:xfail-when)
                (unless (= (length rest) 2)
                  (syntax-error key ":xfail-when expects expression and reason"))
-               #`(cons 'xfail-when (cons (lambda (params) #,(car rest)) #,(cadr rest)))]
+               #`(cons 'xfail-when
+                       (cons (lambda (params)
+                               #,(build-bindings parameter-ids (list (car rest))))
+                             #,(cadr rest)))]
               [(:xfail-strict :stdout :stderr :output :raises)
                (unless (= (length rest) 1)
                  (syntax-error key "test option expects one expression"))
@@ -130,31 +139,32 @@
               [else (syntax-error key "unknown test option")]))))
       (define build-metadata
         (lambda (options)
-          (let loop ([options options] [entries '()] [parameterize-tables '()])
-            (cond
-             [(null? options)
-              #`(list #,@(reverse entries)
-                      #,@(if (null? parameterize-tables)
-                             '()
-                             (list #`(cons 'parameterize
-                                           (append #,@(reverse parameterize-tables))))))]
-             [(eq? (syntax->datum (caar options)) ':parameterize)
-              (syntax-case (cadar options) ()
-                [([name ...] row ...)
-                 (loop (cdr options)
-                       entries
-                       (cons #`(list (cons '(name ...)
-                                           (list #,@(map (lambda (row)
-                                                           (quote-row (caar options) row))
-                                                         #'(row ...)))))
-                             parameterize-tables))]
-                [_ (loop (cdr options)
-                         (cons (parse-option (caar options) (cdar options)) entries)
-                         parameterize-tables)])]
-             [else
-              (loop (cdr options)
-                    (cons (parse-option (caar options) (cdar options)) entries)
-                    parameterize-tables)]))))
+          (let ([parameter-ids (parameter-names options)])
+            (let loop ([options options] [entries '()] [parameterize-tables '()])
+              (cond
+               [(null? options)
+                #`(list #,@(reverse entries)
+                        #,@(if (null? parameterize-tables)
+                               '()
+                               (list #`(cons 'parameterize
+                                             (append #,@(reverse parameterize-tables))))))]
+               [(eq? (syntax->datum (caar options)) ':parameterize)
+                (syntax-case (cadar options) ()
+                  [([name ...] row ...)
+                   (loop (cdr options)
+                         entries
+                         (cons #`(list (cons '(name ...)
+                                             (list #,@(map (lambda (row)
+                                                             (quote-row (caar options) row))
+                                                           #'(row ...)))))
+                               parameterize-tables))]
+                  [_ (loop (cdr options)
+                           (cons (parse-option (caar options) (cdar options) parameter-ids) entries)
+                           parameterize-tables)])]
+               [else
+                (loop (cdr options)
+                      (cons (parse-option (caar options) (cdar options) parameter-ids) entries)
+                      parameterize-tables)])))))
       (define parameter-names
         (lambda (options)
           (let loop ([options options] [out '()])
@@ -227,8 +237,13 @@
                           #,metadata)])
                     (test-register! (current-test-registry) descriptor)
                     descriptor)]
-               [(suite)
-                #`(let ([descriptor (make-test-suite 'name (list #,@body) #,metadata)])
+               [(suite group)
+                #`(let ([descriptor
+                         (make-test-suite
+                          'name
+                          (parameterize ([current-test-registry (make-test-registry)])
+                            (list #,@body))
+                          #,metadata)])
                     (test-register! (current-test-registry) descriptor)
                     descriptor)]
                [(expand)
@@ -241,8 +256,6 @@
                 #`(let ([descriptor (make-test-compile 'name '#,body #,metadata)])
                     (test-register! (current-test-registry) descriptor)
                     descriptor)]
-               [(group)
-                #`(make-test-suite 'name (list #,@body) #,metadata)]
                [else (syntax-error #'kind "unknown test macro kind")])))]
         [_ (syntax-error stx "invalid test macro helper form")])))
 
@@ -259,7 +272,8 @@ runner.
 
   #|macro:test-suite
 The `test-suite` macro defines and registers a suite descriptor named `name`.
-Config clauses are inherited by child descriptors.
+Config clauses are inherited by child descriptors. Nested definition macros
+register only as children of this suite, so each child runs once.
 |#
   (define-syntax test-suite
     (syntax-rules ()
@@ -285,8 +299,8 @@ The `test-compile` macro defines and registers a compile test descriptor named
        ($test-macro-helper compile name item ...)]))
 
   #|macro:test
-The `test` macro groups nested descriptors under shared config metadata and
-returns a suite descriptor.
+The `test` macro groups nested descriptors under shared config metadata,
+registers the assembled suite, and returns its descriptor.
 |#
   (define-syntax test
     (syntax-rules ()
