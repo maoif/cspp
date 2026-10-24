@@ -584,3 +584,57 @@
        (equal? (map (lambda (expanded) (benchmark-state-arg (car expanded) 'n))
                     (benchmark-expand benchmark (benchmark-test-config)))
                '(1 2 4 8))))
+
+(mat benchmark-sample-state-lifecycle
+     (let* ([seen '()]
+            [benchmark (make-benchmark 'iteration-index
+                         (lambda (state)
+                           (when (= (benchmark-state-iterations state) 4)
+                             (set! seen (cons (benchmark-state-iteration state) seen))))
+                         '())]
+            [result (car (benchmark-run benchmark
+                           (benchmark-config-with (benchmark-test-config)
+                             '((samples . 1) (min-time . 10) (max-iterations . 4)))))])
+       (and (not (benchmark-result-error result))
+            (equal? (reverse seen) '(0 1 2 3))))
+
+     (let* ([setup-state #f]
+            [body-state #f]
+            [cleaned? #f]
+            [benchmark
+             (make-benchmark 'state-lifecycle
+               (lambda (state setup-value)
+                 (set! body-state state)
+                 (benchmark-state-set-user-data! state 'from-body))
+               `((setup . ,(lambda (state)
+                              (set! setup-state state)
+                              (benchmark-state-set-user-data! state 'from-setup)))
+                 (teardown . ,(lambda (state setup-value)
+                                 (set! cleaned?
+                                   (and (eq? state setup-state)
+                                        (eq? state body-state)
+                                        (eq? (benchmark-state-user-data state) 'from-body)))))))])
+       (benchmark-run benchmark (benchmark-test-config))
+       cleaned?)
+
+     ;; Error: resources recorded by a failing body must remain available to teardown.
+     (let* ([cleaned? #f]
+            [benchmark
+             (make-benchmark 'state-error-cleanup
+               (lambda (state setup-value)
+                 (benchmark-state-set-user-data! state 'resource)
+                 (error 'state-error-cleanup "expected body error"))
+               `((setup . ,(lambda (state) #t))
+                 (teardown . ,(lambda (state setup-value)
+                                 (set! cleaned?
+                                   (eq? (benchmark-state-user-data state) 'resource))))))]
+            [result (car (benchmark-run benchmark (benchmark-test-config)))])
+       (and cleaned? (if (benchmark-result-error result) #t #f)))
+
+     (let ([seen '()])
+       (define-benchmark suite-state-child ()
+         (lambda (state) (set! seen (cons (benchmark-state-suite state) seen))))
+       (define-benchmark-suite suite-state-parent () suite-state-child)
+       (benchmark-run-suite suite-state-parent (benchmark-test-config))
+       (benchmark-run suite-state-child (benchmark-test-config))
+       (equal? (reverse seen) '(suite-state-parent suite-state-parent #f #f))))

@@ -76,7 +76,9 @@
     (fields name benchmarks setup teardown))
 
   (define-record-type ($benchmark-state $mk-benchmark-state benchmark-state?)
-    (fields name suite args template-args iteration iterations sample
+    (fields name suite args template-args
+            (mutable iteration $benchmark-state-iteration $benchmark-state-iteration-set!)
+            iterations sample
             (mutable user-data benchmark-state-user-data benchmark-state-set-user-data!)
             (mutable counters $benchmark-state-counters $benchmark-state-counters-set!)
             (mutable timing-paused? $benchmark-state-timing-paused? $benchmark-state-timing-paused?-set!)
@@ -1872,6 +1874,8 @@ suffix.
 ;;;; expansion and runner
 ;;;;===----------------------------------------------------------------------===
 
+  (define $current-suite-context (make-parameter #f))
+
   #|proc:benchmark-expand
 The `benchmark-expand` procedure expands `benchmark` into concrete run pairs
 for `config`. Each pair contains a benchmark state in the car and the descriptor
@@ -1883,7 +1887,8 @@ to run in the cdr.
               (map (lambda (arg-row)
                      (let ([args (caddr arg-row)])
                        (cons ($make-benchmark-state ($benchmark-name benchmark)
-                                                    ($benchmark-suite-ref benchmark)
+                                                    (or ($current-suite-context)
+                                                        ($benchmark-suite-ref benchmark))
                                                     args
                                                     ($benchmark-template-args benchmark)
                                                     0
@@ -1936,6 +1941,7 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
     (lambda (benchmark state values setup-value setup-value? iterations)
       (let loop ([i 0])
         (when (< i iterations)
+          ($benchmark-state-iteration-set! state i)
           ($apply-body benchmark state values setup-value setup-value?)
           (loop (+ i 1))))))
 
@@ -1956,43 +1962,46 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
 
   (define $measure-sample
     (lambda (benchmark state values iterations)
-      ($call-with-values-list
-       (lambda ()
-         ($setup-for-sample benchmark state))
-       (lambda (setup-results)
-         (let ([setup-value (car setup-results)]
-               [teardown (cadr setup-results)]
-               [setup-value? (caddr setup-results)]
-               [cleanup? #t]
-               [sample-state ($make-benchmark-state ($benchmark-state-name state)
-                                                    ($benchmark-state-suite state)
-                                                    ($benchmark-state-args state)
-                                                    ($benchmark-state-template-args state)
-                                                    0
-                                                    iterations
-                                                    ($benchmark-state-sample state)
-                                                    (benchmark-state-user-data state)
-                                                    '()
-                                                    #f)])
-           (dynamic-wind
-             (lambda () (void))
-             (lambda ()
-               (let* ([b1 (statistics)]
-                      [b2 (statistics)])
-                 ($run-body-iterations benchmark sample-state values setup-value setup-value? iterations)
-                 (let* ([after (statistics)]
-                        [elapsed (sstats-difference after b2)]
-                        [overhead (sstats-difference b2 b1)]
-                        [active (sstats-difference elapsed ($benchmark-state-paused-sstats sample-state))]
-                        [adjusted ($sanitize-sstats (sstats-difference active overhead))])
-                   ($mk-benchmark-sample iterations adjusted #f ($benchmark-state-counters sample-state)))))
-             (lambda ()
-               (when cleanup?
-                 (set! cleanup? #f)
-                 (when ($benchmark-state-timing-paused? sample-state)
-                   (benchmark-resume-timing sample-state))
-                 (when setup-value?
-                   (teardown state setup-value))))))))))
+      (let ([sample-state ($make-benchmark-state ($benchmark-state-name state)
+                                                ($benchmark-state-suite state)
+                                                ($benchmark-state-args state)
+                                                ($benchmark-state-template-args state)
+                                                0
+                                                iterations
+                                                ($benchmark-state-sample state)
+                                                (benchmark-state-user-data state)
+                                                '()
+                                                #f)])
+        ($call-with-values-list
+         (lambda ()
+           ($setup-for-sample benchmark sample-state))
+         (lambda (setup-results)
+           (let ([setup-value (car setup-results)]
+                 [teardown (cadr setup-results)]
+                 [setup-value? (caddr setup-results)]
+                 [cleanup? #t])
+             (dynamic-wind
+               (lambda () (void))
+               (lambda ()
+                 (let* ([b1 (statistics)]
+                        [b2 (statistics)])
+                   ($run-body-iterations benchmark sample-state values
+                                         setup-value setup-value? iterations)
+                   (let* ([after (statistics)]
+                          [elapsed (sstats-difference after b2)]
+                          [overhead (sstats-difference b2 b1)]
+                          [active (sstats-difference
+                                   elapsed ($benchmark-state-paused-sstats sample-state))]
+                          [adjusted ($sanitize-sstats (sstats-difference active overhead))])
+                     ($mk-benchmark-sample iterations adjusted #f
+                                           ($benchmark-state-counters sample-state)))))
+               (lambda ()
+                 (when cleanup?
+                   (set! cleanup? #f)
+                   (when ($benchmark-state-timing-paused? sample-state)
+                     (benchmark-resume-timing sample-state))
+                   (when setup-value?
+                     (teardown sample-state setup-value)))))))))))
 
   (define $warmup
     (lambda (benchmark state values config)
@@ -2086,7 +2095,8 @@ The `benchmark-run-suite` procedure runs suite descriptor `suite` with runner
                    (dynamic-wind
                      (lambda () (void))
                      (lambda ()
-                       (benchmark-run ($benchmark-suite-benchmarks suite) config))
+                       (parameterize ([$current-suite-context ($benchmark-suite-name suite)])
+                         (benchmark-run ($benchmark-suite-benchmarks suite) config)))
                      (lambda ()
                        (($benchmark-suite-teardown suite) suite-state (car values))))))))))
 
