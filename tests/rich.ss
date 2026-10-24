@@ -27,6 +27,23 @@
 
      )
 
+(mat rich-export-text-controls
+
+     ;; Plain export must omit renderer control segments while retaining text.
+     (let ([value (vector 'export-controls)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (rich-register-renderer!
+            (lambda (candidate) (eq? candidate value))
+            (lambda (_) (list (list (make-rich-segment "\033[?25l" #f #t)
+                                    (make-rich-segment "hello" #f #f)
+                                    (make-rich-segment "\033[?25h" #f #t)))))
+           (string=? "hello" (rich-export-text value)))
+         void))
+
+     )
+
 (mat rich-style
 
      (rich-style? (rich-style 'bold 'red))

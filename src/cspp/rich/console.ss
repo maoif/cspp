@@ -435,6 +435,28 @@
         (cond [(string? value) ($emit port value #f)]
               [else ($write-segment-lines port value)]))))
 
+  (define $write-segment-line/plain
+    (lambda (port line)
+      (for-each (lambda (segment)
+                  (unless (rich-segment-control? segment)
+                    (display (rich-segment-text segment) port)))
+                line)))
+
+  (define $write-segment-lines/plain
+    (lambda (port lines)
+      (let loop ([lines lines] [first? #t])
+        (unless (null? lines)
+          (unless first? (display "\n" port))
+          ($write-segment-line/plain port (car lines))
+          (loop (cdr lines) #f)))))
+
+  (define $write-rendered-value/plain
+    (lambda (port value)
+      (let ([value ($check-rendered-value 'rich-export-text value)])
+        (if (string? value)
+            (display value port)
+            ($write-segment-lines/plain port value)))))
+
   (define $style->ansi
     (lambda (color-system style)
       (if (eq? color-system 'none)
@@ -662,11 +684,11 @@
        (lambda (port)
          (let ([renderer (rich-renderer-for value)])
            (cond [renderer
-                  ($write-rendered-value port (renderer value))]
+                  ($write-rendered-value/plain port (renderer value))]
                  [(or (rich-style? value) (rich-reset? value))
                   (void)]
                  [else
-                  ($write-rendered-value port (rich-pretty-render value))]))))))
+                  ($write-rendered-value/plain port (rich-pretty-render value))]))))))
 
   #|proc:rich-export-ansi
   The `rich-export-ansi` procedure renders a value to ANSI text and returns the
