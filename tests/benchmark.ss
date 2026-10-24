@@ -638,3 +638,70 @@
        (benchmark-run-suite suite-state-parent (benchmark-test-config))
        (benchmark-run suite-state-child (benchmark-test-config))
        (equal? (reverse seen) '(suite-state-parent suite-state-parent #f #f))))
+
+(define benchmark-roundtrip-raised
+  (lambda (raised)
+    (let* ([path (benchmark-temp-file)]
+           [benchmark (make-benchmark 'roundtrip-raised
+                        (lambda (state) (raise raised)) '())]
+           [results (benchmark-run benchmark (benchmark-test-config))])
+      (dynamic-wind
+        (lambda () (void))
+        (lambda ()
+          (benchmark-save-baseline results path)
+          (benchmark-result-error (car (benchmark-load-baseline path))))
+        (lambda () (when (file-exists? path) (delete-file path)))))))
+
+(define benchmark-results-from-data
+  (lambda (results)
+    (let ([path (benchmark-temp-file)])
+      (dynamic-wind
+        (lambda () (void))
+        (lambda ()
+          (benchmark-write-datum-file path
+            `((format . cspp-benchmark-baseline) (version . 1) (results . ,results)))
+          (benchmark-load-baseline path))
+        (lambda () (when (file-exists? path) (delete-file path)))))))
+
+(mat benchmark-baseline-condition-components
+     ;; Error: a captured condition need not include a who component.
+     (let ([condition (benchmark-roundtrip-raised
+                        (condition (make-error) (make-message-condition "without who")))])
+       (and (error? condition)
+            (string=? (condition-message condition) "without who")))
+
+     ;; Error: a captured condition need not include any descriptive components.
+     (let ([condition (benchmark-roundtrip-raised (make-error))])
+       (and (error? condition) (message-condition? condition)))
+
+     ;; Error: arbitrary raised values must still roundtrip as captured errors.
+     (condition? (benchmark-roundtrip-raised 'raised-symbol)))
+
+(mat benchmark-comparison-measurement-availability
+     ;; Error: a failed current benchmark must never count as an improvement.
+     (let* ([baseline (benchmark-results-from-data
+                        '(((name . compare-failure)
+                           (summary . ((real-ns . ((mean . 100))))))))]
+            [benchmark (make-benchmark 'compare-failure
+                         (lambda (state) (error 'compare-failure "expected body error")) '())]
+            [current (benchmark-run benchmark (benchmark-test-config))])
+       (and (null? (benchmark-compare-results baseline current))
+            (null? (benchmark-compare-results current baseline))))
+
+     (let ([baseline (benchmark-results-from-data
+                       '(((name . missing-metric) (summary . ()))))]
+           [current (benchmark-results-from-data
+                      '(((name . missing-metric)
+                         (summary . ((real-ns . ((mean . 100))))))))])
+       (and (null? (benchmark-compare-results baseline current))
+            (null? (benchmark-compare-results current baseline))))
+
+     (let ([baseline (benchmark-results-from-data
+                       '(((name . zero-metric)
+                          (summary . ((real-ns . ((mean . 100))))))))]
+           [current (benchmark-results-from-data
+                      '(((name . zero-metric)
+                         (summary . ((real-ns . ((mean . 0))))))))])
+       (let ([comparisons (benchmark-compare-results baseline current)])
+         (and (= (length comparisons) 1)
+              (benchmark-comparison-improvement? (car comparisons))))))

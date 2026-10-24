@@ -452,9 +452,13 @@
   (define $condition->datum
     (lambda (exn)
       (if (condition? exn)
-          `((who . ,(condition-who exn))
-            (message . ,(condition-message exn))
-            (irritants . ,(condition-irritants exn)))
+          `((who . ,(and (who-condition? exn) (condition-who exn)))
+            (message . ,(if (message-condition? exn)
+                            (condition-message exn)
+                            "benchmark error"))
+            (irritants . ,(if (irritants-condition? exn)
+                              (condition-irritants exn)
+                              '())))
           `((who . #f)
             (message . ,($write-string exn))
             (irritants . ())))))
@@ -480,6 +484,13 @@
         (if entry
             ($alist-ref (cdr entry) 'mean 0)
             0))))
+
+  (define $comparison-metric-mean
+    (lambda (result metric)
+      (and (not (benchmark-result-error result))
+           (let* ([entry (assq metric (benchmark-result-summary result))]
+                  [mean (and entry ($alist-ref (cdr entry) 'mean #f))])
+             (and (real? mean) (finite? mean) mean)))))
 
   (define $benchmark-report-value
     (lambda (value)
@@ -2214,6 +2225,8 @@ positive or negative infinity.
 The `benchmark-compare-results` procedure compares current benchmark `current`
 results with `baseline` results. `options` is an alist supporting `metric`,
 `threshold-percent`, `threshold-absolute`, and `noise-threshold-percent`.
+The returned list excludes results with captured errors or without a finite real
+mean for the selected metric. A measured mean of zero remains comparable.
 |#
   (define benchmark-compare-results
     (case-lambda
@@ -2233,34 +2246,34 @@ results with `baseline` results. `options` is an alist supporting `metric`,
                                                   (benchmark-result-name cur)
                                                   (benchmark-result-args cur)
                                                   (benchmark-result-template-args cur))])
-                         (if base
-                             (let* ([base-value ($metric-mean base metric)]
-                                    [cur-value ($metric-mean cur metric)]
-                                    [absolute (benchmark-absolute-difference base-value cur-value)]
-                                    [percent (benchmark-percent-difference base-value cur-value)]
-                                    [abs-percent (abs percent)]
-                                    [significant? (and (>= (abs absolute) threshold-absolute)
-                                                       (>= abs-percent noise-threshold-percent))]
-                                    [regression? (and significant?
-                                                      (positive? absolute)
-                                                      (>= percent threshold-percent))]
-                                    [improvement? (and significant?
-                                                       (negative? absolute)
-                                                       (>= (abs percent) threshold-percent))])
-                               (loop (cdr current)
-                                     (cons ($mk-benchmark-comparison
-                                            (benchmark-result-name cur)
-                                            metric
-                                            base
-                                            cur
-                                            base-value
-                                            cur-value
-                                            absolute
-                                            percent
-                                            regression?
-                                            improvement?)
-                                           out)))
-                             (loop (cdr current) out)))))))]))
+                         (let ([base-value (and base ($comparison-metric-mean base metric))]
+                               [cur-value ($comparison-metric-mean cur metric)])
+                           (if (and base-value cur-value)
+                               (let* ([absolute (benchmark-absolute-difference base-value cur-value)]
+                                      [percent (benchmark-percent-difference base-value cur-value)]
+                                      [abs-percent (abs percent)]
+                                      [significant? (and (>= (abs absolute) threshold-absolute)
+                                                         (>= abs-percent noise-threshold-percent))]
+                                      [regression? (and significant?
+                                                        (positive? absolute)
+                                                        (>= percent threshold-percent))]
+                                      [improvement? (and significant?
+                                                         (negative? absolute)
+                                                         (>= (abs percent) threshold-percent))])
+                                 (loop (cdr current)
+                                       (cons ($mk-benchmark-comparison
+                                              (benchmark-result-name cur)
+                                              metric
+                                              base
+                                              cur
+                                              base-value
+                                              cur-value
+                                              absolute
+                                              percent
+                                              regression?
+                                              improvement?)
+                                             out)))
+                               (loop (cdr current) out))))))))]))
 
   #|proc:benchmark-pause-timing
 The `benchmark-pause-timing` procedure pauses timing for measured benchmark
