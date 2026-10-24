@@ -1128,3 +1128,127 @@
      (let ([x 'outer])
        (define-syntax prefix-value (lambda (stx) (datum->syntax stx 'x)))
        (match '#(1 2 outer) [#(,x ... `prefix-value) #f] [else #t])))
+
+(mat native-record-capture-bindings
+     ;; Active captures must shadow missing, imported, and syntax bindings in libraries.
+     (begin
+       (eval '(library (match-tests native-capture-bindings)
+                (export run)
+                (import (cspp))
+                (define run
+                  (lambda ()
+                    (define-record-type P (fields value))
+                    (list (match (make-P 10) [,(P ,x) x])
+                          (match (make-P 10) [,(P ,map) (set! map 20) map])
+                          (match (list (make-P 10))
+                            [(,(P ,if) ...) (set! if '(30)) if])
+                          (match (vector (make-P 10)) [#(,(P ,P) ...) P])))))
+             (copy-environment (environment '(cspp)) #t))
+       (equal? '(10 20 (30) (10))
+               ((eval 'run (environment '(match-tests native-capture-bindings))))))
+
+     ;; Inactive captures retain readable imports and writable lexical aliases.
+     (let ([outer 0])
+       (define-record-type SyntaxField (fields unquote))
+       (let-syntax ([name (identifier-syntax
+                          (reference outer)
+                          ((set! reference value) (set! outer value)))])
+         (and (eq? map (match (list (make-SyntaxField 'map))
+                        [(,(SyntaxField (unquote map)) ...) map]))
+              (= 20 (match (list (make-SyntaxField 'name))
+                      [(,(SyntaxField (unquote name)) ...) (set! name 20) name]))
+              (= outer 20))))
+
+     ;; Short and substantial bodies must accept the same record capture bindings.
+     (let ()
+       (define-record-type P (fields value))
+       (= 40 (match (make-P 10)
+               [,(P ,map)
+                (begin 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+                       0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+                       (set! map 40) map)]))))
+
+(mat inactive-record-syntax-bindings
+     ;; An inactive name retains its original operator syntax as well as value semantics.
+     (let ()
+       (define-record-type SyntaxField (fields unquote))
+       (eq? 'ok (match (make-SyntaxField 'if)
+                  [,(SyntaxField ,if) (if #t 'ok 'bad)])))
+
+     (let ()
+       (define-record-type SyntaxField (fields unquote))
+       (eq? 'ok (match (list (make-SyntaxField 'if))
+                  [(,(SyntaxField ,if) ...) (if #t 'ok 'bad)])))
+
+     ;; Inspecting fallback bindings must not speculatively expand identifier macros.
+     (let ()
+       (define-record-type SyntaxField (fields unquote))
+       (define-syntax counter
+         (let ([count 0])
+           (lambda (stx)
+             (set! count (+ count 1))
+             (datum->syntax stx count))))
+       (= 1 (match (make-SyntaxField 'counter) [,(SyntaxField ,counter) counter])))
+
+     (let ()
+       (define-record-type SyntaxField (fields unquote))
+       (define-syntax counter
+         (let ([count 0])
+           (lambda (stx)
+             (set! count (+ count 1))
+             (datum->syntax stx count))))
+       (= 1 (match (list (make-SyntaxField 'counter))
+              [(,(SyntaxField ,counter) ...) counter])))
+
+     ;; Forwarded macros preserve definition-site bindings and temporary-variable hygiene.
+     (let ([outer 10])
+       (define-record-type SyntaxField (fields unquote))
+       (define-syntax value
+         (lambda (stx) #'(let ([temporary 1]) (+ outer temporary))))
+       (let ([outer 100] [temporary 100])
+         (= 11 (match (make-SyntaxField 'value) [,(SyntaxField ,value) value]))))
+
+     ;; Macro lookup callbacks and compile-time properties survive fallback forwarding.
+     (let ()
+       (define-record-type SyntaxField (fields unquote))
+       (define-syntax property-key (syntax-rules () [(_) #f]))
+       (define-syntax value (lambda (stx) (lambda (lookup) #'42)))
+       (define-property value property-key #t)
+       (= 42 (match (make-SyntaxField 'value) [,(SyntaxField ,value) value]))))
+
+(mat shared-record-operator-bindings
+     ;; A captured procedure may shadow core syntax even if its arity differs.
+     (let ()
+       (define-record-type P (fields value))
+       (= 43 (match (make-P (lambda (value) (+ value 1)))
+               [,(P ,if)
+                (begin 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+                       0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+                       (if 42))])))
+
+     (let ()
+       (define-record-type P (fields value))
+       (eq? 'zero (match (make-P (lambda () 'zero))
+                    [,(P ,if)
+                     (begin 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+                            0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+                            (if))])))
+
+     ;; Guarding an invalid inactive core form must not replay argument macros.
+     (let ()
+       (define-record-type P (fields value))
+       (define-syntax counter
+         (let ([count 0])
+           (lambda (stx)
+             (set! count (+ count 1))
+             (datum->syntax stx count))))
+       (= 1 (match (make-P (lambda (value) value))
+              [,(P ,if)
+               (begin 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+                      0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+                      (if counter))])))
+
+     ;; An invalid fallback raises an error when its inactive interpretation is selected.
+     (error? (let ()
+               (define-record-type SyntaxField (fields unquote))
+               (match (make-SyntaxField 'if) [,(SyntaxField ,if) (if)]))))

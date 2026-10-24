@@ -19,25 +19,83 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
           (cspp private match)
           (cspp io))
 
-  ;; A property lookup diagnoses missing lexical bindings without evaluating them.
-  ;; Defer that check until expansion reaches the surrounding generated bindings.
+  ;; Compile fallback expressions once in the live lexical context. Chez's core
+  ;; transformer protocol supplies (expression environment wrap source); using the
+  ;; bundled core-transformer descriptor lets us catch invalid inactive fallbacks
+  ;; during normal expansion, without replaying macros or escaping capture locations.
   (define-syntax capture-reference
-    (lambda (stx)
-      (syntax-case stx ()
-        [(_ variable)
-         (lambda (lookup)
-           (guard (condition
-                   [(syntax-violation? condition)
-                    #'(errorf 'match "inactive capture has no surrounding binding: ~s" 'variable)])
-             (lookup #'variable #'capture-reference)
-             #'variable))]
-        [(_ variable value)
-         (lambda (lookup)
-           (guard (condition
-                   [(syntax-violation? condition)
-                    #'(errorf 'match "inactive capture has no surrounding binding: ~s" 'variable)])
-             (lookup #'variable #'capture-reference)
-             #'(set! variable value)))])))
+    (let* ([definition-environment (environment '(chezscheme))]
+           [environment-rtd (record-rtd definition-environment)]
+           [definition-wrap
+            (begin
+              (unless (and (eq? (record-type-name environment-rtd) 'env)
+                           (equal? (record-type-field-names environment-rtd) '#(top-ribcage wrap)))
+                (error 'match "unsupported Chez expansion environment"))
+              ((record-accessor environment-rtd 1) definition-environment))]
+           [rtd (make-record-type-descriptor 'core-transformer #f
+                  '#{g0 cy54rjf3ozvorudk-a} #t #t '#((immutable binding)))]
+           [constructor (record-constructor (make-record-constructor-descriptor rtd #f #f))]
+           [conditional-binding
+            ((record-accessor rtd 0) (top-level-syntax 'if definition-environment))])
+      (unless (and (pair? conditional-binding) (eq? (car conditional-binding) 'core)
+                   (procedure? (cdr conditional-binding)))
+        (error 'match "unsupported Chez core transformer protocol"))
+      (let ([conditional (cdr conditional-binding)])
+        (define (compile-reference variable expression environment wrap source)
+          (guard (condition
+                  [(syntax-violation? condition)
+                   (conditional
+                    (list 'if #t
+                          (list '#%error ''match
+                                "inactive capture has no valid surrounding binding"
+                                (list 'quote (syntax->datum variable))))
+                    ;; The failure's primitive and quote forms come from Chez,
+                    ;; independently of the caller's imports and macro marks.
+                    environment definition-wrap source)])
+            (conditional (list 'if #t expression) environment wrap source)))
+        (constructor
+         (cons 'core
+               (lambda (expression environment wrap source)
+                 (syntax-case expression ()
+                   [(_ variable)
+                    (identifier? #'variable)
+                    (compile-reference #'variable #'variable environment wrap source)]
+                   [(_ variable value)
+                    (identifier? #'variable)
+                    (compile-reference #'variable #'(set! variable value)
+                                       environment wrap source)]
+                   [(_ (variable . arguments))
+                    (identifier? #'variable)
+                    (compile-reference #'variable #'(variable . arguments)
+                                       environment wrap source)])))))))
+
+  ;; Preserve operator syntax as well as reads and assignments in inactive branches.
+  (define-syntax capture-binding
+    (syntax-rules ()
+      [(_ variable body)
+       (let-syntax
+           ([variable
+             (make-variable-transformer
+              (lambda (stx)
+                (syntax-case stx (set!)
+                  [(set! reference value) #'(capture-reference variable value)]
+                  [(reference . arguments) #'(capture-reference (variable . arguments))]
+                  [reference (identifier? #'reference) #'(capture-reference variable)])))])
+         body)]
+      [(_ variable active read-expression (value write-expression) body)
+       (let-syntax
+           ([variable
+             (make-variable-transformer
+              (lambda (stx)
+                (syntax-case stx (set!)
+                  [(set! reference value)
+                   #'(if active write-expression (capture-reference variable value))]
+                  [(reference . arguments)
+                   #'(if active (read-expression . arguments)
+                         (capture-reference (variable . arguments)))]
+                  [reference (identifier? #'reference)
+                   #'(if active read-expression (capture-reference variable))])))])
+         body)]))
 
   #|macro:match
   The `match` macro evaluates its input once and tries its pattern clauses in order.
@@ -63,7 +121,7 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                 (string? p)
                 (char? p)))))
       (define handle-extension
-        (lambda (ext rho expr-id pat body fk share-body)
+        (lambda (ext rho expr-id pat body fk share-body protect-body)
           (define (match-expander? ext)
             (let* ([n ($construct-name ext ext "-expander")]
                    [?p (rho n)])
@@ -78,7 +136,7 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
               (expander process-pattern rho expr-id pat body fk))]
            ;; TODO make this dispatch extensible
            [(valid-record-type? rho ext)
-            (system-record-expander process-pattern rho expr-id pat body fk share-body)]
+            (system-record-expander process-pattern rho expr-id pat body fk share-body protect-body)]
            [(record? ext)
             (record-expander process-pattern rho expr-id pat body fk)]
            [(eq? 'box (syntax->datum ext))
@@ -130,14 +188,8 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                         (with-syntax ([(capture) (generate-temporaries '(capture))]
                                       [variable variable] [enabled enabled])
                           #`(let ([capture #,expression])
-                              (let-syntax
-                                  ([variable
-                                    (identifier-syntax
-                                     (name (if enabled capture (capture-reference variable)))
-                                     ((set! name value)
-                                      (if enabled (set! capture value)
-                                          (capture-reference variable value))))])
-                                #,rest))))))))
+                              (capture-binding variable enabled capture
+                                               (value (set! capture value)) #,rest))))))))
           (define bind-suffix-captures
             (lambda (variables accumulators active suffix success generate)
               (let loop ([variables variables] [accumulators accumulators] [active active]
@@ -157,7 +209,7 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
               (map (lambda (variable getter) (if getter #`(#,getter #,variable) variable))
                    variables getters)))
           (define with-pattern-vars
-            (lambda (pattern generate)
+            (lambda (pattern generate . emit-bindings?)
               (define captures '())
               (define (both left right)
                 (cond [(eq? #t (syntax->datum left)) right]
@@ -211,6 +263,8 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                                      (and (not (eq? #t (syntax->datum condition)))
                                           (car (generate-temporaries '(capture-value)))))
                                    conditions)])
+                (if (and (pair? emit-bindings?) (not (car emit-bindings?)))
+                    (generate variables conditions '())
                 #`(let (#,@(fold-right (lambda (flag condition rest)
                                         (if (eq? #t (syntax->datum flag)) rest
                                             (cons #`[#,flag #,condition] rest)))
@@ -233,7 +287,7 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                                                      #'(set! reference value))]))]
                                          rest)))
                              '() getters variables))
-                      #,(generate variables active getters))))))
+                      #,(generate variables active getters)))))))
           (define share-record-body
             (lambda (record-pattern success generate)
               (with-pattern-vars #`(unquote #,record-pattern)
@@ -247,15 +301,8 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                              (lambda (readers ... writers ...)
                                #,(fold-right
                                   (lambda (variable reader writer enabled rest)
-                                    #`(let-syntax
-                                          ([#,variable
-                                            (identifier-syntax
-                                             (name (if #,enabled (#,reader)
-                                                       (capture-reference #,variable)))
-                                             ((set! name value)
-                                              (if #,enabled (#,writer value)
-                                                  (capture-reference #,variable value))))])
-                                        #,rest))
+                                    #`(capture-binding #,variable #,enabled (#,reader)
+                                                       (value (#,writer value)) #,rest))
                                   success variables #'(readers ...) #'(writers ...) active))])
                         #,(generate
                            #`(continue
@@ -267,6 +314,25 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                                             #,(if getter #`(#,getter #,variable value)
                                                   #`(set! #,variable value))))
                                       variables getters)))))))))
+          (define protect-record-body
+            (lambda (record-pattern selected-patterns success)
+              (with-pattern-vars #`(unquote #,record-pattern)
+                (lambda (variables active getters)
+                  (with-pattern-vars selected-patterns
+                    (lambda (selected conditions ignored)
+                      ;; Protect only names absent from this interpretation. Keeping
+                      ;; actual captures direct avoids escaping/boxing their locations.
+                      (fold-right
+                       (lambda (variable rest)
+                         (if (exists (lambda (name condition)
+                                       (and (bound-identifier=? name variable)
+                                            (eq? #t (syntax->datum condition))))
+                                     selected conditions)
+                             rest
+                             #`(capture-binding #,variable #,rest)))
+                       success variables))
+                    #f))
+                #f)))
           (define process-vector-pats
             (lambda (vecid vlen veci pats body fk)
               (syntax-case pats ()
@@ -367,7 +433,7 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
               [,(?match-extension special-pats ...)
                (identifier? #'?match-extension)
                (handle-extension #'?match-extension rho #'expr-id #'(?match-extension special-pats ...) body fk
-                                 share-record-body)]
+                                 share-record-body protect-record-body)]
               ;; ... in the end
               [(pat dots)
                (eq? (datum dots) '...)

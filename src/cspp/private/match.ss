@@ -194,6 +194,9 @@
        (system-record-expander pp rho expr-id pat body fk
                                (lambda (pattern body generate) (generate body)))]
       [(pp rho expr-id pat body fk share-body)
+       (system-record-expander pp rho expr-id pat body fk share-body
+                               (lambda (pattern patterns body) body))]
+      [(pp rho expr-id pat body fk share-body protect-body)
        (syntax-case pat ()
          [(dt pats ...)
           (if (record-type-descriptor? (get-type-descriptor rho #'dt))
@@ -208,6 +211,7 @@
                                     [_ #f]))
                                 pats))]
                        [ordinary? (ordinary-named-patterns? pats)]
+                       [protect-small? (and named? (not ordinary?) (small-record-body? body))]
                        [generate-shared-fields
                         (lambda (success)
                           (let loop ([patterns pats] [i 0])
@@ -230,17 +234,20 @@
                                              (#,fk))))]))))]
                        [generate-fields
                         (lambda (patterns named? success)
-                          (let loop ([patterns patterns] [i 0])
-                            (if (null? patterns)
-                                success
-                                (with-syntax ([(field) (generate-temporaries '(field))])
-                                  #`(let ([field ((record-accessor rtd
-                                                   #,(if named?
-                                                         #`(list-ref indices #,i)
-                                                         i))
-                                                 #,expr-id)])
-                                      #,(pp rho #'field (car patterns)
-                                            (loop (cdr patterns) (fx1+ i)) fk))))))])
+                          (let ([success (if protect-small?
+                                             (protect-body pat patterns success)
+                                             success)])
+                            (let loop ([patterns patterns] [i 0])
+                              (if (null? patterns)
+                                  success
+                                  (with-syntax ([(field) (generate-temporaries '(field))])
+                                    #`(let ([field ((record-accessor rtd
+                                                     #,(if named?
+                                                           #`(list-ref indices #,i)
+                                                           i))
+                                                   #,expr-id)])
+                                        #,(pp rho #'field (car patterns)
+                                              (loop (cdr patterns) (fx1+ i)) fk)))))))])
                  (let ([generate
                         (lambda (success)
                            #`(let ([rtd (record-type-descriptor dt)])
@@ -280,7 +287,7 @@
                                    (#,fk))))])
                    ;; Share substantial continuations; duplicating a small leaf avoids
                    ;; access closures and boxing when a read-only capture stays local.
-                   (if (and named? (not ordinary?) (not (small-record-body? body)))
+                   (if (and named? (not ordinary?) (not protect-small?))
                        (share-body pat body generate)
                        (generate body))))))])]))
 
