@@ -80,7 +80,10 @@
                                        benchmarks)
                                benchmarks)])
             (when (null? selected) (errorf program "filter matched no benchmark cases"))
-            (let ([results (benchmark-run selected config)])
+            ;; The CLI has already applied its substring filter; the library selector
+            ;; uses prefix matching and must not filter these cases a second time.
+            (let ([results (benchmark-run selected
+                             (benchmark-config-with config '((filter . #f))))])
               (for-each (lambda (result)
                           (when (benchmark-result-error result)
                             (raise (benchmark-result-error result)))) results))))

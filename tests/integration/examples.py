@@ -787,6 +787,13 @@ def benchmarks():
         # Error cases: invalid sizes/configurations and an unmatched filter must fail.
         for args in [('--samples=0',), ('--max-iterations=0',), ('--filter=missing',)]:
             assert example('benchmarks/treeset.ss', *args, ok=False).returncode != 0
+        # A suffix filter must retain the CLI's documented substring matching.
+        result = example('benchmarks/vectors.ss', '--size=8', '--samples=1',
+                         '--warmup=0', '--min-time=0.0', '--max-iterations=1',
+                         '--format=json', '--filter=fold')
+        filtered = json.loads(result.stdout)['results']
+        assert filtered and all('fold' in record['name'] for record in filtered), filtered
+
         selected = []
         for _ in range(2):
             result = example('benchmarks/treemap.ss', '--size=0', '--samples=1',
