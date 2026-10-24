@@ -2037,10 +2037,8 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
     (lambda (expanded config)
       (let* ([state (car expanded)]
              [benchmark (cdr expanded)]
-             [arg-row (car (filter (lambda (row)
-                                     (equal? (caddr row) ($benchmark-state-args state)))
-                                   ($benchmark-args benchmark)))]
-             [values (cadr arg-row)])
+             ;; Expansion preserves positional argument order in the state alist.
+             [values (map cdr ($benchmark-state-args state))])
         (guard (exn
                 [else
                  ($mk-benchmark-result ($benchmark-state-name state)

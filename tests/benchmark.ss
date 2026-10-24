@@ -1115,3 +1115,25 @@
          (and (= (length results) 2)
               (not (benchmark-result-error (car results)))
               (condition? (benchmark-result-error (cadr results)))))))
+
+(mat benchmark-argument-object-identity
+     (let* ([first (vector 1)] [second (vector 1)] [seen '()]
+            [benchmark (make-benchmark 'identity
+                         (lambda (state value)
+                           (set! seen
+                             (cons (and (eq? value (benchmark-state-arg state 'value))
+                                        value) seen)))
+                         `((args . ((value) (,first) (,second)))))]
+            [results (benchmark-run benchmark (benchmark-test-config))])
+       (and (for-all (lambda (result) (not (benchmark-result-error result))) results)
+            (equal? (map (lambda (value) (eq? value first)) (reverse seen)) '(#t #t #f #f))
+            (eq? (car seen) second)))
+
+     ;; The low-level runner must use the concrete state's values too.
+     (let* ([first (vector 1)] [second (vector 1)] [seen #f]
+            [benchmark (make-benchmark 'identity-one
+                         (lambda (state value) (set! seen value))
+                         `((args . ((value) (,first) (,second)))))]
+            [expanded (benchmark-expand benchmark (benchmark-test-config))]
+            [result (benchmark-run-one (cadr expanded) (benchmark-test-config))])
+       (and (not (benchmark-result-error result)) (eq? seen second))))
