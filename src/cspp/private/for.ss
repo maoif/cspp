@@ -606,7 +606,7 @@
                                                     #`(let ([s #,s])
                                                         (unless (positive-natural? s)
                                                           (errorf ':vector "step has to be a positive natural number: ~a" s))
-                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
+                                                        (let ([stride (min (inexact->exact s) (abs (fx- t-to t-from)))])
                                                           (if (fx<= t-from t-to)
                                                               stride
                                                               (fx- stride)))))
@@ -669,7 +669,7 @@
                                                     #`(let ([s #,s])
                                                         (unless (positive-natural? s)
                                                           (errorf ':string "step has to be a positive natural number: ~a" s))
-                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
+                                                        (let ([stride (min (inexact->exact s) (abs (fx- t-to t-from)))])
                                                           (if (fx<= t-from t-to)
                                                               stride
                                                               (fx- stride)))))
@@ -732,7 +732,7 @@
                                                     #`(let ([s #,s])
                                                         (unless (positive-natural? s)
                                                           (errorf ':fxvector "step has to be a positive natural number: ~a" s))
-                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
+                                                        (let ([stride (min (inexact->exact s) (abs (fx- t-to t-from)))])
                                                           (if (fx<= t-from t-to)
                                                               stride
                                                               (fx- stride)))))
@@ -795,7 +795,7 @@
                                                     #`(let ([s #,s])
                                                         (unless (positive-natural? s)
                                                           (errorf ':flvector "step has to be a positive natural number: ~a" s))
-                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
+                                                        (let ([stride (min (inexact->exact s) (abs (fx- t-to t-from)))])
                                                           (if (fx<= t-from t-to)
                                                               stride
                                                               (fx- stride)))))
@@ -900,7 +900,7 @@
                                                           (let* ([distance (abs (fx- t-to t-from))]
                                                                  [stride (if (> s (fxquotient distance #,size))
                                                                              distance
-                                                                             (fx* s #,size))])
+                                                                             (fx* (inexact->exact s) #,size))])
                                                             (if (fx<= t-from t-to)
                                                                 stride
                                                                 (fx- stride)))))

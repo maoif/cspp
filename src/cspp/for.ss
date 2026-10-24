@@ -88,6 +88,8 @@
   Sequence positions survive `:from`, `:to`, `:step`, and `:rev`; typed bytevector positions are
   byte offsets. Numeric ranges, hashtables, and iterators count source items starting from zero.
   Lists support the sequence traversal options; sliced or reversed list traversal uses O(n) space.
+  Sequence `:step` accepts positive integer values, including inexact integers, and normalizes
+  them to exact strides before traversal. Large strides stop after the first selected item.
   `[var :iota bound]` visits integers from zero up to, but excluding, the natural number `bound`.
   `[var :fxiota bound]` requires a nonnegative fixnum bound and uses fixnum arithmetic.
   Both forms evaluate `bound` once per source setup and accept only `:guard` and `:index` options.

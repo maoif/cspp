@@ -1823,3 +1823,34 @@
      (equal? '(0) (for/list ([x :nums 0 1 +inf.0]) x))
 
      (equal? '(0) (for/list ([x :nums 0 -1 -inf.0]) x)))
+
+(mat inexact-sequence-strides
+     (equal? '(0 2) (for/list ([x :vector '#(0 1 2 3) :step 2.0]) x))
+
+     (equal? '(#\d #\b) (for/list ([x :string "abcd" :rev :step 2.0]) x))
+
+     (equal? '(0 2) (for/list ([x :fxvector (fxvector 0 1 2 3) :step 2.0]) x))
+
+     (equal? '(3.0 1.0)
+             (for*/list ([x :flvector (flvector 0.0 1.0 2.0 3.0) :rev :step 2.0]) x))
+
+     (equal? '(0 2) (for/list ([x :list '(0 1 2 3) :step 2.0]) x))
+
+     (equal? '(1 1029)
+             (for/list ([x :bytevector #vu8(0 1 2 3 4 5) :type u16 :big :step 2.0]) x))
+
+     (let ([calls 0])
+       (and (equal? '(0 2) (for/list ([x :vector '#(0 1 2 3)
+                                       :step (begin (set! calls (+ calls 1)) 2.0)]) x))
+            (= calls 1)))
+
+     ;; Non-integer, zero, negative, NaN, and infinite strides remain invalid.
+     (error? (for/list ([x :vector '#(0 1) :step 1.5]) x))
+
+     (error? (for/list ([x :vector '#(0 1) :step 0.0]) x))
+
+     (error? (for/list ([x :vector '#(0 1) :step -1.0]) x))
+
+     (error? (for/list ([x :vector '#(0 1) :step +nan.0]) x))
+
+     (error? (for/list ([x :vector '#(0 1) :step +inf.0]) x)))
