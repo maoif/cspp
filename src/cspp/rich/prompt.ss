@@ -115,8 +115,6 @@
                       (when (zero? ($terminal-echo-supported))
                         (errorf 'rich-password
                                 "terminal no-echo input is not supported"))
-                      (rich-print console message ": ")
-                      (flush-output-port (rich-console-output-port console))
                       (let ([password
                              (dynamic-wind
                                (lambda ()
@@ -125,6 +123,8 @@
                                   ($terminal-disable-echo)
                                   "cannot disable terminal echo"))
                                (lambda ()
+                                 (rich-print console message ": ")
+                                 (flush-output-port (rich-console-output-port console))
                                  ($read-line input))
                                (lambda ()
                                  ($check-terminal-status

@@ -101,5 +101,65 @@ def main():
             os.close(slave)
 
 
+def password_echo():
+    # Hold the prompt's output callback open until input is already queued.
+    # Echo must be disabled before that callback makes the prompt visible.
+    with tempfile.TemporaryDirectory(prefix="cspp-rich-password-") as directory:
+        release = Path(directory) / "release"
+        os.mkfifo(release)
+        probe = Path(directory) / "password.ss"
+        probe.write_text('''(import (cspp))
+(define destination (current-output-port))
+(define first? #t)
+(call-with-port
+ (make-custom-textual-output-port "password-prompt"
+  (lambda (text start count)
+    (display (substring text start (+ start count)) destination)
+    (flush-output-port destination)
+    (when first?
+      (set! first? #f)
+      (call-with-input-file "RELEASE" get-line))
+    count)
+  #f #f #f)
+ (lambda (output)
+   (unless (string=? "secret" (rich-password (rich-console :output-port output) "Password"))
+     (error 'password-test "queued password was lost"))
+   (display "DONE" destination)
+   (flush-output-port destination)))
+'''.replace("RELEASE", str(release)))
+        master, slave = pty.openpty()
+        process = None
+        try:
+            original = termios.tcgetattr(slave)
+            process = subprocess.Popen(
+                [str(ROOT / "cspp"), "--script=" + str(probe)], cwd=ROOT,
+                stdin=slave, stdout=slave, stderr=subprocess.PIPE)
+            output = b""
+            with selectors.DefaultSelector() as selector:
+                selector.register(master, selectors.EVENT_READ)
+                while b"Password: " not in output:
+                    assert selector.select(10), output
+                    output += os.read(master, 8192)
+                assert not (termios.tcgetattr(slave)[3] & termios.ECHO), output
+                os.write(master, b"secret\n")
+                with release.open("w") as signal:
+                    signal.write("continue\n")
+                while b"DONE" not in output:
+                    assert selector.select(10), output
+                    output += os.read(master, 8192)
+            _, error = process.communicate(timeout=10)
+            assert process.returncode == 0 and not error, error
+            assert b"secret" not in output, output
+            assert termios.tcgetattr(slave) == original
+        finally:
+            if process is not None:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate()
+            os.close(master)
+            os.close(slave)
+
+
 if __name__ == "__main__":
     main()
+    password_echo()
