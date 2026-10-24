@@ -705,3 +705,151 @@
        (let ([comparisons (benchmark-compare-results baseline current)])
          (and (= (length comparisons) 1)
               (benchmark-comparison-improvement? (car comparisons))))))
+
+(mat benchmark-runner-option-precedence
+     (let* ([calls 0]
+            [benchmark (make-benchmark 'descriptor-defaults
+                         (lambda (state) (set! calls (+ calls 1)))
+                         '((warmup . 0) (samples . 3) (min-time . 0)
+                           (max-iterations . 1) (reporter . #f) (output . #f)))]
+            [results (benchmark-run benchmark (default-benchmark-config))])
+       (and (= calls 3) (= (length (benchmark-result-samples (car results))) 3)))
+
+     (let* ([calls 0]
+            [benchmark (make-benchmark 'explicit-overrides
+                         (lambda (state) (set! calls (+ calls 1)))
+                         '((warmup . 3) (samples . 3) (min-time . 1)
+                           (max-iterations . 4)))]
+            [results (benchmark-run benchmark (benchmark-test-config))])
+       (and (= calls 2) (= (length (benchmark-result-samples (car results))) 2)))
+
+     (let* ([benchmark (make-benchmark 'partial-overrides (lambda (state) (void))
+                         '((warmup . 0) (samples . 3) (min-time . 0)
+                           (max-iterations . 1) (reporter . #f) (output . #f)))]
+            [config (benchmark-config-with (default-benchmark-config) '((samples . 1)))]
+            [results (benchmark-run benchmark config)])
+       (= (length (benchmark-result-samples (car results))) 1))
+
+     (let* ([reported 0]
+            [reporter (make-benchmark-reporter
+                        (lambda (results out) (set! reported (+ reported (length results))))
+                        (lambda (result out) (void))
+                        (lambda (results out) (void)))]
+            [benchmark (make-benchmark 'descriptor-reporter (lambda (state) (void))
+                         `((warmup . 0) (samples . 1) (min-time . 0)
+                           (max-iterations . 1) (reporter . ,reporter)))])
+       (call-with-port (open-output-string)
+         (lambda (out)
+           (benchmark-run benchmark
+             (benchmark-config-with (default-benchmark-config) `((output . ,out))))))
+       (= reported 1))
+
+     ;; Error: config copies must reject invalid sample counts before execution.
+     (guard (exn [else #t])
+       (benchmark-config-with (default-benchmark-config) '((samples . -1)))
+       #f)
+
+     ;; Error: a zero iteration cap cannot produce a valid measured sample.
+     (guard (exn [else #t])
+       (benchmark-config-with (default-benchmark-config) '((max-iterations . 0)))
+       #f))
+
+(mat benchmark-stop-on-error
+     ;; Error: stopping must prevent later descriptors from executing.
+     (let* ([later-ran? #f]
+            [failed (make-benchmark 'stop-first
+                      (lambda (state) (error 'stop-first "expected failure")) '())]
+            [later (make-benchmark 'stop-later
+                     (lambda (state) (set! later-ran? #t)) '())]
+            [results (benchmark-run (list failed later)
+                       (benchmark-config-with (benchmark-test-config)
+                         '((stop-on-error? . #t))))])
+       (and (= (length results) 1) (not later-ran?)))
+
+     ;; Error: stopping must prevent later argument cases of the same descriptor.
+     (let* ([seen '()]
+            [benchmark (make-benchmark 'stop-arguments
+                         (lambda (state n)
+                           (set! seen (cons n seen))
+                           (error 'stop-arguments "expected failure"))
+                         '((args (n) (1) (2))))]
+            [results (benchmark-run benchmark
+                       (benchmark-config-with (benchmark-test-config)
+                         '((stop-on-error? . #t))))])
+       (and (= (length results) 1) (equal? seen '(1))))
+
+     ;; Error: disabled stopping must retain the existing continue-on-error behavior.
+     (let* ([seen '()]
+            [benchmark (make-benchmark 'continue-arguments
+                         (lambda (state n)
+                           (set! seen (cons n seen))
+                           (error 'continue-arguments "expected failure"))
+                         '((args (n) (1) (2))))]
+            [results (benchmark-run benchmark (benchmark-test-config))])
+       (and (= (length results) 2) (equal? (reverse seen) '(1 2)))))
+
+(mat benchmark-config-explicit-fields
+     (let* ([benchmark (make-benchmark 'constructor-override (lambda (state) (void))
+                         '((samples . 3)))]
+            [config (make-benchmark-config 0 1 0 1 #f #f #f #f #f)]
+            [result (benchmark-run-one (car (benchmark-expand benchmark config)) config)])
+       (= (length (benchmark-result-samples result)) 1))
+
+     (let* ([benchmark (make-benchmark 'expanded-default (lambda (state) (void))
+                         '((warmup . 0) (samples . 3) (min-time . 0)
+                           (max-iterations . 1) (reporter . #f) (output . #f)))]
+            [config (default-benchmark-config)]
+            [result (benchmark-run-one (car (benchmark-expand benchmark config)) config)])
+       (= (length (benchmark-result-samples result)) 3))
+
+     ;; Error: a descriptor stop setting applies when the caller leaves it unspecified.
+     (let* ([seen '()]
+            [benchmark (make-benchmark 'descriptor-stop
+                         (lambda (state n)
+                           (set! seen (cons n seen))
+                           (error 'descriptor-stop "expected failure"))
+                         '((args (n) (1) (2)) (stop-on-error? . #t)))]
+            [results (benchmark-run benchmark (benchmark-test-config))])
+       (and (= (length results) 1) (equal? seen '(1))))
+
+     ;; Error: an explicit false stop setting overrides the descriptor's true default.
+     (let* ([benchmark (make-benchmark 'explicit-continue
+                         (lambda (state n) (error 'explicit-continue "expected failure"))
+                         '((args (n) (1) (2)) (stop-on-error? . #t)))]
+            [results (benchmark-run benchmark
+                       (benchmark-config-with (benchmark-test-config)
+                         '((stop-on-error? . #f))))])
+       (= (length results) 2))
+
+     (let ([groups '()])
+       (call-with-port (open-output-string)
+         (lambda (out)
+           (let* ([reporter (make-benchmark-reporter
+                             (lambda (results out)
+                               (set! groups (cons (map benchmark-result-name results) groups)))
+                             (lambda (result out) (void))
+                             (lambda (results out) (void)))]
+                  [first (make-benchmark 'group-first (lambda (state) (void)) '())]
+                  [second (make-benchmark 'group-second (lambda (state) (void)) '())])
+             (benchmark-run (list first second)
+               (benchmark-config-with (benchmark-test-config)
+                 `((reporter . ,reporter) (output . ,out)))))))
+       (equal? groups '((group-first group-second))))
+
+     (let* ([first (make-benchmark 'select-first (lambda (state) (void)) '())]
+            [second (make-benchmark 'select-second (lambda (state) (void)) '())]
+            [results (benchmark-run (list first second)
+                       (benchmark-config-with (benchmark-test-config)
+                         '((filter . select-second))))])
+       (equal? (map benchmark-result-name results) '(select-second)))
+
+     (call-with-port (open-output-string)
+       (lambda (first-port)
+         (call-with-port (open-output-string)
+           (lambda (second-port)
+             (let ([first-config (parameterize ([current-output-port first-port])
+                                   (default-benchmark-config))]
+                   [second-config (parameterize ([current-output-port second-port])
+                                    (default-benchmark-config))])
+               (and (eq? (benchmark-config-output first-config) first-port)
+                    (eq? (benchmark-config-output second-config) second-port))))))))

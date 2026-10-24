@@ -92,7 +92,8 @@
     (fields name args template-args samples summary counters error))
 
   (define-record-type ($benchmark-config $mk-benchmark-config benchmark-config?)
-    (fields warmup samples min-time max-iterations output filter reporter cost-center? stop-on-error?))
+    (fields warmup samples min-time max-iterations output filter reporter cost-center? stop-on-error?
+            explicit-options))
 
   (define-record-type ($benchmark-reporter $mk-benchmark-reporter benchmark-reporter?)
     (fields start result finish))
@@ -944,7 +945,7 @@ registry used by definition macros and `(benchmark-run)`.
 ;;;; configs and reporters
 ;;;;===----------------------------------------------------------------------===
 
-  (define $default-config #f)
+  (define $default-reporter #f)
 
   #|proc:benchmark-result-name
 The `benchmark-result-name` procedure returns the concrete name stored in
@@ -1287,15 +1288,40 @@ result fields and whose values are column labels; supported field keys are
                   (newline out)
                   (flush-output-port out))))]))
 
+  (define $benchmark-config-keys
+    '(warmup samples min-time max-iterations output filter reporter cost-center? stop-on-error?))
+
+  (define $make-checked-config
+    (lambda (warmup samples min-time max-iterations output selector reporter
+             cost-center? stop-on-error? explicit-options)
+      (unless (and (natural? warmup) (natural? samples)
+                   (natural? max-iterations) (> max-iterations 0)
+                   (real? min-time) (finite? min-time) (>= min-time 0)
+                   (or (not output) (output-port? output))
+                   (or (not selector) (symbol? selector) (string? selector) (procedure? selector))
+                   (or (not reporter) (benchmark-reporter? reporter))
+                   (boolean? cost-center?) (boolean? stop-on-error?))
+        (errorf 'make-benchmark-config "invalid benchmark configuration"))
+      ($mk-benchmark-config warmup samples min-time max-iterations output selector reporter
+                            cost-center? stop-on-error? explicit-options)))
+
   #|proc:make-benchmark-config
-The `make-benchmark-config` procedure creates a runner configuration. The
-parameters are `warmup`, `samples`, `min-time`, `max-iterations`, `output`,
-`filter`, `reporter`, `cost-center?`, and `stop-on-error?`.
+The `make-benchmark-config` procedure returns a runner configuration whose fields
+are explicit overrides of descriptor defaults. `warmup` and `samples` are natural
+sample counts, `min-time` is a finite nonnegative target in seconds, and
+`max-iterations` is a positive iteration cap. `output` is an output port or `#f`;
+`filter` is `#f`, a name symbol, a name prefix string, or a predicate receiving a
+benchmark descriptor and returning whether to select it. `reporter` is a reporter
+or `#f`. Boolean `cost-center?` requests optional instrumentation, and Boolean
+`stop-on-error?` stops after the first captured error when true. Cost-center
+instrumentation is reserved for future support; measured cost-center data is `#f`.
 |#
   (define make-benchmark-config
     (lambda (warmup samples min-time max-iterations output filter reporter cost-center? stop-on-error?)
-      (pcheck ([natural? warmup samples max-iterations] [number? min-time])
-              ($mk-benchmark-config warmup samples min-time max-iterations output filter reporter cost-center? stop-on-error?))))
+      (pcheck ([natural? warmup samples max-iterations] [real? min-time]
+               [boolean? cost-center? stop-on-error?])
+              ($make-checked-config warmup samples min-time max-iterations output filter reporter
+                                    cost-center? stop-on-error? $benchmark-config-keys))))
 
   #|proc:benchmark-config-warmup
 The `benchmark-config-warmup` procedure returns the warmup sample count stored
@@ -1370,134 +1396,62 @@ cost-center measurement is enabled in runner `config`.
               ($benchmark-config-cost-center? config))))
 
   #|proc:default-benchmark-config
-The `default-benchmark-config` procedure returns the default benchmark runner
-configuration.
+The `default-benchmark-config` procedure returns a fresh default runner
+configuration using the current output port. Its fields remain defaults rather
+than explicit overrides, so descriptor options can replace them.
 |#
   (define default-benchmark-config
     (lambda ()
-      (or $default-config
-          (begin
-            (set! $default-config
-                  (make-benchmark-config 1 10 0.01 1000000
-                                         (current-output-port)
-                                         #f
-                                         (benchmark-text-reporter)
-                                         #f
-                                         #f))
-            $default-config))))
+      (unless $default-reporter
+        (set! $default-reporter (benchmark-text-reporter)))
+      ($make-checked-config 1 10 0.01 1000000 (current-output-port) #f
+                            $default-reporter #f #f '())))
+
+  (define $benchmark-config-options
+    (lambda (config)
+      (list (cons 'warmup ($benchmark-config-warmup config))
+            (cons 'samples ($benchmark-config-samples config))
+            (cons 'min-time ($benchmark-config-min-time config))
+            (cons 'max-iterations ($benchmark-config-max-iterations config))
+            (cons 'output ($benchmark-config-output config))
+            (cons 'filter ($benchmark-config-filter config))
+            (cons 'reporter ($benchmark-config-reporter config))
+            (cons 'cost-center? ($benchmark-config-cost-center? config))
+            (cons 'stop-on-error? ($benchmark-config-stop-on-error? config)))))
 
   #|proc:benchmark-config-with
-The `benchmark-config-with` procedure returns a copy of `config` with fields
-changed according to option alist `options`.
+The `benchmark-config-with` procedure returns a validated copy of `config` with
+fields changed by option alist `options`. Each changed field becomes an explicit
+run override. Explicit run settings take precedence over descriptor options;
+descriptor options take precedence over untouched default settings.
 |#
   (define benchmark-config-with
     (lambda (config options)
       (pcheck ([benchmark-config? config] [list? options])
-              (let loop ([options options] [config config])
+              (let loop ([options options]
+                         [fields ($benchmark-config-options config)]
+                         [explicit ($benchmark-config-explicit-options config)])
                 (if (null? options)
-                    config
+                    (apply $make-checked-config
+                           (append (map (lambda (key) ($alist-ref fields key))
+                                        $benchmark-config-keys)
+                                   (list explicit)))
                     (let ([option (car options)])
-                      (case (car option)
-                        [(warmup)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (cdr option)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(samples)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (cdr option)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(min-time)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (cdr option)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(max-iterations)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (cdr option)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(output)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (cdr option)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(filter)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (cdr option)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(reporter)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (cdr option)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(cost-center?)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (cdr option)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(stop-on-error?)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     (cdr option)))]
-                        [else (errorf 'benchmark-config-with "unknown config option: ~a" (car option))])))))))
+                      (unless (and (pair? option) (memq (car option) $benchmark-config-keys))
+                        (errorf 'benchmark-config-with "unknown config option: ~s" option))
+                      (loop (cdr options)
+                            ($replace-option fields (car option) (cdr option))
+                            (if (memq (car option) explicit)
+                                explicit
+                                (cons (car option) explicit)))))))))
+
+  (define $effective-benchmark-config
+    (lambda (benchmark config)
+      (benchmark-config-with config
+        (filter (lambda (option)
+                  (and (memq (car option) $benchmark-config-keys)
+                       (not (memq (car option) ($benchmark-config-explicit-options config)))))
+                ($benchmark-options benchmark)))))
 
 
 ;;;;===----------------------------------------------------------------------===
@@ -1631,6 +1585,10 @@ alist. `:args` receives a grouped table `([name ...] [value ...] ...)`; each
 `name` is an argument name and each value row supplies one concrete benchmark
 case. Repeated `:args` tables are expanded as a Cartesian product, and argument
 names must not be duplicated in one table or across argument options.
+`:arg-range [name start end factor]` requires finite bounds, a positive start,
+and a factor greater than one. `:dense-arg-range [name start end step]` requires
+finite bounds and a positive step; its start may be zero. Both ranges include
+their upper bound when reached and reject steps that fail to advance.
 |#
   (define-syntax benchmark-options
     (lambda (stx)
@@ -2078,12 +2036,13 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
 
   #|proc:benchmark-run-one
 The `benchmark-run-one` procedure runs one concrete expanded benchmark pair
-`expanded` with runner `config` and returns one benchmark result.
+`expanded` with runner `config` and returns one benchmark result. Explicit config
+fields override descriptor options, which override default settings.
 |#
   (define benchmark-run-one
     (lambda (expanded config)
       (pcheck ([pair? expanded] [benchmark-config? config])
-              ($run-expanded expanded config))))
+              ($run-expanded expanded ($effective-benchmark-config (cdr expanded) config)))))
 
   #|proc:benchmark-run-suite
 The `benchmark-run-suite` procedure runs suite descriptor `suite` with runner
@@ -2111,11 +2070,66 @@ The `benchmark-run-suite` procedure runs suite descriptor `suite` with runner
                      (lambda ()
                        (($benchmark-suite-teardown suite) suite-state (car values))))))))))
 
+  (define $benchmark-matches-selector?
+    (lambda (benchmark selector)
+      (cond
+       [(not selector) #t]
+       [(symbol? selector) (eq? selector ($benchmark-name benchmark))]
+       [(string? selector)
+        (let ([name (symbol->string ($benchmark-name benchmark))])
+          (and (<= (string-length selector) (string-length name))
+               (string=? selector (substring name 0 (string-length selector)))))]
+       [else (selector benchmark)])))
+
+  (define $run-benchmarks
+    (lambda (benchmarks config)
+      (let ([report-groups '()])
+        (define record-report!
+          (lambda (result effective)
+            (let ([reporter (benchmark-config-reporter effective)]
+                  [out (benchmark-config-output effective)])
+              (when (and reporter out)
+                (let ([group (find (lambda (group)
+                                     (and (eq? reporter (caar group))
+                                          (eq? out (cdar group))))
+                                   report-groups)])
+                  (if group
+                      (set-cdr! group (cons result (cdr group)))
+                      (set! report-groups
+                            (cons (cons (cons reporter out) (list result)) report-groups))))))))
+        (define finish
+          (lambda (results)
+            (for-each (lambda (group)
+                        (benchmark-report (reverse (cdr group)) (caar group) (cdar group)))
+                      (reverse report-groups))
+            (reverse results)))
+        (let loop-benchmarks ([benchmarks benchmarks] [results '()])
+          (if (null? benchmarks)
+              (finish results)
+              (let* ([benchmark (car benchmarks)]
+                     [effective ($effective-benchmark-config benchmark config)])
+                (if (not ($benchmark-matches-selector?
+                          benchmark (benchmark-config-filter effective)))
+                    (loop-benchmarks (cdr benchmarks) results)
+                    (let loop-cases ([expanded (benchmark-expand benchmark effective)]
+                                     [results results])
+                      (if (null? expanded)
+                          (loop-benchmarks (cdr benchmarks) results)
+                          (let ([result ($run-expanded (car expanded) effective)])
+                            (record-report! result effective)
+                            (if (and ($benchmark-config-stop-on-error? effective)
+                                     (benchmark-result-error result))
+                                (finish (cons result results))
+                                (loop-cases (cdr expanded) (cons result results)))))))))))))
+
   #|proc:benchmark-run
 The `benchmark-run` procedure runs registered benchmarks, descriptors, or a
-registry with a runner configuration. It supports `(benchmark-run)`,
-`(benchmark-run config)`, `(benchmark-run registry config)`, and
-`(benchmark-run benchmarks config)`.
+registry with a runner configuration and returns their measured results. It
+supports `(benchmark-run)`, `(benchmark-run config)`, `(benchmark-run registry
+config)`, and `(benchmark-run benchmarks config)`. Explicit config fields override
+descriptor options, which override defaults. Reporting groups results sharing a
+reporter and output port. Enabled stopping returns results through the first error
+and skips all later argument cases and descriptors.
 |#
   (define benchmark-run
     (case-lambda
@@ -2126,30 +2140,13 @@ registry with a runner configuration. It supports `(benchmark-run)`,
                (benchmark-run (current-benchmark-registry) config))]
       [(source config)
        (pcheck ([benchmark-config? config])
-               (let* ([benchmarks
-                       (cond
-                        [(benchmark-registry? source)
-                         (benchmark-select source (benchmark-config-filter config))]
-                        [(benchmark? source) (list source)]
-                        [(benchmark-suite? source)
-                         (benchmark-run-suite source config)]
-                        [(list? source) source]
-                        [else (errorf 'benchmark-run "invalid benchmark source: ~s" source)])])
-                 (if (and (pair? benchmarks) (benchmark-result? (car benchmarks)))
-                     benchmarks
-                     (let ([results
-                            (apply append
-                                   (map (lambda (benchmark)
-                                          (map (lambda (expanded)
-                                                 (benchmark-run-one expanded config))
-                                               (benchmark-expand benchmark config)))
-                                        benchmarks))])
-                       (when (and (benchmark-config-reporter config)
-                                  (benchmark-config-output config))
-                         (benchmark-report results
-                                           (benchmark-config-reporter config)
-                                           (benchmark-config-output config)))
-                       results))))]))
+               (cond
+                [(benchmark-suite? source) (benchmark-run-suite source config)]
+                [(benchmark-registry? source)
+                 ($run-benchmarks ($benchmark-registry-benchmarks source) config)]
+                [(benchmark? source) ($run-benchmarks (list source) config)]
+                [(list? source) ($run-benchmarks source config)]
+                [else (errorf 'benchmark-run "invalid benchmark source: ~s" source)]))]))
 
   #|proc:benchmark-summarize
 The `benchmark-summarize` procedure computes CPU nanosecond, real nanosecond,
