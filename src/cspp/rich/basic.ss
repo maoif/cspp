@@ -107,26 +107,14 @@
     (lambda (x)
       (and (list? x) (rich-list-every? $rich-segment-list? x))))
 
-  (define $string-split-lines
-    (lambda (text)
-      (let ([len (string-length text)])
-        (let loop ([start 0] [i 0] [out '()])
-          (cond [(= i len)
-                 (reverse (cons (substring text start i) out))]
-                [(char=? (string-ref text i) #\newline)
-                 (loop (+ i 1) (+ i 1) (cons (substring text start i) out))]
-                [else
-                 (loop start (+ i 1) out)])))))
-
   (define $string->segment-lines
     (lambda (text)
-      (map (lambda (line) (list (rich-segment line)))
-           ($string-split-lines text))))
+      (rich-lines-normalize (list (list (rich-segment text))))))
 
   (define $rendered->segment-lines
     (lambda (who value)
       (cond [(string? value) ($string->segment-lines value)]
-            [($rich-segment-line-list? value) value]
+            [($rich-segment-line-list? value) (rich-lines-normalize value)]
             [else (errorf who "renderer returned invalid value: ~a" value)])))
 
   (define $value->segment-lines

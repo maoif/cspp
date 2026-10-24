@@ -1,9 +1,73 @@
 #!chezscheme
 (library (cspp rich private lines)
-  (export rich-lines-wrap rich-lines-width rich-lines-min-width)
+  (export rich-lines-normalize rich-lines-wrap rich-lines-width rich-lines-min-width)
   (import (cspp chez) (cspp utils) (cspp rich private common) (cspp rich segment)
           (cspp rich private cells)
           (only (cspp list) make-list-builder))
+
+  ;; Normalize display text before measuring it. Explicit control segments stay opaque.
+  (define $normalize-characters
+    (lambda (segments)
+      (define special?
+        (lambda (text)
+          (let loop ([index 0])
+            (and (< index (string-length text))
+                 (or (memv (string-ref text index) '(#\tab #\return))
+                     (loop (+ index 1)))))))
+      (if (not (exists (lambda (segment)
+                         (and (not (rich-segment-control? segment))
+                              (special? (rich-segment-text segment)))) segments))
+          segments
+          (let* ([text (apply string-append
+                              (map (lambda (segment)
+                                     (if (rich-segment-control? segment) ""
+                                         (rich-segment-text segment))) segments))]
+                 [len (string-length text)]
+                 [replacements (make-eqv-hashtable)])
+            ;; Measure whole runs so graphemes can cross style boundaries.
+            (let scan ([index 0] [start 0] [column 0])
+              (unless (= index len)
+                (let ([character (string-ref text index)])
+                  (case character
+                    [(#\tab)
+                     (let* ([column (+ column (rich-cell-string-width (substring text start index)))]
+                            [spaces (- 8 (modulo column 8))])
+                       (hashtable-set! replacements index (make-string spaces #\space))
+                       (scan (+ index 1) (+ index 1) (+ column spaces)))]
+                    [(#\return)
+                     (hashtable-set! replacements index "\n")
+                     (let ([next (+ index 1)])
+                       (if (and (< next len) (char=? (string-ref text next) #\newline))
+                           (begin
+                             (hashtable-set! replacements next "")
+                             (scan (+ next 1) (+ next 1) 0))
+                           (scan next next 0)))]
+                    [(#\newline) (scan (+ index 1) (+ index 1) 0)]
+                    [else (scan (+ index 1) start column)]))))
+            (let ([offset 0] [result (make-list-builder)])
+              (for-each
+               (lambda (segment)
+                 (result
+                  (if (rich-segment-control? segment)
+                     segment
+                     (let* ([source (rich-segment-text segment)] [len (string-length source)]
+                            [base offset])
+                       (set! offset (+ offset len))
+                       (let ([normalized
+                              (rich-string-output
+                               (lambda (port)
+                                 (let scan ([index 0] [start 0])
+                                   (cond
+                                     [(= index len) (display (substring source start index) port)]
+                                     [(hashtable-ref replacements (+ base index) #f) =>
+                                      (lambda (replacement)
+                                        (display (substring source start index) port)
+                                        (display replacement port)
+                                        (scan (+ index 1) (+ index 1)))]
+                                     [else (scan (+ index 1) start)]))))])
+                         (rich-segment normalized (rich-segment-style segment)))))))
+               segments)
+              (result))))))
 
   ;; Preserve source styles when a custom renderer embeds newlines in its segments.
   (define $split-line
@@ -29,6 +93,16 @@
         (lines (line))
         (lines))))
 
+  #|proc:rich-lines-normalize
+  The private `rich-lines-normalize` returns segment `lines` with CRLF and CR normalized
+  to line breaks and tabs expanded to eight-cell tab stops within each content line.
+  Styles and explicit control segments are preserved, including across style boundaries.
+  |#
+  (define rich-lines-normalize
+    (lambda (lines)
+      (pcheck ([list? lines])
+        (apply append (map (lambda (line) ($split-line ($normalize-characters line))) lines)))))
+
   #|proc:rich-lines-wrap
   The private `rich-lines-wrap` returns segment `lines` normalized at embedded newlines
   and wrapped to nonnegative cell count `width`, preserving styles and control segments.
@@ -42,7 +116,7 @@
                       (if (zero? width)
                           (list (rich-segment-crop line 0))
                           (rich-segment-wrap line width)))
-                    (apply append (map $split-line lines)))))))
+                    (rich-lines-normalize lines))))))
 
   #|proc:rich-lines-width
   The private `rich-lines-width` returns the maximum terminal cell width of segment
@@ -51,7 +125,7 @@
   (define rich-lines-width
     (lambda (lines)
       (pcheck ([list? lines])
-        (let loop ([lines (apply append (map $split-line lines))] [width 0])
+        (let loop ([lines (rich-lines-normalize lines)] [width 0])
           (if (null? lines)
               width
               (loop (cdr lines) (max width (rich-segments-width (car lines)))))))))

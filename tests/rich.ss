@@ -2160,3 +2160,35 @@
                (and failed? (string=? result "hello")))))))
 
      )
+
+(mat rich-container-control-normalization
+
+     ;; Tabs must occupy measured spaces, and CRLF must produce one line break.
+     (equal? '("+-----------+" "| a       b |" "+-----------+")
+             (map rich-segments->plain (rich-panel-render (rich-panel :body "a\tb"))))
+
+     (equal? '("+---+" "| a |" "| b |" "+---+")
+             (map rich-segments->plain (rich-panel-render (rich-panel :body "a\r\nb"))))
+
+     (equal? '("+-----------+" "| A         |" "+-----------+" "| a       b |"
+               "+-----------+")
+             (map rich-segments->plain
+                  (rich-table-render (rich-table :columns ("A") :rows (("a\tb"))))))
+
+     (equal? '("+---+" "| A |" "+---+" "| a |" "| b |" "+---+")
+             (map rich-segments->plain
+                  (rich-table-render (rich-table :columns ("A") :rows (("a\r\nb"))))))
+
+     ;; Tab stops use cells and span style boundaries. CRLF may also span styles.
+     (let* ([text (rich-text "界" (rich-style 'red))]
+            [unused (rich-text-append! text "\tb\r" (rich-style 'green))]
+            [unused (rich-text-append! text "\nc" (rich-style 'blue))])
+       (equal? '("+-----------+" "| 界      b |" "| c         |" "+-----------+")
+               (map rich-segments->plain (rich-panel-render (rich-panel :body text)))))
+
+     (equal? '("x       y" "z")
+             (map rich-segments->plain
+                  (rich-render (rich-console :width 20)
+                               (rich-layout :direction 'column :items ("x\ty\rz")))))
+
+     )

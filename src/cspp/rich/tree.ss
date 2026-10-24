@@ -37,62 +37,14 @@
   (define $rich-tree-children
     (lambda (tree) (($rich-tree-child-builder tree))))
 
-  (define $string-split-lines
-    (lambda (text)
-      (let ([len (string-length text)])
-        (let loop ([start 0] [i 0] [out '()])
-          (cond [(= i len)
-                 (reverse (cons (substring text start i) out))]
-                [(char=? (string-ref text i) #\newline)
-                 (loop (+ i 1) (+ i 1) (cons (substring text start i) out))]
-                [else
-                 (loop start (+ i 1) out)])))))
-
   (define $string->segment-lines
     (lambda (text)
-      (map (lambda (line) (list (rich-segment line)))
-           ($string-split-lines text))))
-
-  (define $segment-copy
-    (lambda (segment text)
-      (rich-segment text
-                    (rich-segment-style segment)
-                    (rich-segment-control? segment))))
-
-  (define $normalize-segment-line
-    (lambda (line)
-      (let loop-segments ([segments line] [line '()] [lines '()])
-        (if (null? segments)
-            (reverse (cons (reverse line) lines))
-            (let loop-pieces ([pieces ($string-split-lines
-                                       (rich-segment-text (car segments)))]
-                              [line line]
-                              [lines lines])
-              (cond [(null? pieces)
-                     (loop-segments (cdr segments) line lines)]
-                    [(null? (cdr pieces))
-                     (loop-segments (cdr segments)
-                                    (cons ($segment-copy (car segments)
-                                                         (car pieces))
-                                          line)
-                                    lines)]
-                    [else
-                     (loop-pieces (cdr pieces)
-                                  '()
-                                  (cons (reverse
-                                         (cons ($segment-copy (car segments)
-                                                              (car pieces))
-                                               line))
-                                        lines))]))))))
-
-  (define $normalize-segment-lines
-    (lambda (lines)
-      (apply append (map $normalize-segment-line lines))))
+      (rich-lines-normalize (list (list (rich-segment text))))))
 
   (define $rendered->segment-lines
     (lambda (who value)
       (cond [(string? value) ($string->segment-lines value)]
-            [($rich-segment-line-list? value) ($normalize-segment-lines value)]
+            [($rich-segment-line-list? value) (rich-lines-normalize value)]
             [else (errorf who "renderer returned invalid value: ~a" value)])))
 
   (define $value->segment-lines
