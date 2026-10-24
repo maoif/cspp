@@ -365,20 +365,24 @@
   ;; A worker that stops itself finishes the current frame before cleaning it up.
   (define $finish-live-stop!
     (lambda (live)
-        (when (and (rich-live-transient? live) ($rich-live-previous-frame live))
-          (let ([port (rich-console-output-port (rich-live-console live))])
-            (when (eq? port ($rich-live-previous-port live))
-              ($clear-live-output
-               port ($frame-line-count ($rich-live-previous-frame live)
-                                       (rich-console-output-width (rich-live-console live)))))
-            (flush-output-port port)
-            ($rich-live-previous-frame-set! live #f)
-            ($rich-live-previous-port-set! live #f)))
+      (let ([frame ($rich-live-previous-frame live)]
+            [previous-port ($rich-live-previous-port live)]
+            [failure ($rich-live-failure live)]
+            [transient? (rich-live-transient? live)])
+        ;; Complete bookkeeping before touching a port that may already be closed.
         ($rich-live-started?-set! live #f)
-        (let ([failure ($rich-live-failure live)])
-          ($rich-live-failure-set! live #f)
-          (when failure (raise (car failure))))
-        (void)))
+        ($rich-live-failure-set! live #f)
+        (when transient?
+          ($rich-live-previous-frame-set! live #f)
+          ($rich-live-previous-port-set! live #f))
+        (guard (condition [else (unless failure (set! failure (list condition)))])
+          (when (and transient? frame)
+            (let* ([console (rich-live-console live)]
+                   [port (rich-console-output-port console)])
+              (when (eq? port previous-port)
+                ($clear-live-output port ($frame-line-count frame (rich-console-output-width console)))
+                (flush-output-port port)))))
+        (when failure (raise (car failure))))))
 
   #|proc:rich-live-stop!
   The `rich-live-stop!` procedure stops refreshing `live` and returns `live`.

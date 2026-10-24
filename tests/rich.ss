@@ -2141,3 +2141,22 @@
                              (string-contains? (rich-segments->plain line) "x"))) lines))))
 
      )
+
+(mat rich-transient-cleanup-failure-retry
+
+     ;; A closed destination may fail cleanup, but must leave shutdown complete.
+     (call-with-port (open-output-string)
+       (lambda (second)
+         (let* ([first (open-output-string)]
+                [live (make-rich-live "hello" (rich-console :output-port first) 0 #t)])
+           (rich-live-start! live)
+           (close-port first)
+           (let ([failed? (guard (condition [else #t]) (rich-live-stop! live) #f)])
+             (rich-live-console-set! live (rich-console :output-port second))
+             (rich-live-start! live)
+             (let ([result (get-output-string second)])
+               (rich-live-stop! live)
+               (rich-live-stop! live)
+               (and failed? (string=? result "hello")))))))
+
+     )
