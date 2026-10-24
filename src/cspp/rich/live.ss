@@ -181,20 +181,25 @@
   ;;;;===----------------------------------------------------------------------===
 
   #|proc:rich-current-time
-  The `rich-current-time` parameter returns the current time in seconds for
-  live display and status rendering.
+  The `rich-current-time` parameter holds a clock procedure for live, status, and progress.
+  The clock takes no arguments and returns finite real seconds. Optional procedure `clock`
+  replaces the hook and returns unspecified; with no argument, returns the current hook.
   |#
   (define rich-current-time
     (make-parameter
      (lambda ()
-       ($time->seconds (current-time)))))
+       ($time->seconds (current-time)))
+     (lambda (clock) (pcheck ([procedure? clock]) clock))))
 
   #|proc:rich-sleep
-  The `rich-sleep` parameter returns the procedure used by live refresh threads
-  to sleep for a number of seconds.
+  The `rich-sleep` parameter holds a procedure accepting nonnegative real seconds and
+  blocking for that duration; its return value is ignored. Optional procedure `sleeper`
+  replaces the hook and returns unspecified; with no argument, returns the current hook.
+  Custom hooks must return promptly enough for live shutdown; only the default wait is signaled.
   |#
   (define rich-sleep
-    (make-parameter $default-sleep))
+    (make-parameter $default-sleep
+      (lambda (sleeper) (pcheck ([procedure? sleeper]) sleeper))))
 
   ;;;;===----------------------------------------------------------------------===
   ;;;; Live

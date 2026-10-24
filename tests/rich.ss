@@ -2207,3 +2207,18 @@
                                        (string-length result)) ":46:39"))))))
 
      )
+
+(mat rich-time-hook-validation
+
+     ;; Hook parameters reject nonprocedures at assignment, before an API invokes them.
+     (error? (rich-current-time #f))
+
+     ;; A bad sleep hook must never reach the worker as a nonprocedure.
+     (error? (rich-sleep 123))
+
+     (let ([clock (rich-current-time)] [sleeper (rich-sleep)])
+       (parameterize ([rich-current-time (lambda () 42)] [rich-sleep (lambda (seconds) seconds)])
+         (and (= ((rich-current-time)) 42) (= ((rich-sleep) 1/2) 1/2)))
+       (and (eq? clock (rich-current-time)) (eq? sleeper (rich-sleep))))
+
+     )
