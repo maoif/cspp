@@ -190,7 +190,8 @@
                                  (or (list-ref fragment 7) (list-ref fragment 2)))
                                iter-frags)
                           '())
-                      (map (lambda (fragment) (list-ref fragment 2)) iter-frags))]
+                      (map (lambda (fragment) (or (list-ref fragment 9) (list-ref fragment 2)))
+                           iter-frags))]
                     [updates (let ([res (map (lambda (x*) (list-ref x* 3)) iter-frags)])
                                (when frag-index
                                  (set! res (cons (syntax-case frag-index ()
@@ -319,9 +320,11 @@
                                              (if (car gen-getters)
                                                  ((car gen-getters) (lp-getters (cdr gen-getters)))
                                                  (lp-getters (cdr gen-getters)))))
-                                       #`(if #,(car termination-checks)
-                                             #,(car call/finish-proc)
-                                             #,(lp-checks (cdr termination-checks))))))
+                                       (let ([check (car termination-checks)]
+                                             [success (lp-checks (cdr termination-checks))])
+                                         (if (procedure? check)
+                                             (check success (car call/finish-proc))
+                                             #`(if #,check #,(car call/finish-proc) #,success))))))
                            (if (car gen-preloops)
                                ((car gen-preloops) (lp-preloops (cdr gen-preloops)))
                                (lp-preloops (cdr gen-preloops)))))))))])))

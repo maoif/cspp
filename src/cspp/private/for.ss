@@ -406,6 +406,7 @@
   - exposed-variables: public item and iterator-local index identifiers bound by the getter
   - raw-termination: exhaustion check before filtering, or #f for an unfiltered source
   - direct-filter: optional (body retry) generator that binds and filters without seeking
+  - visit: optional (body exhausted) generator that seeks in private item binding scopes
   |#
   (define (process-iter-clause/direct cl direct-filter?)
     (define (process-multi-var-iter-clause v* ty op*)
@@ -966,20 +967,20 @@
           [:iter
            (unless (= nops 1)
              (syntax-error op* "invalid number of options for iter type `:iter`:"))
-           (with-syntax ([(t-it t-v pending) (generate-temporaries '(t-it t-v pending))])
+           (with-syntax ([(t-it t-v pending unused) (generate-temporaries '(t-it t-v pending unused))])
              (list (lambda (e)
                      #`(let ([t-it #,(car op*)])
                          (unless (iter? t-it)
                            (errorf ':iter "not a iter: ~a" t-it))
-                         (let ([t-v #f]) #,e)))
-                   #'[pending #t]
+                         (let ([t-v #f] [pending #t]) #,e)))
+                   #'[unused #f]
                    ;; Fetch after known companion bounds, at most once per visit.
                    #'(begin
                        (when pending
                          (set! t-v (iter-next! t-it))
                          (set! pending #f))
                        (iter-end? t-v))
-                   #'#t
+                   #'(begin (set! pending #t) #f)
                    (lambda (e)
                      #`(let ([#,v t-v])
                          #,e))
@@ -1049,7 +1050,7 @@
                                   (and predicate (list-ref fragment 2)))]
              [exposed (if index (append variables (list index)) variables)])
         (define (finish fragment)
-          (append (list-head fragment 5) (list source-index exposed raw-termination #f)))
+          (append (list-head fragment 5) (list source-index exposed raw-termination #f #f)))
         (cond
          [(not (or predicate index)) (finish fragment)]
          [(and predicate direct-filter?)
@@ -1059,7 +1060,8 @@
                  [getter (or (list-ref indexed 4) (lambda (body) body))])
             (append (list-head indexed 8)
                     (list (lambda (body retry)
-                            (getter #`(if #,predicate #,body #,retry))))))]
+                            (getter #`(if #,predicate #,body #,retry)))
+                          #f)))]
          [(not predicate)
           ;; Index-only sources need neither filtering nor accepted-item caches.
           (with-syntax ([(position) (generate-temporaries '(position))])
@@ -1076,43 +1078,44 @@
                          #`(begin (set! position (+ position 1)) #,(list-ref fragment 3)))
                      (lambda (body)
                        (getter #`(let ([#,index #,(or source-index #'position)]) #,body)))))))]
-         [else
-            (with-syntax ([(position seek) (generate-temporaries '(position seek))]
-                          [(cache ...) (generate-temporaries variables)]
-                          [(variable ...) variables])
-              (let* ([preloop (or (car fragment) (lambda (body) body))]
-                     [binding (list-ref fragment 1)]
-                     [state (syntax-case binding () [(state initial) #'state])]
-                     [initial (syntax-case binding () [(state initial) #'initial])]
-                     [termination (list-ref fragment 2)]
-                     [advance (list-ref fragment 3)]
-                     [getter (or (list-ref fragment 4) (lambda (body) body))]
-                     [index-expression (or source-index #'position)]
-                     [bind-index (lambda (body)
-                                   (if index
-                                       #`(let ([#,index #,index-expression]) #,body)
-                                       body))]
-                     [advance (if source-index
-                                  advance
-                                  #`(begin (set! position (+ position 1)) #,advance))]
-                     [accept (getter
-                              (bind-index
-                               #`(if #,(or predicate #'#t)
-                                     (begin (set! cache variable) ... #,state)
-                                     (seek #,advance))))])
-                (finish
-                 (list (lambda (body)
-                         (preloop
-                          #`(let ([position 0] [cache #f] ...)
-                              (letrec ([seek (lambda (#,state)
-                                               (if #,termination #,state #,accept))])
-                                #,body))))
-                       #`[#,state #,initial]
-                       #`(begin (set! #,state (seek #,state)) #,termination)
-                       advance
-                       (lambda (body)
-                         #`(let ([variable cache] ...)
-                             #,(bind-index body)))))))])))
+         [else (syntax-error cl "parallel filter requires private source bindings:")])))
+    ;; Each visitor binds fresh private variables. Public aliases are visible only
+    ;; to that source's predicate, and later to the body, so parallel guards cannot
+    ;; accidentally capture a previously visited companion's item bindings.
+    (define (parallel-filter-fragment variables predicate index generate)
+      (let* ([private-variables (generate-temporaries variables)]
+             [private-index (and index (car (generate-temporaries '(source-index))))]
+             [fragment (decorate-fragment (generate private-variables)
+                                          private-variables #f private-index)]
+             [public (if index (append variables (list index)) variables)]
+             [private (if index (append private-variables (list private-index)) private-variables)]
+             [getter (or (list-ref fragment 4) (lambda (body) body))]
+             [binding (list-ref fragment 1)]
+             [state (syntax-case binding () [(state initial) #'state])]
+             [termination (list-ref fragment 2)]
+             [advance (list-ref fragment 3)]
+             [bind-public
+              (lambda (body)
+                #`(let-syntax
+                      (#,@(map (lambda (name value)
+                                 #`[#,name
+                                    (identifier-syntax
+                                     (reference #,value)
+                                     ((set! reference expression) (set! #,value expression)))])
+                               public private))
+                    #,body))])
+        (with-syntax ([(seek) (generate-temporaries '(seek))])
+          (list (car fragment) binding termination advance bind-public
+                (list-ref fragment 5) public
+                (or (list-ref fragment 7) termination)
+                #f
+                (lambda (body exhausted)
+                  #`(let seek ([#,state #,state])
+                      (if #,termination
+                          #,exhausted
+                          #,(getter #`(if #,(bind-public predicate)
+                                          #,body
+                                          (seek #,advance))))))))))
     (define (single-fragment variable type arguments)
       (cond
        [(memq type '(:iota :fxiota :nums :fixnums))
@@ -1137,12 +1140,20 @@
         (list #'v) #f #f)]
       [((v* ...) iter-ty op* ...)
        (let-values ([(arguments predicate index) (split-common-options #'(op* ...))])
-         (decorate-fragment (process-multi-var-iter-clause #'(v* ...) (datum iter-ty) arguments)
-                            #'(v* ...) predicate index))]
+         (if (and predicate (not direct-filter?))
+             (parallel-filter-fragment
+              #'(v* ...) predicate index
+              (lambda (variables) (process-multi-var-iter-clause variables (datum iter-ty) arguments)))
+             (decorate-fragment (process-multi-var-iter-clause #'(v* ...) (datum iter-ty) arguments)
+                                #'(v* ...) predicate index)))]
       [(v iter-ty op* ...)
        (let-values ([(arguments predicate index) (split-common-options #'(op* ...))])
-         (decorate-fragment (single-fragment #'v (datum iter-ty) arguments)
-                            (list #'v) predicate index))]
+         (if (and predicate (not direct-filter?))
+             (parallel-filter-fragment
+              (list #'v) predicate index
+              (lambda (variables) (single-fragment (car variables) (datum iter-ty) arguments)))
+             (decorate-fragment (single-fragment #'v (datum iter-ty) arguments)
+                                (list #'v) predicate index)))]
       [_ (syntax-error cl "unknown iter clause:")]))
 
   (define (process-iter-clause clause)

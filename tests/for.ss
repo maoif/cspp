@@ -1926,3 +1926,48 @@
      ;; Each rejected item keeps its original source position.
      (equal? '((1 1) (3 3))
              (for/list ([x :fxiota 5 :index i :guard (odd? i)]) (list x i))))
+
+(mat parallel-filter-binding-locations
+     (let ([read-item #f])
+       (equal? '((10 a 10) (11 b 11))
+               (for/list ([x :fxiota 2
+                             :guard (begin (set! read-item (lambda () x)) #t)]
+                          [y :list '(a b)])
+                 (set! x (+ x 10))
+                 (list x y (read-item)))))
+
+     (let ([read-index #f])
+       (equal? '((100 100) (100 100))
+               (for/list ([y :fxiota 2]
+                          [x :vector '#(a b) :index i
+                             :guard (begin (set! i 100)
+                                           (set! read-index (lambda () i)) #t)])
+                 (list i (read-index)))))
+
+     ;; Closures escaping the body retain their own iteration's assignment location.
+     (let* ([saved (make-list-builder)]
+            [readers
+             (for/list ([x :fxiota 2
+                           :guard (begin (saved (lambda () x)) #t)] [y :fxiota 2])
+               (set! x (+ x 10))
+               (lambda () x))])
+       (and (equal? '(10 11) (map (lambda (read) (read)) readers))
+            (equal? '(10 11) (map (lambda (read) (read)) (saved)))))
+
+     ;; Local guards see their own source and lexical context, not companion aliases.
+     (let ([x 100] [i 100])
+       (equal? '((0 1) (1 3))
+               (for/list ([x :fxiota 2 :index i]
+                          [y :fxiota 5 :guard (and (= x 100) (= i 100) (odd? y))])
+                 (list x y))))
+
+     ;; Mutating both hashtable bindings in a guard and body shares their locations.
+     (let ([table (make-eq-hashtable)] [read-pair #f])
+       (hashtable-set! table 'one 1)
+       (equal? '((changed 10))
+               (for/list ([(key value) :hashtable table
+                            :guard (begin (set! read-pair (lambda () (list key value))) #t)]
+                          [y :fxiota 1])
+                 (set! key 'changed)
+                 (set! value 10)
+                 (read-pair)))))
