@@ -62,8 +62,8 @@
             (mutable start-time $rich-status-start-time $rich-status-start-time-set!)
             (mutable live $rich-status-live $rich-status-live-set!)))
 
-  ;; A worker context records its live display, owning thread, and self-stop request.
-  ;; Check the thread id as parameters are inherited by threads spawned by renderers.
+  ;; A worker context records its live display, active lifetime, and stop request.
+  ;; Renderer children inherit it: joining the worker there can deadlock the renderer.
   (define $worker-context (make-parameter #f))
 
   (define $default-status-frames
@@ -363,7 +363,7 @@
                     (let ([thread
                            (fork-thread
                             (lambda ()
-                              (let ([context (vector live (get-thread-id) #f)])
+                              (let ([context (vector live #t #f)])
                                 (parameterize ([$worker-context context])
                                   (guard (condition
                                           [else
@@ -378,7 +378,16 @@
                                                        (positive? (rich-live-refresh-rate live)))
                                               (rich-live-refresh! live))
                                             (loop)))))
-                                    (when (vector-ref context 2) ($finish-live-stop! live)))))))])
+                                    (when (with-mutex ($rich-live-wake-lock live)
+                                            ;; Keep cleanup callbacks in this worker context.
+                                            ;; Otherwise retire before a child can request stop.
+                                            (if (vector-ref context 2)
+                                                #t
+                                                (begin (vector-set! context 1 #f) #f)))
+                                      ($finish-live-stop! live)))
+                                ;; Retire failed workers too; descendants may outlive them.
+                                (with-mutex ($rich-live-wake-lock live)
+                                  (vector-set! context 1 #f))))))])
                       ($rich-live-thread-set! live thread)))))
               live)))
 
@@ -407,24 +416,26 @@
   #|proc:rich-live-stop!
   The `rich-live-stop!` procedure stops refreshing `live` and returns `live`.
   The default wait is interrupted immediately; custom `rich-sleep` hooks must return
-  themselves. A call from its worker requests shutdown after the current frame finishes.
+  themselves. Calls from its worker or renderer child threads request shutdown after the
+  current frame finishes; callers outside that active worker context wait for shutdown.
   If its worker failed, cleanup finishes before its condition is raised once.
   |#
   (define rich-live-stop!
     (lambda (live)
       (pcheck ([rich-live? live])
-        (with-mutex ($rich-live-wake-lock live)
-          ($rich-live-stop?-set! live #t)
-          (condition-signal ($rich-live-wake-condition live)))
-        (let ([context ($worker-context)])
-          (if (and context (eq? live (vector-ref context 0))
-                   (eqv? (get-thread-id) (vector-ref context 1)))
-              (vector-set! context 2 #t)
-              (begin
-                (when ($rich-live-thread live)
-                  (thread-join ($rich-live-thread live))
-                  ($rich-live-thread-set! live #f))
-                ($finish-live-stop! live))))
+        (let ([deferred?
+               (with-mutex ($rich-live-wake-lock live)
+                 ($rich-live-stop?-set! live #t)
+                 (condition-signal ($rich-live-wake-condition live))
+                 (let ([context ($worker-context)])
+                   (and context (eq? live (vector-ref context 0))
+                        (vector-ref context 1)
+                        (begin (vector-set! context 2 #t) #t))))])
+          (unless deferred?
+            (when ($rich-live-thread live)
+              (thread-join ($rich-live-thread live))
+              ($rich-live-thread-set! live #f))
+            ($finish-live-stop! live)))
         live)))
 
   #|macro:rich-live

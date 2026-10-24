@@ -136,6 +136,92 @@ SELF_STOP = r'''
 '''
 
 
+# A renderer may delegate shutdown to a child and wait for that child to return.
+CHILD_STOP = SELF_STOP.replace(
+    '(rich-live-stop! live) (set! stopped? #t)',
+    '(thread-join (fork-thread (lambda () (rich-live-stop! live)))) (set! stopped? #t)')
+
+
+CLEANUP_CHILD_STOP = r'''
+(import (cspp))
+(define calls 0)
+(define writes 0)
+(define cleanup-stopped? #f)
+(define live #f)
+(define value (vector 'cleanup-child-stop))
+(rich-register-renderer! (lambda (candidate) (eq? candidate value))
+  (lambda (value)
+    (set! calls (+ calls 1))
+    (when (= calls 2) (rich-live-stop! live))
+    "ok"))
+(call-with-port
+  (make-custom-textual-output-port "cleanup-child-stop"
+    (lambda (text start count)
+      (set! writes (+ writes 1))
+      ;; The third flushed write clears the final frame after the worker stops itself.
+      ;; Cleanup callbacks and their children must still recognize the active worker.
+      (when (= writes 3)
+        (thread-join (fork-thread (lambda () (rich-live-stop! live))))
+        (rich-live-stop! live)
+        (set! cleanup-stopped? #t))
+      count)
+    #f #f #f)
+  (lambda (output)
+    (set! live (make-rich-live value (rich-console :output-port output) 100 #t))
+    (rich-live-start! live)
+    (let wait ([remaining 1000])
+      (when (and (not cleanup-stopped?) (positive? remaining))
+        (milisleep 1) (wait (- remaining 1))))
+    (rich-live-stop! live)
+    (unless (and cleanup-stopped? (= calls 2) (= writes 3))
+      (error 'cleanup-child-stop "cleanup callback did not stop safely"))))
+'''
+
+
+STALE_CHILD_STOP = r'''
+(import (cspp))
+(define calls 0)
+(define child #f)
+(define live #f)
+(define lock (make-mutex))
+(define ready (make-condition))
+(define released? #f)
+(define value (vector 'stale-child-stop))
+(rich-register-renderer! (lambda (candidate) (eq? candidate value))
+  (lambda (value)
+    (set! calls (+ calls 1))
+    (when (= calls 2)
+      (set! child
+        (fork-thread
+          (lambda ()
+            (with-mutex lock
+              (let wait ()
+                (unless released? (condition-wait ready lock) (wait))))
+            (rich-live-stop! live))))
+      (rich-live-stop! live))
+    "ok"))
+(call-with-port (open-output-string)
+  (lambda (output)
+    (set! live (make-rich-live value (rich-console :output-port output) 100 #t))
+    (rich-live-start! live)
+    (let wait ([remaining 1000])
+      (when (and (not child) (positive? remaining))
+        (milisleep 1) (wait (- remaining 1))))
+    (unless child (error 'stale-child-stop "worker did not render"))
+    (rich-live-stop! live)
+    (get-output-string output)
+    ;; The child retains its parameter context after its worker has exited.
+    ;; It must stop a subsequent display synchronously and perform its cleanup.
+    (rich-live-refresh-rate-set! live 0)
+    (rich-live-start! live)
+    (with-mutex lock (set! released? #t) (condition-signal ready))
+    (thread-join child)
+    (unless (string-contains? (get-output-string output) "\033[2K")
+      (error 'stale-child-stop "expired worker context deferred shutdown"))
+    (rich-live-stop! live)))
+'''
+
+
 
 STATUS_RECOVERY = r'''
 (import (cspp))
@@ -192,6 +278,8 @@ def main():
                  ("false-failure", FAILURE.replace(
                      '(error \'worker-recovery "later frame failed")', "(raise #f)")),
                  ("stop", STOP), ("status", STATUS), ("self-stop", SELF_STOP),
+                 ("child-stop", CHILD_STOP), ("cleanup-child-stop", CLEANUP_CHILD_STOP),
+                 ("stale-child-stop", STALE_CHILD_STOP),
                  ("status-recovery", STATUS_RECOVERY),
                  ("extreme-timing", EXTREME_TIMING))
         for name, source in cases:
