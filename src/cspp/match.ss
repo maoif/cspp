@@ -106,8 +106,10 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                 [_ #f])))
           (define transparent-suffix?
             (lambda (pattern)
-              (syntax-case pattern (unquote unquote-splicing)
+              (syntax-case pattern (unquote unquote-splicing quasiquote)
                 [,name (identifier? #'name) #t]
+                ;; Identifier macros may introduce prefix references at their use site.
+                [`name (identifier? #'name) #f]
                 [,(extension arguments ...) #f]
                 [(unquote-splicing . arguments) #f]
                 [(head . tail) (and (transparent-suffix? #'head) (transparent-suffix? #'tail))]

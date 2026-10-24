@@ -1108,3 +1108,23 @@
               [result (match source [(,(AllocationRecord ,x) ...) (length x)] [else #f])]
               [allocated (sstats-bytes (sstats-difference (statistics) before))])
          (and (= result 1000) (< allocated 60000)))))
+
+(mat macro-introduced-backreference
+     ;; Identifier macros in backreferences must retain repeated prefix capture scope.
+     (let ([x 'outer])
+       (define-syntax prefix-value (lambda (stx) (datum->syntax stx 'x)))
+       (equal? '(1 2)
+               (match '(1 2 (1 2)) [(,x ... `prefix-value) x] [else #f])))
+
+     (let ([x 'outer])
+       (define-syntax prefix-value (lambda (stx) (datum->syntax stx 'x)))
+       (match '(1 2 outer) [(,x ... `prefix-value) #f] [else #t]))
+
+     (let ([x 'outer])
+       (define-syntax prefix-value (lambda (stx) (datum->syntax stx 'x)))
+       (equal? '(1 2)
+               (match '#(1 2 (1 2)) [#(,x ... `prefix-value) x] [else #f])))
+
+     (let ([x 'outer])
+       (define-syntax prefix-value (lambda (stx) (datum->syntax stx 'x)))
+       (match '#(1 2 outer) [#(,x ... `prefix-value) #f] [else #t])))
