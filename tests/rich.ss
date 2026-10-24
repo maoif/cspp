@@ -2044,6 +2044,36 @@
 
      )
 
+(mat rich-progress-finite-spinner-times
+
+     ;; Finite elapsed times must not overflow while selecting a spinner frame.
+     (andmap
+      (lambda (width)
+        (let ([now 0])
+          (parameterize ([rich-current-time (lambda () now)])
+            (let* ([progress (make-rich-progress width '(spinner))]
+                   [id (rich-progress-add-task! progress "spin" #f)])
+              (set! now 1e308)
+              (and (equal? "|" (rich-export-text progress))
+                   (begin
+                     (rich-progress-complete! progress id)
+                     (set! now 0)
+                     (equal? "|" (rich-export-text progress))))))))
+      '(#f 4))
+
+     ;; Preserve the existing flonum rounding at ordinary tenth-second transitions.
+     (let ([now 0])
+       (parameterize ([rich-current-time (lambda () now)])
+         (let ([progress (make-rich-progress 4 '(spinner))])
+           (rich-progress-add-task! progress "spin" #f)
+           (andmap (lambda (time expected)
+                     (set! now time)
+                     (equal? expected (rich-export-text progress)))
+                   '(0 9/100 1/10 1/5 0.3 2/5 0.6 -1)
+                   '("|" "|" "/" "-" "\\" "|" "-" "|")))))
+
+     )
+
 (mat rich-accumulated-style-restoration
 
      (equal? "\033[1m\033[31mA\033[34mB\033[32mS\033[0m\033[1m\033[34mC\033[0m"

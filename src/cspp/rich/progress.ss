@@ -152,8 +152,12 @@
                                (ceiling (/ (- total (inexact->exact completed)) speed)))]
                              [else "--:--:--"])]
           [(speed) ($speed-string speed)]
-          [(spinner) (vector-ref '#("|" "/" "-" "\\")
-                                 (modulo (inexact->exact (floor (* elapsed 10))) 4))]))))
+          [(spinner)
+           (let* ([ticks (* elapsed 10)]
+                  ;; Preserve ordinary flonum rounding; use exact ticks on overflow.
+                  [ticks (if (finite? ticks) ticks (* (inexact->exact elapsed) 10))])
+             (vector-ref '#("|" "/" "-" "\\")
+                         (modulo (inexact->exact (floor ticks)) 4)))]))))
 
   (define $task-line
     (lambda (task width columns now)
