@@ -1854,3 +1854,38 @@
      (error? (for/list ([x :vector '#(0 1) :step +nan.0]) x))
 
      (error? (for/list ([x :vector '#(0 1) :step +inf.0]) x)))
+
+(mat deferred-parallel-iterators
+     (let ([source (list->iter '(a b c))])
+       (and (equal? '() (for/list ([x :fxiota 0] [y :iter source]) y))
+            (eq? 'a (iter-next! source))))
+
+     (let ([source (list->iter '(a b c))])
+       (and (equal? '(a) (for/list ([y :iter source] [x :fxiota 1]) y))
+            (eq? 'b (iter-next! source))))
+
+     ;; A known empty companion must stop before a rejecting pipeline can seek.
+     (let* ([calls 0]
+            [source (iter-filter
+                     (lambda (value)
+                       (set! calls (+ calls 1))
+                       (when (> calls 3) (error 'exhaustion "unexpected seek"))
+                       #f)
+                     (range 0 +inf.0))])
+       (and (equal? '() (for/list ([y :iter source] [x :list '()]) y))
+            (= calls 0)))
+
+     (let ([source (list->iter '(a b c d e))])
+       (and (equal? '(b) (for/list ([x :fxiota 1]
+                                    [y :iter source :index i :guard (odd? i)]) y))
+            (eq? 'c (iter-next! source))))
+
+     (equal? '((0 a 0) (0 c 2) (1 a 0) (1 c 2))
+             (for*/list ([x :fxiota 2]
+                          [y :iter (list->iter '(a b c)) :index i :guard (even? i)])
+               (list x y i)))
+
+     ;; With unknown source lengths one pending value may be needed to discover exhaustion.
+     (equal? '((a 1) (b 2))
+             (for/list ([x :iter (list->iter '(a b))]
+                        [y :iter (list->iter '(1 2 3))]) (list x y))))

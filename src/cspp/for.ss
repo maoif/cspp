@@ -95,6 +95,8 @@
   Both forms evaluate `bound` once per source setup and accept only `:guard` and `:index` options.
   All `for` variants support these sources; nested variants set up each source per outer item.
   A `:nums` range raises an error if its next value is unchanged or unordered, including NaN.
+  Known exhausted parallel sources stop before a companion `:iter` advances. With only
+  unknown-length iterators, discovering exhaustion can consume one unpaired companion value.
   |#
   (define-syntax for/fold
     (lambda (stx)

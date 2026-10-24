@@ -965,18 +965,25 @@
           [:iter
            (unless (= nops 1)
              (syntax-error op* "invalid number of options for iter type `:iter`:"))
-           (with-syntax ([(t-it t-v) (generate-temporaries '(t-it t-v))])
+           (with-syntax ([(t-it t-v pending) (generate-temporaries '(t-it t-v pending))])
              (list (lambda (e)
                      #`(let ([t-it #,(car op*)])
                          (unless (iter? t-it)
                            (errorf ':iter "not a iter: ~a" t-it))
-                         #,e))
-                   #`[t-v (iter-next! t-it)]
-                   #'(iter-end? t-v)
-                   #'(iter-next! t-it)
+                         (let ([t-v #f]) #,e)))
+                   #'[pending #t]
+                   ;; Fetch after known companion bounds, at most once per visit.
+                   #'(begin
+                       (when pending
+                         (set! t-v (iter-next! t-it))
+                         (set! pending #f))
+                       (iter-end? t-v))
+                   #'#t
                    (lambda (e)
                      #`(let ([#,v t-v])
-                         #,e))))]
+                         #,e))
+                   #f
+                   #'#f))]
           [else (syntax-error ty "bad iter type:")])))
     (define (process-literal-iter-clause v lit)
       (let ([lit (->literal lit)])
@@ -1037,7 +1044,8 @@
          [else (loop (cdr options) (cons (car options) arguments) predicate index)])))
     (define (decorate-fragment fragment variables predicate index)
       (let* ([source-index (and (> (length fragment) 5) (list-ref fragment 5))]
-             [raw-termination (and predicate (list-ref fragment 2))]
+             [raw-termination (or (and (> (length fragment) 6) (list-ref fragment 6))
+                                  (and predicate (list-ref fragment 2)))]
              [exposed (if index (append variables (list index)) variables)])
         (define (finish fragment)
           (append (list-head fragment 5) (list source-index exposed raw-termination)))
