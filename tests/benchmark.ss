@@ -1060,3 +1060,24 @@
                       (equal? (cdr (assq first-out groups))
                               '(first-output-child output-groups-suite))
                       (equal? (cdr (assq second-out groups)) '(second-output-child))))))))))
+
+(mat benchmark-cleanup-preserves-primary-condition
+     ;; Error: teardown must not replace a primary body exception.
+     (let* ([primary (condition (make-error) (make-message-condition "primary"))]
+            [cleaned? #f]
+            [benchmark (make-benchmark 'double-error
+                         (lambda (state value) (raise primary))
+                         `((setup . ,(lambda (state) 'resource))
+                           (teardown . ,(lambda (state value)
+                                          (set! cleaned? #t)
+                                          (error 'cleanup "secondary")))))]
+            [result (car (benchmark-run benchmark (benchmark-test-config)))])
+       (and cleaned? (eq? (benchmark-result-error result) primary)))
+
+     ;; Error: teardown alone must still produce an errored benchmark result.
+     (let* ([benchmark (make-benchmark 'cleanup-error (lambda (state value) (void))
+                         `((setup . ,(lambda (state) 'resource))
+                           (teardown . ,(lambda (state value) (error 'cleanup "secondary")))))]
+            [result (car (benchmark-run benchmark (benchmark-test-config)))])
+       (and (benchmark-result-error result)
+            (eq? (condition-who (benchmark-result-error result)) 'cleanup))))

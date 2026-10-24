@@ -934,3 +934,32 @@
       (and (equal? (map test-result-status results) '(passed passed passed passed passed))
            (equal? (reverse seen)
                    '(zero ((x . 7)) (((x . 7))) (((x . 7))) ((x . 7))))))))
+
+(mat test-cleanup-preserves-primary-condition
+  ;; A cleanup error must not replace an assertion failure or let a handler pass it.
+  (let* ([primary (make-test-failure "primary" #t #f)]
+         [result (car (test-run
+                        (list (make-test-case 'double-error (lambda () (raise primary))
+                                `((after . ,(lambda (fixtures) (error 'cleanup "secondary")))
+                                  (condition-handler . ,(lambda (raised)
+                                                          (if (test-failure? raised)
+                                                              'failed 'handled))))))
+                        (test-silent-config)))])
+    (and (eq? (test-result-status result) 'failed)
+         (eq? (test-result-condition result) primary)))
+
+  ;; Even a false raised value must take precedence over a cleanup error.
+  (let ([result (car (test-run
+                      (list (make-test-case 'false-primary (lambda () (raise #f))
+                              `((after . ,(lambda (fixtures) (error 'cleanup "secondary"))))))
+                      (test-silent-config)))])
+    (and (eq? (test-result-status result) 'errored)
+         (eq? (test-result-condition result) #f)))
+
+  ;; Cleanup errors after successful bodies must still fail the case.
+  (let ([result (car (test-run
+                      (list (make-test-case 'cleanup-error (lambda () #t)
+                              `((after . ,(lambda (fixtures) (error 'cleanup "secondary"))))))
+                      (test-silent-config)))])
+    (and (eq? (test-result-status result) 'errored)
+         (eq? (condition-who (test-result-condition result)) 'cleanup))))

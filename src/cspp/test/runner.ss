@@ -221,22 +221,28 @@ association-list filters as `test-select`.
 
   (define $run-body-with-fixtures
     (lambda (metadata body parameters)
-      (let ([fixture-values '()])
+      (let ([fixture-values '()] [failed? #f])
         (dynamic-wind
           (lambda () (void))
           (lambda ()
-            (for-each
-             (lambda (fixture)
-               (let ([value ((cdr fixture))])
-                 (set! fixture-values (cons (cons (car fixture) value) fixture-values))))
-             (test-metadata-ref metadata 'fixtures '()))
-            (let ([fixtures (reverse fixture-values)]
-                  [before (test-metadata-ref metadata 'before #f)])
-              (when before (before fixtures))
-              ($call-body body (append fixtures parameters))))
+            (guard (condition [else (set! failed? #t) (raise condition)])
+              ($run-allowing-warnings metadata
+                (lambda ()
+                  (for-each
+                   (lambda (fixture)
+                     (let ([value ((cdr fixture))])
+                       (set! fixture-values (cons (cons (car fixture) value) fixture-values))))
+                   (test-metadata-ref metadata 'fixtures '()))
+                  (let ([fixtures (reverse fixture-values)]
+                        [before (test-metadata-ref metadata 'before #f)])
+                    (when before (before fixtures))
+                    ($call-body body (append fixtures parameters)))))))
           (lambda ()
-            (let ([after (test-metadata-ref metadata 'after #f)])
-              (when after (after (reverse fixture-values)))))))))
+            (guard (condition [else (unless failed? (raise condition))])
+              ($run-allowing-warnings metadata
+                (lambda ()
+                  (let ([after (test-metadata-ref metadata 'after #f)])
+                    (when after (after (reverse fixture-values))))))))))))
 
   (define $case-result
     (lambda (concrete-case status message condition stdout stderr)

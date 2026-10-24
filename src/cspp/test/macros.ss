@@ -318,6 +318,7 @@
   `:before` and `:after` receive a fixture-value association list with signature
   `(lambda (fixtures) unspecified)`. Cleanup runs even if setup or `:before` raises;
   then `:after` receives only the fixtures successfully acquired in declaration order.
+  If setup or the body and cleanup both raise, the primary condition takes precedence.
   |#
   (define-syntax test-case
     (syntax-rules ()

@@ -1757,7 +1757,8 @@ by `name`. `options` configures arguments, lifecycle hooks, and runner defaults;
 `body` is a procedure that receives state, argument values in option order, and
 optional setup value. Runtime arguments are configured with grouped `:args`
 tables such as `(:args ([size start] [1024 0] [2048 128]))`; repeated `:args`
-tables are expanded as a Cartesian product.
+tables are expanded as a Cartesian product. If body and teardown both raise,
+the body condition takes precedence.
 |#
   (define-syntax define-benchmark
     (syntax-rules ()
@@ -1966,31 +1967,34 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                  [arguments (if (caddr setup-results)
                                 (append values (list (car setup-results)))
                                 values)]
-                 [cleanup? #t])
+                 [cleanup? #t]
+                 [failed? #f])
              (dynamic-wind
                (lambda () (void))
                (lambda ()
-                 (let* ([b1 (statistics)]
-                        [b2 (statistics)])
-                   ($run-body-iterations ($benchmark-body benchmark) sample-state
-                                         arguments iterations)
-                   (when ($benchmark-state-timing-paused? sample-state)
-                     (benchmark-resume-timing sample-state))
-                   (let* ([after (statistics)]
-                          [elapsed (sstats-difference after b2)]
-                          [overhead (sstats-difference b2 b1)]
-                          [active (sstats-difference
-                                   elapsed ($benchmark-state-paused-sstats sample-state))]
-                          [adjusted ($sanitize-sstats (sstats-difference active overhead))])
-                     ($mk-benchmark-sample iterations adjusted #f
-                                           ($benchmark-state-counters sample-state)))))
+                 (guard (exn [else (set! failed? #t) (raise exn)])
+                   (let* ([b1 (statistics)]
+                          [b2 (statistics)])
+                     ($run-body-iterations ($benchmark-body benchmark) sample-state
+                                           arguments iterations)
+                     (when ($benchmark-state-timing-paused? sample-state)
+                       (benchmark-resume-timing sample-state))
+                     (let* ([after (statistics)]
+                            [elapsed (sstats-difference after b2)]
+                            [overhead (sstats-difference b2 b1)]
+                            [active (sstats-difference
+                                     elapsed ($benchmark-state-paused-sstats sample-state))]
+                            [adjusted ($sanitize-sstats (sstats-difference active overhead))])
+                       ($mk-benchmark-sample iterations adjusted #f
+                                             ($benchmark-state-counters sample-state))))))
                (lambda ()
                  (when cleanup?
                    (set! cleanup? #f)
                    (when ($benchmark-state-timing-paused? sample-state)
                      (benchmark-resume-timing sample-state))
                    (when setup-value?
-                     (teardown sample-state setup-value)))))))))))
+                     (guard (exn [else (unless failed? (raise exn))])
+                       (teardown sample-state setup-value))))))))))))
 
   (define $warmup
     (lambda (benchmark state values config)
