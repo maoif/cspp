@@ -85,6 +85,8 @@
   index counting passes through that guard, including passes rejected by a later guard.
   Iterator-local `:guard` filters its own source before parallel items are paired. Iterator-local
   `:index` binds the original source position, before filtering, and is available to the guard.
+  Local guards share item and index bindings with the body. They see surrounding lexical
+  bindings and their own source bindings, before the fold accumulator and global index aliases.
   Sequence positions survive `:from`, `:to`, `:step`, and `:rev`; typed bytevector positions are
   byte offsets. Numeric ranges, hashtables, and iterators count source items starting from zero.
   Lists support the sequence traversal options; sliced or reversed list traversal uses O(n) space.
@@ -156,6 +158,8 @@
            (with-syntax ([(for-loop t-acc t-finish state-acc state-index)
                           (generate-temporaries '(for-loop t-acc t-finish state-acc state-index))])
              (let* ([iter-frags (process-iter-clauses (hashtable-ref fragments 'iter #f))]
+                    [direct-filter (and (null? (cdr iter-frags)) (list-ref (car iter-frags) 8))]
+                    [direct-exposed (if direct-filter (list-ref (car iter-frags) 6) '())]
                     [init-def (if frag-init
                                   (syntax-case frag-init () [(_ v e) #'[state-acc e]])
                                   #f)]
@@ -195,16 +199,33 @@
                                (when frag-init
                                  (set! res (cons #'t-acc res)))
                                res)]
-                    [gen-getters
-                     (cons (lambda (body)
-                             #`(let (#,@(if frag-init
+                    [bind-loop-state
+                     (lambda (body)
+                             #`(let (#,@(if (and frag-init
+                                                (not (exists
+                                                      (lambda (v) (bound-identifier=? v
+                                                        (syntax-case frag-init () [(_ v e) #'v])))
+                                                      direct-exposed)))
                                             (list #`[#,(syntax-case frag-init () [(_ v e) #'v]) state-acc])
                                             '())
-                                     #,@(if frag-index
+                                     #,@(if (and frag-index
+                                                (not (exists
+                                                      (lambda (v) (bound-identifier=? v
+                                                        (syntax-case frag-index () [(_ v) #'v])))
+                                                      direct-exposed)))
                                             (list #`[#,(syntax-case frag-index () [(_ v) #'v]) state-index])
                                             '()))
-                                 #,body))
-                           (map (lambda (x*) (list-ref x* 4)) iter-frags))]
+                                 #,body))]
+                    [gen-getters
+                     (if direct-filter
+                         (list (lambda (body)
+                                 (direct-filter
+                                  (bind-loop-state body)
+                                  #`(for-loop #,@(if frag-init (list #'state-acc) '())
+                                              #,@(if frag-index (list #'state-index) '())
+                                              #,(list-ref (car iter-frags) 3)))))
+                         (cons bind-loop-state
+                               (map (lambda (x*) (list-ref x* 4)) iter-frags)))]
                     [call/finish-proc (if frag-finish
                                           (let ([params '()])
                                             (when frag-index
@@ -402,7 +423,7 @@
                                        vars)]
                     ;; (((gen-preloop loop-var tycheck term-check update gen-getter) config0 config1 ...) ...)
                     [iters/configs (map (lambda (i/c)
-                                          (cons (process-iter-clause (car i/c))
+                                          (cons (process-iter-clause/direct (car i/c) #t)
                                                 (cdr i/c)))
                                         frag-iter/config)]
                     [call/finish-proc (if frag-finish
@@ -463,6 +484,7 @@
                                     [termination-check (list-ref iter-cl 2)]
                                     [update            (list-ref iter-cl 3)]
                                     [gen-getter        (list-ref iter-cl 4)]
+                                    [direct-filter     (list-ref iter-cl 8)]
                                     [loop-var
                                      (let ([vars (if last-forloop
                                                      (let* ([vars (if frag-index (list #`[#,index-var #,index-var])     '())]
@@ -481,22 +503,33 @@
                                              call-lastforloop
                                              ;; already outermost loop, stop
                                              (car call/finish-proc))
-                                       #,(let ([gen-getter
+                                       #,(let* ([state-shadowed (if direct-filter
+                                                                    (append exposed shadowed)
+                                                                    shadowed)]
+                                                [bind-loop-state
                                               (lambda (body)
                                                 #`(let (#,@(if (and frag-init
                                                                     (not (exists (lambda (v) (bound-identifier=? v
                                                                              (syntax-case frag-init () [(_ n e) #'n])))
-                                                                                 shadowed)))
+                                                                                 state-shadowed)))
                                                                (list #`[#,(syntax-case frag-init () [(_ n e) #'n]) state-acc])
                                                                '())
                                                         #,@(if (and frag-index
                                                                     (not (exists (lambda (v) (bound-identifier=? v
                                                                              (syntax-case frag-index () [(_ n) #'n])))
-                                                                                 shadowed)))
+                                                                                 state-shadowed)))
                                                                (list #`[#,(syntax-case frag-index () [(_ n) #'n]) state-index])
                                                                '()))
-                                                    #,(if gen-getter (gen-getter body) body)))])
-                                           (gen-getter
+                                                    #,body))]
+                                                [gen-bindings
+                                                 (lambda (body)
+                                                   (if direct-filter
+                                                       (direct-filter
+                                                        (bind-loop-state body)
+                                                        #`(forloop #,@init/index-vars #,update))
+                                                       (bind-loop-state
+                                                        (if gen-getter (gen-getter body) body))))])
+                                           (gen-bindings
                                             (let lp-configs ([configs (if configs configs '())] [shadowed (append exposed shadowed)])
                                               (if (null? configs)
                                                   (lp-for-loop (cdr i/c*) #'forloop update shadowed)

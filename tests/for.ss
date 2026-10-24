@@ -1889,3 +1889,40 @@
      (equal? '((a 1) (b 2))
              (for/list ([x :iter (list->iter '(a b))]
                         [y :iter (list->iter '(1 2 3))]) (list x y))))
+
+(mat direct-filter-binding-locations
+     (let ([read-item #f])
+       (equal? '(10 11)
+               (for/list ([x :fxiota 2
+                             :guard (begin (set! read-item (lambda () x)) #t)])
+                 (set! x (+ x 10))
+                 (read-item))))
+
+     (let ([read-index #f])
+       (equal? '((100 100) (100 100))
+               (for/list ([x :vector '#(a b) :index i
+                             :guard (begin (set! i 100)
+                                           (set! read-index (lambda () i)) #t)])
+                 (list i (read-index)))))
+
+     (let ([read-item #f])
+       (equal? '(changed changed changed changed)
+               (for*/list ([outer :fxiota 2]
+                            [x :list '(a b)
+                               :guard (begin (set! read-item (lambda () x)) #t)])
+                 (set! x 'changed)
+                 (read-item))))
+
+     ;; Source filtering must not advance the global index or inspect its local binding.
+     (let ([i 100])
+       (equal? '((1 0) (3 1))
+               (for/list ([:index i]
+                          [x :fxiota 5 :guard (and (= i 100) (odd? x))]) (list x i))))
+
+     (let ([sum 100])
+       (= 6 (for/fold ([:init sum 0] [:finish sum]
+                       [x :fxiota 4 :guard (= sum 100)]) (+ sum x))))
+
+     ;; Each rejected item keeps its original source position.
+     (equal? '((1 1) (3 3))
+             (for/list ([x :fxiota 5 :index i :guard (odd? i)]) (list x i))))

@@ -20,7 +20,7 @@
           handle-length handle-fill
           handle-iter/config-iter handle-iter/config-config
 
-          process-iter-clause process-iter-clauses)
+          process-iter-clause process-iter-clause/direct process-iter-clauses)
   (import (cspp chez)
           (cspp utils)
           (cspp internal)
@@ -405,8 +405,9 @@
   - source-index: source position expression when the iterator has a native index, otherwise #f
   - exposed-variables: public item and iterator-local index identifiers bound by the getter
   - raw-termination: exhaustion check before filtering, or #f for an unfiltered source
+  - direct-filter: optional (body retry) generator that binds and filters without seeking
   |#
-  (define (process-iter-clause cl)
+  (define (process-iter-clause/direct cl direct-filter?)
     (define (process-multi-var-iter-clause v* ty op*)
       (let ([nops (length op*)])
         (case ty
@@ -1048,9 +1049,17 @@
                                   (and predicate (list-ref fragment 2)))]
              [exposed (if index (append variables (list index)) variables)])
         (define (finish fragment)
-          (append (list-head fragment 5) (list source-index exposed raw-termination)))
+          (append (list-head fragment 5) (list source-index exposed raw-termination #f)))
         (cond
          [(not (or predicate index)) (finish fragment)]
+         [(and predicate direct-filter?)
+          ;; A single source can filter in the item's lexical scope and retry its
+          ;; own loop. No accepted-item cache or mutable seeking state is needed.
+          (let* ([indexed (decorate-fragment fragment variables #f index)]
+                 [getter (or (list-ref indexed 4) (lambda (body) body))])
+            (append (list-head indexed 8)
+                    (list (lambda (body retry)
+                            (getter #`(if #,predicate #,body #,retry))))))]
          [(not predicate)
           ;; Index-only sources need neither filtering nor accepted-item caches.
           (with-syntax ([(position) (generate-temporaries '(position))])
@@ -1136,10 +1145,12 @@
                             (list #'v) predicate index))]
       [_ (syntax-error cl "unknown iter clause:")]))
 
+  (define (process-iter-clause clause)
+    (process-iter-clause/direct clause #f))
 
   (define (process-iter-clauses cl*)
     ;; (for-each displayln cl*)
-    (map process-iter-clause cl*))
+    (map (lambda (clause) (process-iter-clause/direct clause (null? (cdr cl*)))) cl*))
 
 
   )
