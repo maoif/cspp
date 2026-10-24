@@ -737,3 +737,46 @@
                   (test-run (list (make-test-case 'valid (lambda () #t) '()))
                     (make-test-config (test-text-reporter) out #f #f 'never))))])
     (test-string-contains? text "passed: 1")))
+
+(mat test-inherited-fixture-bindings
+  ;; Inherited names must bind in child bodies even through a macro wrapper.
+  (guard (condition [else #f])
+    (eval
+      '(parameterize ([current-test-registry (make-test-registry)])
+         (let ([acquired 0] [released 0])
+           (define-syntax wrapped-case
+             (syntax-rules () [(_ name expr) (test-case name expr)]))
+           (test-suite shared
+             :fixture ([resource (begin (set! acquired (+ acquired 1)) 42)])
+             :after (lambda (fixtures) (set! released (+ released 1)))
+             (wrapped-case first (test-= resource 42))
+             (test-suite nested (test-case second (test-= resource 42))))
+           (let ([results (test-run-registry (current-test-registry)
+                            (test-config-with (default-test-config) '((output . #f))))])
+             (and (= acquired 2) (= released 2)
+                  (equal? (map test-result-status results) '(passed passed))))))
+      (environment '(cspp))))
+
+  ;; A child fixture list overrides the suite list, with matching lexical names.
+  (guard (condition [else #f])
+    (eval
+      '(parameterize ([current-test-registry (make-test-registry)])
+         (test-suite shared :fixture ([resource 42])
+           (test-case child :fixture ([resource 7]) (test-= resource 7)))
+         (equal? (map test-result-status
+                      (test-run-registry (current-test-registry)
+                        (test-config-with (default-test-config) '((output . #f)))))
+                 '(passed)))
+      (environment '(cspp))))
+
+  ;; Parameterized suite bindings must also remain available to child expressions.
+  (guard (condition [else #f])
+    (eval
+      '(parameterize ([current-test-registry (make-test-registry)])
+         (test-suite shared :parameterize ([number] [1] [2])
+           (test-case child (test-true (memv number '(1 2)))))
+         (equal? (map test-result-status
+                      (test-run-registry (current-test-registry)
+                        (test-config-with (default-test-config) '((output . #f)))))
+                 '(passed passed)))
+      (environment '(cspp)))))

@@ -4,6 +4,9 @@
   (import (cspp chez)
           (cspp test descriptor))
 
+  (define-syntax $test-binding-context
+    (make-compile-time-value '(() ())))
+
   (define-syntax $test-macro-helper
     (lambda (stx)
       (define keyword?
@@ -138,33 +141,32 @@
                #`(cons '#,(datum->syntax key (keyword->option-name datum)) #,(car rest))]
               [else (syntax-error key "unknown test option")]))))
       (define build-metadata
-        (lambda (options)
-          (let ([parameter-ids (parameter-names options)])
-            (let loop ([options options] [entries '()] [parameterize-tables '()])
-              (cond
-               [(null? options)
-                #`(list #,@(reverse entries)
-                        #,@(if (null? parameterize-tables)
-                               '()
-                               (list #`(cons 'parameterize
-                                             (append #,@(reverse parameterize-tables))))))]
-               [(eq? (syntax->datum (caar options)) ':parameterize)
-                (syntax-case (cadar options) ()
-                  [([name ...] row ...)
-                   (loop (cdr options)
-                         entries
-                         (cons #`(list (cons '(name ...)
-                                             (list #,@(map (lambda (row)
-                                                             (quote-row (caar options) row))
-                                                           #'(row ...)))))
-                               parameterize-tables))]
-                  [_ (loop (cdr options)
-                           (cons (parse-option (caar options) (cdar options) parameter-ids) entries)
-                           parameterize-tables)])]
-               [else
-                (loop (cdr options)
-                      (cons (parse-option (caar options) (cdar options) parameter-ids) entries)
-                      parameterize-tables)])))))
+        (lambda (options parameter-ids)
+          (let loop ([options options] [entries '()] [parameterize-tables '()])
+            (cond
+             [(null? options)
+              #`(list #,@(reverse entries)
+                      #,@(if (null? parameterize-tables)
+                             '()
+                             (list #`(cons 'parameterize
+                                           (append #,@(reverse parameterize-tables))))))]
+             [(eq? (syntax->datum (caar options)) ':parameterize)
+              (syntax-case (cadar options) ()
+                [([name ...] row ...)
+                 (loop (cdr options)
+                       entries
+                       (cons #`(list (cons '(name ...)
+                                           (list #,@(map (lambda (row)
+                                                           (quote-row (caar options) row))
+                                                         #'(row ...)))))
+                             parameterize-tables))]
+                [_ (loop (cdr options)
+                         (cons (parse-option (caar options) (cdar options) parameter-ids) entries)
+                         parameterize-tables)])]
+             [else
+              (loop (cdr options)
+                    (cons (parse-option (caar options) (cdar options) parameter-ids) entries)
+                    parameterize-tables)]))))
       (define parameter-names
         (lambda (options)
           (let loop ([options options] [out '()])
@@ -227,44 +229,65 @@
                   #`(let ([binding (assq '#,(datum->syntax id (syntax->datum id)) params)])
                       (let ([#,id (if binding (cdr binding) #f)])
                         #,(loop (cdr ids) body))))))))
-      (syntax-case stx ()
-        [(_ kind name item ...)
-         (let-values ([(options body) (split-items #'(item ...))])
-           (check-duplicate-parameter-names options)
-           (let ([metadata (build-metadata options)])
-             (case (syntax->datum #'kind)
-               [(case)
-                #`(let ([descriptor
-                         (make-test-case
-                          'name
-                          (lambda (params)
-                            #,(build-bindings
-                               (append (parameter-names options) (fixture-names options))
-                               body))
-                          #,metadata)])
-                    (test-register! (current-test-registry) descriptor)
-                    descriptor)]
-               [(suite group)
-                #`(let ([descriptor
-                         (make-test-suite
-                          'name
-                          (parameterize ([current-test-registry (make-test-registry)])
-                            (list #,@body))
-                          #,metadata)])
-                    (test-register! (current-test-registry) descriptor)
-                    descriptor)]
-               [(expand)
-                (unless (= (length body) 1)
-                  (syntax-error #'name "test-expand expects one body form"))
-                #`(let ([descriptor (make-test-expand 'name '#,(car body) #,metadata)])
-                    (test-register! (current-test-registry) descriptor)
-                    descriptor)]
-               [(compile)
-                #`(let ([descriptor (make-test-compile 'name '#,body #,metadata)])
-                    (test-register! (current-test-registry) descriptor)
-                    descriptor)]
-               [else (syntax-error #'kind "unknown test macro kind")])))]
-        [_ (syntax-error stx "invalid test macro helper form")])))
+      (lambda (lookup)
+        (syntax-case stx ()
+          [(_ kind name item ...)
+           (let-values ([(options body) (split-items #'(item ...))])
+             (check-duplicate-parameter-names options)
+             (let* ([inherited (lookup #'$test-binding-context)]
+                    [inherit-names
+                     (lambda (symbols)
+                       (map (lambda (symbol) (datum->syntax #'name symbol)) symbols))]
+                    [fixture-ids
+                     (if (exists (lambda (option) (eq? (syntax->datum (car option)) ':fixture))
+                                 options)
+                         (fixture-names options)
+                         (inherit-names (car inherited)))]
+                    [parameter-ids
+                     (if (exists (lambda (option) (eq? (syntax->datum (car option)) ':parameterize))
+                                 options)
+                         (parameter-names options)
+                         (inherit-names (cadr inherited)))]
+                    [metadata (build-metadata options parameter-ids)])
+               (case (syntax->datum #'kind)
+                 [(case)
+                  #`(let ([descriptor
+                           (make-test-case
+                            'name
+                            (lambda (params)
+                              #,(build-bindings
+                                 (append parameter-ids fixture-ids)
+                                 body))
+                            #,metadata)])
+                      (test-register! (current-test-registry) descriptor)
+                      descriptor)]
+                 [(suite group)
+                  #`(let ([descriptor
+                           (make-test-suite
+                            'name
+                            (fluid-let-syntax
+                              ([$test-binding-context
+                                (make-compile-time-value
+                                 '#,(datum->syntax #'name
+                                      (list (map syntax->datum fixture-ids)
+                                            (map syntax->datum parameter-ids))))])
+                              (parameterize ([current-test-registry (make-test-registry)])
+                                (list #,@body)))
+                            #,metadata)])
+                      (test-register! (current-test-registry) descriptor)
+                      descriptor)]
+                 [(expand)
+                  (unless (= (length body) 1)
+                    (syntax-error #'name "test-expand expects one body form"))
+                  #`(let ([descriptor (make-test-expand 'name '#,(car body) #,metadata)])
+                      (test-register! (current-test-registry) descriptor)
+                      descriptor)]
+                 [(compile)
+                  #`(let ([descriptor (make-test-compile 'name '#,body #,metadata)])
+                      (test-register! (current-test-registry) descriptor)
+                      descriptor)]
+                 [else (syntax-error #'kind "unknown test macro kind")])))]
+          [_ (syntax-error stx "invalid test macro helper form")]))))
 
   #|macro:test-case
   The `test-case` macro defines and registers a runtime test descriptor named
@@ -284,7 +307,10 @@
   #|macro:test-suite
   The `test-suite` macro defines and registers a suite descriptor named `name`.
   Config clauses are inherited by child descriptors. Nested definition macros
-  register only as children of this suite, so each child runs once.
+  register only as children of this suite, so each child runs once. Child bodies
+  bind inherited fixture and parameter names; conditional rules bind parameters.
+  A child's
+  explicit fixture list or parameter tables replace the corresponding suite list.
   |#
   (define-syntax test-suite
     (syntax-rules ()
