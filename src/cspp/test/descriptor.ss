@@ -56,7 +56,7 @@
 
   (define $reporter-option?
     (lambda (reporter)
-      (or (not reporter) (procedure? reporter) (record? reporter))))
+      (or (not reporter) (test-reporter? reporter))))
 
   (define $output-option?
     (lambda (output)

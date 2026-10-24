@@ -1,11 +1,35 @@
 #!chezscheme
 (library (cspp test private common)
-  (export test-alist-ref test-alist-set test-remove-key test-metadata-ref
+  (export test-reporter? make-test-reporter test-reporter-write
+          test-alist-ref test-alist-set test-remove-key test-metadata-ref
           test-natural-version-list?
           chez-version
           chez-version<? chez-version<=? chez-version=? chez-version>=? chez-version>?)
   (import (cspp chez)
           (cspp utils))
+
+  (define-record-type ($test-reporter $make-test-reporter test-reporter?)
+    (fields kind write))
+
+  #|proc:make-test-reporter
+The `make-test-reporter` procedure creates a reporter. `kind` is a symbol
+naming the reporter, and `write` is a procedure with signature
+`(lambda (output-port summary) unspecified)`.
+|#
+  (define make-test-reporter
+    (lambda (kind write)
+      (pcheck ([symbol? kind] [procedure? write])
+              ($make-test-reporter kind write))))
+
+  #|proc:test-reporter-write
+  The `test-reporter-write` procedure returns the callback stored in `reporter`.
+  The callback accepts `(output-port summary)` and returns unspecified values.
+  This helper is internal to the test libraries.
+  |#
+  (define test-reporter-write
+    (lambda (reporter)
+      (pcheck ([test-reporter? reporter])
+              ($test-reporter-write reporter))))
 
   (define $version-compare
     (lambda (left right)

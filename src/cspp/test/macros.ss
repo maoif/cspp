@@ -184,12 +184,19 @@
              [(eq? (syntax->datum (caar options)) ':parameterize)
               (syntax-case (cadar options) ()
                 [([name ...] row ...)
+                 (begin
+                   (for-each
+                    (lambda (row)
+                      (let ([values (syntax->datum row)])
+                        (unless (and (list? values) (= (length values) (length #'(name ...))))
+                          (syntax-error row "parameter row length must match name list"))))
+                    #'(row ...))
                  (let loop-names ([names #'(name ...)] [seen seen])
                    (cond
                     [(null? names) (loop-options (cdr options) seen)]
                     [(ormap (lambda (id) (free-identifier=? id (car names))) seen)
                      (syntax-error (car names) "duplicate parameter name")]
-                    [else (loop-names (cdr names) (cons (car names) seen))]))]
+                    [else (loop-names (cdr names) (cons (car names) seen))])))]
                 [_ (loop-options (cdr options) seen)])]
              [else (loop-options (cdr options) seen)]))))
       (define fixture-names

@@ -677,3 +677,63 @@
 
   ;; A compile body must be a proper list of forms.
   (error? (make-test-compile 'invalid '#(1 2) '())))
+
+(mat test-runtime-exception-expectations
+  ;; Runtime :raises must accept only the declared exception type.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (test-case expected :raises error? (error 'expected "boom"))
+    (test-case missing :raises error? #t)
+    (test-case wrong :raises syntax-violation? (error 'wrong "boom"))
+    (equal? (map test-result-status
+                 (test-run-registry (current-test-registry) (test-silent-config)))
+            '(passed failed failed)))
+
+  ;; Expected exceptions must preserve fixture cleanup and captured diagnostics.
+  (let ([cleaned? #f])
+    (parameterize ([current-test-registry (make-test-registry)])
+      (test-case expected
+        :raises error?
+        :capture stdout
+        :stdout "before"
+        :fixture ([resource 42])
+        :after (lambda (fixtures) (set! cleaned? #t))
+        (display "before")
+        (error 'expected "boom"))
+      (let ([result (car (test-run-registry (current-test-registry) (test-silent-config)))])
+        (and cleaned? (eq? (test-result-status result) 'passed)
+             (string=? (test-result-stdout result) "before"))))))
+
+(mat test-parameter-row-width-validation
+  ;; Low-level tables must reject extra and missing cells, including zero-name rows.
+  (andmap
+    (lambda (table)
+      (guard (condition [else #t])
+        (test-expand-parameters
+          (make-test-case 'bad (lambda () #t) (list (cons 'parameterize (list table)))))
+        #f))
+    '(((x) (1 2)) ((x y) (1)) (() (1))))
+
+  ;; Macro tables must reject extra cells before any body runs.
+  (guard (condition [else #t])
+    (eval '(test-case too-wide :parameterize ([x] [1 2]) #t))
+    #f))
+
+(mat test-reporter-config-validation
+  ;; A procedure and an unrelated record are not reporter objects.
+  (andmap
+    (lambda (reporter)
+      (guard (condition [else #t])
+        (make-test-config reporter #f #f #f 'never)
+        #f))
+    (list (lambda (out summary) #t) (make-test-registry)))
+
+  ;; Config updates must reject the same invalid reporter types as construction.
+  (guard (condition [else #t])
+    (test-config-with (default-test-config) `((reporter . ,(lambda (out summary) #t))))
+    #f)
+
+  (let ([text (call-with-string-output-port
+                (lambda (out)
+                  (test-run (list (make-test-case 'valid (lambda () #t) '()))
+                    (make-test-config (test-text-reporter) out #f #f 'never))))])
+    (test-string-contains? text "passed: 1")))

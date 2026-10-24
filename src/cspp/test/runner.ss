@@ -22,7 +22,10 @@
     (lambda (names row)
       (let loop ([names names] [row row] [out '()])
         (cond
-         [(null? names) (reverse out)]
+         [(null? names)
+          (unless (null? row)
+            (errorf 'test-expand-parameters "parameter row is longer than names: ~a" row))
+          (reverse out)]
          [(null? row)
           (errorf 'test-expand-parameters "parameter row is shorter than names: ~a" row)]
          [else
@@ -333,8 +336,11 @@ association-list filters as `test-select`.
              [metadata (test-concrete-case-metadata concrete-case)])
         (case (test-descriptor-phase descriptor)
           [(runtime)
-           ($run-body-with-fixtures metadata (test-descriptor-body descriptor)
-                                    (test-concrete-case-parameters concrete-case))]
+           ($run-body-with-fixtures metadata
+             (lambda (parameters)
+               ($run-with-expected-condition metadata
+                 (lambda () ($call-body (test-descriptor-body descriptor) parameters))))
+             (test-concrete-case-parameters concrete-case))]
           [(expand)
            ($run-with-expected-condition
             metadata (lambda () (expand (test-descriptor-body descriptor))))]

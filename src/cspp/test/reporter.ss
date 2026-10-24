@@ -4,20 +4,8 @@
           test-datum-reporter test-progress-reporter test-report test-summarize)
   (import (cspp chez)
           (cspp utils)
-          (cspp test descriptor))
-
-  (define-record-type ($test-reporter $make-test-reporter test-reporter?)
-    (fields kind write))
-
-  #|proc:make-test-reporter
-The `make-test-reporter` procedure creates a reporter. `kind` is a symbol
-naming the reporter, and `write` is a procedure with signature
-`(lambda (output-port summary) unspecified)`.
-|#
-  (define make-test-reporter
-    (lambda (kind write)
-      (pcheck ([symbol? kind] [procedure? write])
-              ($make-test-reporter kind write))))
+          (cspp test descriptor)
+          (cspp test private common))
 
   (define $count-status
     (lambda (status results)
@@ -130,6 +118,6 @@ The `test-report` procedure writes `summary` to `output-port` using `reporter`.
   (define test-report
     (lambda (reporter output-port summary)
       (pcheck ([test-reporter? reporter] [output-port? output-port] [test-summary? summary])
-              (($test-reporter-write reporter) output-port summary))))
+              ((test-reporter-write reporter) output-port summary))))
 
   )
