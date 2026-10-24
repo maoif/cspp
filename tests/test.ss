@@ -885,3 +885,33 @@
                         (test-config-with (default-test-config) '((output . #f)))))
                  '(skipped passed)))
       (environment '(cspp)))))
+
+(mat test-inherited-bindings-with-generated-case-name
+  ;; A wrapper's generated case name must not determine its caller expressions' context.
+  (guard (condition [else #f])
+    (eval
+      '(parameterize ([current-test-registry (make-test-registry)])
+         (define-syntax wrapped-case
+           (syntax-rules () [(_ expr) (test-case generated expr)]))
+         (test-suite shared :fixture ([resource 42])
+           (wrapped-case (test-= resource 42)))
+         (equal? (map test-result-status
+                      (test-run-registry (current-test-registry)
+                        (test-config-with (default-test-config) '((output . #f)))))
+                 '(passed)))
+      (environment '(cspp))))
+
+  (guard (condition [else #f])
+    (eval
+      '(parameterize ([current-test-registry (make-test-registry)])
+         (define-syntax wrapped-case
+           (syntax-rules ()
+             [(_ expression)
+              (test-case generated :skip-when (= number 1) "skip first" expression)]))
+         (test-suite shared :parameterize ([number] [1] [2])
+           (wrapped-case (test-= number 2)))
+         (equal? (map test-result-status
+                      (test-run-registry (current-test-registry)
+                        (test-config-with (default-test-config) '((output . #f)))))
+                 '(skipped passed)))
+      (environment '(cspp)))))

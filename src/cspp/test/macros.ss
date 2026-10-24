@@ -217,7 +217,7 @@
           (let loop ([ids ids] [out '()])
             (cond
              [(null? ids) (reverse out)]
-             [(ormap (lambda (id) (free-identifier=? id (car ids))) out)
+             [(ormap (lambda (id) (bound-identifier=? id (car ids))) out)
               (loop (cdr ids) out)]
              [else (loop (cdr ids) (cons (car ids) out))]))))
       (define build-bindings
@@ -237,7 +237,27 @@
              (let* ([inherited (lookup #'$test-binding-context)]
                     [inherit-names
                      (lambda (symbols)
-                       (map (lambda (symbol) (datum->syntax #'name symbol)) symbols))]
+                       (let loop ([symbols symbols] [seen '()] [out '()])
+                         (cond
+                          [(null? symbols) (reverse out)]
+                          [(memq (car symbols) seen) (loop (cdr symbols) seen out)]
+                          [else
+                           (let ([symbol (car symbols)] [references '()])
+                             ;; Wrapper-generated names may have a different lexical context
+                             ;; from their body or option expressions. Bind the actual references.
+                             (let visit ([form #'(item ...)])
+                               (if (identifier? form)
+                                   (when (eq? (syntax->datum form) symbol)
+                                     (set! references (cons form references)))
+                                   (syntax-case form ()
+                                     [(head . tail) (begin (visit #'head) (visit #'tail))]
+                                     [#(element ...) (for-each visit #'(element ...))]
+                                     [_ (void)])))
+                             (loop (cdr symbols) (cons symbol seen)
+                                   (append (if (null? references)
+                                               (list (datum->syntax #'name symbol))
+                                               references)
+                                           out)))])))]
                     [fixture-ids
                      (if (exists (lambda (option) (eq? (syntax->datum (car option)) ':fixture))
                                  options)
