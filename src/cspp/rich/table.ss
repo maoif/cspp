@@ -35,11 +35,14 @@
             (mutable show-header? $rich-table-show-header? $rich-table-show-header?-set!)
             (mutable show-lines? $rich-table-show-lines? $rich-table-show-lines?-set!)
             (mutable padding $rich-table-padding $rich-table-padding-set!)
-            (mutable columns $rich-table-columns $rich-table-columns-set!)
+            (immutable columns $rich-table-column-builder)
             (immutable rows $rich-table-row-builder)))
 
   (define $rich-table-rows
     (lambda (table) (($rich-table-row-builder table))))
+
+  (define $rich-table-columns
+    (lambda (table) (($rich-table-column-builder table))))
 
   (define-record-type (rich-table-column-record $make-rich-table-column-record $rich-table-column?)
     (fields (mutable title $rich-table-column-title $rich-table-column-title-set!)
@@ -52,13 +55,6 @@
   (define $rich-table-justify?
     (lambda (x)
       (memq x '(left center right))))
-
-  (define $append-one
-    (lambda (ls value)
-      (let loop ([ls ls] [out '()])
-        (if (null? ls)
-            (rich-reverse-append out (list value))
-            (loop (cdr ls) (cons (car ls) out))))))
 
   (define $string->segment-lines
     (lambda (text)
@@ -262,7 +258,7 @@
   (define make-rich-table
     (case-lambda
       [()
-       ($make-rich-table-record #f #f 'ascii #t #t 1 '() (make-list-builder))]))
+       ($make-rich-table-record #f #f 'ascii #t #t 1 (make-list-builder) (make-list-builder))]))
 
   #|proc:rich-table-title
   The `rich-table-title` procedure returns the optional title for `table`.
@@ -382,10 +378,8 @@
                (unless (null? ($rich-table-rows table))
                  (errorf 'rich-table-add-column!
                          "cannot add a column after rows have been added"))
-               ($rich-table-columns-set!
-                table
-                ($append-one ($rich-table-columns table)
-                             ($make-rich-table-column-record title justify)))
+               (($rich-table-column-builder table)
+                ($make-rich-table-column-record title justify))
                table)]))
 
   #|proc:rich-table-add-row!
