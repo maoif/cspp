@@ -116,6 +116,18 @@
                            (string-append (if (< n 10) "0" "") (number->string n)))])
         (string-append (two-digits hours) ":" (two-digits minutes) ":" (two-digits seconds)))))
 
+  ;; Format exact hundredths directly: even a finite speed can exceed flonum range.
+  (define $speed-string
+    (lambda (speed)
+      (let* ([hundredths (round (* speed 100))]
+             [fraction (remainder hundredths 100)]
+             [decimal (cond [(zero? fraction) "0"]
+                            [(zero? (remainder fraction 10))
+                             (number->string (quotient fraction 10))]
+                            [(< fraction 10) (string-append "0" (number->string fraction))]
+                            [else (number->string fraction)])])
+        (string-append (number->string (quotient hundredths 100)) "." decimal "/s"))))
+
   (define $task-column
     (lambda (task width column now)
       (let* ([completed ($rich-progress-task-completed task)]
@@ -139,8 +151,7 @@
                               ($duration-string
                                (ceiling (/ (- total (inexact->exact completed)) speed)))]
                              [else "--:--:--"])]
-          [(speed) (string-append
-                    (number->string (exact->inexact (/ (round (* speed 100)) 100))) "/s")]
+          [(speed) ($speed-string speed)]
           [(spinner) (vector-ref '#("|" "/" "-" "\\")
                                  (modulo (inexact->exact (floor (* elapsed 10))) 4))]))))
 

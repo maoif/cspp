@@ -2008,6 +2008,42 @@
 
      )
 
+(mat rich-progress-finite-speed-formatting
+
+     ;; Finite exact speeds must not overflow while converting the display to decimal.
+     (parameterize ([rich-current-time (lambda () 0)])
+       (let* ([progress (make-rich-progress 4 '(speed))]
+              [id (rich-progress-add-task! progress "build" #f)])
+         (rich-progress-update! progress id (expt 10 1000))
+         (parameterize ([rich-current-time (lambda () (/ 1 (expt 10 300)))])
+           (string=? (string-append "1" (make-string 1300 #\0) ".0/s")
+                     (rich-export-text progress)))))
+
+     ;; The same overflow also occurs with ordinary finite flonum counts and times.
+     (parameterize ([rich-current-time (lambda () 0)])
+       (let* ([progress (make-rich-progress 4 '(speed))]
+              [id (rich-progress-add-task! progress "build" #f)])
+         (rich-progress-update! progress id 1e308)
+         (parameterize ([rich-current-time (lambda () 0.001)])
+           (let* ([text (rich-export-text progress)]
+                  [speed (string->number
+                          (string-append "#e" (substring text 0 (- (string-length text) 2))))])
+             (and speed (finite? speed) (> speed (expt 10 310)))))))
+
+     ;; Preserve the existing decimal spelling and round ties to an even hundredth.
+     (andmap
+      (lambda (case)
+        (parameterize ([rich-current-time (lambda () 0)])
+          (let* ([progress (make-rich-progress 4 '(speed))]
+                 [id (rich-progress-add-task! progress "build" #f)])
+            (rich-progress-update! progress id (car case))
+            (parameterize ([rich-current-time (lambda () 1)])
+              (string=? (cadr case) (rich-export-text progress))))))
+      '((0 "0.0/s") (1/200 "0.0/s") (3/200 "0.02/s") (1/10 "0.1/s")
+        (1/100 "0.01/s") (5/4 "1.25/s") (199/200 "1.0/s") (9999/1000 "10.0/s")))
+
+     )
+
 (mat rich-accumulated-style-restoration
 
      (equal? "\033[1m\033[31mA\033[34mB\033[32mS\033[0m\033[1m\033[34mC\033[0m"
