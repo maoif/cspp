@@ -780,3 +780,85 @@
                         (test-config-with (default-test-config) '((output . #f)))))
                  '(passed passed)))
       (environment '(cspp)))))
+
+(mat test-registry-snapshot-order
+  (let ([registry (make-test-registry)]
+        [first (make-test-case 'first (lambda () #t) '())]
+        [second (make-test-case 'second (lambda () #t) '())])
+    (test-register! registry first)
+    (let ([snapshot (test-registry-descriptors registry)])
+      (test-register! registry second)
+      (let ([all (test-registry-descriptors registry)])
+        (test-clear-registry! registry)
+        (test-register! registry second)
+        (and (equal? (map test-descriptor-name snapshot) '(first))
+             (equal? (map test-descriptor-name all) '(first second))
+             (equal? (map test-descriptor-name (test-registry-descriptors registry))
+                     '(second)))))))
+
+(mat test-registry-linear-allocation
+  ;; Repeated registration must not copy the full registry on every insertion.
+  (let ([registry (make-test-registry)]
+        [descriptor (make-test-case 'same (lambda () #t) '())])
+    (collect)
+    (let ([before (statistics)])
+      (do ([index 0 (fx+ index 1)]) ((fx= index 2000))
+        (test-register! registry descriptor))
+      (let ([bytes (sstats-bytes (sstats-difference (statistics) before))])
+        (and (< bytes 200000)
+             (= (length (test-registry-descriptors registry)) 2000))))))
+
+(mat test-capture-mode-validation
+  ;; Misspelled symbols, invalid list entries, and improper lists must be rejected.
+  (andmap
+    (lambda (mode)
+      (let ([called? #f])
+        (guard (condition [else (not called?)])
+          (test-capture-ports mode (lambda () (set! called? #t)))
+          #f)))
+    '(bogus (stdout bogus) (stderr . stdout) 42))
+
+  ;; Invalid capture metadata must produce an error without running the case body.
+  (let ([called? #f])
+    (let ([result (car (test-run
+                        (list (make-test-case 'bad-capture
+                                (lambda () (set! called? #t)) '((capture . bogus))))
+                        (test-silent-config)))])
+      (and (not called?) (eq? (test-result-status result) 'errored)))))
+
+(mat test-capture-selected-streams
+  (andmap
+    (lambda (mode)
+      (let ([outer (open-output-string)])
+        (dynamic-wind
+          (lambda () (void))
+          (lambda ()
+            (parameterize ([current-output-port outer] [current-error-port outer])
+              (let-values ([(values-list stdout stderr)
+                            (test-capture-ports mode
+                              (lambda ()
+                                (display "out")
+                                (display "err" (current-error-port))
+                                (values 1 2)))])
+                (and (equal? values-list '(1 2))
+                     (case mode
+                       [(#f) (and (string=? stdout "") (string=? stderr "")
+                                  (string=? (get-output-string outer) "outerr"))]
+                       [(stdout) (and (string=? stdout "out") (string=? stderr "")
+                                      (string=? (get-output-string outer) "err"))]
+                       [(stderr) (and (string=? stdout "") (string=? stderr "err")
+                                      (string=? (get-output-string outer) "out"))]
+                       [(combined) (and (string=? stdout "outerr") (string=? stderr "")
+                                        (string=? (get-output-string outer) ""))])))))
+          (lambda () (close-output-port outer)))))
+    '(#f stdout stderr combined)))
+
+(mat test-disabled-capture-allocation
+  ;; Disabled capture must not create string ports for every case.
+  (let ([body (lambda () (values))])
+    (collect)
+    (let ([before (statistics)])
+      (do ([index 0 (fx+ index 1)]) ((fx= index 1000))
+        (call-with-values (lambda () (test-capture-ports #f body))
+          (lambda (values-list stdout stderr) (void))))
+      (< (sstats-bytes (sstats-difference (statistics) before)) 256000))))

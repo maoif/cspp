@@ -31,7 +31,8 @@
     (fields reporter output xfail-strict? stop-on-failure? color))
 
   (define-record-type ($test-registry $make-test-registry $test-registry?)
-    (fields (mutable descriptors $test-registry-descriptors $test-registry-descriptors-set!)))
+    (fields (mutable reversed $test-registry-reversed $test-registry-reversed-set!)
+            (mutable snapshot $test-registry-snapshot $test-registry-snapshot-set!)))
 
   (define-record-type ($test-concrete-case $make-test-concrete-case $test-concrete-case?)
     (fields id name descriptor parameters metadata))
@@ -384,7 +385,7 @@ registry.
 |#
   (define make-test-registry
     (lambda ()
-      ($make-test-registry '())))
+      ($make-test-registry '() '())))
 
   #|proc:current-test-registry
 The `current-test-registry` parameter stores the default mutable test
@@ -394,16 +395,16 @@ descriptor registry.
     (make-parameter (make-test-registry)))
 
   #|proc:test-register!
-The `test-register!` procedure appends `descriptor` to `registry` and returns
-`descriptor`.
-|#
+  The `test-register!` procedure appends `descriptor` to `registry` in constant time
+  and returns `descriptor`. Previously returned descriptor lists are preserved.
+  |#
   (define test-register!
     (lambda (registry descriptor)
       (pcheck ([test-registry? registry] [test-descriptor? descriptor])
               (begin
-                ($test-registry-descriptors-set!
-                 registry
-                 (append ($test-registry-descriptors registry) (list descriptor)))
+                ($test-registry-reversed-set!
+                 registry (cons descriptor ($test-registry-reversed registry)))
+                ($test-registry-snapshot-set! registry #f)
                 descriptor))))
 
   #|proc:test-clear-registry!
@@ -412,16 +413,21 @@ The `test-clear-registry!` procedure removes all descriptors from `registry`.
   (define test-clear-registry!
     (lambda (registry)
       (pcheck ([test-registry? registry])
-              ($test-registry-descriptors-set! registry '()))))
+              ($test-registry-reversed-set! registry '())
+              ($test-registry-snapshot-set! registry '()))))
 
   #|proc:test-registry-descriptors
-The `test-registry-descriptors` procedure returns the descriptors currently
-stored in `registry`.
-|#
+  The `test-registry-descriptors` procedure returns an ordered snapshot of the
+  descriptors currently stored in `registry`. After registration, the first read
+  takes linear time; repeated reads reuse the snapshot until the registry changes.
+  |#
   (define test-registry-descriptors
     (lambda (registry)
       (pcheck ([test-registry? registry])
-              ($test-registry-descriptors registry))))
+              (or ($test-registry-snapshot registry)
+                  (let ([snapshot (reverse ($test-registry-reversed registry))])
+                    ($test-registry-snapshot-set! registry snapshot)
+                    snapshot)))))
 
   #|proc:make-test-concrete-case
 The `make-test-concrete-case` procedure creates a concrete test case. `id` is a
