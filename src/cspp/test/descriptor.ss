@@ -250,10 +250,11 @@ suite `descriptor`; non-suite descriptors return the empty list.
               ($test-descriptor-children descriptor))))
 
   #|proc:test-descriptor-body
-The `test-descriptor-body` procedure returns the body stored in `descriptor`.
-For runtime cases this is a zero-argument procedure; for expansion and compile
-descriptors this is source data; for suites this is `#f`.
-|#
+  The `test-descriptor-body` procedure returns the body stored in `descriptor`.
+  For runtime cases the procedure accepts zero arguments or the concrete parameter
+  association list as described by `make-test-case`. Expansion descriptors return one
+  source datum, compile descriptors return a list of source forms, and suites return `#f`.
+  |#
   (define test-descriptor-body
     (lambda (descriptor)
       (pcheck ([test-descriptor? descriptor])

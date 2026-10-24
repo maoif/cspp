@@ -12,10 +12,10 @@
     (fields kind write))
 
   #|proc:make-test-reporter
-The `make-test-reporter` procedure creates a reporter. `kind` is a symbol
-naming the reporter, and `write` is a procedure with signature
-`(lambda (output-port summary) unspecified)`.
-|#
+  The `make-test-reporter` procedure creates a reporter. `kind` is a symbol
+  naming the reporter, and `write` is a procedure with signature
+  `(lambda (output-port summary) unspecified)`.
+  |#
   (define make-test-reporter
     (lambda (kind write)
       (pcheck ([symbol? kind] [procedure? write])

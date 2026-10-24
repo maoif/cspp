@@ -862,3 +862,26 @@
         (call-with-values (lambda () (test-capture-ports #f body))
           (lambda (values-list stdout stderr) (void))))
       (< (sstats-bytes (sstats-difference (statistics) before)) 256000))))
+
+(mat test-runtime-expectation-does-not-mask-setup
+  ;; An expected body exception must not accept a fixture acquisition error.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (test-case bad-setup :raises error?
+      :fixture ([resource (error 'setup "acquisition failed")])
+      #t)
+    (equal? (map test-result-status
+                 (test-run-registry (current-test-registry) (test-silent-config)))
+            '(errored))))
+
+(mat test-inherited-parameter-conditional-binding
+  (guard (condition [else #f])
+    (eval
+      '(parameterize ([current-test-registry (make-test-registry)])
+         (test-suite shared :parameterize ([number] [1] [2])
+           (test-case child :skip-when (= number 1) "skip first"
+             (test-= number 2)))
+         (equal? (map test-result-status
+                      (test-run-registry (current-test-registry)
+                        (test-config-with (default-test-config) '((output . #f)))))
+                 '(skipped passed)))
+      (environment '(cspp)))))

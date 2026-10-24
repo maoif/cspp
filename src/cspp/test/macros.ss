@@ -309,8 +309,7 @@
   Config clauses are inherited by child descriptors. Nested definition macros
   register only as children of this suite, so each child runs once. Child bodies
   bind inherited fixture and parameter names; conditional rules bind parameters.
-  A child's
-  explicit fixture list or parameter tables replace the corresponding suite list.
+  A child's explicit fixture list or parameter tables replace the corresponding suite list.
   |#
   (define-syntax test-suite
     (syntax-rules ()
