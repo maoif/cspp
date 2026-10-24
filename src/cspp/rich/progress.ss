@@ -24,6 +24,7 @@
           (cspp utils)
           (only (cspp list) make-list-builder)
           (cspp rich private common)
+          (cspp rich private lines)
           (cspp rich segment)
           (cspp rich renderable)
           (cspp rich live))
@@ -124,7 +125,7 @@
              [speed (if (positive? elapsed)
                         (/ (inexact->exact completed) (inexact->exact elapsed)) 0)])
         (case column
-          [(description) ($rich-progress-task-description task)]
+          [(description) (rich-single-line-text ($rich-progress-task-description task))]
           [(bar) ($task-bar task width)]
           [(percentage) (if total
                             (string-append (number->string ($percent completed total)) "%")
@@ -448,7 +449,8 @@
   Automatic sizing aligns columns across visible tasks. Bars receive leftover space;
   descriptions are shortened when needed, then rows are cropped if fixed columns cannot fit.
   Explicit bar widths retain their fixed layout. Timing uses `rich-current-time` and
-  freezes when the task is explicitly completed.
+  freezes when the task is explicitly completed. Description tabs expand at eight-cell
+  stops and line endings fold to spaces so each task occupies one logical line.
   Spinner frames cycle through `|`, `/`, `-`, and `\` every tenth of a second.
   |#
   (define rich-progress-render

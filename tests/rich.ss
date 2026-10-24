@@ -2259,3 +2259,23 @@
                (rich-progress-update! progress (expt 10 30) 2)))
 
      )
+
+(mat rich-single-line-display-controls
+
+     ;; Progress must allocate its bar after expanding description tabs.
+     (let ([progress (make-rich-progress #f '(description bar percentage))])
+       (rich-progress-add-task! progress "a\tb" 10)
+       (parameterize ([rich-render-width 20])
+         (equal? '("a       b [-----] 0%")
+                 (map rich-segments->plain (rich-progress-render progress)))))
+
+     ;; Single-line displays fold line endings so their row count stays predictable.
+     (let ([progress (make-rich-progress 2 '(description))])
+       (rich-progress-add-task! progress "a\r\nb\rc\nd" 10)
+       (equal? '("a b c d") (map rich-segments->plain (rich-progress-render progress))))
+
+     (parameterize ([rich-current-time (lambda () 0)])
+       (let ([status (make-rich-status "a\tb\r\nc" (make-rich-console) '("*\n*") 1)])
+         (equal? '("* * a       b c") (map rich-segments->plain (rich-status-render status)))))
+
+     )

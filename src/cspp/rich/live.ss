@@ -33,6 +33,7 @@
   (import (cspp chez)
           (cspp utils)
           (cspp rich private common)
+          (cspp rich private lines)
           (cspp rich private cells)
           (cspp rich style)
           (cspp rich segment)
@@ -583,7 +584,8 @@
                 (rich-live-refresh-rate-set! ($rich-status-live status) (/ 1 (inexact->exact interval)))))))
 
   #|proc:rich-status-render
-  The `rich-status-render` procedure renders `status` as one segment line.
+  The `rich-status-render` procedure renders `status` as one segment line. Frame and
+  message tabs expand at eight-cell stops; line endings fold to spaces.
   |#
   (define rich-status-render
     (lambda (status)
@@ -595,9 +597,9 @@
                                               (inexact->exact (rich-status-interval status))))
                                     (length frames))]
                      [frame (list-ref frames index)])
-                (list (list (rich-segment frame)
+                (list (list (rich-segment (rich-single-line-text frame))
                             (rich-segment " ")
-                            (rich-segment (rich-status-message status))))))))
+                            (rich-segment (rich-single-line-text (rich-status-message status)))))))))
 
   #|proc:rich-status-start!
   The `rich-status-start!` procedure starts a live display for `status` so its

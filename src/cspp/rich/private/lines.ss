@@ -1,6 +1,6 @@
 #!chezscheme
 (library (cspp rich private lines)
-  (export rich-lines-normalize rich-lines-wrap rich-lines-width rich-lines-min-width)
+  (export rich-single-line-text rich-lines-normalize rich-lines-wrap rich-lines-width rich-lines-min-width)
   (import (cspp chez) (cspp utils) (cspp rich private common) (cspp rich segment)
           (cspp rich private cells)
           (only (cspp list) make-list-builder))
@@ -102,6 +102,31 @@
     (lambda (lines)
       (pcheck ([list? lines])
         (apply append (map (lambda (line) ($split-line ($normalize-characters line))) lines)))))
+
+  #|proc:rich-single-line-text
+  The private `rich-single-line-text` returns string `text` with CRLF, CR, and LF folded
+  to spaces and tabs expanded at eight-cell stops. The result fits one logical line.
+  |#
+  (define rich-single-line-text
+    (lambda (text)
+      (pcheck ([string? text])
+        (if (let scan ([index 0])
+              (and (< index (string-length text))
+                   (or (memv (string-ref text index) '(#\tab #\return #\newline))
+                       (scan (+ index 1)))))
+            (let ([text (rich-string-output
+                         (lambda (port)
+                           (let loop ([index 0])
+                             (unless (= index (string-length text))
+                               (let ([character (string-ref text index)])
+                                 (write-char (if (memv character '(#\return #\newline))
+                                                 #\space character) port)
+                                 (loop (if (and (char=? character #\return)
+                                                (< (+ index 1) (string-length text))
+                                                (char=? (string-ref text (+ index 1)) #\newline))
+                                           (+ index 2) (+ index 1))))))))])
+              (rich-segments->plain ($normalize-characters (list (rich-segment text)))))
+            text))))
 
   #|proc:rich-lines-wrap
   The private `rich-lines-wrap` returns segment `lines` normalized at embedded newlines
