@@ -1176,3 +1176,19 @@
                          (samples . (((iterations . 1) (bytes . 0))))
                          (summary . ((bytes . ((mean . 0))))))))])
        (= (length (benchmark-compare-results results results '((metric . bytes)))) 1)))
+
+(mat benchmark-summary-preserves-fractions
+     (let* ([results (benchmark-results-from-data
+                       '(((name . fractional)
+                          (samples . (((iterations . 4) (cpu-ns . 6)
+                                       (real-ns . 7) (bytes . 2))
+                                      ((iterations . 2) (cpu-ns . 5)
+                                       (real-ns . 5) (bytes . 3)))))))]
+            [summary (benchmark-summarize (benchmark-result-samples (car results)))]
+            [bytes (cdr (assq 'bytes summary))])
+       (and (= (cdr (assq 'mean (cdr (assq 'cpu-ns summary)))) 2)
+            (= (cdr (assq 'mean (cdr (assq 'real-ns summary)))) 17/8)
+            (= (cdr (assq 'mean bytes)) 1)
+            (= (cdr (assq 'median bytes)) 1)
+            (= (cdr (assq 'min bytes)) 1/2)
+            (= (cdr (assq 'max bytes)) 3/2))))

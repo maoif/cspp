@@ -229,24 +229,24 @@
       (let ([iterations (benchmark-sample-iterations sample)])
         (if (zero? iterations)
             0
-            (quotient ($time->ns (sstats-cpu (benchmark-sample-sstats sample)))
-                      iterations)))))
+            (/ ($time->ns (sstats-cpu (benchmark-sample-sstats sample)))
+               iterations)))))
 
   (define $sample-real-ns
     (lambda (sample)
       (let ([iterations (benchmark-sample-iterations sample)])
         (if (zero? iterations)
             0
-            (quotient ($time->ns (sstats-real (benchmark-sample-sstats sample)))
-                      iterations)))))
+            (/ ($time->ns (sstats-real (benchmark-sample-sstats sample)))
+               iterations)))))
 
   (define $sample-bytes
     (lambda (sample)
       (let ([iterations (benchmark-sample-iterations sample)])
         (if (zero? iterations)
             0
-            (quotient (sstats-bytes (benchmark-sample-sstats sample))
-                      iterations)))))
+            (/ (sstats-bytes (benchmark-sample-sstats sample))
+               iterations)))))
 
   (define $mean
     (lambda (xs)
@@ -2222,6 +2222,7 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
   #|proc:benchmark-summarize
 The `benchmark-summarize` procedure computes CPU nanosecond, real nanosecond,
 and allocated-byte per-iteration summary alists from measured `samples`.
+Division by iteration counts preserves exact fractional measurements.
 |#
   (define benchmark-summarize
     (lambda (samples)
