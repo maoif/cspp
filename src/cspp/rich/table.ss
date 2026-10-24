@@ -140,26 +140,23 @@
                   '()
                   (list (rich-segment (make-string padding #\space)))))))
 
-  (define $column-width
-    (lambda (index header-blocks row-blocks)
-      (let ([header-width (if header-blocks
-                              ($segment-lines-width (list-ref header-blocks index))
-                              0)])
-        (let loop ([rows row-blocks] [width header-width])
-          (if (null? rows)
-              width
-              (loop (cdr rows)
-                    (max width
-                         ($segment-lines-width (list-ref (car rows) index)))))))))
+  ;; Traverse cells in row order; repeated list-ref made wide tables quadratic.
+  (define $measure-columns
+    (lambda (count headers rows measure initial)
+      (let ([widths (make-vector count initial)])
+        (define measure-row!
+          (lambda (row)
+            (let loop ([blocks row] [index 0])
+              (unless (null? blocks)
+                (vector-set! widths index (max (vector-ref widths index) (measure (car blocks))))
+                (loop (cdr blocks) (fx1+ index))))))
+        (when headers (measure-row! headers))
+        (for-each measure-row! rows)
+        (vector->list widths))))
 
   (define $column-widths
     (lambda (columns header-blocks row-blocks)
-      (let loop ([index 0] [columns columns] [out '()])
-        (if (null? columns)
-            (reverse out)
-            (loop (+ index 1)
-                  (cdr columns)
-                  (cons ($column-width index header-blocks row-blocks) out))))))
+      ($measure-columns (length columns) header-blocks row-blocks $segment-lines-width 0)))
 
   (define $border-line
     (lambda (chars left join right widths padding)
@@ -427,11 +424,7 @@
 
   (define $column-minimums
     (lambda (count headers rows)
-      (map (lambda (index)
-             (rich-lines-min-width
-              (append (if headers (list-ref headers index) '())
-                      (apply append (map (lambda (row) (list-ref row index)) rows)))))
-           (iota count))))
+      ($measure-columns count headers rows rich-lines-min-width 1)))
 
   ;; When borders alone cannot fit, keep fields readable by stacking them without a box.
   (define $stack-table-blocks

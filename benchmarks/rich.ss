@@ -100,3 +100,14 @@
                     (for-each (lambda (id) (rich-progress-update! progress id 1)) ids)
                     #t))))))
  '(1000 2000 4000 8000))
+
+(for-each
+ (lambda (size)
+   (measure 'wide-table size
+            (lambda ()
+              (let ([table (make-rich-table)])
+                (do ([index 0 (+ index 1)]) ((= index size))
+                  (rich-table-add-column! table "x"))
+                (apply rich-table-add-row! table (make-list size "x"))
+                (lambda () (rich-table-render table))))))
+ '(1000 2000 4000 8000))
