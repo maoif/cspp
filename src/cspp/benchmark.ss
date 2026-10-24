@@ -103,7 +103,15 @@
             percent-difference regression? improvement?))
 
   (define-record-type ($benchmark-registry $mk-benchmark-registry benchmark-registry?)
-    (fields (mutable benchmarks $benchmark-registry-benchmarks $benchmark-registry-benchmarks-set!)))
+    (fields (mutable reversed $benchmark-registry-reversed $benchmark-registry-reversed-set!)
+            (mutable snapshot $benchmark-registry-snapshot $benchmark-registry-snapshot-set!)))
+
+  (define $benchmark-registry-benchmarks
+    (lambda (registry)
+      (or ($benchmark-registry-snapshot registry)
+          (let ([snapshot (reverse ($benchmark-registry-reversed registry))])
+            ($benchmark-registry-snapshot-set! registry snapshot)
+            snapshot))))
 
   (define $void-procedure (lambda args (void)))
 
@@ -893,10 +901,10 @@ must be a benchmark registry, usually `(current-benchmark-registry)`.
     (lambda (registry benchmark)
       (pcheck ([benchmark-registry? registry] [benchmark? benchmark])
               (begin
-                ($benchmark-registry-benchmarks-set!
+                ($benchmark-registry-reversed-set!
                  registry
-                 (append ($benchmark-registry-benchmarks registry)
-                         (list benchmark)))
+                 (cons benchmark ($benchmark-registry-reversed registry)))
+                ($benchmark-registry-snapshot-set! registry #f)
                 benchmark))))
 
   #|proc:benchmark-unregister!
@@ -906,14 +914,11 @@ from `registry`.
   (define benchmark-unregister!
     (lambda (registry name)
       (pcheck ([benchmark-registry? registry] [symbol? name])
-              ($benchmark-registry-benchmarks-set!
+              ($benchmark-registry-reversed-set!
                registry
-               (let loop ([benchmarks ($benchmark-registry-benchmarks registry)] [out '()])
-                 (cond
-                  [(null? benchmarks) (reverse out)]
-                  [(eq? name ($benchmark-name (car benchmarks)))
-                   (loop (cdr benchmarks) out)]
-                  [else (loop (cdr benchmarks) (cons (car benchmarks) out))]))))))
+               (filter (lambda (benchmark) (not (eq? name ($benchmark-name benchmark))))
+                       ($benchmark-registry-reversed registry)))
+              ($benchmark-registry-snapshot-set! registry #f))))
 
   #|proc:benchmark-clear-registry!
 The `benchmark-clear-registry!` procedure removes all benchmarks from
@@ -922,7 +927,8 @@ The `benchmark-clear-registry!` procedure removes all benchmarks from
   (define benchmark-clear-registry!
     (lambda (registry)
       (pcheck ([benchmark-registry? registry])
-              ($benchmark-registry-benchmarks-set! registry '()))))
+              ($benchmark-registry-reversed-set! registry '())
+              ($benchmark-registry-snapshot-set! registry '()))))
 
   #|proc:benchmark-registry-benchmarks
 The `benchmark-registry-benchmarks` procedure returns the benchmark descriptors
@@ -938,7 +944,7 @@ The `current-benchmark-registry` parameter stores the default benchmark
 registry used by definition macros and `(benchmark-run)`.
 |#
   (define current-benchmark-registry
-    (make-parameter ($mk-benchmark-registry '())))
+    (make-parameter ($mk-benchmark-registry '() '())))
 
 
 ;;;;===----------------------------------------------------------------------===

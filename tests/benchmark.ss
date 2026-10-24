@@ -886,3 +886,46 @@
        (and (not (benchmark-result-error result))
             (= (benchmark-sample-iterations sample) 4096)
             (< (sstats-bytes (benchmark-sample-sstats sample)) 4096))))
+
+(mat benchmark-registry-insertion-allocation
+     (let* ([registry (current-benchmark-registry)]
+            [saved (benchmark-registry-benchmarks registry)]
+            [descriptor (make-benchmark 'allocation-entry (lambda (state) (void)) '())])
+       (dynamic-wind
+         (lambda () (benchmark-clear-registry! registry))
+         (lambda ()
+           (let ([before (statistics)])
+             (do ([index 0 (+ index 1)])
+                 ((= index 512))
+               (benchmark-register! registry descriptor))
+             (let ([allocated (sstats-bytes (sstats-difference (statistics) before))])
+               (and (< allocated 262144)
+                    (= (length (benchmark-registry-benchmarks registry)) 512)))))
+         (lambda ()
+           (benchmark-clear-registry! registry)
+           (for-each (lambda (descriptor) (benchmark-register! registry descriptor)) saved)))))
+
+(mat benchmark-registry-order-and-snapshots
+     (let* ([registry (current-benchmark-registry)]
+            [saved (benchmark-registry-benchmarks registry)]
+            [first (make-benchmark 'snapshot-first (lambda (state) (void)) '())]
+            [second (make-benchmark 'snapshot-second (lambda (state) (void)) '())]
+            [third (make-benchmark 'snapshot-third (lambda (state) (void)) '())])
+       (dynamic-wind
+         (lambda () (benchmark-clear-registry! registry))
+         (lambda ()
+           (benchmark-register! registry first)
+           (benchmark-register! registry second)
+           (let ([snapshot (benchmark-registry-benchmarks registry)])
+             (benchmark-register! registry third)
+             (let ([after-insert (map benchmark-name (benchmark-registry-benchmarks registry))])
+               (benchmark-unregister! registry 'snapshot-second)
+               (let ([after-remove (map benchmark-name (benchmark-registry-benchmarks registry))])
+                 (benchmark-clear-registry! registry)
+                 (and (equal? (map benchmark-name snapshot) '(snapshot-first snapshot-second))
+                      (equal? after-insert '(snapshot-first snapshot-second snapshot-third))
+                      (equal? after-remove '(snapshot-first snapshot-third))
+                      (null? (benchmark-registry-benchmarks registry)))))))
+         (lambda ()
+           (benchmark-clear-registry! registry)
+           (for-each (lambda (descriptor) (benchmark-register! registry descriptor)) saved)))))
