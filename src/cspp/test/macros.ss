@@ -260,22 +260,25 @@
         [_ (syntax-error stx "invalid test macro helper form")])))
 
   #|macro:test-case
-The `test-case` macro defines and registers a runtime test descriptor named
-`name`. Config clauses may include `:tags`, `:parameterize`, `:skip-when`,
-`:xfail`, `:capture`, and output expectations. Body forms are evaluated by the
-runner. Conditional rules can reference the case's named parameters.
-`:xfail-strict` overrides the configuration's strictness for this case.
-|#
+  The `test-case` macro defines and registers a runtime test descriptor named
+  `name`. Config clauses may include `:tags`, `:parameterize`, `:skip-when`,
+  `:xfail`, `:capture`, and output expectations. Body forms are evaluated by the
+  runner. Conditional rules can reference the case's named parameters.
+  `:xfail-strict` overrides the configuration's strictness for this case.
+  `:before` and `:after` receive a fixture-value association list with signature
+  `(lambda (fixtures) unspecified)`. Cleanup runs even if setup or `:before` raises;
+  then `:after` receives only the fixtures successfully acquired in declaration order.
+  |#
   (define-syntax test-case
     (syntax-rules ()
       [(_ name item ...)
        ($test-macro-helper case name item ...)]))
 
   #|macro:test-suite
-The `test-suite` macro defines and registers a suite descriptor named `name`.
-Config clauses are inherited by child descriptors. Nested definition macros
-register only as children of this suite, so each child runs once.
-|#
+  The `test-suite` macro defines and registers a suite descriptor named `name`.
+  Config clauses are inherited by child descriptors. Nested definition macros
+  register only as children of this suite, so each child runs once.
+  |#
   (define-syntax test-suite
     (syntax-rules ()
       [(_ name item ...)
@@ -300,9 +303,9 @@ The `test-compile` macro defines and registers a compile test descriptor named
        ($test-macro-helper compile name item ...)]))
 
   #|macro:test
-The `test` macro groups nested descriptors under shared config metadata,
-registers the assembled suite, and returns its descriptor.
-|#
+  The `test` macro groups nested descriptors under shared config metadata,
+  registers the assembled suite, and returns its descriptor.
+  |#
   (define-syntax test
     (syntax-rules ()
       [(_ item ...)

@@ -444,12 +444,12 @@ association-list filters as `test-select`.
            (memq (test-result-status result) '(failed errored)))))
 
   #|proc:test-run
-The `test-run` procedure executes test `descriptors` using runner `config` and
-returns a list of test result records. Allowed continuable warnings resume
-the case body. Skip and expected-failure rules apply to every phase. An
-unexpected pass has status `failed` under effective strict xfail policy and
-`xpass` otherwise; only `failed` and `errored` stop a stop-on-failure run.
-|#
+  The `test-run` procedure executes test `descriptors` using runner `config` and
+  returns a list of test result records. Allowed continuable warnings resume
+  the case body. Skip and expected-failure rules apply to every phase. An
+  unexpected pass has status `failed` under effective strict xfail policy and
+  `xpass` otherwise; only `failed` and `errored` stop a stop-on-failure run.
+  |#
   (define test-run
     (lambda (descriptors config)
       (pcheck ([list? descriptors] [test-config? config])
@@ -472,10 +472,10 @@ unexpected pass has status `failed` under effective strict xfail policy and
                 results))))
 
   #|proc:test-run-registry
-The `test-run-registry` procedure executes every descriptor registered in
-`registry` using runner `config` and returns a list of test result records.
-Case policies are the same as those described by `test-run`.
-|#
+  The `test-run-registry` procedure executes every descriptor registered in
+  `registry` using runner `config` and returns a list of test result records.
+  Case policies are the same as those described by `test-run`.
+  |#
   (define test-run-registry
     (lambda (registry config)
       (pcheck ([test-registry? registry] [test-config? config])

@@ -1306,16 +1306,16 @@ result fields and whose values are column labels; supported field keys are
                             cost-center? stop-on-error? explicit-options)))
 
   #|proc:make-benchmark-config
-The `make-benchmark-config` procedure returns a runner configuration whose fields
-are explicit overrides of descriptor defaults. `warmup` and `samples` are natural
-sample counts, `min-time` is a finite nonnegative target in seconds, and
-`max-iterations` is a positive iteration cap. `output` is an output port or `#f`;
-`filter` is `#f`, a name symbol, a name prefix string, or a predicate receiving a
-benchmark descriptor and returning whether to select it. `reporter` is a reporter
-or `#f`. Boolean `cost-center?` requests optional instrumentation, and Boolean
-`stop-on-error?` stops after the first captured error when true. Cost-center
-instrumentation is reserved for future support; measured cost-center data is `#f`.
-|#
+  The `make-benchmark-config` procedure returns a runner configuration whose fields
+  are explicit overrides of descriptor defaults. `warmup` and `samples` are natural
+  sample counts, `min-time` is a finite nonnegative target in seconds, and
+  `max-iterations` is a positive iteration cap. `output` is an output port or `#f`;
+  `filter` is `#f`, a name symbol, a name prefix string, or a predicate receiving a
+  benchmark descriptor and returning whether to select it. `reporter` is a reporter
+  or `#f`. Boolean `cost-center?` requests optional instrumentation, and Boolean
+  `stop-on-error?` stops after the first captured error when true. Cost-center
+  instrumentation is reserved for future support; measured cost-center data is `#f`.
+  |#
   (define make-benchmark-config
     (lambda (warmup samples min-time max-iterations output filter reporter cost-center? stop-on-error?)
       (pcheck ([natural? warmup samples max-iterations] [real? min-time]
@@ -1396,10 +1396,10 @@ cost-center measurement is enabled in runner `config`.
               ($benchmark-config-cost-center? config))))
 
   #|proc:default-benchmark-config
-The `default-benchmark-config` procedure returns a fresh default runner
-configuration using the current output port. Its fields remain defaults rather
-than explicit overrides, so descriptor options can replace them.
-|#
+  The `default-benchmark-config` procedure returns a fresh default runner
+  configuration using the current output port. Its fields remain defaults rather
+  than explicit overrides, so descriptor options can replace them.
+  |#
   (define default-benchmark-config
     (lambda ()
       (unless $default-reporter
@@ -1420,11 +1420,11 @@ than explicit overrides, so descriptor options can replace them.
             (cons 'stop-on-error? ($benchmark-config-stop-on-error? config)))))
 
   #|proc:benchmark-config-with
-The `benchmark-config-with` procedure returns a validated copy of `config` with
-fields changed by option alist `options`. Each changed field becomes an explicit
-run override. Explicit run settings take precedence over descriptor options;
-descriptor options take precedence over untouched default settings.
-|#
+  The `benchmark-config-with` procedure returns a validated copy of `config` with
+  fields changed by option alist `options`. Each changed field becomes an explicit
+  run override. Explicit run settings take precedence over descriptor options;
+  descriptor options take precedence over untouched default settings.
+  |#
   (define benchmark-config-with
     (lambda (config options)
       (pcheck ([benchmark-config? config] [list? options])
@@ -1580,16 +1580,16 @@ descriptor options take precedence over untouched default settings.
           (car (car args)))))
 
   #|macro:benchmark-options
-The `benchmark-options` macro converts benchmark option syntax into an option
-alist. `:args` receives a grouped table `([name ...] [value ...] ...)`; each
-`name` is an argument name and each value row supplies one concrete benchmark
-case. Repeated `:args` tables are expanded as a Cartesian product, and argument
-names must not be duplicated in one table or across argument options.
-`:arg-range [name start end factor]` requires finite bounds, a positive start,
-and a factor greater than one. `:dense-arg-range [name start end step]` requires
-finite bounds and a positive step; its start may be zero. Both ranges include
-their upper bound when reached and reject steps that fail to advance.
-|#
+  The `benchmark-options` macro converts benchmark option syntax into an option
+  alist. `:args` receives a grouped table `([name ...] [value ...] ...)`; each
+  `name` is an argument name and each value row supplies one concrete benchmark
+  case. Repeated `:args` tables are expanded as a Cartesian product, and argument
+  names must not be duplicated in one table or across argument options.
+  `:arg-range [name start end factor]` requires finite bounds, a positive start,
+  and a factor greater than one. `:dense-arg-range [name start end step]` requires
+  finite bounds and a positive step; its start may be zero. Both ranges include
+  their upper bound when reached and reject steps that fail to advance.
+  |#
   (define-syntax benchmark-options
     (lambda (stx)
       (define keyword?
@@ -2035,10 +2035,10 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                                         #f))))))))
 
   #|proc:benchmark-run-one
-The `benchmark-run-one` procedure runs one concrete expanded benchmark pair
-`expanded` with runner `config` and returns one benchmark result. Explicit config
-fields override descriptor options, which override default settings.
-|#
+  The `benchmark-run-one` procedure runs one concrete expanded benchmark pair
+  `expanded` with runner `config` and returns one benchmark result. Explicit config
+  fields override descriptor options, which override default settings.
+  |#
   (define benchmark-run-one
     (lambda (expanded config)
       (pcheck ([pair? expanded] [benchmark-config? config])
@@ -2123,14 +2123,14 @@ The `benchmark-run-suite` procedure runs suite descriptor `suite` with runner
                                 (loop-cases (cdr expanded) (cons result results)))))))))))))
 
   #|proc:benchmark-run
-The `benchmark-run` procedure runs registered benchmarks, descriptors, or a
-registry with a runner configuration and returns their measured results. It
-supports `(benchmark-run)`, `(benchmark-run config)`, `(benchmark-run registry
-config)`, and `(benchmark-run benchmarks config)`. Explicit config fields override
-descriptor options, which override defaults. Reporting groups results sharing a
-reporter and output port. Enabled stopping returns results through the first error
-and skips all later argument cases and descriptors.
-|#
+  The `benchmark-run` procedure runs registered benchmarks, descriptors, or a
+  registry with a runner configuration and returns their measured results. It
+  supports `(benchmark-run)`, `(benchmark-run config)`, `(benchmark-run registry
+  config)`, and `(benchmark-run benchmarks config)`. Explicit config fields override
+  descriptor options, which override defaults. Reporting groups results sharing a
+  reporter and output port. Enabled stopping returns results through the first error
+  and skips all later argument cases and descriptors.
+  |#
   (define benchmark-run
     (case-lambda
       [()
@@ -2219,12 +2219,12 @@ positive or negative infinity.
                [else (* 100 (/ (- current baseline) baseline))]))))
 
   #|proc:benchmark-compare-results
-The `benchmark-compare-results` procedure compares current benchmark `current`
-results with `baseline` results. `options` is an alist supporting `metric`,
-`threshold-percent`, `threshold-absolute`, and `noise-threshold-percent`.
-The returned list excludes results with captured errors or without a finite real
-mean for the selected metric. A measured mean of zero remains comparable.
-|#
+  The `benchmark-compare-results` procedure compares current benchmark `current`
+  results with `baseline` results. `options` is an alist supporting `metric`,
+  `threshold-percent`, `threshold-absolute`, and `noise-threshold-percent`.
+  The returned list excludes results with captured errors or without a finite real
+  mean for the selected metric. A measured mean of zero remains comparable.
+  |#
   (define benchmark-compare-results
     (case-lambda
       [(baseline current)

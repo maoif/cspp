@@ -171,10 +171,12 @@ registry.
       ($test-registry? value)))
 
   #|proc:make-test-case
-The `make-test-case` procedure creates a runtime test descriptor. `name` is the
-symbol naming the case, `body` is a zero-argument procedure run by the test
-runner, and `metadata` is an association list of descriptor metadata.
-|#
+  The `make-test-case` procedure creates a runtime test descriptor. `name` is the
+  symbol naming the case, and `metadata` is an association list of descriptor metadata.
+  The runner calls `body` as `(lambda () unspecified)` or as
+  `(lambda (parameters) unspecified)`, where `parameters` is an association list
+  containing fixture values followed by the concrete case parameters.
+  |#
   (define make-test-case
     (lambda (name body metadata)
       (pcheck ([symbol? name] [procedure? body] [list? metadata])
@@ -201,10 +203,10 @@ is an association list of descriptor metadata.
               ($make-test-descriptor 'expand name 'expand metadata '() form))))
 
   #|proc:make-test-compile
-The `make-test-compile` procedure creates a compile test descriptor. `name` is
-the symbol naming the descriptor, `forms` is a list of source data to compile,
-and `metadata` is an association list of descriptor metadata.
-|#
+  The `make-test-compile` procedure creates a compile test descriptor. `name` is
+  the symbol naming the descriptor, `forms` is a list of source data to compile,
+  and `metadata` is an association list of descriptor metadata.
+  |#
   (define make-test-compile
     (lambda (name forms metadata)
       (pcheck ([symbol? name] [list? forms metadata])
@@ -257,12 +259,12 @@ descriptors this is source data; for suites this is `#f`.
               ($test-descriptor-body descriptor))))
 
   #|proc:make-test-config
-The `make-test-config` procedure creates a test runner configuration.
-`reporter` is a reporter object or `#f`, `output` is the output port or `#f`,
-`xfail-strict?` makes unexpected passes have status `failed` instead of `xpass`,
-`stop-on-failure?` controls whether the runner stops at the first failure, and
-`color` is `auto`, `always`, or `never`.
-|#
+  The `make-test-config` procedure creates a test runner configuration.
+  `reporter` is a reporter object or `#f`, `output` is the output port or `#f`,
+  `xfail-strict?` makes unexpected passes have status `failed` instead of `xpass`,
+  `stop-on-failure?` controls whether the runner stops at the first failure, and
+  `color` is `auto`, `always`, or `never`.
+  |#
   (define make-test-config
     (lambda (reporter output xfail-strict? stop-on-failure? color)
       (pcheck ([$reporter-option? reporter]

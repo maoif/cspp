@@ -19,12 +19,12 @@
           (and (list? mode) (memq 'stderr mode)))))
 
   #|proc:test-capture-ports
-The `test-capture-ports` procedure calls `thunk` while capturing selected
-current output ports. `mode` is `'stdout`, `'stderr`, `'combined`, or a list
-containing `'stdout` and/or `'stderr`. The `thunk` parameter has signature
-`(lambda () value ...)`. The procedure returns three values: the thunk values as
-a list, captured stdout, and captured stderr.
-|#
+  The `test-capture-ports` procedure calls `thunk` while capturing selected
+  current output ports. `mode` is `'stdout`, `'stderr`, `'combined`, or a list
+  containing `'stdout` and/or `'stderr`. The `thunk` parameter has signature
+  `(lambda () value ...)`. The procedure returns three values: the thunk values as
+  a list, captured stdout, and captured stderr.
+  |#
   (define test-capture-ports
     (lambda (mode thunk)
       (pcheck ([procedure? thunk])
