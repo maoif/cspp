@@ -929,3 +929,134 @@
          (lambda ()
            (benchmark-clear-registry! registry)
            (for-each (lambda (descriptor) (benchmark-register! registry descriptor)) saved)))))
+
+(mat benchmark-suite-setup-error-is-a-result
+     ;; Error: failed setup must skip children and release partial suite resources.
+     (let ([child-ran? #f]
+           [cleanup-value 'not-cleaned]
+           [cleanup-resource #f]
+           [reported '()]
+           [primary (condition (make-error) (make-message-condition "suite setup failed"))])
+       (define-benchmark failed-suite-child ()
+         (lambda (state) (set! child-ran? #t)))
+       (define-benchmark-suite failed-suite
+         (:suite-setup (lambda (state)
+                         (benchmark-state-set-user-data! state 'partial-resource)
+                         (raise primary))
+          :suite-teardown (lambda (state setup-value)
+                            (set! cleanup-value setup-value)
+                            (set! cleanup-resource (benchmark-state-user-data state))))
+         failed-suite-child)
+       (call-with-port (open-output-string)
+         (lambda (out)
+           (let* ([reporter (make-benchmark-reporter
+                             (lambda (results out) (void))
+                             (lambda (result out)
+                               (set! reported (cons (benchmark-result-name result) reported)))
+                             (lambda (results out) (void)))]
+                  [results (benchmark-run-suite failed-suite
+                             (benchmark-config-with (benchmark-test-config)
+                               `((output . ,out) (reporter . ,reporter))))])
+             (and (= (length results) 1)
+                  (eq? (benchmark-result-name (car results)) 'failed-suite)
+                  (eq? (benchmark-result-error (car results)) primary)
+                  (not child-ran?)
+                  (eq? cleanup-value #f)
+                  (eq? cleanup-resource 'partial-resource)
+                  (equal? reported '(failed-suite))))))))
+
+(mat benchmark-suite-errors-preserve-primary
+     ;; Error: teardown failure must not replace the original setup failure.
+     (let ([primary (condition (make-error) (make-message-condition "primary setup error"))]
+           [secondary (condition (make-error) (make-message-condition "secondary cleanup error"))])
+       (define-benchmark unused-suite-child () (lambda (state) (void)))
+       (define-benchmark-suite double-error-suite
+         (:suite-setup (lambda (state) (raise primary))
+          :suite-teardown (lambda (state setup-value) (raise secondary)))
+         unused-suite-child)
+       (let ([results (benchmark-run-suite double-error-suite (benchmark-test-config))])
+         (and (= (length results) 1)
+              (eq? (benchmark-result-error (car results)) primary)))))
+
+(mat benchmark-suite-teardown-error-retains-children
+     ;; Error: failed teardown must add a suite error without discarding measured children.
+     (let ([seen-value #f]
+           [primary (condition (make-error) (make-message-condition "suite teardown failed"))])
+       (define-benchmark measured-suite-child () (lambda (state) (void)))
+       (define-benchmark-suite teardown-error-suite
+         (:suite-setup (lambda (state) 'suite-resource)
+          :suite-teardown (lambda (state setup-value)
+                            (set! seen-value setup-value)
+                            (raise primary)))
+         measured-suite-child)
+       (let ([results (benchmark-run-suite teardown-error-suite (benchmark-test-config))])
+         (and (= (length results) 2)
+              (equal? (map benchmark-result-name results)
+                      '(measured-suite-child teardown-error-suite))
+              (not (benchmark-result-error (car results)))
+              (eq? (benchmark-result-error (cadr results)) primary)
+              (eq? seen-value 'suite-resource)))))
+
+(mat benchmark-text-reporter-shows-errors
+     ;; Error: a captured failure must be visibly distinct from a zero-cost measurement.
+     (let* ([benchmark (make-benchmark 'visible-error
+                         (lambda (state) (error 'visible-error "body failed visibly")) '())]
+            [results (benchmark-run benchmark (benchmark-test-config))])
+       (call-with-port (open-output-string)
+         (lambda (out)
+           (benchmark-report results (benchmark-text-reporter) out)
+           (let ([text (get-output-string out)])
+             (and (benchmark-string-contains? text "error")
+                  (benchmark-string-contains? text "body failed visibly")))))))
+
+(mat benchmark-suite-reports-one-json-document
+     ;; Error: failed suite teardown must remain in the same JSON report as its children.
+     (let ()
+       (define-benchmark json-suite-child () (lambda (state) (void)))
+       (define-benchmark-suite json-suite
+         (:suite-teardown (lambda (state setup-value)
+                            (error 'json-suite "JSON teardown failure")))
+         json-suite-child)
+       (call-with-port (open-output-string)
+         (lambda (out)
+           (let* ([results (benchmark-run-suite json-suite
+                             (benchmark-config-with (benchmark-test-config)
+                               `((output . ,out) (reporter . ,(benchmark-json-reporter)))))]
+                  [text (get-output-string out)]
+                  [results-key (benchmark-string-index text "\"results\"")])
+             (and (= (length results) 2)
+                  results-key
+                  (not (benchmark-string-contains?
+                        (substring text (+ results-key 9) (string-length text)) "\"results\""))
+                  (benchmark-string-contains? text "\"json-suite-child\"")
+                  (benchmark-string-contains? text "\"json-suite\"")))))))
+
+(mat benchmark-suite-report-groups-retain-descriptor-outputs
+     ;; Error: reporting a teardown failure must preserve each child's effective output group.
+     (call-with-port (open-output-string)
+       (lambda (first-out)
+         (call-with-port (open-output-string)
+           (lambda (second-out)
+             (let* ([groups '()]
+                    [reporter (make-benchmark-reporter
+                                (lambda (results out)
+                                  (set! groups
+                                    (cons (cons out (map benchmark-result-name results)) groups)))
+                                (lambda (result out) (void))
+                                (lambda (results out) (void)))])
+               (define-benchmark first-output-child () (lambda (state) (void)))
+               (define-benchmark second-output-child (:output second-out)
+                 (lambda (state) (void)))
+               (define-benchmark-suite output-groups-suite
+                 (:suite-teardown (lambda (state setup-value)
+                                    (error 'output-groups-suite "group teardown failure")))
+                 first-output-child second-output-child)
+               (let ([config (parameterize ([current-output-port first-out])
+                               (benchmark-config-with (default-benchmark-config)
+                                 `((warmup . 0) (samples . 1) (min-time . 0)
+                                   (max-iterations . 1) (reporter . ,reporter))))])
+                 (benchmark-run-suite output-groups-suite config)
+                 (and (= (length groups) 2)
+                      (equal? (cdr (assq first-out groups))
+                              '(first-output-child output-groups-suite))
+                      (equal? (cdr (assq second-out groups)) '(second-output-child))))))))))

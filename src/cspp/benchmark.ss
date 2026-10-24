@@ -528,7 +528,9 @@
         [(real-ns) ($metric-mean result 'real-ns)]
         [(bytes) ($metric-mean result 'bytes)]
         [(counters) (benchmark-result-counters result)]
-        [(error) (and (benchmark-result-error result) #t)]
+        [(error)
+         (let ([error (benchmark-result-error result)])
+           (and error ($alist-ref ($condition->datum error) 'message)))]
         [else (errorf 'benchmark-rich-reporter "unknown result column: ~a" key)])))
 
   (define $benchmark-result-column-justify
@@ -553,7 +555,8 @@
       (cpu-ns . "cpu/ns")
       (real-ns . "real/ns")
       (bytes . "bytes/iter")
-      (counters . "counters")))
+      (counters . "counters")
+      (error . "error")))
 
   (define $string-pad-left
     (lambda (text width)
@@ -1186,9 +1189,9 @@ The `benchmark-comparison-improvement?` procedure returns whether comparison
               ($benchmark-comparison-improvement? comparison))))
 
   #|proc:benchmark-text-reporter
-The `benchmark-text-reporter` procedure returns the default plain textual
-reporter.
-|#
+  The `benchmark-text-reporter` procedure returns the default plain textual
+  reporter. Its error column describes captured failures beside their measurements.
+  |#
   (define benchmark-text-reporter
     (lambda ()
       (make-benchmark-reporter
@@ -1795,9 +1798,12 @@ the fixture setup value.
            benchmark))]))
 
   #|macro:define-benchmark-suite
-The `define-benchmark-suite` macro defines a suite descriptor named by `name`
-containing the listed benchmark descriptors.
-|#
+  The `define-benchmark-suite` macro defines a suite descriptor named by `name`
+  containing the listed benchmark descriptors. The optional `:suite-setup` procedure
+  receives the suite state and returns a setup value. The `:suite-teardown` procedure
+  receives that state and setup value, or `#f` if setup raised; it can inspect user
+  data in the state to release partially acquired resources.
+  |#
   (define-syntax define-benchmark-suite
     (syntax-rules ()
       [(_ name options benchmark ...)
@@ -1850,6 +1856,15 @@ suffix.
 ;;;;===----------------------------------------------------------------------===
 
   (define $current-suite-context (make-parameter #f))
+
+  (define $current-benchmark-report-collector (make-parameter #f))
+
+  (define $dispatch-benchmark-report
+    (lambda (results reporter out)
+      (let ([collector ($current-benchmark-report-collector)])
+        (if collector
+            (collector results reporter out)
+            (benchmark-report results reporter out)))))
 
   #|proc:benchmark-expand
 The `benchmark-expand` procedure expands `benchmark` into concrete run pairs
@@ -2050,9 +2065,14 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
               ($run-expanded expanded ($effective-benchmark-config (cdr expanded) config)))))
 
   #|proc:benchmark-run-suite
-The `benchmark-run-suite` procedure runs suite descriptor `suite` with runner
-`config` and returns the resulting benchmark results.
-|#
+  The `benchmark-run-suite` procedure runs suite descriptor `suite` with runner
+  `config` and returns its benchmark results. Failed setup skips children and returns
+  one error result named after the suite. Teardown always runs, receiving `#f` when
+  setup failed; a setup error takes precedence over a later teardown error. Failed
+  teardown after successful setup appends a suite error after completed child results.
+  Reports are emitted after teardown, grouping children by their effective reporter
+  and output. Suite errors join the configured reporter's group when enabled.
+  |#
   (define benchmark-run-suite
     (lambda (suite config)
       (pcheck ([benchmark-suite? suite] [benchmark-config? config])
@@ -2062,18 +2082,48 @@ The `benchmark-run-suite` procedure runs suite descriptor `suite` with runner
                                                   '()
                                                   0
                                                   1
-                                                  0)])
-                ($call-with-values-list
-                 (lambda ()
-                   (values (($benchmark-suite-setup suite) suite-state)))
-                 (lambda (values)
-                   (dynamic-wind
-                     (lambda () (void))
-                     (lambda ()
-                       (parameterize ([$current-suite-context ($benchmark-suite-name suite)])
-                         (benchmark-run ($benchmark-suite-benchmarks suite) config)))
-                     (lambda ()
-                       (($benchmark-suite-teardown suite) suite-state (car values))))))))))
+                                                  0)]
+                    [setup-value #f]
+                    [failure #f]
+                    [results '()]
+                    [report-groups '()])
+                (define collect-report!
+                  (lambda (results reporter out)
+                    (let ([group (find (lambda (group)
+                                         (and (eq? reporter (caar group))
+                                              (eq? out (cdar group))))
+                                       report-groups)])
+                      (if group
+                          (set-cdr! group (append (reverse results) (cdr group)))
+                          (set! report-groups
+                            (cons (cons (cons reporter out) (reverse results)) report-groups))))))
+                (dynamic-wind
+                  (lambda () (void))
+                  (lambda ()
+                    (guard (exn [else (set! failure exn)])
+                      (set! setup-value (($benchmark-suite-setup suite) suite-state))
+                      (set! results
+                        (parameterize ([$current-suite-context ($benchmark-suite-name suite)]
+                                       [$current-benchmark-report-collector collect-report!])
+                          (benchmark-run ($benchmark-suite-benchmarks suite) config)))))
+                  (lambda ()
+                    (guard (exn [else (unless failure (set! failure exn))])
+                      (($benchmark-suite-teardown suite) suite-state setup-value))))
+                (when failure
+                  (let ([result ($mk-benchmark-result ($benchmark-suite-name suite)
+                                                      '() '() '()
+                                                      (benchmark-summarize '())
+                                                      '() failure)]
+                        [reporter (benchmark-config-reporter config)]
+                        [out (benchmark-config-output config)])
+                    (when (and reporter out)
+                      (collect-report! (list result) reporter out))
+                    (set! results (append results (list result)))))
+                (for-each
+                  (lambda (group)
+                    ($dispatch-benchmark-report (reverse (cdr group)) (caar group) (cdar group)))
+                  (reverse report-groups))
+                results))))
 
   (define $benchmark-matches-selector?
     (lambda (benchmark selector)
@@ -2105,7 +2155,8 @@ The `benchmark-run-suite` procedure runs suite descriptor `suite` with runner
         (define finish
           (lambda (results)
             (for-each (lambda (group)
-                        (benchmark-report (reverse (cdr group)) (caar group) (cdar group)))
+                        ($dispatch-benchmark-report
+                         (reverse (cdr group)) (caar group) (cdar group)))
                       (reverse report-groups))
             (reverse results)))
         (let loop-benchmarks ([benchmarks benchmarks] [results '()])
