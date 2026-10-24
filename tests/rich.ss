@@ -2192,3 +2192,18 @@
                                (rich-layout :direction 'column :items ("x\ty\rz")))))
 
      )
+
+(mat rich-progress-huge-remaining
+
+     ;; A finite inexact completed count must not overflow subtraction from an exact total.
+     (parameterize ([rich-current-time (lambda () 0)])
+       (let* ([progress (make-rich-progress 4 '(remaining))]
+              [id (rich-progress-add-task! progress "build" (expt 10 1000))])
+         (rich-progress-update! progress id 1.0)
+         (parameterize ([rich-current-time (lambda () 1)])
+           (let ([result (rich-export-text progress)])
+             (and (> (string-length result) 990)
+                  (string=? (substring result (- (string-length result) 6)
+                                       (string-length result)) ":46:39"))))))
+
+     )

@@ -139,7 +139,8 @@
           [(elapsed) ($duration-string elapsed)]
           [(remaining) (cond [(and total (>= completed total)) "00:00:00"]
                              [(and total (positive? speed))
-                              ($duration-string (ceiling (/ (- total completed) speed)))]
+                              ($duration-string
+                               (ceiling (/ (- total (inexact->exact completed)) speed)))]
                              [else "--:--:--"])]
           [(speed) (string-append
                     (number->string (exact->inexact (/ (round (* speed 100)) 100))) "/s")]
