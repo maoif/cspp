@@ -853,3 +853,36 @@
                                     (default-benchmark-config))])
                (and (eq? (benchmark-config-output first-config) first-port)
                     (eq? (benchmark-config-output second-config) second-port))))))))
+
+(mat benchmark-dangling-pause-excludes-tail
+     (let* ([benchmark
+             (make-benchmark 'paused-tail
+               (lambda (state)
+                 (benchmark-pause-timing state)
+                 (benchmark-do-not-optimize (make-bytevector 1048576))
+                 (sleep-milliseconds 80))
+               '())]
+            [result (car (benchmark-run benchmark
+                           (benchmark-config-with (benchmark-test-config)
+                             '((samples . 1)))))]
+            [sample (car (benchmark-result-samples result))]
+            [stats (benchmark-sample-sstats sample)])
+       (and (not (benchmark-result-error result))
+            (< (sstats-bytes stats) 4096)
+            (= (time-second (sstats-real stats)) 0)
+            (< (time-nanosecond (sstats-real stats)) 40000000))))
+
+(mat benchmark-setup-dispatch-does-not-allocate-per-iteration
+     (let* ([benchmark
+             (make-benchmark 'setup-dispatch
+               (lambda (state left right setup-value)
+                 (benchmark-do-not-optimize setup-value))
+               `((args (left right) (1 2))
+                 (setup . ,(lambda (state) 'setup-value))))]
+            [result (car (benchmark-run benchmark
+                           (benchmark-config-with (benchmark-test-config)
+                             '((samples . 1) (min-time . 1) (max-iterations . 4096)))))]
+            [sample (car (benchmark-result-samples result))])
+       (and (not (benchmark-result-error result))
+            (= (benchmark-sample-iterations sample) 4096)
+            (< (sstats-bytes (benchmark-sample-sstats sample)) 4096))))

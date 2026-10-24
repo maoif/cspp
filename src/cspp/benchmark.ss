@@ -1900,18 +1900,12 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
         (lambda values
           (consumer values)))))
 
-  (define $apply-body
-    (lambda (benchmark state values setup-value setup-value?)
-      (if setup-value?
-          (apply ($benchmark-body benchmark) state (append values (list setup-value)))
-          (apply ($benchmark-body benchmark) state values))))
-
   (define $run-body-iterations
-    (lambda (benchmark state values setup-value setup-value? iterations)
+    (lambda (body state arguments iterations)
       (let loop ([i 0])
         (when (< i iterations)
           ($benchmark-state-iteration-set! state i)
-          ($apply-body benchmark state values setup-value setup-value?)
+          (apply body state arguments)
           (loop (+ i 1))))))
 
   (define $setup-for-sample
@@ -1948,14 +1942,19 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
            (let ([setup-value (car setup-results)]
                  [teardown (cadr setup-results)]
                  [setup-value? (caddr setup-results)]
+                 [arguments (if (caddr setup-results)
+                                (append values (list (car setup-results)))
+                                values)]
                  [cleanup? #t])
              (dynamic-wind
                (lambda () (void))
                (lambda ()
                  (let* ([b1 (statistics)]
                         [b2 (statistics)])
-                   ($run-body-iterations benchmark sample-state values
-                                         setup-value setup-value? iterations)
+                   ($run-body-iterations ($benchmark-body benchmark) sample-state
+                                         arguments iterations)
+                   (when ($benchmark-state-timing-paused? sample-state)
+                     (benchmark-resume-timing sample-state))
                    (let* ([after (statistics)]
                           [elapsed (sstats-difference after b2)]
                           [overhead (sstats-difference b2 b1)]
