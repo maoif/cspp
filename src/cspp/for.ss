@@ -54,7 +54,7 @@
           |  <vector>   ; iter items in the vector from left to right
 
 <for-config-clause> := <break-clause>
-                    |  <guard-clasue>
+                    |  <guard-clause>
                     |  <bind-clause>
 
 <index-clause> := [:index <var>]
@@ -64,7 +64,7 @@
 <break-clause> := [:break <expr>]
                |  [:break <expr> <expr>]  ; value of 2nd expr computes the return value
 
-<guard-clasue> := [:guard <expr>]
+<guard-clause> := [:guard <expr>]
                |  [:guard <expr> :index <var>] ; index incrs only when guard passes
 
 <bind-clause> := [:let <var> <expr>]
@@ -597,6 +597,11 @@
         <for-config-clause>*)
   <body>+)
   |#
+  #|macro:for
+  The `for` macro runs its iterators in parallel and evaluates the body for each accepted tuple.
+  It returns an unspecified value after all sources are exhausted. The optional global `:index`
+  counts body evaluations; iterator options and configuration clauses follow `for/fold`.
+  |#
   (define-syntax for
     (lambda (stx)
       (define handler
@@ -633,6 +638,11 @@
            <for-config-clause>*)
   <body>+)
   |#
+  #|macro:for/list
+  The `for/list` macro runs `for` and collects each body result in source order.
+  It returns a newly built list. `:index`, iterator options, guards, bindings, and breaks follow
+  `for/fold`; the body result is evaluated once for every accepted tuple.
+  |#
   (define-syntax for/list
     (lambda (stx)
       (syntax-case stx ()
@@ -653,6 +663,11 @@
 
 <length-clause> := [:length <expr>] ; <expr> must evaluate to a non-negative fixnum
 <fill-clause>   := [:fill   <expr>]
+  |#
+  #|macro:for/vector
+  The `for/vector` macro runs `for` and collects body results in a vector.
+  With `:length`, it preallocates that many slots and stops when full; `:fill` supplies the
+  initial value. Without `:length`, it grows a list builder and converts the results to a vector.
   |#
   (define-syntax for/vector
     (lambda (stx)
@@ -732,6 +747,11 @@
        <for*-clause>+)
    <body>+)
   |#
+  #|macro:for*
+  The `for*` macro nests its iterator clauses, evaluating each inner source for every outer item.
+  It returns an unspecified value after all nested sources are exhausted. Configuration clauses
+  belong to the iterator they follow; global `:index` and binding semantics follow `for*/fold`.
+  |#
   (define-syntax for*
     (lambda (stx)
       (define handler
@@ -766,9 +786,14 @@
 
 
   #|doc
-(for*/vector (<index-clause>?
+(for*/list (<index-clause>?
               <for*-clause>+)
   <body>+)
+  |#
+  #|macro:for*/list
+  The `for*/list` macro runs `for*` and collects each body result in nested traversal order.
+  It returns a newly built list; iterator-local guards, indexes, bindings, `:break`, and `:stop`
+  apply at the iterator level where they appear.
   |#
   (define-syntax for*/list
     (lambda (stx)
@@ -786,6 +811,11 @@
               <fill-clause>?
               <for*-clause>+)
   <body>+)
+  |#
+  #|macro:for*/vector
+  The `for*/vector` macro runs `for*` and collects body results in a vector.
+  With `:length`, it preallocates the vector and stops when full; `:fill` supplies its initial
+  value. Without `:length`, it uses a list builder and converts the nested results to a vector.
   |#
   (define-syntax for*/vector
     (lambda (stx)
