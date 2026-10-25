@@ -1291,3 +1291,13 @@
              (and (benchmark-string-contains? text "template-args")
                   (benchmark-string-contains? text "kind")
                   (benchmark-string-contains? text "vector")))))))
+
+(mat benchmark-exact-min-time-respects-iteration-cap
+     ;; Finite exact targets must not overflow through an intermediate flonum.
+     (let* ([benchmark (make-benchmark 'exact-target (lambda (state) (void)) '())]
+            [result (car (benchmark-run benchmark
+                           (benchmark-config-with (benchmark-test-config)
+                             `((samples . 1) (max-iterations . 2)
+                               (min-time . ,(expt 10 400))))))])
+       (and (not (benchmark-result-error result))
+            (= (benchmark-sample-iterations (car (benchmark-result-samples result))) 2))))

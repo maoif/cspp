@@ -749,7 +749,7 @@
 
   (define $seconds->ns
     (lambda (seconds)
-      (inexact->exact (floor (* (exact->inexact seconds) 1000000000.0)))))
+      (floor (* (if (exact? seconds) seconds (inexact->exact seconds)) 1000000000))))
 
   (define $sstats-real-ns
     (lambda (s)
