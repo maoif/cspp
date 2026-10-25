@@ -339,7 +339,10 @@
 
   #|macro:test-expand
 The `test-expand` macro defines and registers a macro expansion test descriptor
-named `name`.
+named `name`. The source is expanded at run time in an immutable CSPP
+environment. It must be self-contained: place local macro definitions inside
+the tested form. Surrounding lexical or user top-level bindings are not imported;
+unbound references are errors. Skip policies run before expansion.
 |#
   (define-syntax test-expand
     (syntax-rules ()

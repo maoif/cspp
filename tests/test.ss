@@ -1028,3 +1028,27 @@
         (and (= (test-main '("--reporter" "text")) 0)
              (= (test-main '("--reporter" "datum")) 0)
              (= (test-main '("--reporter" "progress")) 0))))))
+
+(mat test-expansion-self-contained-source
+  ;; Surrounding local bindings must not become silently accepted global references.
+  (let-syntax ([reject (lambda (stx) (syntax-error stx "local rejection"))])
+    (let* ([descriptor (test-expand external-local (reject))]
+           [result (car (test-run (list descriptor) (test-silent-config)))])
+      (and (eq? (test-result-status result) 'errored)
+           (syntax-violation? (test-result-condition result)))))
+
+  ;; Put the local transformer in the tested source to expand it during the run.
+  (let* ([descriptor
+          (test-expand self-contained-reject :raises syntax-violation?
+            (let-syntax ([reject (lambda (stx) (syntax-error stx "source rejection"))])
+              (reject)))]
+         [result (car (test-run (list descriptor) (test-silent-config)))])
+    (eq? (test-result-status result) 'passed))
+
+  ;; Skip policies apply before a self-contained transformer can run or raise.
+  (let* ([descriptor
+          (test-expand self-contained-skipped :skip "disabled"
+            (let-syntax ([reject (lambda (stx) (syntax-error stx "must not expand"))])
+              (reject)))]
+         [result (car (test-run (list descriptor) (test-silent-config)))])
+    (eq? (test-result-status result) 'skipped)))

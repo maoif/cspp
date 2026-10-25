@@ -196,7 +196,8 @@ suite, and `metadata` is an association list of descriptor metadata.
   #|proc:make-test-expand
 The `make-test-expand` procedure creates an expansion test descriptor. `name` is
 the symbol naming the descriptor, `form` is the datum to expand, and `metadata`
-is an association list of descriptor metadata.
+is an association list of descriptor metadata. The form is expanded in an
+immutable `(cspp)` environment; include custom macro definitions in `form`.
 |#
   (define make-test-expand
     (lambda (name form metadata)

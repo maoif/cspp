@@ -341,7 +341,8 @@ association-list filters as `test-select`.
              (test-concrete-case-parameters concrete-case))]
           [(expand)
            ($run-with-expected-condition
-            metadata (lambda () (expand (test-descriptor-body descriptor))))]
+            metadata (lambda () (expand (test-descriptor-body descriptor)
+                                         (environment '(cspp)))))]
           [(compile)
            ($run-with-expected-condition metadata
              (lambda () ($compile-case descriptor)))]
