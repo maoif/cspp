@@ -13,6 +13,29 @@
                (match '(10 20)
                  [(,(tagged ,outer ,x) ...) (list x outer)]))))
 
+(mat reserved-extension-capture-dispatch
+     ;; Built-in heads stay reserved during both capture discovery and matcher generation.
+     (let ()
+       (define-match-expander hash-expander (lambda (pp rho expr pat body fk) body))
+       (let ([table (make-hashtable string-hash string=?)])
+         (hashtable-set! table "key" 42)
+         (equal? '(42)
+                 (match (list table) [(,(hash ("key" ,x)) ...) x]))))
+
+     (let ()
+       (define-match-expander box-expander (lambda (pp rho expr pat body fk) body))
+       (equal? '(10 20) (match '#(#&10 #&20) [#(,(box ,x) ...) x])))
+
+     (let ()
+       (define-match-expander regex-expander (lambda (pp rho expr pat body fk) body))
+       (equal? '("a" "b") (match '("a" "b") [(,(regex "." (0 ,x)) ...) x])))
+
+     (let ()
+       (record hash (value))
+       (let ([table (make-hashtable string-hash string=?)])
+         (hashtable-set! table "key" 42)
+         (equal? '(42) (match (list table) [(,(hash ("key" ,x)) ...) x])))))
+
 
 (mat else-clause
 

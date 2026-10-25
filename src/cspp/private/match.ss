@@ -122,6 +122,12 @@
             (let-values ([(type named? patterns)
                           (record-pattern-info compile-environment pattern)])
               (if named? (map pattern-value patterns) patterns))]
+           ;; Built-in spelling has the same precedence as matcher generation.
+           [(eq? (syntax->datum extension) 'regex)
+            (map pattern-value (cdr arguments))]
+           [(eq? (syntax->datum extension) 'hash)
+            (map pattern-value arguments)]
+           [(eq? (syntax->datum extension) 'box) arguments]
            [(eq? expander datatype-expander)
             (if (and (= 1 (length arguments)) (identifier? (car arguments)))
                 '()
@@ -132,12 +138,6 @@
                            (by-name-record-pats? compile-environment variant patterns))
                       (map pattern-value patterns)
                       patterns)))]
-           [(and (not expander) (eq? (syntax->datum extension) 'regex))
-            (map pattern-value (cdr arguments))]
-           [(and (not expander) (eq? (syntax->datum extension) 'hash))
-            (map pattern-value arguments)]
-           [(and (not expander) (eq? (syntax->datum extension) 'box))
-            arguments]
            [else
             ;; Custom expanders decide which arguments are patterns.  Ask the
             ;; expander through a collector callback instead of treating every
