@@ -1301,3 +1301,38 @@
                                (min-time . ,(expt 10 400))))))])
        (and (not (benchmark-result-error result))
             (= (benchmark-sample-iterations (car (benchmark-result-samples result))) 2))))
+
+(mat benchmark-counters-update-without-repeated-allocation
+     (let ([state (benchmark-state 'counter #f '() '() 0 1 0)])
+       (benchmark-state-counter-set! state 'calls 0)
+       (collect)
+       (let ([before (statistics)])
+         (do ([index 0 (fx+ index 1)]) [(fx= index 20000)]
+           (benchmark-state-counter-add! state 'calls 1))
+         ;; Counter updates must not add per-iteration list allocations to measured work.
+         (< (sstats-bytes (sstats-difference (statistics) before)) 65536))))
+
+(mat benchmark-counters-snapshot-before-cleanup
+     (let* ([states '()]
+            [benchmark
+             (make-benchmark 'counter-snapshot
+               (lambda (state value)
+                 (benchmark-state-counter-add! state 'calls 1)
+                 (benchmark-state-counter-set! state 'other 3)
+                 (benchmark-state-counter-set! state 'other 4))
+               `((setup . ,(lambda (state)
+                             (set! states (cons state states))
+                             (benchmark-state-counter-set! state 'calls 1)))
+                 (teardown . ,(lambda (state value)
+                                (benchmark-state-counter-set! state 'calls 1000)))))]
+            [result (car (benchmark-run benchmark (benchmark-test-config)))])
+       (for-each (lambda (state) (benchmark-state-counter-add! state 'calls 1000)) states)
+       (and (not (benchmark-result-error result))
+            (for-all (lambda (sample)
+                       (let ([counters (benchmark-sample-counters sample)])
+                         (and (= (length counters) 2)
+                              (= (cdr (assq 'calls counters)) 2)
+                              (= (cdr (assq 'other counters)) 4))))
+                     (benchmark-result-samples result))
+            (= (cdr (assq 'calls (benchmark-result-counters result))) 4)
+            (= (cdr (assq 'other (benchmark-result-counters result))) 8))))

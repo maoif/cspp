@@ -81,6 +81,7 @@
             iterations sample
             (mutable user-data benchmark-state-user-data benchmark-state-set-user-data!)
             (mutable counters $benchmark-state-counters $benchmark-state-counters-set!)
+            (mutable counter-index $benchmark-state-counter-index $benchmark-state-counter-index-set!)
             (mutable timing-paused? $benchmark-state-timing-paused? $benchmark-state-timing-paused?-set!)
             (mutable pause-start $benchmark-state-pause-start $benchmark-state-pause-start-set!)
             (mutable paused-sstats $benchmark-state-paused-sstats $benchmark-state-paused-sstats-set!)))
@@ -222,7 +223,7 @@
   (define $make-benchmark-state
     (lambda (name suite args template-args iteration iterations sample user-data counters timing-paused?)
       ($mk-benchmark-state name suite args template-args iteration iterations sample
-                           user-data counters timing-paused? #f ($zero-sstats))))
+                           user-data counters #f timing-paused? #f ($zero-sstats))))
 
   (define $sample-cpu-ns
     (lambda (sample)
@@ -297,22 +298,25 @@
 
   (define $merge-counters
     (lambda (samples)
-      (let loop-samples ([samples samples] [out '()])
-        (if (null? samples)
-            (reverse out)
-            (let loop-counters ([counters (benchmark-sample-counters (car samples))]
-                                [out out])
-              (if (null? counters)
-                  (loop-samples (cdr samples) out)
-                  (let* ([entry (car counters)]
-                         [key (car entry)]
-                         [value (cdr entry)]
-                         [old (assq key out)])
-                    (if old
-                        (begin
-                          (set-cdr! old (+ (cdr old) value))
-                          (loop-counters (cdr counters) out))
-                        (loop-counters (cdr counters) (cons (cons key value) out))))))))))
+      (let ([index (make-eq-hashtable)])
+        (let loop-samples ([samples samples] [out '()])
+          (if (null? samples)
+              (reverse out)
+              (let loop-counters ([counters (benchmark-sample-counters (car samples))]
+                                  [out out])
+                (if (null? counters)
+                    (loop-samples (cdr samples) out)
+                    (let* ([entry (car counters)]
+                           [key (car entry)]
+                           [value (cdr entry)]
+                           [old (hashtable-ref index key #f)])
+                      (if old
+                          (begin
+                            (set-cdr! old (+ (cdr old) value))
+                            (loop-counters (cdr counters) out))
+                          (let ([entry (cons key value)])
+                            (hashtable-set! index key entry)
+                            (loop-counters (cdr counters) (cons entry out))))))))))))
 
   (define $string-replace
     (lambda (text old new)
@@ -872,6 +876,21 @@ in `state`.
       (pcheck ([benchmark-state? state])
               ($benchmark-state-sample state))))
 
+  (define $counter-entry
+    (lambda (state name)
+      (let ([index (or ($benchmark-state-counter-index state)
+                       (let ([index (make-eq-hashtable)])
+                         (for-each (lambda (entry) (hashtable-set! index (car entry) entry))
+                                   ($benchmark-state-counters state))
+                         ($benchmark-state-counter-index-set! state index)
+                         index))])
+        (or (hashtable-ref index name #f)
+            (let ([entry (cons name 0)])
+              (hashtable-set! index name entry)
+              ($benchmark-state-counters-set!
+               state (cons entry ($benchmark-state-counters state)))
+              entry)))))
+
   #|proc:benchmark-state-counter-set!
 The `benchmark-state-counter-set!` procedure sets counter `name` in `state` to
 numeric `value` for the current sample.
@@ -879,10 +898,7 @@ numeric `value` for the current sample.
   (define benchmark-state-counter-set!
     (lambda (state name value)
       (pcheck ([benchmark-state? state] [symbol? name] [number? value])
-              ($benchmark-state-counters-set!
-               state
-               (cons (cons name value)
-                     ($remove-key name ($benchmark-state-counters state)))))))
+              (set-cdr! ($counter-entry state name) value))))
 
   #|proc:benchmark-state-counter-add!
 The `benchmark-state-counter-add!` procedure adds numeric `value` to counter
@@ -891,9 +907,8 @@ The `benchmark-state-counter-add!` procedure adds numeric `value` to counter
   (define benchmark-state-counter-add!
     (lambda (state name value)
       (pcheck ([benchmark-state? state] [symbol? name] [number? value])
-              (benchmark-state-counter-set!
-               state name
-               (+ value ($alist-ref ($benchmark-state-counters state) name 0))))))
+              (let ([entry ($counter-entry state name)])
+                (set-cdr! entry (+ value (cdr entry)))))))
 
   #|proc:make-benchmark
 The `make-benchmark` procedure creates a benchmark descriptor named by symbol
@@ -2012,7 +2027,9 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                                      elapsed ($benchmark-state-paused-sstats sample-state))]
                             [adjusted ($sanitize-sstats (sstats-difference active overhead))])
                        ($mk-benchmark-sample iterations adjusted #f
-                                             ($benchmark-state-counters sample-state))))))
+                         ;; Keep completed samples independent of cleanup and retained states.
+                         (map (lambda (entry) (cons (car entry) (cdr entry)))
+                              ($benchmark-state-counters sample-state)))))))
                (lambda ()
                  (when cleanup?
                    (set! cleanup? #f)
