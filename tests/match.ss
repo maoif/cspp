@@ -1025,6 +1025,46 @@
      (equal? '(changed)
              (match '(1 2 stop) [(,x ... stop) (set! x '(changed)) x] [else #f])))
 
+(mat extension-suffix-materialization
+     ;; Built-in suffixes without prefix references must allocate linearly, not reverse per retry.
+     (let ()
+       (define-record-type SuffixRecord (fields value))
+       (datatype SuffixType [SuffixItem value])
+       (define (check suffix matcher)
+         (let* ([input (append (iota 2000) (list suffix))]
+                [before (statistics)]
+                [result (matcher input)]
+                [allocated (sstats-bytes (sstats-difference (statistics) before))])
+           (and (= result 2000) (< allocated 1000000))))
+       (let ([table (make-eq-hashtable)])
+         (hashtable-set! table 'key 'stop)
+         (and (check (box 'stop)
+                     (lambda (input) (match input [(,x ... ,(box stop)) (length x)])))
+              (check (box 'stop)
+                     (lambda (input)
+                       (match (list->vector input) [#(,x ... ,(box stop)) (length x)])))
+              (check table
+                     (lambda (input) (match input [(,x ... ,(hash (key stop))) (length x)])))
+              (check (make-SuffixRecord 'stop)
+                     (lambda (input)
+                       (match input [(,x ... ,(record SuffixRecord :values stop)) (length x)])))
+              (check (SuffixItem 'stop)
+                     (lambda (input)
+                       (match input
+                         [(,x ... ,(datatype SuffixType SuffixItem :fields (value stop)))
+                          (length x)]))))))
+
+     ;; Known extensions containing prefix backreferences still materialize before matching.
+     (let ()
+       (datatype SuffixReference [ReferenceItem value])
+       (let ([table (make-eq-hashtable)])
+         (hashtable-set! table 'key '(1 2))
+         (and (equal? '(1 2)
+                      (match (list 1 2 table) [(,x ... ,(hash (key `x))) x]))
+              (equal? '(1 2)
+                      (match (vector 1 2 (ReferenceItem '(1 2)))
+                        [#(,x ... ,(datatype SuffixReference ReferenceItem :values `x)) x]))))))
+
 (mat record-pattern-expansion-growth
      ;; Four sibling local records must not duplicate the remaining matcher exponentially.
      (let* ([before (statistics)]

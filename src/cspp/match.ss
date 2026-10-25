@@ -185,8 +185,9 @@ Examples:
                 [_ #f])))
           #|proc:transparent-suffix?
           The `transparent-suffix?` helper reports whether a suffix can be inspected without
-          introducing hidden prefix references. A suffix `,x` produces `#t`; a regex extension
-          or a quasiquoted identifier produces `#f`.
+          introducing hidden prefix references. A suffix `,x` or `,(box stop)` produces `#t`;
+          built-in box, hash, record, and datatype subpatterns are checked recursively. Regexes,
+          custom expanders, catamorphisms, and quasiquoted identifiers remain opaque.
           |#
           (define transparent-suffix?
             (lambda (pattern)
@@ -194,7 +195,11 @@ Examples:
                 [,name (identifier? #'name) #t]
                 ;; Identifier macros may introduce prefix references at their use site.
                 [`name (identifier? #'name) #f]
-                [,(extension arguments ...) #f]
+                [,(extension arguments ...)
+                 (identifier? #'extension)
+                 (and (memq (datum extension) '(box hash record datatype))
+                      (for-all transparent-suffix?
+                               (extension-subpatterns rho #'(extension arguments ...))))]
                 [(unquote-splicing . arguments) #f]
                 [(head . tail) (and (transparent-suffix? #'head) (transparent-suffix? #'tail))]
                 [#(items ...) (for-all transparent-suffix? #'(items ...))]
