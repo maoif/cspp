@@ -325,7 +325,20 @@ association-list filters as `test-select`.
     (lambda (metadata thunk)
       (let ([predicate ($expected-condition-predicate metadata)])
         (if predicate
-            (test-assert-raises predicate thunk "expected matching condition")
+            (let ([matched?
+                   ;; Escape on a match without resuming the body after an expected warning.
+                   (call/1cc
+                    (lambda (matched)
+                      (with-exception-handler
+                        (lambda (condition)
+                          (cond
+                           [(predicate condition) (matched #t)]
+                           [($allowed-warning? metadata condition) (void)]
+                           [else
+                            (test-fail "expected matching condition" predicate condition)]))
+                        (lambda () (thunk) #f))))])
+              (unless matched?
+                (test-fail "expected matching condition" predicate 'no-condition)))
             (thunk)))))
 
   (define $run-phase-body
@@ -349,13 +362,17 @@ association-list filters as `test-select`.
           [else (errorf 'test-run "unsupported test phase: ~a"
                         (test-descriptor-phase descriptor))]))))
 
+  (define $allowed-warning?
+    (lambda (metadata condition)
+      (and (warning? condition)
+           (not (test-metadata-ref metadata 'condition-handler #f))
+           (not (eq? (test-metadata-ref metadata 'warnings 'allow) 'error)))))
+
   (define $run-allowing-warnings
     (lambda (metadata thunk)
       (with-exception-handler
         (lambda (condition)
-          (if (and (warning? condition)
-                   (not (test-metadata-ref metadata 'condition-handler #f))
-                   (not (eq? (test-metadata-ref metadata 'warnings 'allow) 'error)))
+          (if ($allowed-warning? metadata condition)
               (void)
               (raise condition)))
         thunk)))
@@ -457,8 +474,9 @@ association-list filters as `test-select`.
   descriptors or all concrete cases (for example, from `test-select`). Concrete
   cases run in supplied order without re-expansion, preserving IDs, parameters,
   and inherited metadata. An empty list returns no results. Mixed lists are rejected.
-  Allowed continuable warnings resume
-  the case body. Skip and expected-failure rules apply to every phase. An
+  Allowed continuable warnings resume the case body unless accepted by `raises`.
+  A `raises` predicate is called once per condition; rejected allowed warnings resume
+  until a matching condition is raised. Skip and expected-failure rules apply to every phase. An
   unexpected pass has status `failed` under effective strict xfail policy and
   `xpass` otherwise; only `failed` and `errored` stop a stop-on-failure run.
   |#

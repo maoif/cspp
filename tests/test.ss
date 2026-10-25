@@ -538,6 +538,83 @@
                         (test-silent-config)))])
       (and continued? (eq? (test-result-status result) 'passed)))))
 
+(mat test-expected-condition-warning-policy
+  ;; Allowed warnings must resume until the expected error, with one predicate call per condition.
+  (for-all
+    (lambda (policy)
+      (let ([continued? #f] [seen '()])
+        (let ([result
+               (car (test-run
+                      (list (make-test-case 'warning-before-error
+                              (lambda ()
+                                (warningf 'warning-before-error "allowed")
+                                (set! continued? #t)
+                                (error 'warning-before-error "expected"))
+                              (cons (cons 'raises
+                                      (lambda (condition)
+                                        (set! seen (cons (if (warning? condition) 'warning 'error)
+                                                         seen))
+                                        (error? condition)))
+                                    policy)))
+                      (test-silent-config)))])
+          (and continued?
+               (equal? seen '(error warning))
+               (eq? (test-result-status result) 'passed)))))
+    '(() ((warnings . allow))))
+
+  ;; Error: an allowed warning alone must not satisfy an expected error.
+  (let ([continued? #f])
+    (let* ([result
+            (car (test-run
+                   (list (make-test-case 'missing-error
+                           (lambda ()
+                             (warningf 'missing-error "allowed")
+                             (set! continued? #t))
+                           `((raises . ,error?))))
+                   (test-silent-config)))]
+           [condition (test-result-condition result)])
+      (and continued?
+           (eq? (test-result-status result) 'failed)
+           (test-failure? condition)
+           (eq? (test-failure-actual condition) 'no-condition))))
+
+  ;; Explicit warning expectations take precedence, including under warnings-as-error.
+  (for-all
+    (lambda (policy)
+      (let ([continued? #f] [calls 0])
+        (let ([result
+               (car (test-run
+                      (list (make-test-case 'expected-warning
+                              (lambda ()
+                                (warningf 'expected-warning "expected")
+                                (set! continued? #t))
+                              (cons (cons 'raises
+                                      (lambda (condition)
+                                        (set! calls (+ calls 1))
+                                        (warning? condition)))
+                                    policy)))
+                      (test-silent-config)))])
+          (and (not continued?) (= calls 1)
+               (eq? (test-result-status result) 'passed)))))
+    '(() ((warnings . error))))
+
+  ;; Error: rejected warnings must still abort under strict policy or a custom handler.
+  (for-all
+    (lambda (policy)
+      (let ([continued? #f])
+        (let ([result
+               (car (test-run
+                      (list (make-test-case 'rejected-warning
+                              (lambda ()
+                                (warningf 'rejected-warning "rejected")
+                                (set! continued? #t)
+                                (error 'rejected-warning "expected"))
+                              (cons (cons 'raises error?) policy)))
+                      (test-silent-config)))])
+          (and (not continued?) (eq? (test-result-status result) 'failed)))))
+    (list '((warnings . error))
+          `((condition-handler . ,(lambda (condition) 'failed))))))
+
 (mat test-failed-output-preservation
   ;; Both streams must survive an assertion failure.
   (let ([result (car (test-run
