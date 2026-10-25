@@ -570,6 +570,8 @@
 
   (define $benchmark-text-default-columns
     '((name . "name")
+      (args . "args")
+      (template-args . "template-args")
       (iterations . "iterations")
       (cpu-ns . "cpu/ns")
       (real-ns . "real/ns")
@@ -1213,7 +1215,8 @@ The `benchmark-comparison-improvement?` procedure returns whether comparison
 
   #|proc:benchmark-text-reporter
   The `benchmark-text-reporter` procedure returns the default plain textual
-  reporter. Its error column describes captured failures beside their measurements.
+  reporter. It identifies runtime and template arguments in each row. Its error
+  column describes captured failures beside their measurements.
   |#
   (define benchmark-text-reporter
     (lambda ()

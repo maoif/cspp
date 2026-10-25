@@ -1242,3 +1242,14 @@
              (and (condition? raised)
                   (string? (car (condition-irritants raised))))))
          (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat benchmark-text-identifies-arguments
+     (let* ([results (benchmark-results-from-data
+                       '(((name . sized) (args . ((size . 1))) (template-args . ((kind . vector))))))])
+       (call-with-port (open-output-string)
+         (lambda (out)
+           (benchmark-report results (benchmark-text-reporter) out)
+           (let ([text (get-output-string out)])
+             (and (benchmark-string-contains? text "size")
+                  (benchmark-string-contains? text "kind")
+                  (benchmark-string-contains? text "vector")))))))
