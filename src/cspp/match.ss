@@ -54,6 +54,8 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
 The `...` pattern repeats zero or more list or vector elements and collects captures as lists.
 `match` evaluates `<expr>` once, tries clauses from left to right, and returns the selected body.
 An omitted `else` raises an error when no clause matches.
+The `,@` forms recursively apply the same clauses as a catamorphism: `,@x` returns the value
+of matching the current input again, while `,@[]` keeps only the recursive side effect.
 
 Examples:
 
@@ -103,6 +105,10 @@ Examples:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;   helpers
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+      #|proc:literal?
+      The `literal?` helper reports whether syntax is a self-contained literal pattern.
+      For example, `42` produces `#t`, while `x` produces `#f` because identifiers are symbols.
+      |#
       (define literal?
         (lambda (lit)
           (let ([p (syntax->datum lit)])
@@ -110,6 +116,10 @@ Examples:
                 (boolean? p)
                 (string? p)
                 (char? p)))))
+      #|proc:handle-extension
+      The `handle-extension` helper dispatches an extension pattern to its expander.
+      For example, `(hash ("key" ,x))` selects the hash expander and returns its matcher syntax.
+      |#
       (define handle-extension
         (lambda (ext rho expr-id pat body fk)
           (define (match-expander? ext)
@@ -135,9 +145,19 @@ Examples:
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;   main logic
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+      #|proc:process-pattern
+      The `process-pattern` helper compiles one pattern against `expr-id`.
+      It returns success syntax when the pattern matches and calls `failure` otherwise; for
+      example, compiling `,x` against `value` returns a binding of `x` to `value`.
+      |#
       (define process-pattern
         (lambda (rho expr-id pat body fk)
           ;; Conservatively include embedded expressions as well as backreferences.
+          #|proc:mentions-variable?
+          The `mentions-variable?` helper reports whether a syntax tree refers to an identifier.
+          For example, `'(,x stop)` with identifier `x` produces `#t`, while `'(stop)` produces
+          `#f`.
+          |#
           (define mentions-variable?
             (lambda (pattern variable)
               (syntax-case pattern ()
@@ -148,6 +168,11 @@ Examples:
                                      #'(items ...))]
                 [name (identifier? #'name) (free-identifier=? #'name variable)]
                 [_ #f])))
+          #|proc:transparent-suffix?
+          The `transparent-suffix?` helper reports whether a suffix can be inspected without
+          introducing hidden prefix references. A suffix `,x` produces `#t`; a regex extension
+          or a quasiquoted identifier produces `#f`.
+          |#
           (define transparent-suffix?
             (lambda (pattern)
               (syntax-case pattern (unquote unquote-splicing quasiquote)
@@ -159,12 +184,22 @@ Examples:
                 [(head . tail) (and (transparent-suffix? #'head) (transparent-suffix? #'tail))]
                 [#(items ...) (for-all transparent-suffix? #'(items ...))]
                 [_ #t])))
+          #|proc:bind-pattern-captures
+          The `bind-pattern-captures` helper emits lexical bindings for captured variables.
+          For example, variables `(x y)` and expressions `(10 20)` produce nested bindings
+          equivalent to `(let ([x 10]) (let ([y 20]) body))`.
+          |#
           (define bind-pattern-captures
             (lambda (variables expressions body)
               (if (null? variables)
                   body
                   #`(let ([#,(car variables) #,(car expressions)])
                       #,(bind-pattern-captures (cdr variables) (cdr expressions) body)))))
+          #|proc:bind-suffix-captures
+          The `bind-suffix-captures` helper reverses accumulated ellipsis captures and binds
+          them around a suffix continuation. For example, accumulated `(2 1)` becomes `(1 2)`
+          before the suffix body runs.
+          |#
           (define bind-suffix-captures
             (lambda (variables accumulators suffix success generate)
               (let loop ([variables variables] [accumulators accumulators]
@@ -178,6 +213,11 @@ Examples:
                               (mentions-variable? suffix (car variables)))
                           (loop (cdr variables) (cdr accumulators) (cons entry early) late)
                           (loop (cdr variables) (cdr accumulators) early (cons entry late))))))))
+          #|proc:with-pattern-vars
+          The `with-pattern-vars` helper walks a pattern and passes its unique capture identifiers
+          to `generate`. For example, `'(,x (,(box ,y)))` passes `(y x)` in source-order-insensitive
+          syntax order, with duplicates removed.
+          |#
           (define with-pattern-vars
             (lambda (pattern generate)
               (define captures '())
@@ -206,6 +246,11 @@ Examples:
                   [_ (void)]))
               (walk pattern)
               (generate captures)))
+          #|proc:process-vector-pats
+          The `process-vector-pats` helper compiles fixed and repeated vector elements.
+          For example, `#(,x ...)` against `#(1 2)` binds `x` to `(1 2)` and checks the vector
+          length before returning the success continuation.
+          |#
           (define process-vector-pats
             (lambda (vecid vlen veci pats body fk)
               (syntax-case pats ()
@@ -272,17 +317,17 @@ Examples:
                #`(if (null? expr-id) #,body (#,fk))]
               [,@var
                (identifier? #'var)
-               #`(let ([var (match-loop expr-id)])
+               #`(let ([var (catamorphism expr-id)])
                    #,body)]
               [,@[]
-               #`(begin (match-loop expr-id)
+               #`(begin (catamorphism expr-id)
                         #,body)]
               [,@[,vars ...]
                (andmap identifier? #'(vars ...))
                (if (fx= 1 (length #'(vars ...)))
-                   #`(let ([#,(car #'(vars ...)) (match-loop expr-id)])
+                   #`(let ([#,(car #'(vars ...)) (catamorphism expr-id)])
                        #,body)
-                   #`(let-values ([(vars ...) (match-loop expr-id)])
+                   #`(let-values ([(vars ...) (catamorphism expr-id)])
                        #,body))]
               [,@[proc ->]
                (and (identifier? #'proc) (eq? '-> (datum ->)))
@@ -380,6 +425,11 @@ Examples:
               [sym
                (identifier? #'sym)
                #`(if (eq? 'sym expr-id) #,body (#,fk))]))))
+      #|proc:process-clause
+      The `process-clause` helper compiles one clause and its optional guard.
+      For example, `[ ,x (guard (positive? x)) x ]` emits a capture, predicate check, and
+      failure call when the guard is false.
+      |#
       (define process-clause
         (lambda (rho expr-id cl fk)
           ;;(printf "process-clause ~s ~s ~s~n" expr-id cl fk)
@@ -393,6 +443,11 @@ Examples:
                               fk)]
             [(pat e0 e* ...)
              (process-clause rho expr-id #'[pat (guard #t) e0 e* ...] fk)])))
+      #|proc:generate-skeleton
+      The `generate-skeleton` helper chains clauses from left to right with zero-argument
+      failure continuations. For example, two clauses produce the first matcher followed by
+      a continuation that invokes the second matcher when the first fails.
+      |#
       (define generate-skeleton
         (lambda (rho expr-id cl* fk)
           ;;(printf "generate-skeleton: ~s ~s ~s~n" expr-id cl* fk)
@@ -404,10 +459,10 @@ Examples:
                       #,(process-clause rho expr-id (car cl*) #'fk)))))))
       (syntax-case stx (else)
         [(k e cl* ... [else e0 e* ...])
-         ;; `match-loop` used for catamorphism
+         ;; `catamorphism` recursively applies the same clauses for `,@` patterns.
          ;; `rho`: compile-time environment
          (lambda (rho)
-           #`(let match-loop ([v e])
+           #`(let catamorphism ([v e])
                #,(generate-skeleton rho #'v #'(cl* ...) #'(begin e0 e* ...))))]
         [(k e cl0 cl* ...)
          #'(let ([v e])
@@ -415,6 +470,10 @@ Examples:
                     [else (errorf 'match "no match found")]))]
         [_ (syntax-error 'match "bad match form")])))
 
+  #|macro:mlambda
+  The `mlambda` macro creates a one-argument procedure whose clauses use `match`.
+  For example, `((mlambda [(,x ,y) (+ x y)]) '(10 20))` returns `30`.
+  |#
   (define-syntax mlambda
     (lambda (stx)
       (syntax-case stx (else)
@@ -427,6 +486,11 @@ Examples:
                     [else (errorf 'k "no match found")]))]
         [_ (syntax-error stx "bad form:")])))
 
+  #|macro:$mlambda+
+  The `$mlambda+` macro creates a procedure accepting any number of arguments and matching
+  them as a list. Its first argument names errors. For example,
+  `(($mlambda+ add [(,x ,y) (+ x y)]) 10 20)` returns `30`.
+  |#
   (define-syntax $mlambda+
     (lambda (stx)
       (syntax-case stx (else)
@@ -439,10 +503,18 @@ Examples:
                     [else (errorf 'who "no match found")]))]
         [_ (syntax-error stx "bad form:")])))
 
+  #|macro:mlambda+
+  The `mlambda+` macro creates a variadic matching procedure without an explicit error name.
+  For example, `((mlambda+ [(,x ,y) (+ x y)]) 10 20)` returns `30`.
+  |#
   (define-syntax mlambda+
     (syntax-rules ()
       [(k cl cl* ...) ($mlambda+ mlambda+ cl cl* ...)]))
 
+  #|macro:mlet
+  The `mlet` macro evaluates right-hand sides in parallel and binds them with match patterns.
+  For example, `(mlet ([(,x ,y) '(10 20)]) (+ x y))` returns `30`.
+  |#
   (define-syntax mlet
     (lambda (stx)
       (syntax-case stx ()
@@ -453,6 +525,11 @@ Examples:
             rhs* ...)]
         [_ (syntax-error stx "bad form:")])))
 
+  #|macro:mlet*
+  The `mlet*` macro evaluates pattern bindings from left to right, making earlier captures
+  available to later right-hand sides. For example, `(mlet* ([,x 10] [,y (+ x 20)]) y)` returns
+  `30`.
+  |#
   (define-syntax mlet*
     (lambda (stx)
       (syntax-case stx (else)

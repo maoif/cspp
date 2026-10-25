@@ -720,6 +720,13 @@
      (let-values ([(s p) (sum/multiply-list '(1 (2 3) (1 1 6 7) (1 (1 1) (1 (2 3) (1 1) 1) 1) 5 (1 1) (1 (7 8) (1 1) 1)))])
        (and (= s 60)
             (= p (* 2 3 6 7 2 3 5 7 8))))
+
+     ;; The generated catamorphism binding stays hygienic when a capture has the same name.
+     (let ([catamorphism 'outer])
+       (equal? '(1 2)
+               (match '(1 2)
+                 [() '()]
+                 [(,head . ,@catamorphism) (cons head catamorphism)])))
      )
 
 ;;;; in-place update
