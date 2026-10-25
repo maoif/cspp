@@ -478,7 +478,7 @@
                           (list ($top-border chars widths padding))
                           (if headers
                               (append ($render-table-row headers columns widths padding chars #t)
-                                      (if (rich-table-show-lines? table)
+                                      (if (and (rich-table-show-lines? table) (pair? wrapped))
                                           (list ($middle-border chars widths padding)) '()))
                               '())
                           ($render-data-rows wrapped columns widths padding chars

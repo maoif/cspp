@@ -2449,3 +2449,24 @@
                             (rich-text "C" (rich-style 'red)) "D" (reset-style)))))
 
      )
+
+(mat rich-table-header-only
+
+     ;; With no data rows, the bottom border also closes the header.
+     (equal? "+---+\n| A |\n+---+"
+             (rich-export-text (rich-table :columns ("A"))))
+
+     ;; Unicode boxes must use bottom corners, without an extra middle separator.
+     (equal? "┌───┬───┐\n│ A │ B │\n└───┴───┘"
+             (rich-export-text (rich-table :box 'square :columns ("A" "B"))))
+
+     ;; Disabling row separators must preserve the same header-only result.
+     (equal? "+---+\n| A |\n+---+"
+             (rich-export-text (rich-table :show-lines? #f :columns ("A"))))
+
+     ;; Data rows still need the header separator and separators between rows.
+     (equal? "┌───┐\n│ A │\n├───┤\n│ x │\n├───┤\n│ y │\n└───┘"
+             (rich-export-text (rich-table :box 'square :columns ("A")
+                                           :rows (("x") ("y")))))
+
+     )
