@@ -19,84 +19,6 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
           (cspp private match)
           (cspp io))
 
-  ;; Compile fallback expressions once in the live lexical context. Chez's core
-  ;; transformer protocol supplies (expression environment wrap source); using the
-  ;; bundled core-transformer descriptor lets us catch invalid inactive fallbacks
-  ;; during normal expansion, without replaying macros or escaping capture locations.
-  (define-syntax capture-reference
-    (let* ([definition-environment (environment '(chezscheme))]
-           [environment-rtd (record-rtd definition-environment)]
-           [definition-wrap
-            (begin
-              (unless (and (eq? (record-type-name environment-rtd) 'env)
-                           (equal? (record-type-field-names environment-rtd) '#(top-ribcage wrap)))
-                (error 'match "unsupported Chez expansion environment"))
-              ((record-accessor environment-rtd 1) definition-environment))]
-           [rtd (make-record-type-descriptor 'core-transformer #f
-                  '#{g0 cy54rjf3ozvorudk-a} #t #t '#((immutable binding)))]
-           [constructor (record-constructor (make-record-constructor-descriptor rtd #f #f))]
-           [conditional-binding
-            ((record-accessor rtd 0) (top-level-syntax 'if definition-environment))])
-      (unless (and (pair? conditional-binding) (eq? (car conditional-binding) 'core)
-                   (procedure? (cdr conditional-binding)))
-        (error 'match "unsupported Chez core transformer protocol"))
-      (let ([conditional (cdr conditional-binding)])
-        (define (compile-reference variable expression environment wrap source)
-          (guard (condition
-                  [(syntax-violation? condition)
-                   (conditional
-                    (list 'if #t
-                          (list '#%error ''match
-                                "inactive capture has no valid surrounding binding"
-                                (list 'quote (syntax->datum variable))))
-                    ;; The failure's primitive and quote forms come from Chez,
-                    ;; independently of the caller's imports and macro marks.
-                    environment definition-wrap source)])
-            (conditional (list 'if #t expression) environment wrap source)))
-        (constructor
-         (cons 'core
-               (lambda (expression environment wrap source)
-                 (syntax-case expression ()
-                   [(_ variable)
-                    (identifier? #'variable)
-                    (compile-reference #'variable #'variable environment wrap source)]
-                   [(_ variable value)
-                    (identifier? #'variable)
-                    (compile-reference #'variable #'(set! variable value)
-                                       environment wrap source)]
-                   [(_ (variable . arguments))
-                    (identifier? #'variable)
-                    (compile-reference #'variable #'(variable . arguments)
-                                       environment wrap source)])))))))
-
-  ;; Preserve operator syntax as well as reads and assignments in inactive branches.
-  (define-syntax capture-binding
-    (syntax-rules ()
-      [(_ variable body)
-       (let-syntax
-           ([variable
-             (make-variable-transformer
-              (lambda (stx)
-                (syntax-case stx (set!)
-                  [(set! reference value) #'(capture-reference variable value)]
-                  [(reference . arguments) #'(capture-reference (variable . arguments))]
-                  [reference (identifier? #'reference) #'(capture-reference variable)])))])
-         body)]
-      [(_ variable active read-expression (value write-expression) body)
-       (let-syntax
-           ([variable
-             (make-variable-transformer
-              (lambda (stx)
-                (syntax-case stx (set!)
-                  [(set! reference value)
-                   #'(if active write-expression (capture-reference variable value))]
-                  [(reference . arguments)
-                   #'(if active (read-expression . arguments)
-                         (capture-reference (variable . arguments)))]
-                  [reference (identifier? #'reference)
-                   #'(if active read-expression (capture-reference variable))])))])
-         body)]))
-
   #|macro:match
   The `match` macro evaluates its input once and tries its pattern clauses in order.
   `,name` captures a value, `` `name `` compares against a bound value, and `_` ignores a value.
@@ -114,6 +36,9 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
   retain custom-expander dispatch; a record named `hash` uses `,(record hash :values ...)`.
   Datatype, box, hash, and regex extensions retain their existing forms. Expressions embedded in
   extensions are evaluated as expressions and do not declare pattern captures.
+  Pattern variables intentionally shadow outer bindings in the selected body. Generated matcher
+  bindings remain hygienic, so names such as `rtd`, `fields`, and `indices` in a pattern cannot
+  capture or rename the matcher's internal temporaries.
   The reader treats `,(hash ...)` as `(unquote (hash ...))`, which invokes the hash extension.
   To match such a list as data, capture its head and use a guard, for example:
   ```scheme
@@ -145,18 +70,18 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
           (cond
            [(eq? 'record (syntax->datum ext))
             (record-expander process-pattern rho expr-id pat body fk)]
-           [(match-expander? ext)
-            (let ([expander (cdr (rho ($construct-name ext ext "-expander")))])
-              (when (eq? expander record-expander)
-                (syntax-error pat "match: use (record type :fields/:values pattern ...):"))
-              (assert (procedure? expander))
-              (expander process-pattern rho expr-id pat body fk))]
+           ;; These heads keep their built-in meanings even when a record or custom
+           ;; expander has the same spelling; explicit `record` selects that type.
            [(eq? 'box (syntax->datum ext))
             (box-expander process-pattern rho expr-id pat body fk)]
            [(eq? 'regex (syntax->datum ext))
             (regex-expander process-pattern rho expr-id pat body fk)]
            [(eq? 'hash (syntax->datum ext))
             (hash-expander process-pattern rho expr-id pat body fk)]
+           [(match-expander? ext)
+            (let ([expander (cdr (rho ($construct-name ext ext "-expander")))])
+              (assert (procedure? expander))
+              (expander process-pattern rho expr-id pat body fk))]
            [else (syntax-error ext "match: invalid extension pattern: ")])))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;   main logic
@@ -185,166 +110,53 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                 [(head . tail) (and (transparent-suffix? #'head) (transparent-suffix? #'tail))]
                 [#(items ...) (for-all transparent-suffix? #'(items ...))]
                 [_ #t])))
-          ;; Conditional captures retain the surrounding binding when their descriptor
-          ;; selects an interpretation that does not declare that capture.
           (define bind-pattern-captures
-            (lambda (variables expressions active body)
+            (lambda (variables expressions body)
               (if (null? variables)
                   body
-                  (let ([variable (car variables)] [expression (car expressions)]
-                        [enabled (car active)]
-                        [rest (bind-pattern-captures (cdr variables) (cdr expressions)
-                                                     (cdr active) body)])
-                    (if (eq? #t (syntax->datum enabled))
-                        #`(let ([#,variable #,expression]) #,rest)
-                        (with-syntax ([(capture) (generate-temporaries '(capture))]
-                                      [variable variable] [enabled enabled])
-                          #`(let ([capture #,expression])
-                              (capture-binding variable enabled capture
-                                               (value (set! capture value)) #,rest))))))))
+                  #`(let ([#,(car variables) #,(car expressions)])
+                      #,(bind-pattern-captures (cdr variables) (cdr expressions) body)))))
           (define bind-suffix-captures
-            (lambda (variables accumulators active suffix success generate)
-              (let loop ([variables variables] [accumulators accumulators] [active active]
+            (lambda (variables accumulators suffix success generate)
+              (let loop ([variables variables] [accumulators accumulators]
                          [early '()] [late '()])
                 (define (bind entries body)
-                  (bind-pattern-captures (map car entries) (map cadr entries)
-                                         (map caddr entries) body))
+                  (bind-pattern-captures (map car entries) (map cadr entries) body))
                 (if (null? variables)
                     (bind (reverse early) (generate (bind (reverse late) success)))
-                    (let ([entry (list (car variables) #`(reverse #,(car accumulators)) (car active))])
+                    (let ([entry (list (car variables) #`(reverse #,(car accumulators)))])
                       (if (or (not (transparent-suffix? suffix))
                               (mentions-variable? suffix (car variables)))
-                          (loop (cdr variables) (cdr accumulators) (cdr active) (cons entry early) late)
-                          (loop (cdr variables) (cdr accumulators) (cdr active) early (cons entry late))))))))
-          (define capture-values
-            (lambda (variables getters)
-              (map (lambda (variable getter) (if getter #`(#,getter #,variable) variable))
-                   variables getters)))
+                          (loop (cdr variables) (cdr accumulators) (cons entry early) late)
+                          (loop (cdr variables) (cdr accumulators) early (cons entry late))))))))
           (define with-pattern-vars
-            (lambda (pattern generate . emit-bindings?)
+            (lambda (pattern generate)
               (define captures '())
-              (define (both left right)
-                (cond [(eq? #t (syntax->datum left)) right]
-                      [(eq? #t (syntax->datum right)) left]
-                      [else #`(and #,left #,right)]))
-              (define (add! variable condition)
-                (let ([entry (find (lambda (entry) (bound-identifier=? variable (car entry))) captures)])
-                  (if entry
-                      (set-cdr! entry (if (or (eq? #t (syntax->datum condition))
-                                             (eq? #t (syntax->datum (cdr entry))))
-                                         #'#t
-                                         #`(or #,(cdr entry) #,condition)))
-                      (set! captures (cons (cons variable condition) captures)))))
-              (define (walk-list patterns condition)
-                (for-each (lambda (pattern) (walk pattern condition)) patterns))
-              (define (walk pattern condition)
+              (define (add! variable)
+                (unless (exists (lambda (capture) (bound-identifier=? variable capture)) captures)
+                  (set! captures (cons variable captures))))
+              (define (walk pattern)
                 (syntax-case pattern (unquote unquote-splicing quasisyntax)
-                  [,variable (identifier? #'variable) (add! #'variable condition)]
-                  [,@variable (identifier? #'variable) (add! #'variable condition)]
+                  [,variable (identifier? #'variable) (add! #'variable)]
+                  [,@variable (identifier? #'variable) (add! #'variable)]
                   [,@[,names ...]
                    (andmap identifier? #'(names ...))
-                   (for-each (lambda (name) (add! name condition)) #'(names ...))]
+                   (for-each add! #'(names ...))]
                   [,@[procedure -> ,names ...]
                    (and (andmap identifier? #'(names ...))
                         (identifier? #'procedure) (eq? (datum ->) '->))
-                   (for-each (lambda (name) (add! name condition)) #'(names ...))]
+                   (for-each add! #'(names ...))]
                   [(#`name subpattern)
                    (identifier? #'name)
-                   (begin (add! #'name condition) (walk #'subpattern condition))]
+                   (begin (add! #'name) (walk #'subpattern))]
                   [,(extension arguments ...)
                    (identifier? #'extension)
-                   (let loop ([branches (extension-pattern-branches rho #'(extension arguments ...))]
-                              [condition condition])
-                     (if (null? (cdr branches))
-                         (walk-list (cadar branches) condition)
-                         (let ([test (caar branches)])
-                           (walk-list (cadar branches) (both condition test))
-                           (loop (cdr branches) (both condition #`(not #,test))))))]
-                  [(head . tail) (begin (walk #'head condition) (walk #'tail condition))]
-                  [#(items ...) (walk-list #'(items ...) condition)]
+                   (for-each walk (extension-subpatterns rho #'(extension arguments ...)))]
+                  [(head . tail) (begin (walk #'head) (walk #'tail))]
+                  [#(items ...) (for-each walk #'(items ...))]
                   [_ (void)]))
-              (walk pattern #'#t)
-              (let* ([variables (map car captures)]
-                     [conditions (map cdr captures)]
-                     [active (map (lambda (condition)
-                                    (if (eq? #t (syntax->datum condition))
-                                        #'#t
-                                        (car (generate-temporaries '(active)))))
-                                  conditions)]
-                     [getters (map (lambda (condition)
-                                     (and (not (eq? #t (syntax->datum condition)))
-                                          (car (generate-temporaries '(capture-value)))))
-                                   conditions)])
-                (if (and (pair? emit-bindings?) (not (car emit-bindings?)))
-                    (generate variables conditions '())
-                #`(let (#,@(fold-right (lambda (flag condition rest)
-                                        (if (eq? #t (syntax->datum flag)) rest
-                                            (cons #`[#,flag #,condition] rest)))
-                                      '() active conditions))
-                    ;; These macros distinguish an actual pattern binding from the
-                    ;; same identifier in the surrounding scope, without reading it.
-                    (let-syntax
-                        (#,@(fold-right
-                             (lambda (getter variable rest)
-                               (if (not getter) rest
-                                   (cons #`[#,getter
-                                            (lambda (stx)
-                                              (syntax-case stx ()
-                                                [(_ reference)
-                                                 (if (free-identifier=? #'reference #'#,variable)
-                                                     #'(capture-reference reference) #'reference)]
-                                                [(_ reference value)
-                                                 (if (free-identifier=? #'reference #'#,variable)
-                                                     #'(void)
-                                                     #'(set! reference value))]))]
-                                         rest)))
-                             '() getters variables))
-                      #,(generate variables active getters)))))))
-          (define share-record-body
-            (lambda (record-pattern success generate)
-              (with-pattern-vars #`(unquote #,record-pattern)
-                (lambda (variables active getters)
-                  (with-syntax ([(continue) (generate-temporaries '(continue))]
-                                [(readers ...) (generate-temporaries variables)]
-                                [(writers ...) (generate-temporaries variables)])
-                    ;; Access procedures preserve each capture's original assignment location
-                    ;; when named and positional branches share their success continuation.
-                    #`(let ([continue
-                             (lambda (readers ... writers ...)
-                               #,(fold-right
-                                  (lambda (variable reader writer enabled rest)
-                                    #`(capture-binding #,variable #,enabled (#,reader)
-                                                       (value (#,writer value)) #,rest))
-                                  success variables #'(readers ...) #'(writers ...) active))])
-                        #,(generate
-                           #`(continue
-                              #,@(map (lambda (variable getter)
-                                        #`(lambda () #,(if getter #`(#,getter #,variable) variable)))
-                                      variables getters)
-                              #,@(map (lambda (variable getter)
-                                        #`(lambda (value)
-                                            #,(if getter #`(#,getter #,variable value)
-                                                  #`(set! #,variable value))))
-                                      variables getters)))))))))
-          (define protect-record-body
-            (lambda (record-pattern selected-patterns success)
-              (with-pattern-vars #`(unquote #,record-pattern)
-                (lambda (variables active getters)
-                  (with-pattern-vars selected-patterns
-                    (lambda (selected conditions ignored)
-                      ;; Protect only names absent from this interpretation. Keeping
-                      ;; actual captures direct avoids escaping/boxing their locations.
-                      (fold-right
-                       (lambda (variable rest)
-                         (if (exists (lambda (name condition)
-                                       (and (bound-identifier=? name variable)
-                                            (eq? #t (syntax->datum condition))))
-                                     selected conditions)
-                             rest
-                             #`(capture-binding #,variable #,rest)))
-                       success variables))
-                    #f))
-                #f)))
+              (walk pattern)
+              (generate captures)))
           (define process-vector-pats
             (lambda (vecid vlen veci pats body fk)
               (syntax-case pats ()
@@ -355,10 +167,8 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                 [(pat dots)
                  (eq? (datum dots) '...)
                  (with-pattern-vars #'pat
-                   (lambda (variables active getters)
-                     (with-syntax ([(patvars ...) variables]
-                                   [(enabled ...) active]
-                                   [(captured ...) (capture-values variables getters)])
+                   (lambda (variables)
+                     (with-syntax ([(patvars ...) variables])
                        (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
                                      [(i viter vitem) (generate-temporaries '(i viter vitem))])
                          #`(let viter ([i #,veci] [bindings '()] ...)
@@ -366,18 +176,16 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                                  #,(bind-pattern-captures variables
                                                           (map (lambda (binding) #`(reverse #,binding))
                                                                #'(bindings ...))
-                                                          active body)
+                                                          body)
                                  (let ([vitem (vector-ref #,vecid i)])
                                    #,(process-pattern rho #'vitem #'pat
-                                                      #'(viter (fx1+ i) (if enabled (cons captured bindings) bindings) ...)
+                                                      #'(viter (fx1+ i) (cons patvars bindings) ...)
                                                       fk))))))))]
                 [(pat0 dots . pat1)
                  (eq? (datum dots) '...)
                  (with-pattern-vars #'pat0
-                   (lambda (variables active getters)
-                     (with-syntax ([(patvars ...) variables]
-                                   [(enabled ...) active]
-                                   [(captured ...) (capture-values variables getters)])
+                   (lambda (variables)
+                     (with-syntax ([(patvars ...) variables])
                        (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
                                      [(i viter vitem new-fk) (generate-temporaries '(i viter vitem new-fk))])
                          #`(let viter ([i #,veci] [bindings '()] ...)
@@ -386,11 +194,11 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                                       (if (fx< i #,vlen)
                                           (let ([vitem (vector-ref #,vecid i)])
                                             #,(process-pattern rho #'vitem #'pat0
-                                                               #'(viter (fx1+ i) (if enabled (cons captured bindings) bindings) ...)
+                                                               #'(viter (fx1+ i) (cons patvars bindings) ...)
                                                                fk))
                                           (#,fk)))])
                                #,(bind-suffix-captures
-                                  variables #'(bindings ...) active #'pat1 body
+                                  variables #'(bindings ...) #'pat1 body
                                   (lambda (success)
                                     (process-vector-pats vecid vlen #'i #'pat1 success #'new-fk)))))))))]
                 [(pat0 pat1 ...)
@@ -449,12 +257,10 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
               [(pat dots)
                (eq? (datum dots) '...)
                #`(if (or (null? expr-id) (pair? expr-id))
-                     ;; Accumulate only captures declared by the active pattern interpretation.
+                     ;; Collect captures from pattern positions, excluding extension expressions.
                      #,(with-pattern-vars #'pat
-                         (lambda (variables active getters)
+                         (lambda (variables)
                            (with-syntax ([(patvars ...) variables]
-                                         [(enabled ...) active]
-                                         [(captured ...) (capture-values variables getters)]
                                          [(lbs ...) (generate-temporaries variables)]
                                          [(iter first rest) (generate-temporaries '(iter first rest))])
                              #`(let ([lbs (make-list-builder)] ...)
@@ -463,11 +269,11 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                                     [(null? ls)
                                      #,(bind-pattern-captures variables
                                                               (map (lambda (builder) #`(#,builder)) #'(lbs ...))
-                                                              active body)]
+                                                              body)]
                                     [(pair? ls)
                                      (let ([first (car ls)] [rest (cdr ls)])
                                        #,(process-pattern rho #'first #'pat
-                                                          #'(begin (when enabled (lbs captured)) ...
+                                                          #'(begin (lbs patvars) ...
                                                                    (iter rest))
                                                           fk))]
                                     [else (#,fk)]))))))
@@ -476,10 +282,8 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
               [(pat0 dots . pat1)
                (eq? (datum dots) '...)
                (with-pattern-vars #'pat0
-                 (lambda (variables active getters)
+                 (lambda (variables)
                    (with-syntax ([(patvars ...) variables]
-                                 [(enabled ...) active]
-                                 [(captured ...) (capture-values variables getters)]
                                  [(bindings ...) (generate-temporaries variables)]
                                  [(iter ls first rest new-fk)
                                   (generate-temporaries '(iter ls first rest new-fk))])
@@ -490,12 +294,12 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                                   (if (pair? ls)
                                       (let ([first (car ls)] [rest (cdr ls)])
                                         #,(process-pattern rho #'first #'pat0
-                                                           #'(iter rest (if enabled (cons captured bindings) bindings) ...)
+                                                           #'(iter rest (cons patvars bindings) ...)
                                                            fk))
                                       (#,fk)))])
                            ;; Prefer the suffix, extending the repeated prefix on failure.
                            #,(bind-suffix-captures
-                              variables #'(bindings ...) active #'pat1 body
+                              variables #'(bindings ...) #'pat1 body
                               (lambda (success)
                                 (process-pattern rho #'ls #'pat1 success #'new-fk))))))))]
               ;; encapsulates (pat ...), (pat . pat), (pat ... . pat)

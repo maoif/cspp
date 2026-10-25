@@ -2,8 +2,7 @@
 (library (cspp private match)
   (export record-expander datatype-expander
           box-expander regex-expander hash-expander
-          extension-pattern-branches
-          valid-record-type?
+          extension-subpatterns
           define-match-expander)
   (import (cspp chez)
           (cspp utils)
@@ -16,17 +15,6 @@
 
   ;; see ChezScheme syntax.ss: define-record-type
   (define get-type-descriptor (lambda (rho dt) (cadr (rho dt))))
-
-  ;; get all field names of the record type, include those from the parents
-  (define get-all-fields
-    (lambda (rho dt)
-      (let ([rtd (get-type-descriptor rho dt)])
-        (let loop ([pdesc (record-type-parent rtd)]
-                   [fld** (list (record-type-field-names rtd))])
-          (if pdesc
-              (loop (record-type-parent pdesc) (cons (record-type-field-names pdesc) fld**))
-              ;; returns a list of vectors: '(#(f0 f1 ...) ...)
-              (reverse fld**))))))
 
   (define get-fields
     (lambda (rho dt)
@@ -107,41 +95,39 @@
            (values type named? patterns))]
         [_ (syntax-error pattern "match: expected (record type :fields/:values pattern ...):")])))
 
-  #|proc:extension-pattern-branches
-  The `extension-pattern-branches` procedure identifies subpatterns in an extension.
+  #|proc:extension-subpatterns
+  The `extension-subpatterns` procedure identifies subpatterns in an extension.
   `compile-environment` maps syntax identifiers to their compile-time bindings, and `pattern`
-  is the extension syntax without its leading unquote. The result has one branch containing
-  `#t` and the subpatterns. Embedded expressions, record type names, and field names are excluded.
+  is the extension syntax without its leading unquote. The result lists only subpatterns;
+  embedded expressions, record type names, and field names are excluded.
   |#
-  (define extension-pattern-branches
+  (define extension-subpatterns
     (lambda (compile-environment pattern)
       (pcheck ([procedure? compile-environment] [list? pattern])
         (let* ([extension (car pattern)]
                [arguments (cdr pattern)]
                [info (compile-environment ($construct-name extension extension "-expander"))]
                [expander (and (pair? info) (eq? (car info) '*MATCH-EXPANDER*) (cdr info))])
-          (list
-           (list #'#t
-                 (cond
-                  [(eq? (syntax->datum extension) 'record)
-                   (let-values ([(type named? patterns)
-                                 (record-pattern-info compile-environment pattern)])
-                     (if named? (map pattern-value patterns) patterns))]
-                  [(eq? expander datatype-expander)
-                   (if (and (= 1 (length arguments)) (identifier? (car arguments)))
-                       '()
-                       (let ([variant ($construct-name extension "$datatype-" extension "-"
-                                                       (car arguments))]
-                             [patterns (cdr arguments)])
-                         (if (and (pair? patterns)
-                                  (by-name-record-pats? compile-environment variant patterns))
-                             (map pattern-value patterns)
-                             patterns)))]
-                  [(and (not expander) (eq? (syntax->datum extension) 'regex))
-                   (map pattern-value (cdr arguments))]
-                  [(and (not expander) (eq? (syntax->datum extension) 'hash))
-                   (map pattern-value arguments)]
-                  [else arguments])))))))
+          (cond
+           [(eq? (syntax->datum extension) 'record)
+            (let-values ([(type named? patterns)
+                          (record-pattern-info compile-environment pattern)])
+              (if named? (map pattern-value patterns) patterns))]
+           [(eq? expander datatype-expander)
+            (if (and (= 1 (length arguments)) (identifier? (car arguments)))
+                '()
+                (let ([variant ($construct-name extension "$datatype-" extension "-"
+                                                (car arguments))]
+                      [patterns (cdr arguments)])
+                  (if (and (pair? patterns)
+                           (by-name-record-pats? compile-environment variant patterns))
+                      (map pattern-value patterns)
+                      patterns)))]
+           [(and (not expander) (eq? (syntax->datum extension) 'regex))
+            (map pattern-value (cdr arguments))]
+           [(and (not expander) (eq? (syntax->datum extension) 'hash))
+            (map pattern-value arguments)]
+           [else arguments])))))
 
 
   (define-syntax define-match-expander
@@ -157,50 +143,62 @@
                     (syntax-error p "define-match-expander: not a procedure:")))))])))
 
 
+  #|proc:record-expander
+  The `record-expander` procedure expands an explicit record pattern `pat` for input `expr-id`.
+  `rho` maps identifiers to expansion bindings. The callback `pp` takes an environment, an input
+  identifier, a subpattern, a success expression, and a failure identifier, and returns syntax.
+  `body` is the success expression; `fk` names a zero-argument failure procedure. The result is
+  matching syntax with lexical captures and validation of the selected descriptor's own fields.
+  |#
   (define record-expander
     (lambda (pp rho expr-id pat body fk)
-      (let-values ([(type named? patterns) (record-pattern-info rho pat)])
-        (let* ([descriptor (get-type-descriptor rho type)]
-               [static? (record-type-descriptor? descriptor)]
-               [names (and named? (map (lambda (pattern)
-                                         (syntax-case pattern () [(name value) (datum name)]))
-                                       patterns))]
-               [subpatterns (if named? (map pattern-value patterns) patterns)]
-               [count (length patterns)])
-          (define (field-indices fields)
-            (if named? (map (lambda (name) (vmemq name fields)) names) (iota count)))
-          (define (valid? fields indices)
-            (if named? (andmap number? indices) (fx= count (vector-length fields))))
-          (when static?
-            (let ([fields (record-type-field-names descriptor)])
-              (unless (valid? fields (field-indices fields))
-                (syntax-error pat "match: invalid record pattern:"))))
-          (with-syntax ([(rtd fields) (generate-temporaries '(rtd fields))]
-                        [(indices ...) (generate-temporaries patterns)])
-            (define (generate offsets)
-              (let loop ([patterns subpatterns] [offsets offsets])
-                (if (null? patterns)
-                    body
-                    (with-syntax ([(field) (generate-temporaries '(field))])
-                      #`(let ([field ((record-accessor rtd #,(car offsets)) #,expr-id)])
-                          #,(pp rho #'field (car patterns)
-                                (loop (cdr patterns) (cdr offsets)) fk))))))
-            #`(let ([rtd #,(if static? #`'#,descriptor #`(record-type-descriptor #,type))])
-                (if ((record-predicate rtd) #,expr-id)
-                    #,(if static?
-                          (generate (field-indices (record-type-field-names descriptor)))
-                          (if named?
-                              #`(let* ([fields (record-type-field-names rtd)]
-                                       #,@(map (lambda (index name) #`[#,index (vmemq '#,(datum->syntax type name) fields)])
-                                               #'(indices ...) names))
-                                  (unless (and indices ...)
-                                    (errorf 'match "invalid record pattern: ~s" '#,pat))
-                                  #,(generate #'(indices ...)))
-                              #`(begin
-                                  (unless (fx= (vector-length (record-type-field-names rtd)) #,count)
-                                    (errorf 'match "invalid record pattern: ~s" '#,pat))
-                                  #,(generate (iota count)))))
-                    (#,fk))))))))
+      (pcheck ([procedure? pp rho] [identifier? expr-id fk])
+        (let-values ([(type named? patterns) (record-pattern-info rho pat)])
+          (let* ([descriptor (get-type-descriptor rho type)]
+                 [static? (record-type-descriptor? descriptor)]
+                 [names (and named? (map (lambda (pattern)
+                                           (syntax-case pattern () [(name value) (datum name)]))
+                                         patterns))]
+                 [subpatterns (if named? (map pattern-value patterns) patterns)]
+                 [count (length patterns)])
+            (define (field-indices fields)
+              (if named? (map (lambda (name) (vmemq name fields)) names) (iota count)))
+            (define (valid? fields indices)
+              (if named? (andmap number? indices) (fx= count (vector-length fields))))
+            (when static?
+              (let ([fields (record-type-field-names descriptor)])
+                (unless (valid? fields (field-indices fields))
+                  (syntax-error pat "match: invalid record pattern:"))))
+            ;; Local descriptors already have private identifiers in rho. Using that binding
+            ;; directly keeps a capture named after the record type from hiding it later.
+            (with-syntax ([(rtd fields) (generate-temporaries '(rtd fields))]
+                          [(indices ...) (generate-temporaries patterns)])
+              (define (generate offsets)
+                (let loop ([patterns subpatterns] [offsets offsets])
+                  (if (null? patterns)
+                      body
+                      (with-syntax ([(field) (generate-temporaries '(field))])
+                        #`(let ([field ((record-accessor rtd #,(car offsets)) #,expr-id)])
+                            #,(pp rho #'field (car patterns)
+                                  (loop (cdr patterns) (cdr offsets)) fk))))))
+              #`(let ([rtd #,(if static? #`'#,descriptor descriptor)])
+                  (if ((record-predicate rtd) #,expr-id)
+                      #,(if static?
+                            (generate (field-indices (record-type-field-names descriptor)))
+                            (if named?
+                                #`(let* ([fields (record-type-field-names rtd)]
+                                         #,@(map (lambda (index name)
+                                                   #`[#,index
+                                                      (vmemq '#,(datum->syntax type name) fields)])
+                                                 #'(indices ...) names))
+                                    (unless (and indices ...)
+                                      (errorf 'match "invalid record pattern: ~s" '#,pat))
+                                    #,(generate #'(indices ...)))
+                                #`(begin
+                                    (unless (fx= (vector-length (record-type-field-names rtd)) #,count)
+                                      (errorf 'match "invalid record pattern: ~s" '#,pat))
+                                    #,(generate (iota count)))))
+                      (#,fk)))))))))
 
 
   (define datatype-expander

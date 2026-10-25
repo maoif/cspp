@@ -892,7 +892,7 @@
          [(,(record SyntaxLiteral :fields (unquote marker)) ...) #t]
          [else #f]))
 
-     ;; The same surface syntax is a positional capture for a differently named field.
+     ;; Positional mode declares its captures regardless of field names.
      (let ()
        (define-record-type Positional (fields value))
        (equal? '(10 20)
@@ -923,7 +923,7 @@
                (match (list (make-DynamicCapture 10) (make-DynamicCapture 20))
                  [(,(record DynamicCapture :fields (unquote ,x)) ...) x] [else #f])))
 
-     ;; Two descriptors with different named/positional interpretations may coexist.
+     ;; Named and positional modes may coexist in one repeated pattern.
      (let ()
        (define-record-type DynamicLiteral (fields unquote))
        (define-record-type DynamicValue (fields value))
@@ -973,7 +973,7 @@
             [allocated (sstats-bytes (sstats-difference (statistics) before))])
        (and (pair? expanded) (< allocated 10000000))))
 
-(mat conditional-record-capture-scope
+(mat explicit-record-capture-scope
      (let ([marker 'outer])
        (define-record-type LiteralCapture (fields unquote))
        (and (eq? 'outer
@@ -984,7 +984,7 @@
                    [(,(record LiteralCapture :fields (unquote marker)) ...) (set! marker 'changed) marker]))
             (eq? marker 'changed)))
 
-     ;; An inactive capture keeps its outer binding visible to later backreferences.
+     ;; Literal field patterns keep outer bindings visible to later backreferences.
      (let ([marker 'outer])
        (define-record-type LiteralCapture (fields unquote))
        (match (list (list (make-LiteralCapture 'marker) 'outer))
@@ -1009,7 +1009,7 @@
                             (list (make-ValueCapture 30)))
                  [((,(record ValueCapture :values ,x) ...) ...) x] [else #f]))))
 
-(mat record-pattern-shared-continuations
+(mat sibling-record-pattern-expansion
      ;; A seven-record tuple should produce a modest expansion, including capture consumers.
      (letrec ([size (lambda (tree)
                       (cond [(pair? tree) (+ 1 (size (car tree)) (size (cdr tree)))]
@@ -1051,7 +1051,7 @@
             (equal? '(1 2) saved))))
 
 (mat library-record-captures
-     ;; Library expansion rejects unbound fallbacks and assignments to immutable imports.
+     ;; Captures may shadow imports and identifiers with no surrounding binding.
      (begin
        (eval '(library (match-tests local-record-capture)
                 (export run)
@@ -1065,12 +1065,12 @@
        (equal? '(10 (20))
                ((eval 'run (environment '(match-tests local-record-capture)))))))
 
-(mat shared-named-record-fields
+(mat named-and-positional-record-fields
      (let ()
        (define-record-type NamedRecord (fields a))
        (= 10 (match (make-NamedRecord 10) [,(record NamedRecord :fields (a ,x)) x] [else #f])))
 
-     ;; Without a matching field name the original two-element list pattern is positional.
+     ;; Explicit positional mode treats a two-element list as the field value.
      (let ()
        (define-record-type PositionalRecord (fields value))
        (= 10 (match (make-PositionalRecord '(a 10))
@@ -1081,14 +1081,14 @@
        (match (make-PositionalRecord '(b 10))
          [,(record PositionalRecord :values (a ,x)) #f] [else #t]))
 
-     ;; The wildcard head retains its positional meaning when it is not a field name.
+     ;; A wildcard is an ordinary part of a positional list pattern.
      (let ()
        (define-record-type PositionalRecord (fields value))
        (= 10 (match (make-PositionalRecord '(b 10))
                [,(record PositionalRecord :values (_ ,x)) x] [else #f]))))
 
 (mat nested-record-pattern-expansion-growth
-     ;; Nested named fields share the same inner matcher for named and positional inputs.
+     ;; Each nested named field generates a single inner matcher.
      (let* ([pattern (let loop ([depth 6])
                        (if (= depth 0) '(unquote x)
                            (list 'unquote (list 'record 'P ':fields (list 'a (loop (- depth 1)))))))]
@@ -1100,7 +1100,7 @@
        (and (pair? expanded) (< allocated 10000000))))
 
 (mat local-record-capture-allocation
-     ;; A short read-only repetition must not box each capture for an unused setter.
+     ;; A read-only repetition must not allocate a box for each capture.
      (let ()
        (define-record-type AllocationRecord (fields value))
        (let* ([source (map make-AllocationRecord (iota 1000))]
@@ -1147,7 +1147,7 @@
        (equal? '(10 20 (30) (10))
                ((eval 'run (environment '(match-tests native-capture-bindings))))))
 
-     ;; Inactive captures retain readable imports and writable lexical aliases.
+     ;; Literal fields leave readable imports and writable lexical aliases in scope.
      (let ([outer 0])
        (define-record-type SyntaxField (fields unquote))
        (let-syntax ([name (identifier-syntax
@@ -1168,8 +1168,8 @@
                        0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
                        (set! map 40) map)]))))
 
-(mat inactive-record-syntax-bindings
-     ;; An inactive name retains its original operator syntax as well as value semantics.
+(mat literal-record-field-syntax-bindings
+     ;; Literal field names do not hide surrounding operator syntax.
      (let ()
        (define-record-type SyntaxField (fields unquote))
        (eq? 'ok (match (make-SyntaxField 'if)
@@ -1180,7 +1180,7 @@
        (eq? 'ok (match (list (make-SyntaxField 'if))
                   [(,(record SyntaxField :fields (unquote if)) ...) (if #t 'ok 'bad)])))
 
-     ;; Inspecting fallback bindings must not speculatively expand identifier macros.
+     ;; Collecting pattern variables must not speculatively expand identifier macros.
      (let ()
        (define-record-type SyntaxField (fields unquote))
        (define-syntax counter
@@ -1208,7 +1208,7 @@
        (let ([outer 100] [temporary 100])
          (= 11 (match (make-SyntaxField 'value) [,(record SyntaxField :fields (unquote value)) value]))))
 
-     ;; Macro lookup callbacks and compile-time properties survive fallback forwarding.
+     ;; Literal field patterns preserve macro lookup callbacks and compile-time properties.
      (let ()
        (define-record-type SyntaxField (fields unquote))
        (define-syntax property-key (syntax-rules () [(_) #f]))
@@ -1216,7 +1216,7 @@
        (define-property value property-key #t)
        (= 42 (match (make-SyntaxField 'value) [,(record SyntaxField :fields (unquote value)) value]))))
 
-(mat shared-record-operator-bindings
+(mat record-operator-bindings
      ;; A captured procedure may shadow core syntax even if its arity differs.
      (let ()
        (define-record-type P (fields value))
@@ -1234,7 +1234,7 @@
                             0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
                             (if))])))
 
-     ;; Guarding an invalid inactive core form must not replay argument macros.
+     ;; A captured operator must not cause its argument macros to expand twice.
      (let ()
        (define-record-type P (fields value))
        (define-syntax counter
@@ -1369,3 +1369,89 @@
        (guard (condition [(error? condition) #t] [else #f])
          (match (make-DynamicInvalid 10) [,(record DynamicInvalid :fields (missing ,x)) x])
          #f)))
+
+(mat explicit-record-composition
+     (let ()
+       (define-record-type CompositionPoint (fields x y))
+       (and (= 30 ((mlambda [,(record CompositionPoint :values ,x ,y) (+ x y)])
+                  (make-CompositionPoint 10 20)))
+            (= 20 (mlet ([,(record CompositionPoint :fields (y ,value))
+                          (make-CompositionPoint 10 20)])
+                    value))
+            (= 30 (mlet* ([,(record CompositionPoint :values ,x ,y)
+                           (make-CompositionPoint 10 20)]
+                          [,sum (+ x y)])
+                    sum))))
+
+     ;; Empty list and vector repetitions bind every explicit field capture to an empty list.
+     (let ()
+       (define-record-type RepeatedPoint (fields x y))
+       (and (equal? '(() ())
+                    (match '() [(,(record RepeatedPoint :fields (y ,y) (x ,x)) ...)
+                                (list x y)]))
+            (equal? '(() ())
+                    (match '#() [#(,(record RepeatedPoint :values ,x ,y) ...) (list x y)]))))
+
+     ;; A record suffix may refer to captures from a middle ellipsis.
+     (let ()
+       (define-record-type ListSuffix (fields value))
+       (and (equal? '(1 2)
+                    (match (list 1 2 (make-ListSuffix '(1 2)))
+                      [(,x ... ,(record ListSuffix :fields (value `x))) x]))
+            (equal? '(1 2)
+                    (match (vector 1 2 (make-ListSuffix '(1 2)))
+                      [#(,x ... ,(record ListSuffix :values `x)) x])))))
+
+(mat explicit-record-inheritance
+     ;; The selected descriptor supplies its own fields and also matches descendant records.
+     (let ()
+       (define-record-type ParentPoint (fields parent-value))
+       (define-record-type ChildPoint (parent ParentPoint) (fields child-value))
+       (let ([source (make-ChildPoint 10 20)])
+         (and (= 10 (match source [,(record ParentPoint :values ,value) value]))
+              (= 20 (match source [,(record ChildPoint :values ,value) value]))
+              (= 20 (match source [,(record ChildPoint :fields (child-value ,value)) value])))))
+
+     ;; A nonmatching value falls through before checking a local descriptor's field count.
+     (let ()
+       (define-record-type MismatchedPoint (fields value))
+       (match #f [,(record MismatchedPoint :values) #f] [else #t]))
+
+     ;; Wrong positional arity on a matching local record is an error, not a partial match.
+     (let ()
+       (define-record-type MismatchedPoint (fields value))
+       (guard (condition [(error? condition) #t] [else #f])
+         (match (make-MismatchedPoint 10)
+           [,(record MismatchedPoint :values ,x ,y) #f] [else #f]))))
+
+(mat explicit-record-type-capture-hygiene
+     ;; Capturing the type's public name must not hide its descriptor in a later pattern.
+     (equal? '(1 2)
+             (eval '(let ()
+                      (define-record-type CaptureTypeName (fields value))
+                      (match (list (make-CaptureTypeName 1) (make-CaptureTypeName 2))
+                        [(,(record CaptureTypeName :values ,CaptureTypeName)
+                          ,(record CaptureTypeName :values ,x))
+                         (list CaptureTypeName x)]))
+                   (environment '(cspp)))))
+
+(mat explicit-record-binding-hygiene
+     ;; Pattern captures shadow outer names, while generated record bindings stay hygienic.
+     (begin
+       (define-record-type BindingNames (fields value))
+       (let ([rtd 'outer-rtd] [fields 'outer-fields] [indices 'outer-indices])
+       (and (equal? '(10 outer-fields outer-indices)
+                    (match (make-BindingNames 10)
+                      [,(record BindingNames :values ,rtd)
+                       (list rtd fields indices)]))
+            (= 10 (match (make-BindingNames 10)
+                    [,(record BindingNames :fields (value ,fields)) fields]))))))
+
+(mat explicit-cspp-record-extension-names
+     ;; Removing automatic record heads also keeps a CSPP record from hiding a built-in head.
+     (let ()
+       (record hash (value))
+       (let ([table (make-hashtable string-hash string=?)])
+         (hashtable-set! table "key" 20)
+         (and (= 10 (match (hash 10) [,(record hash :values ,x) x]))
+              (= 20 (match table [,(hash ("key" ,x)) x]))))))
