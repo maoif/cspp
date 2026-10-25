@@ -160,6 +160,64 @@ def password_echo():
             os.close(slave)
 
 
+def nested_password_echo():
+    # The inner restore must keep echo off until the outer password read completes.
+    with tempfile.TemporaryDirectory(prefix="cspp-rich-nested-password-") as directory:
+        probe = Path(directory) / "nested-password.ss"
+        probe.write_text('''(import (cspp))
+(define nested? #f)
+(define destination (current-output-port))
+(call-with-port
+ (make-custom-textual-output-port "outer-prompt"
+  (lambda (text start count)
+   (display (substring text start (+ start count)) destination)
+   (flush-output-port destination)
+   (unless nested?
+    (set! nested? #t)
+    (unless (string=? (rich-password (make-rich-console) "Inner") "inside")
+      (error 'nested-password "inner password was lost"))
+    (display "OUTER-READ" destination)
+    (flush-output-port destination))
+   count)
+  #f #f #f)
+ (lambda (output)
+  (unless (string=? (rich-password (rich-console :output-port output) "Outer") "outside")
+    (error 'nested-password "outer password was lost"))))
+(display "DONE")
+(flush-output-port)
+''')
+        master, slave = pty.openpty()
+        process = None
+        try:
+            original = termios.tcgetattr(slave)
+            process = subprocess.Popen(
+                [str(ROOT / "cspp"), "--script=" + str(probe)], cwd=ROOT,
+                stdin=slave, stdout=slave, stderr=subprocess.PIPE)
+            output = b""
+            with selectors.DefaultSelector() as selector:
+                selector.register(master, selectors.EVENT_READ)
+                for marker, answer in ((b"Inner: ", b"inside\n"),
+                                       (b"OUTER-READ", b"outside\n"), (b"DONE", None)):
+                    while marker not in output:
+                        assert selector.select(10), output
+                        output += os.read(master, 8192)
+                    if answer is not None:
+                        assert not (termios.tcgetattr(slave)[3] & termios.ECHO), output
+                        os.write(master, answer)
+            _, error = process.communicate(timeout=10)
+            assert process.returncode == 0 and not error, error
+            assert b"inside" not in output and b"outside" not in output, output
+            assert termios.tcgetattr(slave) == original
+        finally:
+            if process is not None:
+                if process.poll() is None:
+                    process.kill()
+                process.communicate()
+            os.close(master)
+            os.close(slave)
+
+
 if __name__ == "__main__":
     main()
     password_echo()
+    nested_password_echo()
