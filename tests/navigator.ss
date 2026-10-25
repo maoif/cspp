@@ -1411,3 +1411,30 @@
   (let ([source (make-ixbox '#(1 2 3))])
     (and (equal? '#(1 2 3) (ixbox-items source))
          (equal? '#(2 3 4) (ixbox-items (nav-transform nav/all add1 source))))))
+
+(mat navigator-review-alist-map-focuses
+  (equal? '(a b) (nav-select nav/keys '((a . 1) (b . 2))))
+
+  (equal? '((a . 1) (b . 2)) (nav-select nav/entries '((a . 1) (b . 2))))
+
+  (equal? '((b . 1) (a . 2))
+          (nav-transform nav/keys (lambda (key) (if (eq? key 'a) 'b 'a))
+                         '((a . 1) (b . 2))))
+
+  (equal? '(a a) (nav-select nav/keys '((a . 1) (a . 2))))
+
+  (equal? '((a . 0) (a . 1))
+          (nav-transform/i nav/entries (lambda (index entry) (cons (car entry) index))
+                           '((a . 1) (a . 2))))
+
+  (equal? '(1 2) (nav-select (nav/key/default 'a 0) '((a . 1) (a . 2))))
+
+  (equal? '((a . 0) (a . 1))
+          (nav-transform/i (nav/key/default 'a 0) (lambda (index value) index)
+                           '((a . 1) (a . 2))))
+
+  (equal? '(0) (nav-select (nav/key/default 'a 0) '((b . 2))))
+
+  (equal? '(0 1) (nav-select nav/keys '(a b)))
+
+  (equal? '((0 . a) (1 . b)) (nav-select nav/entries '(a b))))

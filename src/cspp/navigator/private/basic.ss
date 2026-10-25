@@ -437,15 +437,16 @@
                     clear-all-values!))
 
   #|proc:nav/keys
-  The `nav/keys` navigator focuses sequence indexes or hashtable keys for
-  current collection value. Pure map transforms replace old keys; if transformed keys
+  The `nav/keys` navigator focuses map keys for alists and keyed containers, or
+  sequence indexes for other indexed containers. Pure map transforms replace old keys; if transformed keys
   collide, the last entry in traversal order wins. Sequence indexes are read-only.
   |#
   (define nav/keys
     (make-basic-nav
      'nav/keys 'nav/keys
      (lambda (value emit)
-       (cond [(indexed-supported? value)
+       (cond [(alist? value) (for-each (lambda (entry) (emit (car entry))) value)]
+             [(indexed-supported? value)
               (let ([len (indexed-length value)])
                 (let loop ([i 0])
                   (when (< i len)
@@ -455,7 +456,7 @@
               => (lambda (keys) (for-each emit keys))]
              [else (nav-focus-error 'nav/keys "unsupported collection: ~s" value)]))
      (lambda (value update)
-       (cond [(indexed-supported? value) value]
+       (cond [(and (not (alist? value)) (indexed-supported? value)) value]
              [(keyed-entries value)
               => (lambda (entries)
                    (rebuild-keyed-entries
@@ -477,7 +478,8 @@
     (make-basic-nav
      'nav/entries 'nav/entries
      (lambda (value emit)
-       (cond [(indexed-supported? value)
+       (cond [(alist? value) (for-each emit value)]
+             [(indexed-supported? value)
               (let ([len (indexed-length value)])
                 (let loop ([i 0])
                   (when (< i len)
@@ -683,7 +685,8 @@
 
   #|proc:nav/key/default
   The `nav/key/default` procedure returns a navigator that focuses the value for
-  `key`, or focuses `default` when `key` is missing.
+  `key`, or focuses `default` when `key` is missing. For alists it focuses every matching
+  entry in order, just like `nav/key`.
   |#
   (define nav/key/default
     (case-lambda
@@ -692,8 +695,10 @@
        (make-basic-nav
         'nav/key/default `(nav/key/default ,key ,default)
         (lambda (value emit)
-          (let ([selected (key-ref/missing value key)])
-            (emit (if (nav-missing? selected) default selected))))
+          (if (and (alist? value) (assq key value))
+              (emit-alist-key-values value key emit)
+              (let ([selected (key-ref/missing value key)])
+                (emit (if (nav-missing? selected) default selected)))))
         (lambda (value update)
           (key-transform key default #t value update))
         (lambda (value update!)
