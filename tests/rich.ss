@@ -63,7 +63,7 @@
              (rich-style->ansi #f (rich-style 'red 'blue)))
 
      ;; Later attributes override earlier conflicting attributes.
-     (equal? ""
+     (equal? "\033[24m"
              (rich-style->ansi #f (rich-style 'underline 'no-underline)))
 
      (equal? "\033[38;2;255;170;0m"
@@ -2372,5 +2372,80 @@
      (parameterize ([rich-current-time (lambda () 0)])
        (let ([status (make-rich-status "a\tb\r\nc" (make-rich-console) '("*\n*") 1)])
          (equal? '("* * a       b c") (map rich-segments->plain (rich-status-render status)))))
+
+     )
+
+(mat rich-style-disable-stream
+
+     ;; Explicit disabling must work for standalone styles and temporary span styles.
+     (andmap
+      (lambda (entry)
+        (let ([on (car entry)] [off (cadr entry)]
+              [enable (caddr entry)] [disable (cadddr entry)])
+          (and
+           (eq? #f ((case on
+                        [(bold) rich-style-bold?] [(dim) rich-style-dim?]
+                        [(italic) rich-style-italic?] [(underline) rich-style-underline?]
+                        [(blink) rich-style-blink?] [(reverse) rich-style-reverse?]
+                        [(hidden) rich-style-hidden?] [(strike) rich-style-strike?])
+                      (rich-style off)))
+           (equal? (string-append enable "A" disable "B\033[0m")
+                   (rich-string-output
+                    (lambda (port)
+                      (rich-print (rich-console :output-port port :color-system 'standard)
+                                  (rich-style on) "A" (rich-style off) "B" (reset-style)))))
+           (equal? (string-append enable "A" disable "B\033[0m" enable "C\033[0m")
+                   (rich-string-output
+                    (lambda (port)
+                      (rich-print (rich-console :output-port port :color-system 'standard)
+                                  (rich-style on) "A" (rich-text "B" (rich-style off))
+                                  "C" (reset-style))))))))
+      '((bold no-bold "\033[1m" "\033[22m")
+        (dim no-dim "\033[2m" "\033[22m")
+        (italic no-italic "\033[3m" "\033[23m")
+        (underline no-underline "\033[4m" "\033[24m")
+        (blink no-blink "\033[5m" "\033[25m")
+        (reverse no-reverse "\033[7m" "\033[27m")
+        (hidden no-hidden "\033[8m" "\033[28m")
+        (strike no-strike "\033[9m" "\033[29m")))
+
+     ;; SGR 22 clears both bold and dim; restore the attribute that was not disabled.
+     (equal? "\033[1m\033[2mA\033[22m\033[2mB\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard)
+                            (rich-style 'bold 'dim) "A" (rich-style 'no-bold) "B"
+                            (reset-style)))))
+
+     (equal? "\033[1m\033[2mA\033[22m\033[1mB\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard)
+                            (rich-style 'bold 'dim) "A" (rich-style 'no-dim) "B"
+                            (reset-style)))))
+
+     ;; Option order and boolean accessors still distinguish enabled and disabled styles.
+     (and (eq? #f (rich-style-bold? (rich-style)))
+          (eq? #f (rich-style-bold? (rich-style 'bold 'no-bold)))
+          (eq? #t (rich-style-bold? (rich-style 'no-bold 'bold)))
+          (string=? "\033[1m" (rich-style->ansi 'standard (rich-style 'no-bold 'bold)))
+          (string=? "" (rich-style->ansi 'none (rich-style 'no-bold 'no-hidden))))
+
+     ;; Theme styles use the same disabling and restoration behavior as direct styles.
+     (equal? "\033[4mA\033[24mB\033[0m\033[4mC\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard
+                                          :theme (rich-theme :plain (rich-style 'no-underline)))
+                            (rich-style 'underline) "A" (rich-text "B" 'plain)
+                            "C" (reset-style)))))
+
+     ;; A temporary colored span must not resurrect an explicitly disabled attribute.
+     (equal? "\033[1mA\033[22mB\033[31mC\033[0m\033[22mD\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard)
+                            (rich-style 'bold) "A" (rich-style 'no-bold) "B"
+                            (rich-text "C" (rich-style 'red)) "D" (reset-style)))))
 
      )

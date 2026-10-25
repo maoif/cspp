@@ -410,10 +410,10 @@
           (loop (cdr lines) #f)))))
 
   (define $write-style-ansi
-    (lambda (port color-system style)
+    (lambda (port color-system style active-style)
       (if (eq? color-system 'none)
           #f
-          (let ([ansi (rich-style->ansi color-system style)])
+          (let ([ansi (rich-style->ansi/context color-system style active-style)])
             (and (not (string=? ansi ""))
                  (begin
                    ($emit port ansi #t)
@@ -478,7 +478,7 @@
                    [style ($resolve-segment-style console (rich-segment-style segment))]
                    [segment-style-emitted?
                     (and (rich-style? style)
-                         ($write-style-ansi port color-system style))]
+                         ($write-style-ansi port color-system style active-style))]
                    [segment-reset-emitted?
                     (and (rich-reset? style)
                          style-emitted?
@@ -541,26 +541,6 @@
     (lambda (port values)
       (for-each (lambda (value) ($write-rich-value/plain port value)) values)))
 
-  ;; Standalone styles add terminal attributes until reset. Remember the combined
-  ;; state so nested segment resets can restore every active attribute and color.
-  (define $accumulate-style
-    (lambda (active incoming)
-      (if (not active)
-          incoming
-          (let ([fg (or (rich-style-fg incoming) (rich-style-fg active))]
-                [bg (or (rich-style-bg incoming) (rich-style-bg active))])
-            (apply rich-style
-                   (append
-                    (filter values
-                            (map (lambda (get name)
-                                   (and (or (get active) (get incoming)) name))
-                                 (list rich-style-bold? rich-style-dim? rich-style-italic?
-                                       rich-style-underline? rich-style-blink? rich-style-reverse?
-                                       rich-style-hidden? rich-style-strike?)
-                                 '(bold dim italic underline blink reverse hidden strike)))
-                    (if fg (list fg) '())
-                    (if bg (list (if (integer? bg) (list 'bg bg) bg)) '())))))))
-
   (define $write-rich-values/console
     (lambda (console values)
       (let ([port (rich-console-output-port console)]
@@ -572,8 +552,8 @@
                      (if (eq? color-system 'none)
                          (loop (cdr values) #f style-emitted?)
                          (loop (cdr values)
-                               ($accumulate-style active-style value)
-                               (or ($write-style-ansi port color-system value)
+                               (rich-style-overlay active-style value)
+                               (or ($write-style-ansi port color-system value active-style)
                                    style-emitted?)))]
                     [(rich-reset? value)
                      (when (and style-emitted? (not (eq? color-system 'none)))
