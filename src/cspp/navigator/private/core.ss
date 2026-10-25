@@ -95,9 +95,12 @@
 
   #|proc:make-nav
   The `make-nav` procedure creates a custom navigator named by the symbol `name`.
-  The `select-proc` procedure selects child focuses from one parent value,
-  `transform-proc` rebuilds a parent during pure transformation, and
-  `transform!-proc` mutates a parent during mutating transformation.
+  `select-proc` has signature `(parent emit) -> unspecified`; it calls `(emit child)`
+  once per selected child, in traversal order. `transform-proc` has signature
+  `(parent update) -> rebuilt-parent`; it replaces each child with `(update child)`.
+  `transform!-proc` has signature `(parent update!) -> parent`; it mutates each focus
+  using `(update! child)`, which returns the replacement child. The result is a navigator.
+  Custom navigators created by this procedure do not support clearing.
   |#
   (define make-nav
     (lambda (name select-proc transform-proc transform!-proc)

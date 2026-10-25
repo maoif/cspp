@@ -48,8 +48,11 @@
 
   #|proc:nav/getter-setter!
   The `nav/getter-setter!` procedure creates a navigator named by `name` that
-  supports selection, pure transformation through `set-proc`, and mutating
-  transformation through `set!-proc`.
+  supports selection and both transformation modes. `name` is a symbol used for diagnostics.
+  `get-proc` has signature `(parent) -> child`. `set-proc` has signature
+  `(parent new-child) -> rebuilt-parent` and must leave the original parent unchanged.
+  `set!-proc` has signature `(parent new-child) -> unspecified` and mutates the parent;
+  navigator mutation returns that original parent. The result is a navigator.
   |#
   (define nav/getter-setter!
     (lambda (name get-proc set-proc set!-proc)

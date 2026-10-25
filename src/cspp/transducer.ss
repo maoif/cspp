@@ -352,8 +352,9 @@
                #f))))
 
   #|proc:completion
-  The `completion` procedure returns the completing reducing procedure stored
-  by `reducer`.
+  The `completion` procedure returns the completing reducing procedure stored by reducer record
+  `reducer`. Its signatures are `() -> initial-accumulator`, `(accumulator) -> completed-result`,
+  and `(accumulator value) -> next-accumulator-or-reduced`.
   |#
   (define completion
     (lambda (reducer)
@@ -1024,9 +1025,10 @@
                   #f))))))
 
   #|proc:transduce
-  The `transduce` procedure runs `xform` over `source` using `reducer`. With
-  three arguments, the reducer supplies the initial accumulator; with four
-  arguments, `init` is used as the initial accumulator.
+  The `transduce` procedure runs transducer `xform` over transducible `source` using reducer
+  record `reducer`. With three arguments, the reducer supplies the initial accumulator; with four
+  arguments, `init` supplies it. The result is the reducer's completion value after source
+  exhaustion or an early `reduced` result.
   |#
   (define transduce
     (case-lambda
@@ -1036,8 +1038,10 @@
        (transduce-explicit xform reducer init source)]))
 
   #|proc:transduce1
-  The `transduce1` procedure runs `xform` over `source` using the first
-  transformed value as the initial accumulator for `reducer`.
+  The `transduce1` procedure runs transducer `xform` over transducible `source` using its first
+  transformed value as the accumulator for reducer record `reducer`. The result is the reducer's
+  completion value. An empty transformed source raises an error. The first value must be a valid
+  accumulator for `reducer`.
   |#
   (define transduce1
     (lambda (xform reducer source)
@@ -1152,9 +1156,9 @@
                     (make-iter next! reset-state! finalize-upstream!))))))
 
   #|proc:into
-  The `into` procedure transduces `source` into the destination named by `to`.
-  Phase 1 supports `'list`, `'reverse-list`, `'vector`, `'string`, and
-  `'bytevector`.
+  The `into` procedure transduces transducible `source` with transducer `xform` into the
+  destination named by symbol `to`. Supported destinations are `'list`, `'reverse-list`,
+  `'vector`, `'string`, and `'bytevector`. The result has the requested type.
   |#
   (define into
     (lambda (to xform source)
@@ -1316,8 +1320,11 @@
               (void))))
 
   #|proc:make-reducer
-  The `make-reducer` procedure returns a reducer record named `name`. `proc`
-  must be a completing reducing procedure with zero, one, and two arguments.
+  The `make-reducer` procedure returns a reducer named by symbol `name`. Procedure `proc`
+  implements `() -> initial-accumulator`, `(accumulator) -> completed-result`, and `(accumulator
+  value) -> next-accumulator-or-reduced`. Initialization creates independent accumulation state
+  for each reduction; completion finalizes the result once. A step wraps its accumulator with
+  `reduced` to request early termination.
   |#
   (define make-reducer
     (lambda (name proc)
@@ -1451,8 +1458,9 @@
             (if (or (eq? acc empty) (better? x acc)) x acc)])))))
 
   #|proc:rfmin
-  The `rfmin` procedure returns a reducer that keeps the minimum value
-  according to `less?`.
+  The `rfmin` procedure returns a reducer that keeps the minimum value according to `(less? left
+  right)`, a strict ordering predicate. Empty unseeded reductions raise an error; explicit
+  accumulators and `transduce1` seeds participate in comparisons.
   |#
   (define rfmin
     (lambda (less?)
@@ -1460,8 +1468,9 @@
               (extrema-reducer 'rfmin less?))))
 
   #|proc:rfmax
-  The `rfmax` procedure returns a reducer that keeps the maximum value
-  according to `less?`.
+  The `rfmax` procedure returns a reducer that keeps the maximum value according to `(less? left
+  right)`, a strict ordering predicate. Empty unseeded reductions raise an error; explicit
+  accumulators and `transduce1` seeds participate in comparisons.
   |#
   (define rfmax
     (lambda (less?)
@@ -1469,8 +1478,8 @@
               (extrema-reducer 'rfmax (lambda (x acc) (less? acc x))))))
 
   #|proc:rfany
-  The `rfany` procedure returns the first true result from `(pred x)` and
-  terminates early. It returns `#f` if no value matches.
+  The `rfany` procedure returns a reducer that applies unary predicate `(pred x)`. Reduction
+  returns its first true result and terminates early, or `#f` if no value matches.
   |#
   (define rfany
     (lambda (pred)
@@ -1485,8 +1494,8 @@
                     (if res (reduced res) #f))])))))
 
   #|proc:rfevery
-  The `rfevery` procedure returns `#f` and terminates early on the first value
-  rejected by `pred`; otherwise it returns `#t`.
+  The `rfevery` procedure returns a reducer that applies unary predicate `(pred x)`. Reduction
+  returns `#f` at the first false result and terminates early, or `#t` otherwise.
   |#
   (define rfevery
     (lambda (pred)
