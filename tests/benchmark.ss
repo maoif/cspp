@@ -1358,3 +1358,68 @@
                    (and (json5-document? (parse-json5 text))
                         (benchmark-string-contains? text "#0=")))))))
          (list key-cycle value-cycle tail-cycle))))
+
+;; These fixtures catch lost population deviation, wrong medians, and interval endpoints.
+(mat benchmark-summary-known-values
+     (for-all
+       (lambda (row)
+         (let* ([samples (map (lambda (value) `((iterations . 1) (bytes . ,value))) (car row))]
+                [result (car (benchmark-results-from-data
+                               `(((name . statistics) (samples . ,samples)))))]
+                [summary (cdr (assq 'bytes
+                           (benchmark-summarize (benchmark-result-samples result))))])
+           (and (equal? (map (lambda (key) (cdr (assq key summary)))
+                            '(median mean min max stddev))
+                        (cadr row))
+                (for-all (lambda (actual expected) (< (abs (- actual expected)) 1e-9))
+                         (cdr (assq 'confidence-interval summary)) (caddr row)))))
+       '((() (0 0 0 0 0) (0 0))
+         ((4) (4 4 4 4 0) (4 4))
+         ((0 2) (1 1 0 2 1) (-0.3859292911256331 2.385929291125633))
+         ((0 3 6) (3 3 0 6 2.449489742783178) (0.22814141774873375 5.771858582251266))
+         ((0 0 2 2) (1 1 0 2 1) (0.02 1.98)))))
+
+;; Each gate must admit the boundary itself and reject values just below it.
+(mat benchmark-comparison-threshold-tables
+     (for-all
+       (lambda (metric)
+         (for-all
+           (lambda (row)
+             (let* ([base (benchmark-results-from-data
+                            `(((name . threshold) (summary . ((,metric . ((mean . ,(car row)))))))))]
+                    [current (benchmark-results-from-data
+                               `(((name . threshold) (summary . ((,metric . ((mean . ,(cadr row)))))))))]
+                    [comparison (car (benchmark-compare-results base current
+                                       `((metric . ,metric) ,@(caddr row))))])
+               (and (eq? (benchmark-comparison-regression? comparison) (cadddr row))
+                    (eq? (benchmark-comparison-improvement? comparison) (list-ref row 4))
+                    (= (benchmark-comparison-absolute-difference comparison) (list-ref row 5))
+                    (= (benchmark-comparison-percent-difference comparison) (list-ref row 6)))))
+           '((100 104 () #f #f 4 4)
+             (100 105 () #t #f 5 5)
+             (100 106 () #t #f 6 6)
+             (100 95 () #f #t -5 -5)
+             (100 96 () #f #f -4 -4)
+             (100 110 ((threshold-absolute . 11)) #f #f 10 10)
+             (100 110 ((threshold-absolute . 10)) #t #f 10 10)
+             (100 110 ((noise-threshold-percent . 11)) #f #f 10 10)
+             (100 110 ((noise-threshold-percent . 10)) #t #f 10 10)
+             (100 90 ((noise-threshold-percent . 11)) #f #f -10 -10)
+             (100 90 ((threshold-absolute . 11)) #f #f -10 -10)
+             (0 0 () #f #f 0 0)
+             (0 1 () #t #f 1 +inf.0)
+             (1 0 () #f #t -1 -100))))
+       '(cpu-ns real-ns bytes)))
+
+(mat benchmark-calibration-stops-at-target
+     (let* ([seen '()]
+            [benchmark (make-benchmark 'target-reached
+                         (lambda (state)
+                           (set! seen (cons (benchmark-state-iterations state) seen))
+                           (milisleep 2)) '())]
+            [result (car (benchmark-run benchmark
+                           (benchmark-config-with (benchmark-test-config)
+                             '((samples . 2) (min-time . 0.0001) (max-iterations . 8)))))])
+       (and (not (benchmark-result-error result))
+            (equal? seen '(1 1))
+            (equal? (map benchmark-sample-iterations (benchmark-result-samples result)) '(1 1)))))
