@@ -316,26 +316,52 @@
       (pcheck ([rich-live? live] [boolean? transient?])
               ($rich-live-transient?-set! live transient?))))
 
+  ;; Reuse worker/parent refresh contexts so renderer children never join their parent.
+  (define $call-with-live-context
+    (lambda (live refresh)
+      (let ([context ($worker-context)])
+        (if (with-mutex ($rich-live-wake-lock live)
+              (and context (eq? live (vector-ref context 0)) (vector-ref context 1)))
+            (refresh)
+            (let ([context (vector live #t #f)])
+              (dynamic-wind
+                void
+                (lambda ()
+                  (parameterize ([$worker-context context])
+                    (refresh)
+                    (when (with-mutex ($rich-live-wake-lock live)
+                            (if (vector-ref context 2)
+                                #t
+                                (begin (vector-set! context 1 #f) #f)))
+                      ($finish-live-stop! live))))
+                (lambda ()
+                  (with-mutex ($rich-live-wake-lock live)
+                    (vector-set! context 1 #f)))))))))
+
   #|proc:rich-live-refresh!
   The `rich-live-refresh!` procedure clears the previous live output and writes
   the current renderable to the live console and returns `live`. Each frame is rendered
   once at the current available width. Clearing counts wrapped physical terminal rows,
   including after resize, without counting a pending wrap at the right edge twice.
+  Renderer stop requests finish this frame before clearing transient output.
   |#
   (define rich-live-refresh!
     (lambda (live)
       (pcheck ([rich-live? live])
-              (let* ([console (rich-live-console live)]
-                     [port (rich-console-output-port console)]
-                     [frame (rich-console-frame console (rich-live-renderable live))]
-                     [width (rich-console-output-width console)])
-                (when (eq? port ($rich-live-previous-port live))
-                  ($clear-live-output port ($frame-line-count ($rich-live-previous-frame live) width)))
-                (display frame port)
-                (flush-output-port port)
-                ($rich-live-previous-frame-set! live frame)
-                ($rich-live-previous-port-set! live port)
-                live))))
+              ($call-with-live-context live
+                (lambda ()
+                  (let* ([console (rich-live-console live)]
+                         [port (rich-console-output-port console)]
+                         [frame (rich-console-frame console (rich-live-renderable live))]
+                         [width (rich-console-output-width console)])
+                    (when (eq? port ($rich-live-previous-port live))
+                      ($clear-live-output port ($frame-line-count ($rich-live-previous-frame live) width)))
+                    (display frame port)
+                    (flush-output-port port)
+                    ($rich-live-previous-frame-set! live frame)
+                    ($rich-live-previous-port-set! live port)
+                    live)))
+              live)))
 
   #|proc:rich-live-start!
   The `rich-live-start!` procedure starts refreshing `live` and returns `live`.
@@ -358,18 +384,7 @@
                          (raise condition)])
                   ($rich-live-started?-set! live #t)
                   ($rich-live-stop?-set! live #f)
-                  ;; The synchronous first frame needs the same deferred-stop behavior
-                  ;; as worker frames, including renderer children and cleanup callbacks.
-                  (let ([context (vector live #t #f)])
-                    (dynamic-wind
-                      void
-                      (lambda ()
-                        (parameterize ([$worker-context context])
-                          (rich-live-refresh! live)
-                          (when (vector-ref context 2) ($finish-live-stop! live))))
-                      (lambda ()
-                        (with-mutex ($rich-live-wake-lock live)
-                          (vector-set! context 1 #f)))))
+                  (rich-live-refresh! live)
                   (when (and (not ($rich-live-stop? live))
                              (positive? (rich-live-refresh-rate live)))
                     (let ([thread
@@ -428,8 +443,8 @@
   #|proc:rich-live-stop!
   The `rich-live-stop!` procedure stops refreshing `live` and returns `live`.
   The default wait is interrupted immediately; custom `rich-sleep` hooks must return
-  themselves. Calls during its initial refresh or from its worker and renderer child threads
-  request shutdown after the current frame finishes; other callers wait for shutdown.
+  themselves. Calls from its refresh callbacks, worker, or renderer child threads request
+  shutdown after the current frame finishes; other callers wait for shutdown.
   If its worker failed, cleanup finishes before its condition is raised once.
   |#
   (define rich-live-stop!

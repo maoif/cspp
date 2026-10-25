@@ -424,9 +424,33 @@ EXTERNAL_STOP = r'''
            (error 'external-stop "stop returned before the worker finished")))))))
 '''
 
+MANUAL_REFRESH_STOP = r'''
+(import (cspp))
+(let ([live #f] [stop? #f] [value (vector 'manual-stop)])
+  (rich-register-renderer! (lambda (candidate) (eq? candidate value))
+    (lambda (_)
+      (when stop?
+        ;; Manual refresh must defer both direct and renderer-child shutdown.
+        (rich-live-stop! live)
+        (thread-join (fork-thread (lambda () (rich-live-stop! live)))))
+      "frame"))
+  (call-with-port (open-output-string)
+    (lambda (output)
+      (set! live (make-rich-live value (rich-console :output-port output) 0 #t))
+      (rich-live-start! live)
+      (get-output-string output)
+      (set! stop? #t)
+      (rich-live-refresh! live)
+      (unless (string=? (get-output-string output) "\r\033[2Kframe\r\033[2K")
+        (error 'manual-refresh-stop "new frame remained visible after shutdown"))
+      (rich-live-stop! live)
+      (unless (string=? (get-output-string output) "")
+        (error 'manual-refresh-stop "shutdown cleanup was left pending")))))
+'''
+
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-live-") as directory:
-        cases = (("concurrent-capture", CONCURRENT_CAPTURE),
+        cases = (("manual-refresh-stop", MANUAL_REFRESH_STOP), ("concurrent-capture", CONCURRENT_CAPTURE),
                  ("concurrent-width", CONCURRENT_WIDTH), ("external-stop", EXTERNAL_STOP), ("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE),
                  ("false-failure", FAILURE.replace(
                      '(error \'worker-recovery "later frame failed")', "(raise #f)")),
