@@ -1052,3 +1052,13 @@
               (reject)))]
          [result (car (test-run (list descriptor) (test-silent-config)))])
     (eq? (test-result-status result) 'skipped)))
+
+(mat test-select-validates-keys-before-filtering
+  ;; Unknown selector keys must fail even with no cases or an earlier rejecting filter.
+  (let ([registry (make-test-registry)])
+    (and (guard (raised [else #t])
+           (test-select registry '((bogus . #t))) #f)
+         (begin
+           (test-register! registry (make-test-case 'present (lambda () #t) '()))
+           (guard (raised [else #t])
+             (test-list registry '((name-prefix . "absent") (bogus . #t))) #f)))))

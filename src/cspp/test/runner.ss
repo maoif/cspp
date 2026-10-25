@@ -127,7 +127,7 @@
                         (case (car selector)
                           [(name-prefix) (string? (cdr selector))]
                           [(include-tags) (list? (cdr selector))]
-                          [else #t])
+                          [else #f])
                         (loop (cdr selectors)))))))))
 
   (define $case-selected?
