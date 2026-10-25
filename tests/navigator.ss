@@ -1464,3 +1464,27 @@
                                 (lambda (value emit) (emit (callback-missing-focus value)))
                                 (lambda (value update) value)
                                 (lambda (value update!) value))) 1)))
+
+(define passthrough-nav
+  (make-nav 'passthrough
+            (lambda (value emit) (emit value))
+            (lambda (value update) (update value))
+            (lambda (value update!) (update! value))))
+
+(mat navigator-review-custom-continuation-errors
+  (null? (nav-select (nav/maybe (nav/path passthrough-nav (nav/key 'missing))) '()))
+
+  (equal? '((a . 1))
+          (nav-transform (nav/maybe (nav/path passthrough-nav (nav/key 'missing)))
+                         add1 '((a . 1))))
+
+  (let ([data (ht 'a 1)])
+    (and (eq? data (nav-transform!
+                   (nav/maybe (nav/path passthrough-nav (nav/key 'missing))) add1 data))
+         (= 1 (ht-ref data 'a))))
+
+  (null? (nav-select (nav/maybe (nav/path passthrough-nav passthrough-nav
+                                          (nav/key 'missing))) '()))
+
+  ;; A missing suffix outside the optional path must propagate through custom navigation.
+  (error? (nav-select (nav/path (nav/maybe passthrough-nav) (nav/key 'missing)) '())))

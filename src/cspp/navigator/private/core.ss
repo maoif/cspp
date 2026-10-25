@@ -103,6 +103,20 @@
     (lambda (proc)
       (lambda args (apply nav-call-user proc args))))
 
+  ;; Custom navigators invoke an engine continuation as well as their own code.
+  ;; Preserve continuation-origin absence for an enclosing optional path to handle.
+  (define nav-protect-traversal
+    (lambda (proc)
+      (lambda (value continue)
+        (let ([downstream-condition #f])
+          (guard (exn [(and (nav-absent-focus? exn)
+                            (not (eq? exn downstream-condition)))
+                       (raise (condition exn (make-nav-callback-error)))])
+            (proc value
+                  (lambda (child)
+                    (guard (exn [else (set! downstream-condition exn) (raise exn)])
+                      (continue child)))))))))
+
   (define nav-unsupported-error
     (lambda (who nav value action)
       (nav-error who "navigator ~a does not support ~a for value: ~s"
@@ -126,9 +140,9 @@
     (lambda (name select-proc transform-proc transform!-proc)
       (pcheck ([symbol? name] [procedure? select-proc transform-proc transform!-proc])
               (make-$navigator name 'custom `(nav-custom ,name)
-                               (nav-protect-callback select-proc)
-                               (nav-protect-callback transform-proc)
-                               (nav-protect-callback transform!-proc)
+                               (nav-protect-traversal select-proc)
+                               (nav-protect-traversal transform-proc)
+                               (nav-protect-traversal transform!-proc)
                                (lambda (value clear)
                                  (nav-error name "custom navigator cannot clear: ~s" value))
                                (lambda (value clear!)
