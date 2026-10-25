@@ -650,12 +650,12 @@
                       [() (reducer-init reducer)]
                       [(acc) (reducer-complete reducer acc)]
                       [(acc x)
-                       (if (fx= left 0)
+                       (if (zero? left)
                            (reduced acc)
                            (begin
-                             (set! left (fx- left 1))
+                             (set! left (- left 1))
                              (let ([next (reducer-step reducer acc x)])
-                               (if (or (fx= left 0) (reduced? next))
+                               (if (or (zero? left) (reduced? next))
                                    (ensure-reduced next)
                                    next))))])
                     #f)))))))
@@ -677,8 +677,8 @@
                       [() (reducer-init reducer)]
                       [(acc) (reducer-complete reducer acc)]
                       [(acc x)
-                       (if (fx> left 0)
-                           (begin (set! left (fx- left 1)) acc)
+                       (if (positive? left)
+                           (begin (set! left (- left 1)) acc)
                            (reducer-step reducer acc x))])
                     #f)))))))
 
@@ -887,7 +887,10 @@
                                   (set! key k)
                                   (set! buf (make-list-builder))
                                   (buf x)
-                                  (reducer-step reducer acc chunk))]))])
+                                  (let ([next (reducer-step reducer acc chunk)])
+                                    (when (reduced? next)
+                                      (set! started? #f))
+                                    next))]))])
                     #f)))))))
 
   #|proc:tdedupe
@@ -1429,21 +1432,17 @@
 
   (define extrema-reducer
     (lambda (name better?)
-      (make-reducer
-       name
-       (let ([seen? #f])
+      (let ([empty (gensym)])
+        (make-reducer
+         name
          (case-lambda
-           [() #f]
+           [() empty]
            [(acc)
-            (if seen?
-                acc
-                (errorf name "empty transformed source"))]
+            (if (eq? acc empty)
+                (errorf name "empty transformed source")
+                acc)]
            [(acc x)
-            (if seen?
-                (if (better? x acc) x acc)
-                (begin
-                  (set! seen? #t)
-                  x))])))))
+            (if (or (eq? acc empty) (better? x acc)) x acc)])))))
 
   #|proc:rfmin
   The `rfmin` procedure returns a reducer that keeps the minimum value

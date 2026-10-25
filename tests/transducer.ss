@@ -450,3 +450,49 @@
      ;; slicing transducers require valid positive step values.
      (error? (ttake-nth 0))
      (error? (tslice 0 3 0)))
+
+(mat transducer-review-reducer-contracts
+  (transduce (tpartition-by id)
+             (rfany (lambda (chunk) (= (vector-ref chunk 0) 1))) '(1 2 3))
+
+  (not (transduce (tpartition-by id)
+                 (rfevery (lambda (chunk) (= (vector-ref chunk 0) 2))) '(1 2 3)))
+
+  (let ([seen '()])
+    (transduce (tcompose (tpartition-by id) (ttake 1)
+                        (ttap (lambda (chunk) (set! seen (cons chunk seen)))))
+               (rflist) '(1 2 3))
+    (equal? seen '(#(1))))
+
+  (let ([minimum (rfmin <)] [maximum (rfmax <)])
+    (and (= 1 (transduce (tidentity) minimum '(1 2)))
+         (= 4 (transduce (tidentity) minimum '(4 5)))
+         (= 5 (transduce (tidentity) maximum '(4 5)))
+         (= 2 (transduce (tidentity) maximum '(1 2)))))
+
+  (= 0 (transduce (tidentity) (rfmin <) 0 '(3 4)))
+
+  (= 9 (transduce (tidentity) (rfmax <) 9 '(3 4)))
+
+  (= 0 (transduce (tidentity) (rfmin <) 0 '()))
+
+  (= 1 (transduce1 (tidentity) (rfmin <) '(1 2 3)))
+
+  (= 7 (transduce1 (tidentity) (rfmin <) '(7)))
+
+  (= 7 (transduce1 (tidentity) (rfmax <) '(7)))
+
+  ;; Empty reductions still raise after a reducer has completed a previous pass.
+  (let ([minimum (rfmin <)])
+    (transduce (tidentity) minimum '(1))
+    (guard (condition [else #t])
+      (transduce (tidentity) minimum '())
+      #f))
+
+  (equal? '(1 2) (into 'list (ttake (+ 1 (most-positive-fixnum))) '(1 2)))
+
+  (null? (into 'list (tdrop (+ 1 (most-positive-fixnum))) '(1 2)))
+
+  (equal? '(1 2) (into 'list (ttake 2.0) '(1 2 3)))
+
+  (equal? '(3) (into 'list (tdrop 2.0) '(1 2 3))))
