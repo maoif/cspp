@@ -200,6 +200,10 @@
                                (when frag-init
                                  (set! res (cons #'t-acc res)))
                                res)]
+                    ;; Rejected configuration guards advance sources, not the body count or fold.
+                    [skip-updates (append (if frag-init (list #'state-acc) '())
+                                          (if frag-index (list #'state-index) '())
+                                          (map (lambda (fragment) (list-ref fragment 3)) iter-frags))]
                     [bind-loop-state
                      (lambda (body)
                              #`(let (#,@(if (and frag-init
@@ -291,18 +295,12 @@
                                                                 (let ([v #,counter])
                                                                   (set! #,counter (fx1+ #,counter))
                                                                   #,(lp-configs (cdr configs)))
-                                                                #,(if frag-init
-                                                                      #`(let ([t-acc #,init-var])
-                                                                          (for-loop #,@updates))
-                                                                      #`(for-loop #,@updates))))]
+                                                                (for-loop #,@skip-updates)))]
                                                        [(:guard e)
                                                         (kw:guard? #':guard)
                                                         #`(if e
                                                               #,(lp-configs (cdr configs))
-                                                              #,(if frag-init
-                                                                    #`(let ([t-acc state-acc])
-                                                                        (for-loop #,@updates))
-                                                                    #`(for-loop #,@updates)))]
+                                                              (for-loop #,@skip-updates))]
                                                        [(:let v e)
                                                         (memq (datum :let) '(:let :let* :letrec :letrec*))
                                                         #`(#,(case (datum :let)

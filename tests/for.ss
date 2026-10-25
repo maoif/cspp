@@ -1413,7 +1413,7 @@
      (equal? '#(1 3 #f)
              (for/vector ([:length 3] [x 5] [:guard (odd? x)]) x))
 
-     (equal? '#((1 1) (3 3))
+     (equal? '#((0 1) (1 3))
              (for/vector ([:index i] [:length 2] [x 5] [:guard (odd? x)])
                (list i x)))
 
@@ -1496,6 +1496,28 @@
                           [:letrec* f (lambda (n) (if (zero? n) (fact x) (f (- n 1))))]
                           [:let*-values (z) (values (+ (f y) y))])
                (list x z))))
+
+(mat global-index-after-guards
+     (equal? '((1 0) (3 1))
+             (for/list ([:index i] [x 5] [:guard (odd? x)]) (list x i)))
+
+     ;; Rejecting a tuple preserves the body count and accumulator for both guard forms.
+     (= 0 (for/fold ([:index i] [:finish i] [x 5] [:guard #f]) (void)))
+
+     (= 0 (for/fold ([:index i] [:finish i] [x 5] [:guard #f :index passed]) (void)))
+
+     (equal? '(4 2)
+             (for/fold ([:init sum 0] [:index i] [:finish (list sum i)]
+                        [x 6] [:guard (odd? x) :index passed] [:guard (> x 1)])
+               (+ sum passed i)))
+
+     (equal? '#((1 0) (3 1) (5 2))
+             (for/vector ([:index i] [:length 3] [x 6] [:guard (odd? x)]) (list x i)))
+
+     ;; Parallel sources share the accepted-body count, including across iterator-local filters.
+     (equal? '((1 b 0) (3 d 1))
+             (for/list ([:index i] [x :fxiota 5] [y :list '(a b c d e)]
+                        [:guard (odd? x)]) (list x y i))))
 
 (mat guard-local-indices
      (equal? '((1 0) (3 1) (5 2))
