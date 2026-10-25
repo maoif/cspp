@@ -1314,3 +1314,24 @@
         (and (test-string-contains? text "absent-failure")
              (test-string-contains? text "absent-xpass"))))
     (list (test-text-reporter) (test-progress-reporter 'never))))
+
+(mat test-datum-summary-preserves-counts-under-printer-limits
+  ;; Diagnostic printer limits must not discard counts from the serialized summary.
+  (for-all
+    (lambda (limits)
+      (let* ([summary
+              (test-summarize
+                (map (lambda (status)
+                       (make-test-result status status status "" #f "" "" '() #f))
+                     '(passed failed errored skipped xfail xpass)))]
+             [text
+              (parameterize ([print-length (car limits)] [print-level (cadr limits)])
+                (call-with-string-output-port
+                  (lambda (out) (test-report (test-datum-reporter) out summary))))])
+        (call-with-port (open-input-string text)
+          (lambda (in)
+            (and (equal? (read in)
+                         '(test-summary (total . 6) (passed . 1) (failed . 1)
+                                        (errored . 1) (skipped . 1) (xfail . 1) (xpass . 1)))
+                 (eof-object? (read in)))))))
+    '((#f #f) (1 #f) (#f 1) (1 1))))

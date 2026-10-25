@@ -102,21 +102,22 @@ parameters, source, conditions, assertion operands and captured output when pres
 
   (define $write-datum-summary
     (lambda (out summary)
-      (write
-       `(test-summary
-         (total . ,(test-summary-total summary))
-         (passed . ,(test-summary-passed summary))
-         (failed . ,(test-summary-failed summary))
-         (errored . ,(test-summary-errored summary))
-         (skipped . ,(test-summary-skipped summary))
-         (xfail . ,(test-summary-xfail summary))
-         (xpass . ,(test-summary-xpass summary)))
-       out)
-      (newline out)))
+      (parameterize ([print-level #f] [print-length #f])
+        (write
+         `(test-summary
+           (total . ,(test-summary-total summary))
+           (passed . ,(test-summary-passed summary))
+           (failed . ,(test-summary-failed summary))
+           (errored . ,(test-summary-errored summary))
+           (skipped . ,(test-summary-skipped summary))
+           (xfail . ,(test-summary-xfail summary))
+           (xpass . ,(test-summary-xpass summary)))
+         out)
+        (newline out))))
 
   #|proc:test-datum-reporter
-The `test-datum-reporter` procedure returns a reporter that writes a Scheme
-datum summary.
+The `test-datum-reporter` procedure returns a reporter that writes a complete Scheme
+datum summary, independent of diagnostic printer length and level limits.
 |#
   (define test-datum-reporter
     (lambda ()
