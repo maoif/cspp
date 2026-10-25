@@ -339,9 +339,19 @@
 
   (define $write-string
     (lambda (value)
-      (let ([out (open-output-string)])
-        (write value out)
-        (get-output-string out))))
+      (parameterize ([print-graph #t] [print-level #f] [print-length #f])
+        (call-with-string-output-port (lambda (out) (write value out))))))
+
+  (define $readback-equal?
+    (lambda (value text)
+      (guard (raised [else #f])
+        (call-with-port (open-input-string text)
+          (lambda (in) (equal? value (read in)))))))
+
+  (define $diagnostic-datum
+    (lambda (value)
+      (let ([text ($write-string value)])
+        (if ($readback-equal? value text) value text))))
 
   (define $csv-field
     (lambda (value)
@@ -474,7 +484,7 @@
                             (condition-message exn)
                             "benchmark error"))
             (irritants . ,(if (irritants-condition? exn)
-                              (condition-irritants exn)
+                              (map $diagnostic-datum (condition-irritants exn))
                               '())))
           `((who . #f)
             (message . ,($write-string exn))
@@ -2238,19 +2248,23 @@ Division by iteration counts preserves exact fractional measurements.
   #|proc:benchmark-save-baseline
 The `benchmark-save-baseline` procedure writes benchmark `results` to file
 `path` as versioned Scheme data. The file can be read back with
-`benchmark-load-baseline`.
+`benchmark-load-baseline`. Runtime and template argument keys must be readable
+Scheme data; unsupported values such as procedures or ports are rejected before
+changing `path`. Unreadable error irritants are saved as diagnostic strings.
 |#
   (define benchmark-save-baseline
     (lambda (results path)
       (pcheck ([list? results] [string? path])
-              (call-with-output-file path
-                (lambda (out)
-                  (write `((format . cspp-benchmark-baseline)
-                           (version . 1)
-                           (results . ,(map $result->datum results)))
-                         out)
-                  (newline out))
-                'replace))))
+              (let* ([datum `((format . cspp-benchmark-baseline)
+                              (version . 1)
+                              (results . ,(map $result->datum results)))]
+                     [text ($write-string datum)])
+                (unless ($readback-equal? datum text)
+                  (errorf 'benchmark-save-baseline
+                    "results contain unreadable data; argument keys must be readable Scheme values"))
+                (call-with-output-file path
+                  (lambda (out) (display text out) (newline out))
+                  'replace)))))
 
   #|proc:benchmark-load-baseline
 The `benchmark-load-baseline` procedure reads benchmark results previously

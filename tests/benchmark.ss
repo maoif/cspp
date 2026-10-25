@@ -1210,3 +1210,35 @@
                 [real (cdr (assq 'mean (cdr (assq 'real-ns (benchmark-result-summary result)))))])
            (and (not (benchmark-result-error result)) (> real 5000000))))
        '(#f #t)))
+
+(mat benchmark-baseline-rejects-unreadable-keys-before-replacement
+     ;; Error: procedure-valued argument keys cannot be persisted as readable Scheme data.
+     (for-all
+       (lambda (options)
+         (let* ([path (benchmark-temp-file)]
+                [benchmark (make-benchmark 'unreadable (lambda arguments (void)) options)]
+                [results (benchmark-run benchmark (benchmark-test-config))])
+           (dynamic-wind
+             (lambda () (benchmark-write-datum-file path 'original))
+             (lambda ()
+               (let ([rejected? (guard (raised [else #t])
+                                  (benchmark-save-baseline results path) #f)])
+                 (and rejected? (eq? (call-with-input-file path read) 'original))))
+             (lambda () (when (file-exists? path) (delete-file path))))))
+       (list `((args . ((callback) (,make-vector))))
+             `((template-args . ((callback . ,make-vector)))))))
+
+(mat benchmark-baseline-unreadable-irritants
+     ;; Error: unreadable diagnostic irritants must not corrupt an otherwise usable baseline.
+     (let* ([path (benchmark-temp-file)]
+            [benchmark (make-benchmark 'diagnostic
+                         (lambda (state) (error 'diagnostic "bad callback ~s" make-vector)) '())]
+            [results (benchmark-run benchmark (benchmark-test-config))])
+       (dynamic-wind
+         (lambda () (void))
+         (lambda ()
+           (benchmark-save-baseline results path)
+           (let ([raised (benchmark-result-error (car (benchmark-load-baseline path)))])
+             (and (condition? raised)
+                  (string? (car (condition-irritants raised))))))
+         (lambda () (when (file-exists? path) (delete-file path))))))
