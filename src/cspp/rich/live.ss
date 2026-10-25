@@ -63,9 +63,19 @@
             (mutable start-time $rich-status-start-time $rich-status-start-time-set!)
             (mutable live $rich-status-live $rich-status-live-set!)))
 
-  ;; A refresh context records its live display, active lifetime, and stop request.
-  ;; Renderer children inherit it: joining the worker there can deadlock the renderer.
-  (define $worker-context (make-thread-parameter #f))
+  ;; Contexts record live displays, active lifetimes, and stop requests. Children inherit
+  ;; the chain so a nested renderer can stop any active ancestor without joining it.
+  (define $worker-contexts (make-thread-parameter '()))
+
+  ;; Call under the target display's wake lock, which protects each context's lifetime.
+  (define $live-context
+    (lambda (live)
+      (let loop ([contexts ($worker-contexts)])
+        (and (pair? contexts)
+             (let ([context (car contexts)])
+               (if (and (eq? live (vector-ref context 0)) (vector-ref context 1))
+                   context
+                   (loop (cdr contexts))))))))
 
   (define $default-status-frames
     '("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"))
@@ -320,9 +330,8 @@
   ;; Reuse worker/parent refresh contexts so renderer children never join their parent.
   (define $call-with-live-context
     (lambda (live refresh)
-      (let ([context ($worker-context)])
-        (if (with-mutex ($rich-live-wake-lock live)
-              (and context (eq? live (vector-ref context 0)) (vector-ref context 1)))
+      (let ([context (with-mutex ($rich-live-wake-lock live) ($live-context live))])
+        (if context
             (refresh)
             (let ([context (vector live #t #f)])
               (dynamic-wind
@@ -331,7 +340,7 @@
                     (vector-set! context 1 #t)
                     ($rich-live-refreshes-set! live (+ ($rich-live-refreshes live) 1))))
                 (lambda ()
-                  (parameterize ([$worker-context context])
+                  (parameterize ([$worker-contexts (cons context ($worker-contexts))])
                     (refresh)
                     (when (with-mutex ($rich-live-wake-lock live)
                             (if (vector-ref context 2)
@@ -397,7 +406,7 @@
                            (fork-thread
                             (lambda ()
                               (let ([context (vector live #t #f)])
-                                (parameterize ([$worker-context context])
+                                (parameterize ([$worker-contexts (cons context ($worker-contexts))])
                                   (guard (condition
                                           [else
                                            ($rich-live-failure-set! live (list condition))
@@ -460,10 +469,8 @@
                (with-mutex ($rich-live-wake-lock live)
                  ($rich-live-stop?-set! live #t)
                  (condition-signal ($rich-live-wake-condition live))
-                 (let ([context ($worker-context)])
-                   (and context (eq? live (vector-ref context 0))
-                        (vector-ref context 1)
-                        (begin (vector-set! context 2 #t) #t))))])
+                 (let ([context ($live-context live)])
+                   (and context (begin (vector-set! context 2 #t) #t))))])
           (unless deferred?
             (when ($rich-live-thread live)
               (thread-join ($rich-live-thread live))

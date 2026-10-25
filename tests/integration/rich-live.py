@@ -560,9 +560,55 @@ EXTERNAL_MANUAL_FAILURE = EXTERNAL_MANUAL_STOP.replace(
     "(rich-live-refresh! live)))").replace(
     r'"\r\033[2Kframe\r\033[2K"', r'"\r\033[2K"')
 
+NESTED_STOP = r'''
+(import (cspp))
+(define outer #f)
+(define inner #f)
+(define calls 0)
+(define completed? #f)
+(define lock (make-mutex))
+(define ready (make-condition))
+(define stopping? #f)
+(define first (vector 'outer))
+(define second (vector 'inner))
+(rich-register-renderer! (lambda (v) (eq? v first))
+  (lambda (_)
+    (set! calls (+ calls 1))
+    (when (= calls 2)
+      (rich-live-refresh! inner)
+      (set! completed? #t))
+    "outer"))
+(rich-register-renderer! (lambda (v) (eq? v second))
+  (lambda (_)
+    (thread-join (fork-thread
+      (lambda ()
+        (with-mutex lock (set! stopping? #t) (condition-signal ready))
+        (rich-live-stop! outer))))
+    "inner"))
+(call-with-port (open-output-string)
+  (lambda (out)
+    (call-with-port (open-output-string)
+      (lambda (in)
+        (set! outer (make-rich-live first (rich-console :output-port out) 100 #t))
+        (set! inner (make-rich-live second (rich-console :output-port in) 0 #t))
+        (rich-live-start! outer)
+        (with-mutex lock
+          (let wait () (unless stopping? (condition-wait ready lock) (wait))))
+        (rich-live-stop! outer)
+        (unless completed? (error 'nested-stop "nested refresh did not finish"))
+        (unless (string=? (get-output-string out) "outer\r\033[2Kouter\r\033[2K")
+          (error 'nested-stop "outer frame was not cleared"))
+        (rich-live-stop! inner)))))
+'''
+
+NESTED_INITIAL_STOP = NESTED_STOP.replace(
+    '(= calls 2)', '(= calls 1)').replace(
+    ':output-port out) 100 #t', ':output-port out) 0 #t').replace(
+    r'"outer\r\033[2Kouter\r\033[2K"', r'"outer\r\033[2K"')
+
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-live-") as directory:
-        cases = (("initial-external-stop", EXTERNAL_INITIAL_STOP),
+        cases = (("nested-stop", NESTED_STOP), ("nested-initial-stop", NESTED_INITIAL_STOP), ("initial-external-stop", EXTERNAL_INITIAL_STOP),
                  ("manual-external-failure", EXTERNAL_MANUAL_FAILURE), ("manual-external-stop", EXTERNAL_MANUAL_STOP), ("status-initial-stop", STATUS_INITIAL_STOP),
                  ("status-initial-setters", STATUS_INITIAL_SETTERS), ("manual-refresh-stop", MANUAL_REFRESH_STOP), ("concurrent-capture", CONCURRENT_CAPTURE),
                  ("concurrent-width", CONCURRENT_WIDTH), ("external-stop", EXTERNAL_STOP), ("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE),
