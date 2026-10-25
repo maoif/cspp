@@ -1174,3 +1174,17 @@
                                 "stdout-detail" "stderr-detail"))))))
           '(() ("--reporter" "progress"))))
       (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat test-human-reports-allow-absent-messages
+  ;; Results constructed by callers may omit messages, including on failures and loose xpass.
+  (for-all
+    (lambda (reporter)
+      (let ([text (call-with-string-output-port
+                    (lambda (out)
+                      (test-report reporter out
+                        (test-summarize
+                          (list (make-test-result 0 'absent-failure 'failed #f #f "" "" '() #f)
+                                (make-test-result 1 'absent-xpass 'xpass #f #f "" "" '() #f))))))])
+        (and (test-string-contains? text "absent-failure")
+             (test-string-contains? text "absent-xpass"))))
+    (list (test-text-reporter) (test-progress-reporter 'never))))

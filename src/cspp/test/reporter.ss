@@ -44,8 +44,9 @@ The `test-summarize` procedure returns a summary record for `results`.
             (fprintf out "  parameters: ~s\n" (test-result-parameters result)))
           (when (test-result-source result)
             (fprintf out "  source: ~s\n" (test-result-source result)))
-          (unless (string=? (test-result-message result) "")
-            (fprintf out "  message: ~a\n" (test-result-message result)))
+          (let ([message (test-result-message result)])
+            (when (and message (not (string=? message "")))
+              (fprintf out "  message: ~a\n" message)))
           (let ([raised (test-result-condition result)])
             (when raised
               (display "  condition: " out)
