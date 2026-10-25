@@ -342,6 +342,7 @@
 
 <for*-config-clause> := <break-clause>      ; in for*, break one level of loop
                      |  <guard-clause>
+                     |  <index-clause>      ; local index, counts visits reaching this clause
                      |  <bind-clause>
                      |  <stop-clause>       ; only in for*, stop the entire iter
   |#
@@ -351,6 +352,15 @@
   `:init` binds an accumulator updated from the body result; `:finish` supplies the final value.
   Binding clauses use the corresponding Scheme binding form and scope over subsequent clauses.
   Indexed guards count passes starting at zero and reset on every entry to their loop level.
+  A standalone `[:index name]` after an iterator binds a zero-based counter of visits reaching
+  that clause, equivalent to `[:guard #t :index name]`. It resets whenever its loop level is
+  entered, is visible to subsequent clauses and inner sources, and may shadow outer bindings.
+  Earlier guards filter its count; later guards and empty inner sources do not undo an increment.
+  Mutation or shadowing of `name` does not change the private counter. Multiple local index
+  clauses keep independent counters. A leading `[:index name]` still counts body evaluations
+  globally; iterator-local `:index` options still expose original source positions.
+  For example, `(for*/list ([x 4] [:guard (odd? x)] [:index i]) (list x i))`
+  returns `((1 0) (3 1))`.
   Iterator-local guards and source indexes follow the `for/fold` rules and restart on each entry.
   `:break` leaves one loop level. Its optional result replaces the fold accumulator on an inner
   break and is returned directly on an outermost break. Without an accumulator, inner results

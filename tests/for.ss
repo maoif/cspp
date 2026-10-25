@@ -5,6 +5,8 @@
           (kw-for-config-clause? #':let*-values)
           (kw-for*-config-clause? #':letrec*)
           (kw-for*-config-clause? #':let*-values)
+          (not (kw-for-config-clause? #':index))
+          (kw-for*-config-clause? #':index)
           (not (kw-for-config-clause? #':stop))
           (kw-for*-config-clause? #':stop)))
 
@@ -1517,6 +1519,76 @@
 
      (equal? '#(0 1 #f)
              (for/vector ([:length 3] [x 4] [:guard (odd? x) :index j]) j)))
+
+(mat nested-local-index
+     (equal? '((0 0 0) (0 0 1) (1 1 0) (1 1 1))
+             (for*/list ([x 2] [:index i] [y 2]) (list x i y)))
+
+     ;; Each counter resets when its loop level is entered, even after an empty inner source.
+     (equal? '((1 1 0 0) (2 2 0 0) (2 2 1 1))
+             (for*/list ([x 3] [:index i] [y :fxiota x] [:index j]) (list x i y j)))
+
+     ;; Counters at different clause positions count only visits reaching that position.
+     (equal? '((3 3 1 0) (5 5 2 1))
+             (for*/list ([x 6] [:index before] [:guard (odd? x)] [:index odd]
+                          [:guard (> x 1)] [:index accepted])
+               (list x before odd accepted)))
+
+     ;; An iterator-local guard runs before the standalone counter; source positions stay intact.
+     (equal? '((d 3 0) (b 1 1))
+             (for*/list ([x :vector '#(a b c d) :rev :index source :guard (odd? source)]
+                          [:index local])
+               (list x source local)))
+
+     ;; The global index counts bodies, while an outer local index counts outer visits.
+     (equal? '((0 0 0 0) (1 0 0 1) (2 1 1 0) (3 1 1 1))
+             (for*/list ([:index global] [x 2] [:index i] [y 2])
+               (list global x i y)))
+
+     ;; A same-named local index shadows the global alias without replacing finish state.
+     (= 6 (for*/fold ([:index i] [:finish i] [x 2] [:index i] [y 3]) (void)))
+
+     ;; Mutation and later shadowing of the public alias must not change its private counter.
+     (equal? '(0 1 2)
+             (for*/list ([x 3] [:index i])
+               (let ([original i]) (set! i 100) original)))
+
+     (equal? '(100 100 100)
+             (for*/list ([x 3] [:index i] [:let i 100] [y 1]) i))
+
+     ;; A local alias remains visible in inner source setup and may shadow the accumulator.
+     (equal? '((1 0) (2 0) (2 1))
+             (for*/list ([x 3] [:index i] [y :fxiota i]) (list i y)))
+
+     (= 3 (for*/fold ([:init sum 0] [:finish sum] [x 3] [:index sum] [y 2])
+            (+ sum 1)))
+
+     (let ([sum 0])
+       (for* ([x 2] [:index i] [y 3] [:index j])
+         (set! sum (+ sum i j)))
+       (= sum 9))
+
+     (equal? '#(0 1 0 1)
+             (for*/vector ([x 2] [y 2] [:index i]) i))
+
+     ;; Capacity limits and control clauses still exit the appropriate loop levels.
+     (equal? '#(0 1 0)
+             (for*/vector ([:length 3] [x 2] [y 2] [:index i]) i))
+
+     (equal? '((0 0) (0 1) (1 0) (1 1))
+             (for*/list ([x 2] [y 4] [:index i] [:break (= i 2)]) (list x i)))
+
+     (equal? '((0 0) (0 1))
+             (for*/list ([x 2] [y 4] [:index i] [:stop (= i 2)]) (list x i)))
+
+     ;; Standalone local indexes require an identifier and remain specific to nested loops.
+     (error? (eval '(for*/list ([x 2] [:index 0]) x)))
+
+     (error? (eval '(for*/list ([x 2] [:index]) x)))
+
+     (error? (eval '(for*/list ([x 2] [:index i extra]) x)))
+
+     (error? (eval '(for/list ([x 2] [:index i]) x))))
 
 (mat one-expression-stop
      (let ([seen (make-list-builder)])

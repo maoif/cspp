@@ -77,6 +77,7 @@
     (let ([kw (syntax->datum kw)])
       (or (eq? kw ':break)
           (eq? kw ':guard)
+          (eq? kw ':index)
           (eq? kw ':stop)
           (eq? kw ':let)
           (eq? kw ':let*)
@@ -262,6 +263,10 @@
           (hashtable-set! state 'iter/config
                           (snoc! res (list cl)))))
       (syntax-case cl ()
+        [(:index . rest)
+         (kw:index? #':index)
+         ;; Reserve the local index tag even when its arguments resemble an iterator.
+         (values #f #f)]
         [((v* ...) iter-ty op* ...)
          (and (andmap identifier? #'(v* ...))
               (valid-iter-ty? #'iter-ty))
@@ -286,6 +291,11 @@
               (errorf 'for "no iter clause before config clause: ~a" cl)
               (snoc! (list-last res) cl))))
       (syntax-case cl ()
+        [(:index v)
+         (and (kw:index? #':index) (identifier? #'v))
+         ;; A local counter advances on every visit reaching this clause.
+         (begin (add-clause! #'(:guard #t :index v))
+                (values #t #t))]
         [(:break e)
          (kw:break? #':break)
          (begin (add-clause! cl)
