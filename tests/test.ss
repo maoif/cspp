@@ -1062,3 +1062,65 @@
            (test-register! registry (make-test-case 'present (lambda () #t) '()))
            (guard (raised [else #t])
              (test-list registry '((name-prefix . "absent") (bogus . #t))) #f)))))
+
+(mat test-selected-cases-compose-with-run
+  (let ([registry (make-test-registry)] [seen '()] [hooks '()] [reported #f])
+    (test-register! registry
+      (make-test-case 'unselected (lambda () (error 'unselected "must not run")) '()))
+    (test-register! registry
+      (make-test-suite 'selected-suite
+        (list (make-test-case 'selected
+                (lambda (parameters)
+                  (test-eq (cdr (assq 'resource parameters)) 'ready)
+                  (set! seen (cons (cdr (assq 'n parameters)) seen))) '()))
+        `((tags . (chosen)) (parameterize . (((n) (1) (2) (3))))
+          (fixtures . ((resource . ,(lambda () 'ready))))
+          (before . ,(lambda (fixtures) (set! hooks (cons 'before hooks))))
+          (after . ,(lambda (fixtures) (set! hooks (cons 'after hooks)))))))
+    (let* ([selected (test-select registry '((include-tags . (chosen))))]
+           [subset (list (caddr selected) (car selected))]
+           [results
+            (call-with-port (open-output-string)
+              (lambda (out)
+                (test-run subset
+                  (test-config-with (test-silent-config)
+                    `((output . ,out)
+                      (reporter . ,(make-test-reporter 'collect
+                                     (lambda (port summary) (set! reported summary)))))))))])
+      (and (equal? seen '(1 3))
+           (equal? hooks '(after before after before))
+           (equal? (map test-result-id results) (map test-concrete-case-id subset))
+           (equal? (map test-result-parameters results) '(((n . 3)) ((n . 1))))
+           (equal? (map test-result-status results) '(passed passed))
+           (equal? (test-summary-results reported) results)))))
+
+(mat test-selected-cases-preserve-policies
+  ;; Error: a selected failing row must stop subsequent selected rows.
+  (let* ([calls 0]
+         [cases (test-expand-parameters
+                  (make-test-suite 'policies
+                    (list (make-test-case 'failure
+                            (lambda () (set! calls (+ calls 1)) (test-true #f)) '()))
+                    '((parameterize . (((n) (1) (2)))))))]
+         [results (test-run (reverse cases)
+                    (test-config-with (test-silent-config) '((stop-on-failure? . #t))))])
+    (and (= calls 1) (= (length results) 1)
+         (eq? (test-result-status (car results)) 'failed)
+         (= (test-result-id (car results)) (test-concrete-case-id (cadr cases)))))
+
+  (let* ([cases (test-expand-parameters
+                  (make-test-suite 'skipped-parent
+                    (list (make-test-case 'skipped-child
+                            (lambda () (error 'skipped-child "must not run")) '()))
+                    '((skip-when . ((lambda (parameters) #t) . "inherited")))))]
+         [result (car (test-run cases (test-silent-config)))])
+    (and (eq? (test-result-status result) 'skipped)
+         (string=? (test-result-message result) "inherited")))
+
+  ;; Error: mixed descriptor and concrete-case lists are ambiguous and must reject before running.
+  (let* ([calls 0]
+         [descriptor (make-test-case 'mixed (lambda () (set! calls (+ calls 1))) '())])
+    (and (guard (raised [else #t])
+           (test-run (list descriptor (car (test-expand-parameters descriptor))) (test-silent-config))
+           #f)
+         (= calls 0))))

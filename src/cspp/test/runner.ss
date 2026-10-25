@@ -450,18 +450,25 @@ association-list filters as `test-select`.
            (memq (test-result-status result) '(failed errored)))))
 
   #|proc:test-run
-  The `test-run` procedure executes test `descriptors` using runner `config` and
-  returns a list of test result records. Allowed continuable warnings resume
+  The `test-run` procedure executes `tests` using runner configuration `config`
+  and returns a list of test result records. `tests` must contain either all
+  descriptors or all concrete cases (for example, from `test-select`). Concrete
+  cases run in supplied order without re-expansion, preserving IDs, parameters,
+  and inherited metadata. An empty list returns no results. Mixed lists are rejected.
+  Allowed continuable warnings resume
   the case body. Skip and expected-failure rules apply to every phase. An
   unexpected pass has status `failed` under effective strict xfail policy and
   `xpass` otherwise; only `failed` and `errored` stop a stop-on-failure run.
   |#
   (define test-run
-    (lambda (descriptors config)
-      (pcheck ([list? descriptors] [test-config? config])
-              (unless (andmap test-descriptor? descriptors)
-                (errorf 'test-run "descriptors must all be test descriptors: ~a" descriptors))
-              (let* ([cases ($expand-descriptors descriptors)]
+    (lambda (tests config)
+      (pcheck ([list? tests] [test-config? config])
+              (let* ([cases (cond
+                             [(andmap test-concrete-case? tests) tests]
+                             [(andmap test-descriptor? tests) ($expand-descriptors tests)]
+                             [else (errorf 'test-run
+                                     "tests must all be descriptors or all concrete cases: ~a"
+                                     tests)])]
                      [results
                       (let loop ([cases cases] [out '()])
                         (if (null? cases)
