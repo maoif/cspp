@@ -39,6 +39,9 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
             | #(<pattern> ...)
             | ,(record <type> :fields (<field> <pattern>) ...)
             | ,(record <type> :values <pattern> ...)
+            | ,(datatype <type> <variant> :fields (<field> <pattern>) ...)
+            | ,(datatype <type> <variant> :values <pattern> ...)
+            | ,(datatype <type> <singleton>)
             | ,(box <pattern>)
             | ,(regex <expression> <group> ...)
             | ,(hash (<literal> <pattern>) ...)
@@ -88,9 +91,13 @@ Examples:
   syntax errors for static descriptors and runtime errors for local generative descriptors when
   the input has the selected type. Malformed modes and selectors are always syntax errors.
   Record syntax requires the explicit wrapper; the old `,(Type ...)` form is unsupported.
-  The `record`, `:fields`, and `:values` tags are recognized by spelling. Other extension heads
+  Datatypes use `,(datatype Type Variant :fields (field pattern) ...)` or
+  `,(datatype Type Variant :values pattern ...)` with the same field rules as records.
+  A zero-field variant also accepts the shorthand `,(datatype Type Singleton)`.
+  Datatype patterns select the declared variant type; the old `,(Type Variant ...)` is unsupported.
+  The `record`, `datatype`, `:fields`, and `:values` tags are recognized by spelling. Other heads
   retain custom-expander dispatch; a record named `hash` uses `,(record hash :values ...)`.
-  Datatype, box, hash, and regex extensions retain their existing forms. Expressions embedded in
+  Box, hash, and regex extensions retain their existing forms. Expressions embedded in
   extensions are evaluated as expressions and do not declare pattern captures.
   Hash keys are literal data, including bare symbols. An empty `,(hash)` checks the input type.
   Pattern variables intentionally shadow outer bindings in the selected body. Generated matcher
@@ -135,6 +142,8 @@ Examples:
           (cond
            [(eq? 'record (syntax->datum ext))
             (record-expander process-pattern rho expr-id pat body fk)]
+           [(eq? 'datatype (syntax->datum ext))
+            (datatype-expander process-pattern rho expr-id pat body fk)]
            ;; These heads keep their built-in meanings even when a record or custom
            ;; expander has the same spelling; explicit `record` selects that type.
            [(eq? 'box (syntax->datum ext))

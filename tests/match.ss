@@ -979,7 +979,7 @@
        (datatype CaptureType [Item value])
        (equal? '(10 20)
                (match (vector (Item 10) (Item 20))
-                 [#(,(CaptureType Item (value ,x)) ...) x] [else #f])))
+                 [#(,(datatype CaptureType Item :fields (value ,x)) ...) x] [else #f])))
 
      (let ()
        (define-record-type DynamicCapture (fields unquote))

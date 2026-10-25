@@ -16,12 +16,6 @@
   ;; see ChezScheme syntax.ss: define-record-type
   (define get-type-descriptor (lambda (rho dt) (cadr (rho dt))))
 
-  (define get-fields
-    (lambda (rho dt)
-      (let ([rtd (get-type-descriptor rho dt)])
-        ;; returns vector of names: '#(f0 f1 ...)
-        (record-type-field-names rtd))))
-
   ;; return `t` if it's a record type, otherwise #f
   (define valid-record-type?
     (lambda (rho t)
@@ -38,33 +32,6 @@
              (if pdesc
                  (eq? pdesc (get-type-descriptor rho dt))
                  (errorf 'match "invalid variant ~a of datatype ~a" variant dt))))))
-
-  (define by-pos-record-pats?
-    (lambda (rho rcd pats)
-      (fx= (length pats) (vector-length (get-fields rho rcd)))))
-
-  (define by-pos-datatype-pats?
-    (lambda (rho variant pats)
-      (by-pos-record-pats? rho variant pats)))
-
-  (define by-name-record-pats?
-    (lambda (rho dt pats)
-      (let* ([pats (syntax->datum pats)]
-             [fld* (get-fields rho dt)])
-        (and (apply = 2 (map (lambda (p) (or (and
-                                              ;; in pats like (,x _ ,y), _ is not a list
-                                              (list? p) (length p))
-                                             -1))
-                             pats))
-             (<= (length pats) (vector-length fld*))
-             ;; TODO check names are unique
-             ;; check if each pat has right field names
-             (andmap (lambda (pat) (vmemq (car pat) fld*)) pats)))))
-
-  (define by-name-datatype-pats?
-    (lambda (rho variant pats)
-      (by-name-record-pats? rho variant pats)))
-
 
   (define pattern-value
     (lambda (pattern)
@@ -94,6 +61,32 @@
                    [_ (syntax-error (car patterns) "match: expected (field pattern):")]))))
            (values type named? patterns))]
         [_ (syntax-error pattern "match: expected (record type :fields/:values pattern ...):")])))
+
+  #|proc:datatype-record-pattern
+  The `datatype-record-pattern` helper validates a datatype's variant and returns an equivalent
+  explicit record pattern. `rho` resolves declared types and `pattern` is datatype extension
+  syntax. For example, `(datatype Tree Leaf :values ,x)` becomes
+  `(record $datatype-Tree-Leaf :values ,x)`. Singleton shorthand becomes an empty `:values` form.
+  |#
+  (define datatype-record-pattern
+    (lambda (rho pattern)
+      (syntax-case pattern ()
+        [(_ type variant rest ...)
+         (and (identifier? #'type) (identifier? #'variant))
+         (let ([selected ($construct-name #'type "$datatype-" #'type "-" #'variant)])
+           (unless (variant-of? rho #'type selected)
+             (syntax-error pattern "match: invalid datatype/variant:"))
+           (syntax-case #'(rest ...) ()
+             [()
+              (unless (fxzero?
+                       (vector-length (record-type-field-names (get-type-descriptor rho selected))))
+                (syntax-error pattern "match: non-singleton variant requires :fields or :values:"))
+              #`(record #,selected :values)]
+             [(mode patterns ...)
+              (memq (datum mode) '(:fields :values))
+              #`(record #,selected mode patterns ...)]
+             [_ (syntax-error pattern "match: expected datatype variant :fields/:values:")]))]
+        [_ (syntax-error pattern "match: expected (datatype type variant mode pattern ...):")])))
 
   #|proc:extension-subpatterns
   The `extension-subpatterns` procedure returns the pattern positions of an extension.
@@ -128,16 +121,12 @@
            [(eq? (syntax->datum extension) 'hash)
             (map pattern-value arguments)]
            [(eq? (syntax->datum extension) 'box) arguments]
-           [(eq? expander datatype-expander)
-            (if (and (= 1 (length arguments)) (identifier? (car arguments)))
-                '()
-                (let ([variant ($construct-name extension "$datatype-" extension "-"
-                                                (car arguments))]
-                      [patterns (cdr arguments)])
-                  (if (and (pair? patterns)
-                           (by-name-record-pats? compile-environment variant patterns))
-                      (map pattern-value patterns)
-                      patterns)))]
+           [(eq? (syntax->datum extension) 'datatype)
+            (let-values ([(type named? patterns)
+                          (record-pattern-info compile-environment
+                                               (datatype-record-pattern
+                                                compile-environment pattern))])
+              (if named? (map pattern-value patterns) patterns))]
            [else
             ;; Custom expanders decide which arguments are patterns.  Ask the
             ;; expander through a collector callback instead of treating every
@@ -178,7 +167,7 @@
   #|proc:record-expander
   The `record-expander` procedure expands the explicit `record` extension.
   `process-pattern` compiles each field pattern; `compile-environment` resolves the record;
-  `expr-id` is the input identifier; `pattern` is `(Type :fields/:values ...)`; `body` is the
+  `expr-id` is the input identifier; `pattern` is `(record Type :fields/:values ...)`; `body` is the
   success expression; and `failure` is a zero-argument failure procedure. It returns matcher
   syntax. For example, a `Point` value `(make-Point 10 20)` with
   `,(record Point :fields (y ,y))` binds `y` to `20`.
@@ -235,74 +224,16 @@
 
 
   #|proc:datatype-expander
-  The `datatype-expander` procedure expands a CSPP datatype extension.
-  Its arguments have the same callback, input, pattern, success, and failure meanings as
-  `record-expander`. For example, `,(Tree Leaf)` selects the `Leaf` variant and returns its
-  body; `,(Tree Node (value ,x))` binds the node's `value` field to `x`.
+  The `datatype-expander` procedure expands an explicit CSPP datatype pattern through the record
+  compiler. Its callback, environment, input, success, and failure arguments have the meanings
+  described by `record-expander`. For example, `,(datatype Tree Leaf :values ,x)` captures the
+  leaf value, and `,(datatype Tree Empty)` checks the zero-field variant's type. Variant selection
+  uses the declared descriptor, so earlier captures may shadow type and singleton names safely.
   |#
   (define datatype-expander
     (lambda (pp rho expr-id pat body fk)
-      (syntax-case pat ()
-        [(dt singleton)
-         (identifier? #'singleton)
-         #`(if (and (record? singleton (record-type-descriptor dt))
-                    (eq? #,expr-id singleton))
-               #,body
-               (#,fk))]
-        [(dt variant . rest)
-         ;; name of dt is dt,
-         ;; name of variant is $datatype-dt-varaint
-         (let ([variant ($construct-name #'dt "$datatype-" #'dt "-" #'variant)])
-           (if (variant-of? rho #'dt variant)
-               (syntax-case #'rest ()
-                 [(pat pats ...)
-                  (by-name-datatype-pats? rho variant #'(pat pats ...))
-                  (with-syntax ([(type?) (generate-temporaries '(type?))]
-                                [rtd (datum->syntax variant (get-type-descriptor rho variant))]
-                                [(fld* ...) (generate-temporaries (enumerate #'(pat pats ...)))]
-                                [(i ...) (datum->syntax variant (map
-                                                                 (lambda (n) (vmemq (car n) (get-fields rho variant)))
-                                                                 (syntax->datum #'(pat pats ...))))]
-                                [((_ npats) ...) #'(pat pats ...)])
-                    #`(let ([type? (record-predicate 'rtd)])
-                        (if (type? #,expr-id)
-                            (let ([fld* ((record-accessor 'rtd i) #,expr-id)] ...)
-                              #,(let loop ([fields #'(fld* ...)] [npats #'(npats ...)])
-                                  (if (null? fields)
-                                      body
-                                      (pp rho (car fields) (car npats)
-                                          (loop (cdr fields) (cdr npats))
-                                          fk))))
-                            (#,fk))))]
-                 [(pat pats ...)
-                  (by-pos-datatype-pats? rho variant #'(pat pats ...))
-                  (with-syntax ([(type?) (generate-temporaries '(type?))]
-                                [rtd (datum->syntax variant (get-type-descriptor rho variant))]
-                                [(fld* ...) (generate-temporaries (enumerate #'(pat pats ...)))]
-                                [(i ...) (datum->syntax variant (enumerate #'(pat pats ...)))])
-                    #`(let ([type? (record-predicate 'rtd)])
-                        (if (type? #,expr-id)
-                            (let ([fld* ((record-accessor 'rtd i) #,expr-id)] ...)
-                              #,(let loop ([fields #'(fld* ...)] [npats #'(pat pats ...)])
-                                  (if (null? fields)
-                                      body
-                                      (let ([p (car npats)])
-                                        (pp rho (car fields) p
-                                            (loop (cdr fields) (cdr npats))
-                                            fk)
-                                        #;
-                                        (if (identifier? p)
-                                            ;; `p` has to be singleton: ,(dt p)
-                                            (pp rho (car fields) #`,(dt #,p)
-                                                (loop (cdr fields) (cdr npats))
-                                                fk)
-                                            (pp rho (car fields) p
-                                                (loop (cdr fields) (cdr npats))
-                                                fk))))))
-                            (#,fk))))]
-                 [_ (syntax-error pat "match: invalid datatype pattern:")])
-               (syntax-error pat "match: invalid datatype/variant in:")))]
-        [else (syntax-error pat "match: invalid pattern for datatype: ")])))
+      (pcheck ([procedure? pp rho] [identifier? expr-id fk])
+        (record-expander pp rho expr-id (datatype-record-pattern rho pat) body fk))))
 
 
   #|proc:box-expander

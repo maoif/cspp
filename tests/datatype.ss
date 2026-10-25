@@ -261,6 +261,68 @@
      )
 
 
+(mat explicit-datatype-patterns
+     (let ()
+       (datatype MatchModes [NoFields] [One value] [Two left right] [KeywordField unquote])
+       (and (= 42 (match (One 42) [,(datatype MatchModes One :values ,x) x]))
+            (= 42 (match (One 42) [,(datatype MatchModes One :fields (value ,x)) x]))
+            (equal? '(20 10)
+                    (match (Two 10 20)
+                      [,(datatype MatchModes Two :fields (right ,r) (left ,l)) (list r l)]))
+            (match (Two 10 20) [,(datatype MatchModes Two :fields) #t])
+            (match NoFields [,(datatype MatchModes NoFields) #t])
+            (match NoFields [,(datatype MatchModes NoFields :values) #t])
+            (match NoFields [,(datatype MatchModes NoFields :fields) #t])
+            (= 30 (match (KeywordField 30)
+                    [,(datatype MatchModes KeywordField :values ,x) x]))
+            (= 30 (match (KeywordField 30)
+                    [,(datatype MatchModes KeywordField :fields (unquote ,x)) x]))
+            (equal? '(30 40)
+                    (match (One '(value 30 40))
+                      [,(datatype MatchModes One :values (value ,x ...)) x]))))
+
+     ;; Pattern captures may shadow the declared type, variant value, and compiler helper names.
+     (let ()
+       (datatype ShadowType [ShadowEmpty] [ShadowItem value])
+       (and (match (list 99 ShadowEmpty)
+              [(,ShadowEmpty ,(datatype ShadowType ShadowEmpty)) #t] [else #f])
+            (match (list 99 ShadowEmpty)
+              [(,ShadowType ,(datatype ShadowType ShadowEmpty :values)) #t] [else #f])
+            (equal? '(10 20)
+                    (match (list (ShadowItem 10) (ShadowItem 20))
+                      [(,(datatype ShadowType ShadowItem :values ,rtd) ...) rtd]))
+            (equal? '(10 20)
+                    (match (vector (ShadowItem 10) (ShadowItem 20))
+                      [#(,(datatype ShadowType ShadowItem :fields (value ,fields)) ...) fields]))))
+
+     ;; Both wrapper and mode tags are recognized by spelling even when locally bound.
+     (let ()
+       (datatype TagType [TagItem value])
+       (let ([datatype #f] [:fields #f] [:values #f])
+         (= 42 (match (TagItem 42) [,(datatype TagType TagItem :values ,x) x])))))
+
+(mat explicit-datatype-pattern-errors
+     ;; Missing modes, invalid selectors, duplicate fields, and wrong arities are syntax errors.
+     (for-all
+      (lambda (pattern)
+        (guard (condition [(syntax-violation? condition) #t] [else #f])
+          (expand `(let ()
+                     (datatype InvalidModes [Empty] [Item value])
+                     (match #f [,(list 'unquote pattern) #t] [else #f])))
+          #f))
+      '((datatype InvalidModes Item)
+        (datatype InvalidModes Item ,x)
+        (datatype InvalidModes Item :unknown ,x)
+        (datatype InvalidModes Item :fields ,x)
+        (datatype InvalidModes Item :fields (value ,x extra))
+        (datatype InvalidModes Item :fields (value ,x) (value ,y))
+        (datatype InvalidModes Item :fields (missing ,x))
+        (datatype InvalidModes Item :values)
+        (datatype InvalidModes Empty :values ,x)
+        (datatype InvalidModes Missing :values)
+        (InvalidModes Item ,x)
+        (InvalidModes Empty))))
+
 (mat match-datatype-singleton
 
      (begin (datatype Color [R] [G] [B])
@@ -268,28 +330,28 @@
 
      (= 1
         (match R
-          [,(Color R) 1]
-          [,(Color G) 2]
-          [,(Color B) 3]))
+          [,(datatype Color R) 1]
+          [,(datatype Color G) 2]
+          [,(datatype Color B) 3]))
      (= 2
         (match G
-          [,(Color R) 1]
-          [,(Color G) 2]
-          [,(Color B) 3]))
+          [,(datatype Color R) 1]
+          [,(datatype Color G) 2]
+          [,(datatype Color B) 3]))
      (= 3
         (match B
-          [,(Color R) 1]
-          [,(Color G) 2]
-          [,(Color B) 3]))
+          [,(datatype Color R) 1]
+          [,(datatype Color G) 2]
+          [,(datatype Color B) 3]))
 
      (error? (match 'bla
-               [,(Color R) 1]
-               [,(Color G) 2]
-               [,(Color B) 3]))
+               [,(datatype Color R) 1]
+               [,(datatype Color G) 2]
+               [,(datatype Color B) 3]))
      (error? (match 42
-               [,(Color R) 1]
-               [,(Color G) 2]
-               [,(Color B) 3]))
+               [,(datatype Color R) 1]
+               [,(datatype Color G) 2]
+               [,(datatype Color B) 3]))
 
      )
 
@@ -305,27 +367,27 @@
      ;; match by position
      (eq? 'val
           (match (Node 'val Nil Nil)
-            [,(Tree Nil) 'nil]
-            [,(Tree Node ,x _ _) x])) ;; FIXME
+            [,(datatype Tree Nil) 'nil]
+            [,(datatype Tree Node :values ,x _ _) x])) ;; FIXME
 
      ;; match by name
      (equal? 2
              (match (Node '(1 2 3) Nil Nil)
-               [,(Tree Nil) 'nil]
-               [,(Tree Node (val (_ ,x _))) x]))
+               [,(datatype Tree Nil) 'nil]
+               [,(datatype Tree Node :fields (val (_ ,x _))) x]))
 
      (eq? 42
           (match (Node 42 Nil Nil)
-            [,(Tree Nil) 'nil]
-            [,(Tree Node (val ,v)) v]))
+            [,(datatype Tree Nil) 'nil]
+            [,(datatype Tree Node :fields (val ,v)) v]))
      (eq? Nil
           (match (Node 42 Nil Nil)
-            [,(Tree Nil) 'nil]
-            [,(Tree Node (right ,v)) v]))
+            [,(datatype Tree Nil) 'nil]
+            [,(datatype Tree Node :fields (right ,v)) v]))
      (equal? (list 42 Nil)
              (match (Node 42 Nil Nil)
-               [,(Tree Nil) 'nil]
-               [,(Tree Node ,v _ ,y) (list v y)]))
+               [,(datatype Tree Nil) 'nil]
+               [,(datatype Tree Node :values ,v _ ,y) (list v y)]))
 
 
      ;; nested patterns
@@ -340,28 +402,28 @@
             #t)
 
      (match JNull
-       [,(Json JNull) #t])
+       [,(datatype Json JNull) #t])
 
      (match (JBool #t)
-       [,(Json JBool ,x) x])
+       [,(datatype Json JBool :values ,x) x])
 
      (match (JBool #f)
-       [,(Json JBool ,x) (not x)])
+       [,(datatype Json JBool :values ,x) (not x)])
 
      (match (JNumber 42)
-       [,(Json JNumber ,x)
+       [,(datatype Json JNumber :values ,x)
         (= x 42)])
 
      (match (JString "jstr")
-       [,(Json JString ,x)
+       [,(datatype Json JString :values ,x)
         (string=? x "jstr")])
 
      (match (JArray (list JNull (JBool #t) (JBool #f) (JNumber 42) (JString "jstr")))
-       [,(Json JArray (,(Json JNull)
-                       ,(Json JBool   ,x0)
-                       ,(Json JBool   ,x1)
-                       ,(Json JNumber ,x2)
-                       ,(Json JString ,x3)))
+       [,(datatype Json JArray :values (,(datatype Json JNull)
+                       ,(datatype Json JBool :values ,x0)
+                       ,(datatype Json JBool :values ,x1)
+                       ,(datatype Json JNumber :values ,x2)
+                       ,(datatype Json JString :values ,x3)))
         (equal? (list x0 x1 x2 x3)
                 (list #t #f 42 "jstr"))])
 
@@ -371,11 +433,11 @@
                       (cons "False"  (JBool   #f))
                       (cons "Number" (JNumber 42))
                       (cons "String" (JString "jstr"))))
-       [,(Json JObject ((,n0 . ,(Json JNull))
-                        (,n1 . ,(Json JBool   ,x0))
-                        (,n2 . ,(Json JBool   ,x1))
-                        (,n3 . ,(Json JNumber ,x2))
-                        (,n4 . ,(Json JString ,x3))))
+       [,(datatype Json JObject :values ((,n0 . ,(datatype Json JNull))
+                        (,n1 . ,(datatype Json JBool :values ,x0))
+                        (,n2 . ,(datatype Json JBool :values ,x1))
+                        (,n3 . ,(datatype Json JNumber :values ,x2))
+                        (,n4 . ,(datatype Json JString :values ,x3))))
         (equal? (list n0 n1 n2 n3 n4)
                 (list "Null" "True" "False" "Number" "String"))])
 
