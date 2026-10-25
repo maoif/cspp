@@ -1634,6 +1634,37 @@
                     (pair? (assq 'summary datum))
                     (eof-object? (read in)))))))))
 
+(mat benchmark-json-preserves-subnormal-numbers
+     ;; Error: Chez precision suffixes are not JSON and subnormal values must remain numeric.
+     (let ([object-ref
+            (lambda (object name)
+              (json5-member-value
+                (find (lambda (member) (string=? name (json5-member-name member)))
+                      (vector->list (json5-object-members object)))))])
+       (for-all
+         (lambda (value)
+           (let* ([benchmark (make-benchmark 'subnormal-json
+                              (lambda (state argument)
+                                (benchmark-state-counter-set! state 'value argument))
+                              `((args (value) (,value))))]
+                  [results (benchmark-run benchmark
+                             (benchmark-config-with (benchmark-test-config) '((samples . 1))))])
+             (for-all
+               (lambda (precision)
+                 (let* ([text (call-with-string-output-port
+                                (lambda (out)
+                                  (parameterize ([print-precision precision]
+                                                 [print-subnormal-precision #t])
+                                    (benchmark-report results (benchmark-json-reporter) out))))]
+                        [document (parse-json5 text)]
+                        [result (vector-ref
+                                  (json5-array-elements
+                                    (object-ref (json5-document-value document) "results")) 0)])
+                   (and (= (object-ref (object-ref result "args") "value") value)
+                        (= (object-ref (object-ref result "counters") "value") value))))
+               '(#f 53))))
+         '(1e-310 -1e-310 5e-324 -5e-324))))
+
 (mat benchmark-calibration-growth-and-retained-samples
      ;; An unreachable target makes growth deterministic without replacing the measurement backend.
      (let* ([setups '()] [calls 0]

@@ -390,9 +390,11 @@
 
   (define $json-number-string
     (lambda (n)
-      (number->string (if (and (rational? n) (not (integer? n)))
-                          (exact->inexact n)
-                          n))))
+      ;; Chez's optional mantissa-width suffix is Scheme syntax, not JSON numeric syntax.
+      (parameterize ([print-precision #f] [print-subnormal-precision #f])
+        (number->string (if (and (rational? n) (not (integer? n)))
+                            (exact->inexact n)
+                            n)))))
 
   (define $json-safe-number-string?
     (lambda (text)
