@@ -6,6 +6,22 @@
 
 (rich-register-renderer! example-lines? example-lines-lines)
 
+;; Application records can render directly in text, table cells, and nested panels.
+(define-record-type (package make-package package?)
+  (fields (immutable name package-name)
+          (immutable version package-version)
+          (immutable state package-state)))
+
+(rich-register-renderer!
+ package?
+ (lambda (package)
+   (list (list (rich-segment (package-name package) (rich-style 'bold 'cyan))
+               (rich-segment (string-append "@" (package-version package))
+                             (rich-style 'dim))
+               (rich-segment (string-append " " (package-state package))
+                             (rich-style (if (string=? (package-state package) "ready")
+                                             'green 'yellow)))))))
+
 (define section
   (lambda (console title)
     (rich-println console)
@@ -106,6 +122,9 @@
                         (rich-export-ansi (rich-text "sample" (rich-style #x33ccff))))
                        (rich-style #x33ccff))
             "\n")
+(rich-print console (rich-style 'bold 'cyan)
+            "Inherited: " (rich-text "cyan, normal weight" (rich-style 'no-bold))
+            " / bold again" (reset-style) "\n")
 
 (section console "Segments, Wrapping, Cropping")
 (let* ([wrapped (rich-segment-wrap
@@ -207,6 +226,30 @@
            ("test" (rich-text "pass" (rich-style 'bold 'green)) "rich, string, list"))))
 (rich-print console build-table "\n")
 
+(section console "Package Catalog")
+(define packages
+  (list (make-package "cspp-core" "1.0" "ready")
+        (make-package "cspp-net" "0.2" "testing")
+        (make-package "cspp-rich" "0.1" "ready")))
+(let ([catalog (rich-table :box 'rounded :columns ("Package" "Purpose"))])
+  (for-each
+   (lambda (package purpose)
+     (rich-table-add-row! catalog package purpose))
+   packages '("Base libraries" "HTTP and SSH" "Terminal reports"))
+  (rich-print console catalog "\n")
+  (rich-print console "Inline record: " (car packages) "\n"))
+
+;; Numeric columns use procedural construction to select right justification.
+(section console "Cache Budget")
+(define cache-budget (rich-table :box 'square :show-lines? #f))
+(rich-table-add-column! cache-budget "Artifact")
+(rich-table-add-column! cache-budget "KiB" 'right)
+(rich-table-add-column! cache-budget "Hits" 'right)
+(for-each
+ (lambda (row) (apply rich-table-add-row! cache-budget row))
+ '(("reader" 48 9821) ("compiler" 1024 742) ("runtime" 256 120)))
+(rich-print console cache-budget "\n")
+
 (section console "Tree And Pretty Printing")
 (define project-tree
   (rich-tree :label (rich-text "cspp" (rich-style 'bold 'blue))))
@@ -246,6 +289,27 @@
     :padding 2))
 (rich-print console layout-panel "\n")
 
+(section console "Release Summary")
+;; Compose existing renderables; each child receives its parent's content width.
+(define release-checks (make-rich-tree (rich-text "Release checks" 'ok)))
+(rich-tree-add! release-checks "Unit tests passed")
+(rich-tree-add! release-checks "Documentation generated")
+(rich-tree-add! release-checks "Package signatures verified")
+(define release-report
+  (rich-panel
+    :title "Candidate 0.1"
+    :subtitle "Ready for review"
+    :box 'rounded
+    :body (rich-layout
+            :direction 'column
+            :items (list (rich-columns
+                           :gap 2
+                           :items (list (rich-panel :title "Artifacts" :body cache-budget)
+                                        (rich-panel :title "Validation" :body release-checks)))
+                         (rich-padding :top 1 :left 1
+                           :body (rich-text "Next: publish the signed archive." 'warn))))))
+(rich-print console release-report "\n")
+
 (section console "Live, Status, Progress")
 (let ([now 0])
   (parameterize ([rich-current-time (lambda () now)])
@@ -279,5 +343,6 @@
       :columns ("Export" "Preview")
       :rows (("text length" (number->string (string-length plain)))
              ("ansi value" (rich-text (rich-strip-ansi ansi) (rich-style 'bold 'green)))
+             ("record text" (rich-export-text (cadr packages)))
              ("renderer?" (if (rich-renderable? build-table) "registered" "plain")))))
   (rich-print console export-table "\n"))

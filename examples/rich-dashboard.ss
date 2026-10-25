@@ -41,24 +41,60 @@
 
 (define run-progress-demo
   (lambda (console)
-    (let ([deploy (make-rich-progress)])
-      (let ([assets (rich-progress-add-task! deploy "资源 assets" 8)]
-            [migrate (rich-progress-add-task! deploy "迁移 migrations" 5)]
-            [workers (rich-progress-add-task! deploy "workers" #f)])
-        (let ([live (make-rich-live deploy console 0 #f)])
-          (let loop ([i 0])
-            (when (<= i 8)
-              (rich-progress-update! deploy assets i)
-              (rich-progress-update! deploy migrate (min i 5))
-              (rich-progress-advance! deploy workers 1)
-              (rich-live-refresh! live)
-              (milisleep 500)
-              (loop (+ i 1))))
-          (rich-progress-complete! deploy assets)
-          (rich-progress-complete! deploy migrate)
-          (rich-live-refresh! live)
-          (rich-live-stop! live)
-          (rich-println console "\n"))))))
+    ;; A manual clock makes speed and elapsed time reproducible in captured output.
+    (let ([now 0])
+      (parameterize ([rich-current-time (lambda () now)])
+        (let* ([deploy (make-rich-progress)]
+               [assets (rich-progress-add-task! deploy "资源 assets" 8)]
+               [migrate (rich-progress-add-task! deploy "迁移 migrations" 5)]
+               [workers (rich-progress-add-task! deploy "workers" #f)]
+               [smoke (rich-progress-add-task! deploy "Smoke checks" 3)])
+          (define deployment-frame
+            (lambda (step)
+              (let ([health (rich-table :show-lines? #f :columns ("Service" "Readiness"))]
+                    [ready (min 3 (quotient step 2))])
+                (rich-table-add-row! health "api"
+                  (rich-text (format "ready: ~a/3" ready) (if (= ready 3) 'good 'busy)))
+                (rich-table-add-row! health "database"
+                  (rich-text (if (>= step 5) "migrated" "migrating")
+                             (if (>= step 5) 'good 'busy)))
+                (rich-table-add-row! health "Smoke checks"
+                  (if (= step 8) "passed" (if (>= step 5) "running" "waiting")))
+                (rich-panel
+                  :title "Deployment Control"
+                  :box 'rounded
+                  :body (rich-layout :direction 'column
+                          :items (list health
+                                       (rich-padding :top 1 :bottom 1 :body deploy)
+                                       (rich-text (if (= step 8) "Traffic opened"
+                                                      "Traffic held until checks pass")
+                                                  (if (= step 8) 'good 'busy))))))))
+          (rich-progress-task-visible?-set! deploy smoke #f)
+          (let ([live (make-rich-live (deployment-frame 0) console 0 #f)])
+            (dynamic-wind
+              (lambda () (rich-live-start! live))
+              (lambda ()
+                (do ([step 1 (+ step 1)]) ((> step 8))
+                  (milisleep 500)
+                  (set! now (/ step 2))
+                  (rich-progress-update! deploy assets step)
+                  (when (<= step 5) (rich-progress-advance! deploy migrate))
+                  (rich-progress-advance! deploy workers)
+                  ;; Discovery resolves an unknown total; later phases replace old tasks.
+                  (when (= step 3) (rich-progress-task-total-set! deploy workers 8))
+                  (when (= step 5)
+                    (rich-progress-complete! deploy migrate)
+                    (rich-progress-task-visible?-set! deploy smoke #t))
+                  (when (> step 5) (rich-progress-advance! deploy smoke))
+                  (when (= step 8)
+                    (for-each (lambda (id) (rich-progress-complete! deploy id))
+                              (list assets workers smoke))
+                    (rich-progress-task-visible?-set! deploy workers #f))
+                  ;; Replace the entire composed frame on the same live display.
+                  (rich-live-renderable-set! live (deployment-frame step))
+                  (rich-live-refresh! live)))
+              (lambda () (rich-live-stop! live)))
+            (rich-println console "\n")))))))
 
 (define console (make-rich-console))
 

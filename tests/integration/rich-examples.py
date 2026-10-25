@@ -89,6 +89,12 @@ def check(name, width):
     if SGR.search(output):
         assert SGR.search(export_rows[0].encode()), (name, "unstyled ANSI preview")
     lines = ANSI.sub("", decoded).replace("\r\n", "\n").replace("\r", "\n").splitlines()
+    # The showcases should demonstrate composed reports and application renderers.
+    expected = (("Package Catalog", "Cache Budget", "Release Summary", "cspp-net@0.2")
+                if name == "rich.ss" else
+                ("Deployment Control", "Smoke checks", "Traffic opened", "ready: 3/3"))
+    for label in expected:
+        assert label in "\n".join(lines), (name, "missing showcase content", label)
     title = "Styles, Themes, Text" if name == "rich.ss" else "Styled Signals"
     rules = [line for line in lines if title in line]
     progress = [line for line in lines if re.search(r"\[[#-]*\]", line)]
