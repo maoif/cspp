@@ -496,3 +496,37 @@
   (equal? '(1 2) (into 'list (ttake 2.0) '(1 2 3)))
 
   (equal? '(3) (into 'list (tdrop 2.0) '(1 2 3))))
+
+(define transducer-drain
+  (lambda (iterator)
+    (let ([builder (make-list-builder)])
+      (let loop ()
+        (let ([value (iter-next! iterator)])
+          (if (iter-end? value)
+              (builder)
+              (begin (builder value) (loop))))))))
+
+(mat transducer-review-sequence-lifecycle
+  (let* ([source (list->iter '(1 2 3))]
+         [output (sequence (tcompose (tmap/i cons) (ttake 2)) source)])
+    (and (equal? '(0 . 1) (iter-next! output))
+         (begin (iter-reset! output) #t)
+         (equal? '((0 . 1) (1 . 2)) (transducer-drain output))
+         (not (iter-finalized? source))
+         (begin (iter-reset! output) #t)
+         (equal? '((0 . 1) (1 . 2)) (transducer-drain output))
+         (begin (iter-finalize! output) #t)
+         (iter-finalized? source)))
+
+  (let ([output (sequence (tpartition-all 2) '(1 2 3))])
+    (and (equal? '(#(1 2) #(3)) (transducer-drain output))
+         (begin (iter-reset! output) #t)
+         (equal? '(#(1 2) #(3)) (transducer-drain output))))
+
+  (let ([source (list->iter '(1 2 3))])
+    (iter-next! source)
+    (let ([output (sequence (tidentity) source)])
+      (and (= 2 (iter-next! output))
+           (= 3 (iter-next! output))
+           (iter-end? (iter-next! output))
+           (not (iter-finalized? source))))))

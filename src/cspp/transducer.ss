@@ -1065,7 +1065,10 @@
   #|proc:sequence
   The `sequence` procedure returns an iterator over the transformed values from
   `source`. Values are pulled from `source` only as the returned iterator is
-  advanced.
+  advanced. An iterator source starts at its current position and remains open at
+  exhaustion. Resetting the result resets an iterator source and the transducer state;
+  other sources receive a new traversal. Explicitly finalizing the result finalizes its
+  upstream iterator, including a caller-supplied iterator.
   |#
   (define sequence
     (lambda (xform source)
@@ -1112,9 +1115,11 @@
                           (iter-finalize! upstream))))
                     (define reset-state!
                       (lambda ()
-                        (when (and upstream (not (iter-finalized? upstream)))
-                          (iter-finalize! upstream))
-                        (set! upstream (source->iter source))
+                        (if (and upstream (iter? source))
+                            (iter-reset! upstream)
+                            (begin
+                              (finalize-upstream!)
+                              (set! upstream (source->iter source))))
                         (set! effective (apply-transducer xform emit-reducer))
                         (set! acc (reducer-init effective))
                         (set! done? #f)
@@ -1125,7 +1130,8 @@
                         (unless done?
                           (set! done? #t)
                           (set! acc (reducer-complete effective (unreduced acc)))
-                          (finalize-upstream!))))
+                          (unless (iter? source)
+                            (finalize-upstream!)))))
                     (define next!
                       (lambda ()
                         (let loop ()
