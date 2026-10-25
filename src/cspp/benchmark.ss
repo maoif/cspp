@@ -669,16 +669,11 @@
                   results)
         table)))
 
-  (define $find-result
-    (lambda (results name args template-args)
-      (let loop ([results results])
-        (cond
-         [(null? results) #f]
-         [(and (eq? name (benchmark-result-name (car results)))
-               (equal? args (benchmark-result-args (car results)))
-               (equal? template-args (benchmark-result-template-args (car results))))
-          (car results)]
-         [else (loop (cdr results))]))))
+  (define $result-key
+    (lambda (result)
+      (list (benchmark-result-name result)
+            (benchmark-result-args result)
+            (benchmark-result-template-args result))))
 
   (define $sample->datum
     (lambda (sample)
@@ -2326,7 +2321,17 @@ positive or negative infinity.
        (benchmark-compare-results baseline current '())]
       [(baseline current options)
        (pcheck ([list? baseline current options])
-               (let ([metric ($option-ref options 'metric 'real-ns)]
+               (let ([baseline-index
+                      (let ([index (make-hashtable equal-hash equal?)])
+                        (for-each
+                          (lambda (result)
+                            (let ([key ($result-key result)])
+                              ;; Keep the first match, as the original ordered search did.
+                              (unless (hashtable-contains? index key)
+                                (hashtable-set! index key result))))
+                          baseline)
+                        index)]
+                     [metric ($option-ref options 'metric 'real-ns)]
                      [threshold-percent ($option-ref options 'threshold-percent 5)]
                      [threshold-absolute ($option-ref options 'threshold-absolute 0)]
                      [noise-threshold-percent ($option-ref options 'noise-threshold-percent 0)])
@@ -2334,10 +2339,7 @@ positive or negative infinity.
                    (if (null? current)
                        (reverse out)
                        (let* ([cur (car current)]
-                              [base ($find-result baseline
-                                                  (benchmark-result-name cur)
-                                                  (benchmark-result-args cur)
-                                                  (benchmark-result-template-args cur))])
+                              [base (hashtable-ref baseline-index ($result-key cur) #f)])
                          (let ([base-value (and base ($comparison-metric-mean base metric))]
                                [cur-value ($comparison-metric-mean cur metric)])
                            (if (and base-value cur-value)

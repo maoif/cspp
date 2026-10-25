@@ -1253,3 +1253,15 @@
              (and (benchmark-string-contains? text "size")
                   (benchmark-string-contains? text "kind")
                   (benchmark-string-contains? text "vector")))))))
+
+(mat benchmark-comparison-index-preserves-matching
+     (let* ([baseline
+             (benchmark-results-from-data
+               (map (lambda (number mean)
+                      `((name . case) (args . ((n . ,number)))
+                        (summary . ((real-ns . ((mean . ,mean)))))))
+                    '(1 1 2) '(10 99 20)))]
+            [current (reverse (list (car baseline) (caddr baseline)))]
+            [comparisons (benchmark-compare-results baseline current)])
+       (and (equal? (map benchmark-comparison-baseline-value comparisons) '(20 10))
+            (equal? (map benchmark-comparison-current comparisons) current))))
