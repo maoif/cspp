@@ -2447,6 +2447,8 @@ positive or negative infinity.
   The `benchmark-compare-results` procedure compares current benchmark `current`
   results with `baseline` results. `options` is an alist supporting `metric`,
   `threshold-percent`, `threshold-absolute`, and `noise-threshold-percent`.
+  Thresholds must be finite nonnegative real numbers; invalid thresholds raise an
+  error naming the option, including when the result lists are empty or do not match.
   The returned list excludes results with captured errors or without a finite real
   mean for the selected metric. Runs with no samples are excluded, including after
   baseline save/load. Historical baselines without sample data remain comparable;
@@ -2458,53 +2460,60 @@ positive or negative infinity.
        (benchmark-compare-results baseline current '())]
       [(baseline current options)
        (pcheck ([list? baseline current options])
-               (let ([baseline-index
-                      (let ([index (make-hashtable equal-hash equal?)])
-                        (for-each
-                          (lambda (result)
-                            (let ([key ($result-key result)])
-                              ;; Keep the first match, as the original ordered search did.
-                              (unless (hashtable-contains? index key)
-                                (hashtable-set! index key result))))
-                          baseline)
-                        index)]
-                     [metric ($option-ref options 'metric 'real-ns)]
+               (let ([metric ($option-ref options 'metric 'real-ns)]
                      [threshold-percent ($option-ref options 'threshold-percent 5)]
                      [threshold-absolute ($option-ref options 'threshold-absolute 0)]
                      [noise-threshold-percent ($option-ref options 'noise-threshold-percent 0)])
-                 (let loop ([current current] [out '()])
-                   (if (null? current)
-                       (reverse out)
-                       (let* ([cur (car current)]
-                              [base (hashtable-ref baseline-index ($result-key cur) #f)])
-                         (let ([base-value (and base ($comparison-metric-mean base metric))]
-                               [cur-value ($comparison-metric-mean cur metric)])
-                           (if (and base-value cur-value)
-                               (let* ([absolute (benchmark-absolute-difference base-value cur-value)]
-                                      [percent (benchmark-percent-difference base-value cur-value)]
-                                      [abs-percent (abs percent)]
-                                      [significant? (and (>= (abs absolute) threshold-absolute)
-                                                         (>= abs-percent noise-threshold-percent))]
-                                      [regression? (and significant?
-                                                        (positive? absolute)
-                                                        (>= percent threshold-percent))]
-                                      [improvement? (and significant?
-                                                         (negative? absolute)
-                                                         (>= (abs percent) threshold-percent))])
-                                 (loop (cdr current)
-                                       (cons ($mk-benchmark-comparison
-                                              (benchmark-result-name cur)
-                                              metric
-                                              base
-                                              cur
-                                              base-value
-                                              cur-value
-                                              absolute
-                                              percent
-                                              regression?
-                                              improvement?)
-                                             out)))
-                               (loop (cdr current) out))))))))]))
+                 (for-each
+                   (lambda (key value)
+                     (unless (and (real? value) (finite? value) (>= value 0))
+                       (errorf 'benchmark-compare-results
+                         "~a must be a finite nonnegative real: ~s" key value)))
+                   '(threshold-percent threshold-absolute noise-threshold-percent)
+                   (list threshold-percent threshold-absolute noise-threshold-percent))
+                 (let ([baseline-index
+                        (let ([index (make-hashtable equal-hash equal?)])
+                          (for-each
+                            (lambda (result)
+                              (let ([key ($result-key result)])
+                                ;; Keep the first match, as the original ordered search did.
+                                (unless (hashtable-contains? index key)
+                                  (hashtable-set! index key result))))
+                            baseline)
+                          index)])
+                   (let loop ([current current] [out '()])
+                     (if (null? current)
+                         (reverse out)
+                         (let* ([cur (car current)]
+                                [base (hashtable-ref baseline-index ($result-key cur) #f)])
+                           (let ([base-value (and base ($comparison-metric-mean base metric))]
+                                 [cur-value ($comparison-metric-mean cur metric)])
+                             (if (and base-value cur-value)
+                                 (let* ([absolute (benchmark-absolute-difference base-value cur-value)]
+                                        [percent (benchmark-percent-difference base-value cur-value)]
+                                        [abs-percent (abs percent)]
+                                        [significant? (and (>= (abs absolute) threshold-absolute)
+                                                           (>= abs-percent noise-threshold-percent))]
+                                        [regression? (and significant?
+                                                          (positive? absolute)
+                                                          (>= percent threshold-percent))]
+                                        [improvement? (and significant?
+                                                           (negative? absolute)
+                                                           (>= (abs percent) threshold-percent))])
+                                   (loop (cdr current)
+                                         (cons ($mk-benchmark-comparison
+                                                (benchmark-result-name cur)
+                                                metric
+                                                base
+                                                cur
+                                                base-value
+                                                cur-value
+                                                absolute
+                                                percent
+                                                regression?
+                                                improvement?)
+                                               out)))
+                                 (loop (cdr current) out)))))))))]))
 
   #|proc:benchmark-pause-timing
 The `benchmark-pause-timing` procedure pauses timing for measured benchmark

@@ -1665,6 +1665,52 @@
                '(#f 53))))
          '(1e-310 -1e-310 5e-324 -5e-324))))
 
+(mat benchmark-comparison-rejects-invalid-thresholds
+     ;; Error: NaN and other invalid thresholds must reject even when no results match.
+     (let ([baseline (benchmark-results-from-data
+                       '(((name . threshold-validation)
+                          (summary . ((real-ns . ((mean . 100))))))))]
+           [current (benchmark-results-from-data
+                      '(((name . threshold-validation)
+                         (summary . ((real-ns . ((mean . 200))))))))])
+       (for-all
+         (lambda (key)
+           (for-all
+             (lambda (value)
+               (for-all
+                 (lambda (results)
+                   (guard (raised
+                            [else (and (who-condition? raised)
+                                       (eq? (condition-who raised) 'benchmark-compare-results)
+                                       (message-condition? raised)
+                                       (benchmark-string-contains?
+                                         (call-with-string-output-port
+                                           (lambda (out) (display-condition raised out)))
+                                         (symbol->string key)))])
+                     (benchmark-compare-results (car results) (cadr results)
+                       (list (cons key value)))
+                     #f))
+                 (list (list baseline current) (list '() '()))))
+             '(+nan.0 +inf.0 -inf.0 -1 -1/2 -0.5 1+2i #f invalid)))
+         '(threshold-percent threshold-absolute noise-threshold-percent))))
+
+(mat benchmark-comparison-accepts-finite-real-thresholds
+     (let ([baseline (benchmark-results-from-data
+                       '(((name . real-threshold)
+                          (summary . ((real-ns . ((mean . 100))))))))]
+           [current (benchmark-results-from-data
+                      '(((name . real-threshold)
+                         (summary . ((real-ns . ((mean . 110))))))))])
+       (for-all
+         (lambda (key)
+           (for-all
+             (lambda (row)
+               (let ([comparison (car (benchmark-compare-results baseline current
+                                       (list (cons key (car row)))))])
+                 (eq? (benchmark-comparison-regression? comparison) (cdr row))))
+             (list (cons 0 #t) (cons 1/2 #t) (cons 0.5 #t) (cons (expt 10 400) #f))))
+         '(threshold-percent threshold-absolute noise-threshold-percent))))
+
 (mat benchmark-calibration-growth-and-retained-samples
      ;; An unreachable target makes growth deterministic without replacing the measurement backend.
      (let* ([setups '()] [calls 0]
