@@ -1186,3 +1186,30 @@
 
   ;; The reducer boundary rejects obsolete procedure arguments before traversal.
   (error? (nav-selected-transduce nav/all (tidentity) + '(1))))
+
+(define nested-group-path
+  (nav/letrec
+   ([outer (nav/path (nav/letrec ([inner (nav/key 'a)]) inner) leaf)]
+    [leaf (nav/key 'x)])
+   outer))
+
+(mat navigator-review-recursive-environments
+  (equal? '(1) (nav-select nested-group-path '((a . ((x . 1) (y . 2))))))
+
+  (equal? '((a . ((x . 2) (y . 2))))
+          (nav-transform nested-group-path add1 '((a . ((x . 1) (y . 2))))))
+
+  (let ([data (ht 'a (ht 'x 1 'y 2))])
+    (and (eq? data (nav-transform! nested-group-path add1 data))
+         (equal? '(2) (nav-select nested-group-path data))))
+
+  (equal? '((a . ((y . 2))))
+          (nav-clearval nested-group-path '((a . ((x . 1) (y . 2))))))
+
+  (let ([data (ht 'a (ht 'x 1 'y 2))])
+    (and (eq? data (nav-clearval! nested-group-path data))
+         (not (hashtable-contains? (ht-ref data 'a) 'x))
+         (= 2 (ht-ref (ht-ref data 'a) 'y))))
+
+  (equal? '(1) (iter->list (nav-traverse->iter nested-group-path
+                                            '((a . ((x . 1) (y . 2))))))))

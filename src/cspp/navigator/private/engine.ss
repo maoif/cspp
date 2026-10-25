@@ -94,18 +94,19 @@
   ;; being executed. `tails` is a stack of suspended outer suffixes. When a step
   ;; expands to an inner path, recursive group, or recursive reference, the
   ;; current `rest` must resume after that inner path finishes, so it is pushed
-  ;; onto `tails`. The push allocates one pair per dynamic path expansion; that
-  ;; is the continuation state needed to preserve nested-path order.
+  ;; onto `tails`, together with its recursive environment. Restoring that environment
+  ;; before running an outer suffix keeps nested recursive bindings lexically scoped.
   (define push-tail
     (lambda (rest tails)
-      (cons rest tails)))
+      (cons (cons (current-recursive-env) rest) tails)))
 
   (define run-select
     (lambda (steps tails value emit)
       (if (null? steps)
           (if (null? tails)
               (emit value)
-              (run-select (car tails) (cdr tails) value emit))
+              (parameterize ([current-recursive-env (caar tails)])
+                (run-select (cdar tails) (cdr tails) value emit)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
                    (if (and (null? rest) (null? tails) (nav-children-step? step))
@@ -115,12 +116,13 @@
                         (lambda (child)
                           (run-select rest tails child emit))))]
                   [($recursive-nav-group? step)
-                   (parameterize ([current-recursive-env step])
+                   (let ([tails (push-tail rest tails)])
+                     (parameterize ([current-recursive-env step])
                      (run-select (nav-path-steps (nav-compile-path
                                                   ($recursive-nav-group-root step)))
-                                 (push-tail rest tails)
+                                 tails
                                  value
-                                 emit))]
+                                 emit)))]
                   [($nav-ref? step)
                    (run-select (nav-path-steps (nav-compile-path
                                                 (resolve-nav-ref 'nav-select step)))
@@ -140,7 +142,8 @@
       (if (null? steps)
           (if (null? tails)
               (update value)
-              (run-transform (car tails) (cdr tails) value update))
+              (parameterize ([current-recursive-env (caar tails)])
+                (run-transform (cdar tails) (cdr tails) value update)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
                    (($navigator-transform-proc step)
@@ -148,12 +151,13 @@
                     (lambda (child)
                       (run-transform rest tails child update)))]
                   [($recursive-nav-group? step)
-                   (parameterize ([current-recursive-env step])
+                   (let ([tails (push-tail rest tails)])
+                     (parameterize ([current-recursive-env step])
                      (run-transform (nav-path-steps (nav-compile-path
                                                      ($recursive-nav-group-root step)))
-                                    (push-tail rest tails)
+                                    tails
                                     value
-                                    update))]
+                                    update)))]
                   [($nav-ref? step)
                    (run-transform (nav-path-steps (nav-compile-path
                                                    (resolve-nav-ref 'nav-transform step)))
@@ -173,7 +177,8 @@
       (if (null? steps)
           (if (null? tails)
               (update! value)
-              (run-transform! (car tails) (cdr tails) value update!))
+              (parameterize ([current-recursive-env (caar tails)])
+                (run-transform! (cdar tails) (cdr tails) value update!)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
                    (($navigator-transform!-proc step)
@@ -181,12 +186,13 @@
                     (lambda (child)
                       (run-transform! rest tails child update!)))]
                   [($recursive-nav-group? step)
-                   (parameterize ([current-recursive-env step])
+                   (let ([tails (push-tail rest tails)])
+                     (parameterize ([current-recursive-env step])
                      (run-transform! (nav-path-steps (nav-compile-path
                                                       ($recursive-nav-group-root step)))
-                                     (push-tail rest tails)
+                                     tails
                                      value
-                                     update!))]
+                                     update!)))]
                   [($nav-ref? step)
                    (run-transform! (nav-path-steps (nav-compile-path
                                                     (resolve-nav-ref 'nav-transform! step)))
@@ -202,7 +208,8 @@
       (if (null? steps)
           (if (null? tails)
               nav-missing
-              (run-clear (car tails) (cdr tails) value))
+              (parameterize ([current-recursive-env (caar tails)])
+                (run-clear (cdar tails) (cdr tails) value)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
                    (($navigator-clear-proc step)
@@ -210,11 +217,12 @@
                     (lambda (child)
                       (run-clear rest tails child)))]
                   [($recursive-nav-group? step)
-                   (parameterize ([current-recursive-env step])
+                   (let ([tails (push-tail rest tails)])
+                     (parameterize ([current-recursive-env step])
                      (run-clear (nav-path-steps (nav-compile-path
                                                  ($recursive-nav-group-root step)))
-                                (push-tail rest tails)
-                                value))]
+                                tails
+                                value)))]
                   [($nav-ref? step)
                    (run-clear (nav-path-steps (nav-compile-path
                                                (resolve-nav-ref 'nav-clearval step)))
@@ -229,7 +237,8 @@
       (if (null? steps)
           (if (null? tails)
               nav-missing
-              (run-clear! (car tails) (cdr tails) value))
+              (parameterize ([current-recursive-env (caar tails)])
+                (run-clear! (cdar tails) (cdr tails) value)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
                    (($navigator-clear!-proc step)
@@ -237,11 +246,12 @@
                     (lambda (child)
                       (run-clear! rest tails child)))]
                   [($recursive-nav-group? step)
-                   (parameterize ([current-recursive-env step])
+                   (let ([tails (push-tail rest tails)])
+                     (parameterize ([current-recursive-env step])
                      (run-clear! (nav-path-steps (nav-compile-path
                                                   ($recursive-nav-group-root step)))
-                                 (push-tail rest tails)
-                                 value))]
+                                 tails
+                                 value)))]
                   [($nav-ref? step)
                    (run-clear! (nav-path-steps (nav-compile-path
                                                 (resolve-nav-ref 'nav-clearval! step)))
