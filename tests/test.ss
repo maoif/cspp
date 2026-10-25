@@ -973,3 +973,26 @@
                             `((requires-chez-version . ,(call-with-values scheme-version-number list)))))
                     (test-silent-config))])
       (and called? (equal? (map test-result-status results) '(passed))))))
+
+(mat test-handled-conditions-follow-success-policies
+  ;; Handled body conditions must still check captured stdout.
+  (let* ([handler (lambda (raised) (if (test-failure? raised) 'failed 'handled))]
+         [descriptor (make-test-case 'handled-output
+                       (lambda () (display "wrong") (error 'body "handled"))
+                       `((capture . stdout) (stdout . "expected")
+                         (condition-handler . ,handler)))]
+         [result (car (test-run (list descriptor) (test-silent-config)))])
+    (and (eq? (test-result-status result) 'failed)
+         (string=? (test-result-stdout result) "wrong")
+         (test-failure? (test-result-condition result))))
+
+  ;; A handled condition is a successful outcome, including under strict xfail policy.
+  (let* ([descriptor (make-test-case 'handled-xfail
+                       (lambda () (error 'body "handled"))
+                       `((condition-handler . ,(lambda (raised) 'handled))
+                         (xfail-when . (,(lambda (parameters) #t) . "known issue"))))]
+         [loose (car (test-run (list descriptor) (test-silent-config)))]
+         [strict (car (test-run (list descriptor)
+                        (test-config-with (test-silent-config) '((xfail-strict? . #t)))))])
+    (and (eq? (test-result-status loose) 'xpass)
+         (eq? (test-result-status strict) 'failed))))

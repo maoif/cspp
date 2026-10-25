@@ -283,6 +283,10 @@ association-list filters as `test-select`.
     (lambda (concrete-case metadata condition xfail? xfail-message stdout stderr)
       (let ([status ($classify-condition metadata condition)])
         (cond
+         [(eq? status 'passed)
+          (test-check-output-expectations metadata stdout stderr)
+          ($case-result concrete-case (if xfail? 'xpass 'passed)
+                        (if xfail? xfail-message "") condition stdout stderr)]
          [xfail? ($case-result concrete-case 'xfail xfail-message condition stdout stderr)]
          [else
           ($case-result concrete-case
