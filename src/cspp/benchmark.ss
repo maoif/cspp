@@ -1348,20 +1348,22 @@ The `benchmark-comparison-improvement?` procedure returns whether comparison
 
   #|proc:benchmark-datum-reporter
 The `benchmark-datum-reporter` procedure returns a reporter that writes one
-Scheme datum per result to the output port.
+complete Scheme datum per result to the output port, independent of printer limits.
+Shared and cyclic data use readable graph notation without printer warnings.
 |#
   (define benchmark-datum-reporter
     (lambda ()
       (make-benchmark-reporter
        $void-procedure
        (lambda (result out)
-         (write `((name . ,(benchmark-result-name result))
-                  (args . ,(benchmark-result-args result))
-                  (template-args . ,(benchmark-result-template-args result))
-                  (summary . ,(benchmark-result-summary result))
-                  (counters . ,(benchmark-result-counters result))
-                  (error . ,(and (benchmark-result-error result) #t)))
-                out)
+         (parameterize ([print-graph #t] [print-level #f] [print-length #f])
+           (write `((name . ,(benchmark-result-name result))
+                    (args . ,(benchmark-result-args result))
+                    (template-args . ,(benchmark-result-template-args result))
+                    (summary . ,(benchmark-result-summary result))
+                    (counters . ,(benchmark-result-counters result))
+                    (error . ,(and (benchmark-result-error result) #t)))
+                  out))
          (newline out))
        (lambda (results out)
          (flush-output-port out)))))

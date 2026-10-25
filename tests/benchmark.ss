@@ -1588,6 +1588,52 @@
                  "\"no-summary\",\"()\",\"()\",\"0\",\"0\",\"0\",\"()\",\"#f\""
                  "\"no-means\",\"()\",\"()\",\"0\",\"0\",\"7\",\"()\",\"#f\""))))
 
+(mat benchmark-datum-reports-ignore-printer-limits
+     ;; Error: caller printer limits must not silently discard result fields or nested data.
+     (let* ([results (benchmark-results-from-data
+                      '(((name . complete) (args . ((n . (1 2 3))))
+                         (summary . ((real-ns . ((mean . 100))))))))]
+            [reporter (benchmark-datum-reporter)]
+            [expected (call-with-string-output-port
+                        (lambda (out)
+                          (parameterize ([print-length #f] [print-level #f])
+                            (benchmark-report results reporter out))))])
+       (for-all
+         (lambda (limits)
+           (let ([text (call-with-string-output-port
+                         (lambda (out)
+                           (parameterize ([print-length (car limits)]
+                                          [print-level (cadr limits)])
+                             (benchmark-report results reporter out))))])
+             (equal? text expected)))
+         '((1 #f) (#f 1) (1 1)))))
+
+(mat benchmark-datum-reports-cyclic-arguments-without-warnings
+     ;; Error: readable cyclic arguments should roundtrip without printer warnings.
+     (let ([cycle (list #f)] [warnings 0])
+       (set-car! cycle cycle)
+       (let* ([benchmark (make-benchmark 'cyclic-datum (lambda (state value) (void))
+                          `((args (value) (,cycle))))]
+              [results (benchmark-run benchmark (benchmark-test-config))]
+              [text (call-with-string-output-port
+                      (lambda (out)
+                        (parameterize ([print-graph #f])
+                          (with-exception-handler
+                            (lambda (raised)
+                              (if (warning? raised)
+                                  (set! warnings (+ warnings 1))
+                                  (raise raised)))
+                            (lambda ()
+                              (benchmark-report results (benchmark-datum-reporter) out))))))])
+         (call-with-port (open-input-string text)
+           (lambda (in)
+             (let* ([datum (read in)]
+                    [value (cdr (assq 'value (cdr (assq 'args datum))))])
+               (and (= warnings 0)
+                    (eq? value (car value))
+                    (pair? (assq 'summary datum))
+                    (eof-object? (read in)))))))))
+
 (mat benchmark-calibration-growth-and-retained-samples
      ;; An unreachable target makes growth deterministic without replacing the measurement backend.
      (let* ([setups '()] [calls 0]
