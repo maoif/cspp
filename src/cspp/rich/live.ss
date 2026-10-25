@@ -64,7 +64,7 @@
 
   ;; A refresh context records its live display, active lifetime, and stop request.
   ;; Renderer children inherit it: joining the worker there can deadlock the renderer.
-  (define $worker-context (make-parameter #f))
+  (define $worker-context (make-thread-parameter #f))
 
   (define $default-status-frames
     '("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"))

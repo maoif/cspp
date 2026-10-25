@@ -387,7 +387,7 @@
                   (display value port))))))))
 
   ;; A hard-wrap pass captures encoded pieces while retaining zero-width controls.
-  (define $output-pieces (make-parameter '()))
+  (define $output-pieces (make-thread-parameter '()))
 
   (define $emit
     (lambda (port text control?)

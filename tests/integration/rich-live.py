@@ -308,9 +308,126 @@ EXTREME_TIMING = r'''
 '''
 
 
+CONCURRENT_CAPTURE = r'''
+(import (cspp))
+(define lock (make-mutex))
+(define signal (make-condition))
+(define entered (vector #f #f))
+(define released (vector #f #f))
+(define a (vector 'a))
+(define b (vector 'b))
+(define enter-and-wait
+ (lambda (index)
+   (with-mutex lock
+     (vector-set! entered index #t)
+     (condition-broadcast signal)
+     (let wait ()
+       (unless (vector-ref released index) (condition-wait signal lock) (wait))))))
+(define wait-entered
+ (lambda (index)
+   (with-mutex lock
+     (let wait ()
+       (unless (vector-ref entered index) (condition-wait signal lock) (wait))))))
+(define release
+ (lambda (index)
+   (with-mutex lock (vector-set! released index #t) (condition-broadcast signal))))
+(rich-register-renderer! (lambda (v) (eq? v a)) (lambda (v) (enter-and-wait 0) "aaaa"))
+(rich-register-renderer! (lambda (v) (eq? v b)) (lambda (v) (enter-and-wait 1) "bbbb"))
+(call-with-port (open-output-string)
+ (lambda (first)
+   (call-with-port (open-output-string)
+    (lambda (second)
+      (let ([ta (fork-thread (lambda () (rich-print (rich-console :width 2 :output-port first) a)))])
+        (wait-entered 0)
+        (let ([tb (fork-thread (lambda () (rich-print (rich-console :width 2 :output-port second) b)))])
+          (wait-entered 1)
+          (release 0)
+          (thread-join ta)
+          (release 1)
+          (thread-join tb)
+          (unless (equal? (list (get-output-string first) (get-output-string second))
+                          '("aa\naa" "bb\nbb"))
+            (error 'concurrent-capture "hard-wrap capture crossed threads"))
+          (rich-fprint first "AFTER")
+          (unless (string=? (get-output-string first) "AFTER")
+            (error 'concurrent-capture "stale capture swallowed later output"))))))))
+'''
+
+CONCURRENT_WIDTH = r'''
+(import (cspp))
+(define lock (make-mutex))
+(define change (make-condition))
+(define entered? #f)
+(define release? #f)
+(define done? #f)
+(define a (vector 'a))
+(define b (vector 'b))
+(rich-register-renderer! (lambda (x) (eq? x a))
+ (lambda (_)
+  (with-mutex lock
+   (set! entered? #t) (condition-broadcast change)
+   (let wait () (unless release? (condition-wait change lock) (wait))))
+  (rich-rule-render (make-rich-rule))))
+(rich-register-renderer! (lambda (x) (eq? x b))
+ (lambda (_)
+  (with-mutex lock
+   (set! release? #t) (condition-broadcast change)
+   (let wait () (unless done? (condition-wait change lock) (wait))))
+  (rich-rule-render (make-rich-rule))))
+(call-with-port (open-output-string)
+ (lambda (first)
+  (call-with-port (open-output-string)
+   (lambda (second)
+    (let ([worker (fork-thread (lambda ()
+      (rich-print (rich-console :width 7 :output-port first :soft-wrap? #t) a)
+      (with-mutex lock (set! done? #t) (condition-broadcast change))))])
+     (with-mutex lock (let wait () (unless entered? (condition-wait change lock) (wait))))
+     (rich-print (rich-console :width 19 :output-port second :soft-wrap? #t) b)
+     (thread-join worker)
+     (unless (equal? (list (get-output-string first) (get-output-string second))
+                         '("-------" "-------------------"))
+       (error 'concurrent-width "available widths crossed threads")))))))
+'''
+
+EXTERNAL_STOP = r'''
+(import (cspp))
+(define lock (make-mutex))
+(define changed (make-condition))
+(define entered? #f)
+(define released? #f)
+(define calls 0)
+(define value (vector 'blocked-frame))
+(rich-register-renderer! (lambda (x) (eq? x value))
+  (lambda (_)
+    (set! calls (+ calls 1))
+    (when (= calls 2)
+      (with-mutex lock
+        (set! entered? #t) (condition-broadcast changed)
+        (let wait () (unless released? (condition-wait changed lock) (wait)))))
+    "frame"))
+(call-with-port (open-output-string)
+ (lambda (output)
+   (let ([live (make-rich-live value (rich-console :output-port output) 100 #t)])
+     (rich-live-start! live)
+     (with-mutex lock
+       (let wait () (unless entered? (condition-wait changed lock) (wait))))
+     ;; A separate thread releases the blocked renderer. Main-thread stop must join it.
+     (let ([releaser (fork-thread
+                      (lambda ()
+                        (milisleep 30)
+                        (with-mutex lock
+                          (set! released? #t) (condition-broadcast changed))))])
+       (rich-live-stop! live)
+       (let ([waited? released?])
+         (thread-join releaser)
+         (unless waited?
+           (error 'external-stop "stop returned before the worker finished")))))))
+'''
+
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-live-") as directory:
-        cases = (("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE),
+        cases = (("concurrent-capture", CONCURRENT_CAPTURE),
+                 ("concurrent-width", CONCURRENT_WIDTH), ("external-stop", EXTERNAL_STOP), ("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE),
                  ("false-failure", FAILURE.replace(
                      '(error \'worker-recovery "later frame failed")', "(raise #f)")),
                  ("stop", STOP), ("status", STATUS), ("self-stop", SELF_STOP),

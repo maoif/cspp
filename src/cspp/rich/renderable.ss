@@ -18,7 +18,7 @@
   built-in containers reflow at assigned widths. The cache lasts for one sizing operation.
   |#
   (define rich-layout-render-cache
-    (make-parameter #f
+    (make-thread-parameter #f
       (lambda (cache)
         (pcheck ([(lambda (value) (or (not value) (hashtable? value))) cache]) cache))))
 
