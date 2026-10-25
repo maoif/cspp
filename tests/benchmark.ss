@@ -1571,3 +1571,30 @@
                   (equal? (benchmark-result-summary loaded)
                           (benchmark-result-summary (car results))))))
          (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat benchmark-calibration-growth-and-retained-samples
+     ;; An unreachable target makes growth deterministic without replacing the measurement backend.
+     (let* ([setups '()] [calls 0]
+            [benchmark
+             (make-benchmark 'calibration-growth
+               (lambda (state setup-value)
+                 (set! calls (+ calls 1))
+                 (benchmark-state-counter-add! state 'work 1))
+               `((setup . ,(lambda (state)
+                              (set! setups
+                                (cons (list (benchmark-state-sample state)
+                                            (benchmark-state-iterations state)) setups))
+                              'ready))))]
+            [result (car (benchmark-run benchmark
+                           (benchmark-config-with (benchmark-test-config)
+                             `((warmup . 2) (samples . 2) (max-iterations . 5)
+                               (min-time . ,(expt 10 400))))))]
+            [samples (benchmark-result-samples result)])
+       (and (not (benchmark-result-error result))
+            (equal? (reverse setups)
+                    '((0 1) (0 1)
+                      (0 1) (0 2) (0 4) (0 5)
+                      (1 1) (1 2) (1 4) (1 5)))
+            (= calls 26)
+            (equal? (map benchmark-sample-iterations samples) '(5 5))
+            (equal? (map benchmark-sample-counters samples) '(((work . 5)) ((work . 5)))))))
