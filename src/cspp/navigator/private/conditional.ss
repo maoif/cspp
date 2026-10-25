@@ -18,7 +18,7 @@
 
   (define path-selected?
     (lambda (path value)
-      (guard [exn [(nav-focus-error? exn) #f]]
+      (guard [exn [(nav-absent-focus? exn) #f]]
         ;; Use a one-shot continuation to stop traversal after the first focus.
         (call/1cc
          (lambda (return)
@@ -29,7 +29,7 @@
   (define optional-focus
     (lambda (run callback default)
       (let ([downstream-condition #f])
-        (guard (exn [(and (nav-focus-error? exn)
+        (guard (exn [(and (nav-absent-focus? exn)
                           (not (eq? exn downstream-condition))) default])
           (run (lambda (value)
                  (guard (exn [else (set! downstream-condition exn) (raise exn)])
@@ -45,16 +45,16 @@
               (make-conditional-nav
                'nav/pred '(nav/pred)
                (lambda (value emit)
-                 (when (predicate value)
+                 (when (nav-call-user predicate value)
                    (emit value)))
                (lambda (value update)
-                 (if (predicate value) (update value) value))
+                 (if (nav-call-user predicate value) (update value) value))
                (lambda (value update!)
-                 (if (predicate value) (update! value) value))
+                 (if (nav-call-user predicate value) (update! value) value))
                (lambda (value clear)
-                 (if (predicate value) (clear value) value))
+                 (if (nav-call-user predicate value) (clear value) value))
                (lambda (value clear!)
-                 (if (predicate value) (clear! value) value))))))
+                 (if (nav-call-user predicate value) (clear! value) value))))))
 
   #|proc:nav/not-pred
   The `nav/not-pred` procedure returns a navigator that focuses the current
@@ -63,7 +63,7 @@
   (define nav/not-pred
     (lambda (predicate)
       (pcheck ([procedure? predicate])
-              (nav/pred (lambda (value) (not (predicate value)))))))
+              (nav/pred (lambda (value) (not (nav-call-user predicate value)))))))
 
   #|proc:nav/maybe
   The `nav/maybe` procedure wraps `path` so absent or unsupported focuses become no-ops.

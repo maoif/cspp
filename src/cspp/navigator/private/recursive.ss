@@ -219,7 +219,7 @@
               'nav/walker '(nav/walker)
               (lambda (value emit)
                 (let walk ([value value])
-                  (when (predicate value)
+                  (when (nav-call-user predicate value)
                     (emit value))
                   (emit-children value walk)))
               (tree-unsupported-transform 'nav/walker)

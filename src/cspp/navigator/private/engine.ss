@@ -329,7 +329,7 @@
   |#
   (define nav-selected?
     (lambda (path data)
-      (guard [exn [(nav-focus-error? exn) #f]]
+      (guard [exn [(nav-absent-focus? exn) #f]]
         ;; Use a one-shot continuation to stop traversal after the first focus.
         (call/1cc
          (lambda (return)
@@ -345,7 +345,7 @@
     (case-lambda
       [(path data) (nav-select-first path data #f)]
       [(path data default)
-       (guard [exn [(nav-focus-error? exn) default]]
+       (guard [exn [(nav-absent-focus? exn) default]]
          ;; Use a one-shot continuation to return the first selected value.
          (call/1cc
           (lambda (return)

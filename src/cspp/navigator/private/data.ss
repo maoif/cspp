@@ -68,8 +68,12 @@
     (lambda (predicate length-proc ref-proc set-proc set!-proc)
       (pcheck ([procedure? predicate length-proc ref-proc set-proc set!-proc])
               (set! indexed-protocols
-                    (cons (make-$indexed-protocol predicate length-proc ref-proc
-                                                  set-proc set!-proc)
+                    (cons (make-$indexed-protocol
+                           (nav-protect-callback predicate)
+                           (nav-protect-callback length-proc)
+                           (nav-protect-callback ref-proc)
+                           (nav-protect-callback set-proc)
+                           (nav-protect-callback set!-proc))
                           indexed-protocols))
               (void))))
 
@@ -91,9 +95,14 @@
       (pcheck ([procedure? predicate ref-proc set-proc set!-proc
                            delete-proc delete!-proc entries-proc])
               (set! keyed-protocols
-                    (cons (make-$keyed-protocol predicate ref-proc set-proc
-                                                set!-proc delete-proc
-                                                delete!-proc entries-proc)
+                    (cons (make-$keyed-protocol
+                           (nav-protect-callback predicate)
+                           (nav-protect-callback ref-proc)
+                           (nav-protect-callback set-proc)
+                           (nav-protect-callback set!-proc)
+                           (nav-protect-callback delete-proc)
+                           (nav-protect-callback delete!-proc)
+                           (nav-protect-callback entries-proc))
                           keyed-protocols))
               (void))))
 
@@ -110,8 +119,13 @@
       (pcheck ([procedure? predicate values-proc replace-proc replace!-proc
                            delete-proc delete!-proc])
               (set! set-protocols
-                    (cons (make-$set-protocol predicate values-proc replace-proc
-                                              replace!-proc delete-proc delete!-proc)
+                    (cons (make-$set-protocol
+                           (nav-protect-callback predicate)
+                           (nav-protect-callback values-proc)
+                           (nav-protect-callback replace-proc)
+                           (nav-protect-callback replace!-proc)
+                           (nav-protect-callback delete-proc)
+                           (nav-protect-callback delete!-proc))
                           set-protocols))
               (void))))
 

@@ -9,7 +9,8 @@
           nav? nav-path? nav/empty-path nav-empty-path?
           make-nav nav-name nav-coerce nav/path nav-compile-path nav/path-append
           make-nav-ref nav-ref? nav-missing nav-missing?
-          nav-error nav-focus-error nav-focus-error? nav-unsupported-error nav-required-error
+          nav-error nav-focus-error nav-focus-error? nav-absent-focus?
+          nav-call-user nav-protect-callback nav-unsupported-error nav-required-error
           nav-path-steps nav-normalize-step nav-debug-name-core nav->datum-core
           install-nav-key-proc! install-nav-nth-proc!)
   (import (chezscheme)
@@ -83,6 +84,25 @@
                         (make-who-condition who)
                         (make-message-condition (apply format fmt args))))))
 
+  (define-condition-type &nav-callback-error &condition
+    make-nav-callback-error nav-callback-error?)
+
+  (define nav-absent-focus?
+    (lambda (exn)
+      (and (nav-focus-error? exn) (not (nav-callback-error? exn)))))
+
+  ;; Keep the original condition components and message, but mark callback-origin
+  ;; navigation failures so optional path handlers cannot mistake them for absence.
+  (define nav-call-user
+    (lambda (proc . args)
+      (guard (exn [(nav-absent-focus? exn)
+                   (raise (condition exn (make-nav-callback-error)))])
+        (apply proc args))))
+
+  (define nav-protect-callback
+    (lambda (proc)
+      (lambda args (apply nav-call-user proc args))))
+
   (define nav-unsupported-error
     (lambda (who nav value action)
       (nav-error who "navigator ~a does not support ~a for value: ~s"
@@ -106,7 +126,9 @@
     (lambda (name select-proc transform-proc transform!-proc)
       (pcheck ([symbol? name] [procedure? select-proc transform-proc transform!-proc])
               (make-$navigator name 'custom `(nav-custom ,name)
-                               select-proc transform-proc transform!-proc
+                               (nav-protect-callback select-proc)
+                               (nav-protect-callback transform-proc)
+                               (nav-protect-callback transform!-proc)
                                (lambda (value clear)
                                  (nav-error name "custom navigator cannot clear: ~s" value))
                                (lambda (value clear!)

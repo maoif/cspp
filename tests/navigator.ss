@@ -1438,3 +1438,29 @@
   (equal? '(0 1) (nav-select nav/keys '(a b)))
 
   (equal? '((0 . a) (1 . b)) (nav-select nav/entries '(a b))))
+
+(define callback-missing-focus
+  (lambda (value) (nav-select-one (nav/key 'missing) '())))
+
+(mat navigator-review-callback-focus-errors
+  ;; A callback that itself performs a failing navigation must propagate that failure.
+  (error? (nav-select (nav/maybe (nav/pred callback-missing-focus)) 1))
+
+  ;; Getters are callbacks too, even when their exception describes an absent focus.
+  (error? (nav-select (nav/maybe (nav/getter 'lookup callback-missing-focus)) 1))
+
+  ;; Convenience predicates must distinguish callback failures from absent selections.
+  (error? (nav-selected? (nav/pred callback-missing-focus) 1))
+
+  ;; Choosing the first focus must not suppress a callback-origin focus exception.
+  (error? (nav-select-first (nav/getter 'lookup callback-missing-focus) 1))
+
+  ;; A failing callback inside the test path must not choose the fallback branch.
+  (error? (nav-select (nav/if (nav/pred callback-missing-focus) nav/stay nav/none) 1))
+
+  ;; User-defined navigator implementations must not hide navigation failures.
+  (error? (nav-select
+           (nav/maybe (make-nav 'lookup
+                                (lambda (value emit) (emit (callback-missing-focus value)))
+                                (lambda (value update) value)
+                                (lambda (value update!) value))) 1)))
