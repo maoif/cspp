@@ -329,7 +329,10 @@
                                    natural-total-height)]
                  [chars (rich-box-chars (rich-panel-box panel))])
             (if unboxed?
-                (rich-lines-wrap raw available)
+                (let ([lines (rich-lines-wrap raw available)])
+                  (append lines
+                          ($blank-lines (max 0 (- (or (rich-panel-height panel) 0)
+                                                  (length lines))))))
                 (append
                  (list ($border-line chars (vector-ref chars 0) (vector-ref chars 1)
                                      (- total-width 2)))

@@ -2476,3 +2476,35 @@
      (= 0 (system "cd .. && python3 tests/integration/rich-modules.py"))
 
      )
+
+(mat rich-panel-minimum-height
+
+     (andmap
+      (lambda (width)
+        (let* ([panel (rich-panel :body "x" :height 5)]
+               [lines (rich-render (rich-console :width width) panel)])
+          (and (= (length lines) 5)
+               (andmap (lambda (line) (<= (rich-segments-width line) width)) lines))))
+      '(1 2 3 5))
+
+     (let* ([panel (rich-panel :body "x" :height 5)] [console (rich-console :width 2)]
+            [first (rich-render console panel)])
+       (rich-panel-height-set! panel 7)
+       (let ([second (rich-render console panel)])
+         (rich-panel-height-set! panel #f)
+         (and (equal? (map rich-segments->plain first) '("x" "" "" "" ""))
+              (= (length second) 7)
+              (equal? (map rich-segments->plain (rich-render console panel)) '("x")))))
+
+     (equal? '("a" "b" "c" "d" "e" "f")
+             (map rich-segments->plain
+                  (rich-render (rich-console :width 1)
+                               (rich-panel :body "a\nb\nc\nd\ne\nf" :height 5))))
+
+     ;; A minimum height must be positive when supplied.
+     (error? (rich-panel-height-set! (make-rich-panel "x") 0))
+
+     ;; A nonnumeric height is invalid too.
+     (error? (rich-panel-height-set! (make-rich-panel "x") 'tall))
+
+     )
