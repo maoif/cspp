@@ -1192,3 +1192,21 @@
             (= (cdr (assq 'median bytes)) 1)
             (= (cdr (assq 'min bytes)) 1/2)
             (= (cdr (assq 'max bytes)) 3/2))))
+
+(mat benchmark-setup-pause-does-not-subtract-body
+     (for-all
+       (lambda (leave-paused?)
+         (let* ([benchmark (make-benchmark 'setup-paused
+                              (lambda (state value)
+                                (when leave-paused? (benchmark-resume-timing state))
+                                (milisleep 10))
+                              `((setup . ,(lambda (state)
+                                            (benchmark-pause-timing state)
+                                            (milisleep 30)
+                                            (unless leave-paused? (benchmark-resume-timing state))
+                                            'ready))))]
+                [result (car (benchmark-run benchmark
+                               (benchmark-config-with (benchmark-test-config) '((samples . 1)))))]
+                [real (cdr (assq 'mean (cdr (assq 'real-ns (benchmark-result-summary result)))))])
+           (and (not (benchmark-result-error result)) (> real 5000000))))
+       '(#f #t)))

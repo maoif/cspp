@@ -1986,8 +1986,12 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                (lambda () (void))
                (lambda ()
                  (guard (exn [else (set! failed? #t) (raise exn)])
+                   ;; Setup is outside measurement, including any completed pause intervals.
+                   ($benchmark-state-paused-sstats-set! sample-state ($zero-sstats))
                    (let* ([b1 (statistics)]
                           [b2 (statistics)])
+                     (when ($benchmark-state-timing-paused? sample-state)
+                       ($benchmark-state-pause-start-set! sample-state b2))
                      ($run-body-iterations ($benchmark-body benchmark) sample-state
                                            arguments iterations)
                      (when ($benchmark-state-timing-paused? sample-state)
