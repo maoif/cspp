@@ -457,8 +457,9 @@
 
   #|proc:nav/keys
   The `nav/keys` navigator focuses map keys for alists and keyed containers, or
-  sequence indexes for other indexed containers. Pure map transforms replace old keys; if transformed keys
-  collide, the last entry in traversal order wins. Sequence indexes are read-only.
+  sequence indexes for other indexed containers. Pure map transforms replace old keys.
+  When transformed keys collide, the last entry in traversal order wins in maps with unique
+  keys; alists retain duplicates. Sequence indexes are read-only.
   |#
   (define nav/keys
     (make-basic-nav

@@ -118,11 +118,11 @@
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
                      (parameterize ([current-recursive-env step])
-                     (run-select (nav-path-steps (nav-compile-path
-                                                  ($recursive-nav-group-root step)))
-                                 tails
-                                 value
-                                 emit)))]
+                       (run-select (nav-path-steps (nav-compile-path
+                                                    ($recursive-nav-group-root step)))
+                                   tails
+                                   value
+                                   emit)))]
                   [($nav-ref? step)
                    (run-select (nav-path-steps (nav-compile-path
                                                 (resolve-nav-ref 'nav-select step)))
@@ -153,11 +153,11 @@
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
                      (parameterize ([current-recursive-env step])
-                     (run-transform (nav-path-steps (nav-compile-path
-                                                     ($recursive-nav-group-root step)))
-                                    tails
-                                    value
-                                    update)))]
+                       (run-transform (nav-path-steps (nav-compile-path
+                                                       ($recursive-nav-group-root step)))
+                                      tails
+                                      value
+                                      update)))]
                   [($nav-ref? step)
                    (run-transform (nav-path-steps (nav-compile-path
                                                    (resolve-nav-ref 'nav-transform step)))
@@ -188,11 +188,11 @@
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
                      (parameterize ([current-recursive-env step])
-                     (run-transform! (nav-path-steps (nav-compile-path
-                                                      ($recursive-nav-group-root step)))
-                                     tails
-                                     value
-                                     update!)))]
+                       (run-transform! (nav-path-steps (nav-compile-path
+                                                        ($recursive-nav-group-root step)))
+                                       tails
+                                       value
+                                       update!)))]
                   [($nav-ref? step)
                    (run-transform! (nav-path-steps (nav-compile-path
                                                     (resolve-nav-ref 'nav-transform! step)))
@@ -219,10 +219,10 @@
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
                      (parameterize ([current-recursive-env step])
-                     (run-clear (nav-path-steps (nav-compile-path
-                                                 ($recursive-nav-group-root step)))
-                                tails
-                                value clear)))]
+                       (run-clear (nav-path-steps (nav-compile-path
+                                                   ($recursive-nav-group-root step)))
+                                  tails
+                                  value clear)))]
                   [($nav-ref? step)
                    (run-clear (nav-path-steps (nav-compile-path
                                                (resolve-nav-ref 'nav-clearval step)))
@@ -248,10 +248,10 @@
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
                      (parameterize ([current-recursive-env step])
-                     (run-clear! (nav-path-steps (nav-compile-path
-                                                  ($recursive-nav-group-root step)))
-                                 tails
-                                 value clear!)))]
+                       (run-clear! (nav-path-steps (nav-compile-path
+                                                    ($recursive-nav-group-root step)))
+                                   tails
+                                   value clear!)))]
                   [($nav-ref? step)
                    (run-clear! (nav-path-steps (nav-compile-path
                                                 (resolve-nav-ref 'nav-clearval! step)))
