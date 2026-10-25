@@ -9,7 +9,8 @@
   (import (cspp chez)
           (cspp utils)
           (cspp rich style)
-          (cspp rich segment))
+          (cspp rich segment)
+          (cspp rich renderable))
 
   (define-record-type (rich-text-record $make-rich-text-record $rich-text?)
     (fields (mutable spans $rich-text-spans $rich-text-spans-set!)
@@ -114,4 +115,6 @@
               (list
                (map (lambda (span)
                       (rich-segment (car span) (cdr span)))
-                    ($rich-text-spans rich-text)))))))
+                    ($rich-text-spans rich-text))))))
+
+  (rich-register-renderer! rich-text? rich-text-render))

@@ -2470,3 +2470,9 @@
                                            :rows (("x") ("y")))))
 
      )
+
+(mat rich-standalone-modules
+
+     (= 0 (system "cd .. && python3 tests/integration/rich-modules.py"))
+
+     )

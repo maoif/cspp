@@ -38,7 +38,6 @@
           (cspp rich style)
           (cspp rich segment)
           (cspp rich renderable)
-          (cspp rich text)
           (cspp rich pretty)
           (cspp rich tree))
 
@@ -704,4 +703,4 @@
                                    (rich-console-ascii-only? console))])
                      (rich-print capture value))))))))
 
-  (rich-register-renderer! rich-text? rich-text-render))
+)
