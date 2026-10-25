@@ -1,4 +1,12 @@
-(import (cspp))
+(import (cspp) (cspp private for))
+
+(mat keyword-predicate-consistency
+     (and (kw-for-config-clause? #':letrec*)
+          (kw-for-config-clause? #':let*-values)
+          (kw-for*-config-clause? #':letrec*)
+          (kw-for*-config-clause? #':let*-values)
+          (not (kw-for-config-clause? #':stop))
+          (kw-for*-config-clause? #':stop)))
 
 
 ;;;; When the macro does not exist, the error is
