@@ -561,6 +561,7 @@
   (define $benchmark-rich-default-columns
     '((name . "name")
       (args . "args")
+      (template-args . "template-args")
       (iterations . "iterations")
       (cpu-ns . "cpu/ns")
       (real-ns . "real/ns")

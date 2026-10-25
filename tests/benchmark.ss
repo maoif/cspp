@@ -1280,3 +1280,14 @@
            (let ([loaded (benchmark-result-error (car (benchmark-load-baseline path)))])
              (and (condition? loaded) (string? (condition-who loaded)))))
          (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat benchmark-rich-identifies-template-arguments
+     (let ([results (benchmark-results-from-data
+                      '(((name . template) (template-args . ((kind . vector))))))])
+       (call-with-port (open-output-string)
+         (lambda (out)
+           (benchmark-report results (benchmark-rich-reporter) out)
+           (let ([text (get-output-string out)])
+             (and (benchmark-string-contains? text "template-args")
+                  (benchmark-string-contains? text "kind")
+                  (benchmark-string-contains? text "vector")))))))
