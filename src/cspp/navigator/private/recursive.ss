@@ -151,16 +151,25 @@
        (cond [(and (pair? value) (list? value))
               (remove-missing-values
                (map clear value))]
-             [(indexed-supported? value) value]
+             [(indexed-supported? value)
+              (let ([len (indexed-length value)])
+                (let loop ([i 0] [result value])
+                  (if (fx= i len)
+                      result
+                      (let ([child (clear (indexed-ref/missing value i))])
+                        (when (nav-missing? child)
+                          (nav-error 'nav-clearval "cannot remove indexed child from: ~s" value))
+                        (loop (fx+ i 1) (indexed-set result i child))))))]
              [(keyed-entries value)
               => (lambda (entries)
                    (let loop ([entries entries] [value value])
                      (if (null? entries)
                          value
-                         (loop (cdr entries)
-                               (if (nav-missing? (clear (cdar entries)))
-                                   (keyed-delete value (caar entries))
-                                   value)))))]
+                         (let ([child (clear (cdar entries))])
+                           (loop (cdr entries)
+                                 (if (nav-missing? child)
+                                     (keyed-delete value (caar entries))
+                                     (keyed-set value (caar entries) child)))))))]
              [else value]))
      (lambda (value clear!)
        (cond [(and (pair? value) (list? value))

@@ -251,10 +251,17 @@
                 (keyed-delete! value key))
               value)))))
 
+  (define empty-subtable
+    (lambda (table)
+      (let ([equivalent? (hashtable-equivalence-function table)])
+        (cond [(eq? equivalent? eq?) (make-eq-hashtable)]
+              [(eq? equivalent? eqv?) (make-eqv-hashtable)]
+              [else (make-hashtable (hashtable-hash-function table) equivalent?)]))))
+
   (define submap-transform
     (lambda (keys value update)
       (cond [(hashtable? value)
-             (let ([subtable (make-eq-hashtable)])
+             (let ([subtable (empty-subtable value)])
                (for-each
                 (lambda (key)
                   (let ([selected (keyed-ref/missing value key)])
@@ -266,7 +273,9 @@
                  (let loop ([keys keys] [value value])
                    (if (null? keys)
                        value
-                       (let ([selected (hashtable-ref updated (car keys) nav-missing)])
+                       (let ([selected (if (nav-missing? updated)
+                                           nav-missing
+                                           (hashtable-ref updated (car keys) nav-missing))])
                          (loop (cdr keys)
                                (if (nav-missing? selected)
                                    (keyed-delete value (car keys))
@@ -301,12 +310,39 @@
                (let loop ([keys keys] [value value])
                  (if (null? keys)
                      value
-                     (let ([entry (assq (car keys) updated)])
+                     (let ([entry (and (not (nav-missing? updated))
+                                       (assq (car keys) updated))])
                        (loop (cdr keys)
                              (if entry
                                  (keyed-set value (car keys) (cdr entry))
                                  (keyed-delete value (car keys))))))))]
             [else (nav-focus-error 'nav-transform "unsupported keyed value: ~s" value)])))
+
+  (define submap-clear
+    (lambda (keys value clear)
+      (if (alist? value)
+          (let loop ([keys keys] [value value])
+            (if (null? keys)
+                value
+                (let ([key (car keys)])
+                  (loop (cdr keys)
+                        (key-clear key value
+                                   (lambda (child)
+                                     (let ([entry (clear (cons key child))])
+                                       (if (nav-missing? entry) entry (cdr entry)))))))))
+          (submap-transform keys value clear))))
+
+  (define submap-clear!
+    (lambda (keys value clear!)
+      (let ([result (submap-clear keys value clear!)])
+        (for-each
+         (lambda (key)
+           (let ([child (keyed-ref/missing result key)])
+             (if (nav-missing? child)
+                 (keyed-delete! value key)
+                 (keyed-set! value key child))))
+         keys)
+        value)))
 
   #|proc:nav/stay
   The `nav/stay` navigator focuses the current value unchanged.
@@ -639,10 +675,10 @@
            (if (null? keys)
                value
                (loop (cdr keys)
-                     (key-clear (car keys) value (lambda (child) nav-missing))))))
+                     (key-clear (car keys) value clear)))))
        (lambda (value clear!)
          (for-each (lambda (key)
-                     (key-clear! key value (lambda (child) nav-missing)))
+                     (key-clear! key value clear!))
                    keys)
          value))))
 
@@ -656,7 +692,7 @@
        'nav/submap `(nav/submap ,@keys)
        (lambda (value emit)
          (cond [(hashtable? value)
-                (let ([table (make-eq-hashtable)])
+                (let ([table (empty-subtable value)])
                   (for-each
                    (lambda (key)
                      (let ([selected (keyed-ref/missing value key)])
@@ -688,16 +724,9 @@
        (lambda (value update!)
          (nav-unsupported-error 'nav-transform! nav/submap value 'transform!))
        (lambda (value clear)
-         (let loop ([keys keys] [value value])
-           (if (null? keys)
-               value
-               (loop (cdr keys)
-                     (key-clear (car keys) value (lambda (child) nav-missing))))))
+         (submap-clear keys value clear))
        (lambda (value clear!)
-         (for-each (lambda (key)
-                     (key-clear! key value (lambda (child) nav-missing)))
-                   keys)
-         value))))
+         (submap-clear! keys value clear!)))))
 
   #|proc:nav/car
   The `nav/car` navigator focuses the `car` field of a pair.

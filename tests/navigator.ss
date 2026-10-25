@@ -1279,3 +1279,59 @@
     (and (eq? data (nav-clearval! (nav/path (nav/key 'a) (nav/multi-path nav/stay)) data))
          (not (hashtable-contains? data 'a))
          (= 2 (ht-ref data 'b)))))
+
+(mat navigator-review-container-clearing
+  (equal? '((a . ((y . 2))) (b . ((y . 4))))
+          (nav-clearval (nav/path (nav/key-values 'a 'b) (nav/key 'x))
+                        '((a . ((x . 1) (y . 2))) (b . ((x . 3) (y . 4))))))
+
+  (equal? '((a . 1) (b . 2))
+          (nav-clearval (nav/path (nav/key-values 'a 'b) nav/none) '((a . 1) (b . 2))))
+
+  (let ([data (ht 'a (ht 'x 1 'y 2) 'b (ht 'x 3 'y 4))])
+    (nav-clearval! (nav/path (nav/key-values 'a 'b) (nav/key 'x)) data)
+    (and (= 2 (ht-ref (ht-ref data 'a) 'y))
+         (= 4 (ht-ref (ht-ref data 'b) 'y))
+         (not (hashtable-contains? (ht-ref data 'a) 'x))))
+
+  (equal? '((a . 1) (b . 2))
+          (nav-clearval (nav/path (nav/submap 'a) nav/none) '((a . 1) (b . 2))))
+
+  (let* ([data (ht 'a 1 'b 2 'c 3)]
+         [result (nav-clearval (nav/path (nav/submap 'a 'b) (nav/key 'a)) data)])
+    (and (not (hashtable-contains? result 'a))
+         (= 2 (ht-ref result 'b))
+         (= 3 (ht-ref result 'c))
+         (= 1 (ht-ref data 'a))))
+
+  (let ([data (ht 'a 1 'b 2 'c 3)])
+    (and (eq? data (nav-clearval! (nav/path (nav/submap 'a 'b) (nav/key 'a)) data))
+         (not (hashtable-contains? data 'a))
+         (= 2 (ht-ref data 'b))
+         (= 3 (ht-ref data 'c))))
+
+  (equal? '#(((y . 2)))
+          (nav-clearval (nav/path nav/children (nav/key 'x)) '#(((x . 1) (y . 2)))))
+
+  (let* ([data (ht 'a '((x . 1) (y . 2)))]
+         [result (nav-clearval (nav/path nav/children (nav/key 'x)) data)])
+    (and (equal? '((y . 2)) (ht-ref result 'a))
+         (equal? '((x . 1) (y . 2)) (ht-ref data 'a))))
+
+  ;; Fixed-size indexed collections cannot remove a child directly.
+  (error? (nav-clearval (nav/path nav/children nav/stay) '#(1 2)))
+
+  (let ([data (make-hashtable string-hash string=?)])
+    (hashtable-set! data (string-copy "a") 1)
+    (= 1 (hashtable-ref (nav-select-one (nav/submap (string-copy "a")) data)
+                        (string-copy "a") #f)))
+
+  (let ([data (make-hashtable string-hash string=?)])
+    (hashtable-set! data (string-copy "a") 1)
+    (let ([result
+           (nav-transform (nav/submap (string-copy "a"))
+                          (lambda (table)
+                            (hashtable-set! table (string-copy "a") 2)
+                            table) data)])
+      (and (= 2 (hashtable-ref result (string-copy "a") #f))
+           (= 1 (hashtable-ref data (string-copy "a") #f))))))
