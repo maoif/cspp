@@ -68,6 +68,11 @@ Examples:
 (match (make-Point 10 20)
   [,(record Point :fields (y ,y) (x ,x)) (list x y)])
 ;; => (10 20)
+
+(match '(1 2)
+  [() '()]
+  [(,head . ,@tail) (cons (add1 head) tail)])
+;; => (2 3)
   |#
 
   #|macro:match
@@ -317,17 +322,17 @@ Examples:
                #`(if (null? expr-id) #,body (#,fk))]
               [,@var
                (identifier? #'var)
-               #`(let ([var (catamorphism expr-id)])
+               #`(let ([var (match-loop expr-id)])
                    #,body)]
               [,@[]
-               #`(begin (catamorphism expr-id)
+               #`(begin (match-loop expr-id)
                         #,body)]
               [,@[,vars ...]
                (andmap identifier? #'(vars ...))
                (if (fx= 1 (length #'(vars ...)))
-                   #`(let ([#,(car #'(vars ...)) (catamorphism expr-id)])
+                   #`(let ([#,(car #'(vars ...)) (match-loop expr-id)])
                        #,body)
-                   #`(let-values ([(vars ...) (catamorphism expr-id)])
+                   #`(let-values ([(vars ...) (match-loop expr-id)])
                        #,body))]
               [,@[proc ->]
                (and (identifier? #'proc) (eq? '-> (datum ->)))
@@ -459,10 +464,10 @@ Examples:
                       #,(process-clause rho expr-id (car cl*) #'fk)))))))
       (syntax-case stx (else)
         [(k e cl* ... [else e0 e* ...])
-         ;; `catamorphism` recursively applies the same clauses for `,@` patterns.
+         ;; `match-loop` recursively applies the same clauses for `,@` patterns.
          ;; `rho`: compile-time environment
          (lambda (rho)
-           #`(let catamorphism ([v e])
+           #`(let match-loop ([v e])
                #,(generate-skeleton rho #'v #'(cl* ...) #'(begin e0 e* ...))))]
         [(k e cl0 cl* ...)
          #'(let ([v e])

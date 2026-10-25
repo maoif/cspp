@@ -721,12 +721,12 @@
        (and (= s 60)
             (= p (* 2 3 6 7 2 3 5 7 8))))
 
-     ;; The generated catamorphism binding stays hygienic when a capture has the same name.
-     (let ([catamorphism 'outer])
+     ;; The generated match-loop binding stays hygienic when a capture has the same name.
+     (let ([match-loop 'outer])
        (equal? '(1 2)
                (match '(1 2)
                  [() '()]
-                 [(,head . ,@catamorphism) (cons head catamorphism)])))
+                 [(,head . ,@match-loop) (cons head match-loop)])))
      )
 
 ;;;; in-place update
