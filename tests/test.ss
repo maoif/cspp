@@ -402,7 +402,8 @@
                   (list (make-test-result 'a 'a 'passed "" #f "" "" '() #f)
                         (make-test-result 'b 'b 'failed "bad" #f "" "" '() #f)
                         (make-test-result 'c 'c 'skipped "skip" #f "" "" '() #f))))
-    (equal? (get-output-string out) ".Fs\npassed: 1\nfailed: 1\nerrored: 0\nskipped: 1\nxfail: 0\nxpass: 0\ntotal: 3\n"))
+    (test-string-contains? (get-output-string out)
+      ".Fs\npassed: 1\nfailed: 1\nerrored: 0\nskipped: 1\nxfail: 0\nxpass: 0\ntotal: 3\n"))
   (let ([out (open-output-string)])
     (test-report (test-progress-reporter 'always) out
                  (test-summarize
@@ -1124,3 +1125,52 @@
            (test-run (list descriptor (car (test-expand-parameters descriptor))) (test-silent-config))
            #f)
          (= calls 0))))
+
+(mat test-human-reports-show-failure-details
+  ;; Error: human reports must identify failures and retain diagnostics from errored cases.
+  (for-all
+    (lambda (reporter)
+      (let* ([results
+              (test-run
+                (list
+                  (make-test-case 'assertion-case
+                    (lambda ()
+                      (display "captured-output")
+                      (display "captured-error" (current-error-port))
+                      (test-fail "assertion-detail" 'expected 'actual))
+                    '((capture . (stdout stderr)) (source . "failure-source.ss")))
+                  (make-test-case 'exception-case
+                    (lambda () (error 'exception-origin "exception-detail")) '())
+                  (make-test-case 'strict-case (lambda () #t)
+                    '((xfail-strict . #t)
+                      (xfail-when . ((lambda (parameters) #t) . "known")))))
+                (test-silent-config))]
+             [text (call-with-string-output-port
+                     (lambda (out) (test-report reporter out (test-summarize results))))])
+        (for-all (lambda (needle) (test-string-contains? text needle))
+                 '("assertion-case" "assertion-detail" "captured-output" "captured-error"
+                   "failure-source.ss" "exception-case" "exception-origin" "exception-detail"
+                   "strict-case" "unexpected pass"))))
+    (list (test-text-reporter) (test-progress-reporter 'never))))
+
+(mat test-main-failure-diagnostics
+  ;; Error: the CLI must report the failed row's identity, parameters and captured streams.
+  (let ([path "tmp-cspp-test-main-diagnostics.ss"])
+    (dynamic-wind
+      (lambda () (void))
+      (lambda ()
+        (test-write-file path
+          "(import (cspp) (cspp test))\n(test-case cli-failed :parameterize ([size] [7]) :capture '(stdout stderr) (display \"stdout-detail\") (display \"stderr-detail\" (current-error-port)) (test-fail \"cli-assertion-detail\" 'expected 'actual))\n")
+        (for-all
+          (lambda (args)
+            (let ([status #f])
+              (let ([text (call-with-string-output-port
+                            (lambda (out)
+                              (parameterize ([current-output-port out])
+                                (set! status (test-main (append args (list path)))))))])
+                (and (= status 1)
+                     (for-all (lambda (needle) (test-string-contains? text needle))
+                              '("cli-failed" "size" "7" "cli-assertion-detail"
+                                "stdout-detail" "stderr-detail"))))))
+          '(() ("--reporter" "progress"))))
+      (lambda () (when (file-exists? path) (delete-file path))))))

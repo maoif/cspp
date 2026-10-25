@@ -35,6 +35,27 @@ The `test-summarize` procedure returns a summary record for `results`.
                ($count-status 'xpass results)
                results))))
 
+  (define $write-failure-detail
+    (lambda (out result)
+      (when (memq (test-result-status result) '(failed errored xpass))
+        (parameterize ([print-graph #t])
+          (fprintf out "\n~a: ~a\n" (test-result-status result) (test-result-name result))
+          (unless (null? (test-result-parameters result))
+            (fprintf out "  parameters: ~s\n" (test-result-parameters result)))
+          (when (test-result-source result)
+            (fprintf out "  source: ~s\n" (test-result-source result)))
+          (unless (string=? (test-result-message result) "")
+            (fprintf out "  message: ~a\n" (test-result-message result)))
+          (let ([raised (test-result-condition result)])
+            (when raised
+              (display "  condition: " out)
+              (if (condition? raised) (display-condition raised out) (write raised out))
+              (newline out)))
+          (unless (string=? (test-result-stdout result) "")
+            (fprintf out "  stdout:\n~a\n" (test-result-stdout result)))
+          (unless (string=? (test-result-stderr result) "")
+            (fprintf out "  stderr:\n~a\n" (test-result-stderr result)))))))
+
   (define $write-text-summary
     (lambda (out summary)
       (fprintf out "passed: ~a\n" (test-summary-passed summary))
@@ -43,7 +64,9 @@ The `test-summarize` procedure returns a summary record for `results`.
       (fprintf out "skipped: ~a\n" (test-summary-skipped summary))
       (fprintf out "xfail: ~a\n" (test-summary-xfail summary))
       (fprintf out "xpass: ~a\n" (test-summary-xpass summary))
-      (fprintf out "total: ~a\n" (test-summary-total summary))))
+      (fprintf out "total: ~a\n" (test-summary-total summary))
+      (for-each (lambda (result) ($write-failure-detail out result))
+                (test-summary-results summary))))
 
   (define $ansi-wrap
     (lambda (color text enabled?)
@@ -65,7 +88,8 @@ The `test-summarize` procedure returns a summary record for `results`.
 
   #|proc:test-text-reporter
 The `test-text-reporter` procedure returns a reporter that writes a plain text
-summary.
+summary followed by failed, errored, and unexpected-pass case details, including
+parameters, source, conditions and captured output when present.
 |#
   (define test-text-reporter
     (lambda ()
@@ -95,7 +119,7 @@ datum summary.
 
   #|proc:test-progress-reporter
 The `test-progress-reporter` procedure returns a reporter that writes one
-status character per result followed by the standard text summary. `color` is
+status character per result followed by the text summary and failure details. `color` is
 `auto`, `always`, or `never`; only `always` forces ANSI styling.
 |#
   (define test-progress-reporter
