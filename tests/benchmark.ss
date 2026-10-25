@@ -1505,3 +1505,69 @@
          ((format . cspp-benchmark-baseline) (version . 1) (results . (result)))
          ((format . cspp-benchmark-baseline) (version . 2) (results . ()))
          ((format . another-format) (version . 1) (results . ())))))
+
+(mat benchmark-constructor-validates-option-context
+     ;; Error: misspelled, unconsumed and malformed options must fail before a descriptor can run.
+     (for-all
+       (lambda (options)
+         (guard (raised [else #t])
+           (make-benchmark 'bad-options (lambda (state) (void)) options)
+           #f))
+       '(((sampls . 1))
+         ((suite-setup . #f))
+         (samples)
+         ((1 . 2))
+         ((setup . 1))
+         ((teardown . invalid))
+         ((fixture . invalid))
+         ((suite . 42))
+         ((template-args . not-an-alist))
+         ((template-args . ((n . 1) (n . 2))))
+         ((arg-range 42 1 1 2))
+         ((dense-arg-range 42 1 1 1))
+         ((arg-range n 1 1 2 ignored))
+         ((dense-arg-range n 1 1))
+         ((samples . -1))
+         ((warmup . invalid))
+         ((max-iterations . 0))
+         ((min-time . +inf.0))
+         ((output . invalid))
+         ((filter . 42))
+         ((reporter . text))
+         ((cost-center? . yes))
+         ((stop-on-error? . yes))))
+
+     ;; Error: suites and fixtures reject options they cannot consume, and non-procedure hooks.
+     (for-all
+       (lambda (form)
+         (guard (raised [else #t])
+           (eval form (environment '(cspp)))
+           #f))
+       '((let () (define-benchmark-suite unused (:samples 0)) unused)
+         (let () (define-benchmark-suite unused (:args ([n] [1]))) unused)
+         (let () (define-benchmark-suite unused (:setup (lambda (state) #t))) unused)
+         (let () (define-benchmark-suite invalid (:suite-setup #f)) invalid)
+         (let () (define-benchmark-suite invalid (:suite-teardown 1)) invalid)
+         (let () (define-benchmark-fixture unused (:samples 1)) unused)
+         (let () (define-benchmark-fixture unused (:suite-setup (lambda (state) #t))) unused)
+         (let () (define-benchmark-fixture invalid (:setup #f)) invalid)
+         (let () (define-benchmark-fixture invalid (:teardown 1)) invalid))))
+
+
+(mat benchmark-inexact-iteration-cap-baseline-roundtrip
+     ;; Natural-number API arguments may be represented as inexact integral values.
+     (let* ([benchmark (make-benchmark 'inexact-cap (lambda (state) (void)) '())]
+            [results (benchmark-run benchmark
+                       (benchmark-config-with (benchmark-test-config)
+                         '((samples . 1) (min-time . 1e100) (max-iterations . 3.0))))]
+            [path (benchmark-temp-file)])
+       (dynamic-wind
+         (lambda () (void))
+         (lambda ()
+           (benchmark-save-baseline results path)
+           (let* ([loaded (car (benchmark-load-baseline path))]
+                  [sample (car (benchmark-result-samples loaded))])
+             (and (= (benchmark-sample-iterations sample) 3)
+                  (equal? (benchmark-result-summary loaded)
+                          (benchmark-result-summary (car results))))))
+         (lambda () (when (file-exists? path) (delete-file path))))))

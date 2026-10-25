@@ -742,7 +742,9 @@
       ($baseline-alist datum 'sample)
       (for-each
         (lambda (key)
-          ($baseline-check (lambda (value) (and (natural? value) (exact? value)))
+          ($baseline-check (lambda (value)
+                             (and (natural? value)
+                                  (or (eq? key 'iterations) (exact? value))))
                            ($alist-ref datum key 0) key))
         '(iterations cpu-ns real-ns bytes gc-count gc-cpu-ns gc-real-ns gc-bytes))
       ($baseline-counters ($alist-ref datum 'counters '()) 'sample-counters)
@@ -977,15 +979,51 @@ The `benchmark-state-counter-add!` procedure adds numeric `value` to counter
               (let ([entry ($counter-entry state name)])
                 (set-cdr! entry (+ value (cdr entry)))))))
 
+  (define $check-benchmark-options
+    (lambda (who options allowed)
+      (for-each
+        (lambda (option)
+          (unless (and (pair? option) (memq (car option) allowed))
+            (errorf who "unknown or unused option: ~s" option))
+          (let ([value (cdr option)])
+            (unless
+              (case (car option)
+                [(setup teardown suite-setup suite-teardown)
+                 (or (procedure? value) (and (eq? who 'make-benchmark) (not value)))]
+                [(fixture) (or (not value) (benchmark-fixture? value))]
+                [(suite) (or (not value) (symbol? value))]
+                [(template-args)
+                 (and (list? value)
+                      (andmap (lambda (entry) (and (pair? entry) (symbol? (car entry)))) value)
+                      (not ($duplicate-symbol? (map car value))))]
+                [(arg-range dense-arg-range)
+                 (and (list? value) (= (length value) 4) (symbol? (car value)))]
+                [else #t])
+              (errorf who "invalid option: ~s" option))))
+        options)
+      (let ([config-options (filter (lambda (option) (memq (car option) $benchmark-config-keys))
+                                    options)])
+        (unless (null? config-options)
+          ;; Reuse the configuration validator, including when a run will override these defaults.
+          (benchmark-config-with (default-benchmark-config) config-options)))))
+
   #|proc:make-benchmark
 The `make-benchmark` procedure creates a benchmark descriptor named by symbol
 `name`. `body` is a procedure with signature `(lambda (state arg ... setup-value)
 ...)`; `options` is a benchmark option alist, usually produced by
-`benchmark-options`.
+`benchmark-options`. Options include argument tables/ranges, sample setup/teardown,
+fixture and suite context, template arguments, and runner configuration defaults.
+Unknown options and invalid hooks/configuration values are rejected at construction.
+`unit`, `complexity`, and `throughput` are descriptive metadata; they do not change
+measurement or reporting.
 |#
   (define make-benchmark
     (lambda (name body options)
       (pcheck ([symbol? name] [procedure? body] [list? options])
+              ($check-benchmark-options 'make-benchmark options
+                (append '(args arg-range dense-arg-range setup teardown fixture suite template-args
+                          unit complexity throughput)
+                        $benchmark-config-keys))
               (let ([args ($normalize-arguments options)])
                 ($mk-benchmark name
                                body
@@ -1876,13 +1914,15 @@ the body condition takes precedence.
   #|macro:define-benchmark-fixture
 The `define-benchmark-fixture` macro defines a reusable fixture descriptor named
 by `name`. Its setup hook receives state and its teardown hook receives state
-and the setup value.
+and the setup value. Only `:setup` and `:teardown` options are accepted, and each
+supplied hook must be a procedure.
 |#
   (define-syntax define-benchmark-fixture
     (syntax-rules ()
       [(_ name options)
        (define name
          (let ([opts (benchmark-options options)])
+           ($check-benchmark-options 'define-benchmark-fixture opts '(setup teardown))
            ($mk-benchmark-fixture 'name
                                   ($option-ref opts 'setup $false-procedure)
                                   ($option-ref opts 'teardown $void-procedure))))]))
@@ -1908,13 +1948,16 @@ the fixture setup value.
   containing the listed benchmark descriptors. The optional `:suite-setup` procedure
   receives the suite state and returns a setup value. The `:suite-teardown` procedure
   receives that state and setup value, or `#f` if setup raised; it can inspect user
-  data in the state to release partially acquired resources.
+  data in the state to release partially acquired resources. Only these two hook
+  options are accepted; measurement defaults belong to child benchmark descriptors.
+  Each supplied hook must be a procedure.
   |#
   (define-syntax define-benchmark-suite
     (syntax-rules ()
       [(_ name options benchmark ...)
        (define name
          (let ([opts (benchmark-options options)])
+           ($check-benchmark-options 'define-benchmark-suite opts '(suite-setup suite-teardown))
            ($mk-benchmark-suite 'name
                                 (list benchmark ...)
                                 ($option-ref opts 'suite-setup $false-procedure)
