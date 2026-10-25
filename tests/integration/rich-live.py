@@ -502,9 +502,68 @@ STATUS_INITIAL_SETTERS = r'''
             (error 'status-initial-setters "initial renderer setters did not reach live display")))))))
 '''
 
+EXTERNAL_MANUAL_STOP = r'''
+(import (cspp))
+(define lock (make-mutex))
+(define changed (make-condition))
+(define entered? #f)
+(define released? #f)
+(define calls 0)
+(define value (vector 'manual-external-stop))
+(rich-register-renderer! (lambda (candidate) (eq? value candidate))
+  (lambda (_)
+    (set! calls (+ calls 1))
+    (when (= calls 2)
+      (with-mutex lock
+        (set! entered? #t)
+        (condition-broadcast changed)
+        (let wait ()
+          (unless released? (condition-wait changed lock) (wait)))))
+    "frame"))
+(call-with-port (open-output-string)
+  (lambda (output)
+    (let ([live (make-rich-live value (rich-console :output-port output) 0 #t)])
+      (rich-live-start! live)
+      (get-output-string output)
+      (let ([refresh (fork-thread (lambda () (rich-live-refresh! live)))])
+        (with-mutex lock
+          (let wait () (unless entered? (condition-wait changed lock) (wait))))
+        (let ([release (fork-thread
+                        (lambda ()
+                          (milisleep 30)
+                          (with-mutex lock
+                            (set! released? #t) (condition-broadcast changed))))])
+          (rich-live-stop! live)
+          (let ([waited? released?])
+          (thread-join release)
+          (thread-join refresh)
+          (unless waited?
+            (error 'manual-external-stop "stop returned before manual refresh finished"))
+          (unless (string=? (get-output-string output) "\r\033[2Kframe\r\033[2K")
+            (error 'manual-external-stop "transient frame remained visible")))
+          (rich-live-stop! live))))))
+'''
+
+
+# Initial rendering has no published worker either; shutdown must await that frame too.
+EXTERNAL_INITIAL_STOP = EXTERNAL_MANUAL_STOP.replace(
+    '(= calls 2)', '(= calls 1)').replace(
+    '      (rich-live-start! live)\n      (get-output-string output)\n', '').replace(
+    '(lambda () (rich-live-refresh! live))', '(lambda () (rich-live-start! live))').replace(
+    r'"\r\033[2Kframe\r\033[2K"', r'"frame\r\033[2K"')
+
+# An exceptional manual frame must also release shutdown waiters.
+EXTERNAL_MANUAL_FAILURE = EXTERNAL_MANUAL_STOP.replace(
+    '    "frame"))', '(if (= calls 2) (raise \'manual-frame-failure) "frame")))').replace(
+    '(lambda () (rich-live-refresh! live))',
+    "(lambda () (guard (condition [(eq? condition 'manual-frame-failure) (void)]) "
+    "(rich-live-refresh! live)))").replace(
+    r'"\r\033[2Kframe\r\033[2K"', r'"\r\033[2K"')
+
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-live-") as directory:
-        cases = (("status-initial-stop", STATUS_INITIAL_STOP),
+        cases = (("initial-external-stop", EXTERNAL_INITIAL_STOP),
+                 ("manual-external-failure", EXTERNAL_MANUAL_FAILURE), ("manual-external-stop", EXTERNAL_MANUAL_STOP), ("status-initial-stop", STATUS_INITIAL_STOP),
                  ("status-initial-setters", STATUS_INITIAL_SETTERS), ("manual-refresh-stop", MANUAL_REFRESH_STOP), ("concurrent-capture", CONCURRENT_CAPTURE),
                  ("concurrent-width", CONCURRENT_WIDTH), ("external-stop", EXTERNAL_STOP), ("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE),
                  ("false-failure", FAILURE.replace(

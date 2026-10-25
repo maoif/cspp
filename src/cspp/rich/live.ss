@@ -51,6 +51,7 @@
             (mutable thread $rich-live-thread $rich-live-thread-set!)
             (mutable stop? $rich-live-stop? $rich-live-stop?-set!)
             (mutable failure $rich-live-failure $rich-live-failure-set!)
+            (mutable refreshes $rich-live-refreshes $rich-live-refreshes-set!)
             (immutable wake-lock $rich-live-wake-lock)
             (immutable wake-condition $rich-live-wake-condition)))
 
@@ -235,14 +236,14 @@
     (case-lambda
       [(renderable)
        ($make-rich-live-record renderable (make-rich-console) 4 #f #f #f #f #f #f #f
-                               (make-mutex) (make-condition))]
+                               0 (make-mutex) (make-condition))]
       [(renderable console refresh-rate transient?)
        (pcheck ([rich-console? console]
                 [$real-nonnegative? refresh-rate]
                 [boolean? transient?])
                ($make-rich-live-record renderable console refresh-rate
                                        transient? #f #f #f #f #f #f
-                                       (make-mutex) (make-condition)))]))
+                                       0 (make-mutex) (make-condition)))]))
 
   #|proc:rich-live-renderable
   The `rich-live-renderable` procedure returns the renderable for `live`.
@@ -325,7 +326,10 @@
             (refresh)
             (let ([context (vector live #t #f)])
               (dynamic-wind
-                void
+                (lambda ()
+                  (with-mutex ($rich-live-wake-lock live)
+                    (vector-set! context 1 #t)
+                    ($rich-live-refreshes-set! live (+ ($rich-live-refreshes live) 1))))
                 (lambda ()
                   (parameterize ([$worker-context context])
                     (refresh)
@@ -336,7 +340,9 @@
                       ($finish-live-stop! live))))
                 (lambda ()
                   (with-mutex ($rich-live-wake-lock live)
-                    (vector-set! context 1 #f)))))))))
+                    (vector-set! context 1 #f)
+                    ($rich-live-refreshes-set! live (- ($rich-live-refreshes live) 1))
+                    (condition-broadcast ($rich-live-wake-condition live))))))))))
 
   #|proc:rich-live-refresh!
   The `rich-live-refresh!` procedure clears the previous live output and writes
@@ -462,6 +468,12 @@
             (when ($rich-live-thread live)
               (thread-join ($rich-live-thread live))
               ($rich-live-thread-set! live #f))
+            ;; Synchronous initial/manual frames have no worker thread to join.
+            (with-mutex ($rich-live-wake-lock live)
+              (let wait ()
+                (unless (zero? ($rich-live-refreshes live))
+                  (condition-wait ($rich-live-wake-condition live) ($rich-live-wake-lock live))
+                  (wait))))
             ($finish-live-stop! live)))
         live)))
 
