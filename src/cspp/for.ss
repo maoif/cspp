@@ -599,8 +599,9 @@
   |#
   #|macro:for
   The `for` macro runs its iterators in parallel and evaluates the body for each accepted tuple.
-  It returns an unspecified value after all sources are exhausted. The optional global `:index`
-  counts body evaluations; iterator options and configuration clauses follow `for/fold`.
+  It returns an unspecified value after exhaustion, or an outermost `:break` result. The optional
+  global `:index` counts body evaluations; iterator options and configuration clauses follow
+  `for/fold`.
   |#
   (define-syntax for
     (lambda (stx)
@@ -749,8 +750,9 @@
   |#
   #|macro:for*
   The `for*` macro nests its iterator clauses, evaluating each inner source for every outer item.
-  It returns an unspecified value after all nested sources are exhausted. Configuration clauses
-  belong to the iterator they follow; global `:index` and binding semantics follow `for*/fold`.
+  It returns an unspecified value after exhaustion, or an outermost `:break` or `:stop` result.
+  Configuration clauses belong to the iterator they follow; global `:index` and binding semantics
+  follow `for*/fold`.
   |#
   (define-syntax for*
     (lambda (stx)
