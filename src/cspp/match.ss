@@ -19,6 +19,55 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
           (cspp private match)
           (cspp io))
 
+  #|doc
+(match <expr>
+  [<pattern> <body> ...]
+  ...
+  [else <body> ...])
+
+<pattern> := <literal>
+            | ,<identifier>                    ; capture
+            | `<identifier>                    ; compare with a capture
+            | _                                ; ignore
+            | ,@<identifier>                   ; splice one matched value
+            | ,@[]                              ; splice for effect
+            | ,@[<identifier> ...]              ; splice multiple values
+            | ,@[<procedure> -> <identifier> ...]
+            | (<pattern> ...)
+            | (<pattern> ... . <pattern>)       ; dotted list
+            | (<pattern> ... <pattern> ...)     ; repeated prefix
+            | #(<pattern> ...)
+            | ,(record <type> :fields (<field> <pattern>) ...)
+            | ,(record <type> :values <pattern> ...)
+            | ,(box <pattern>)
+            | ,(regex <expression> <group> ...)
+            | ,(hash (<literal> <pattern>) ...)
+            | ,(<match-expander> <argument> ...)
+
+<group> := (<number-or-name> ,<identifier>)
+
+<literal> := <number> | <boolean> | <string> | <character> | <symbol>
+
+<clause> := [<pattern> <body> ...]
+          | [<pattern> (guard <expression> ...) <body> ...]
+
+The `...` pattern repeats zero or more list or vector elements and collects captures as lists.
+`match` evaluates `<expr>` once, tries clauses from left to right, and returns the selected body.
+An omitted `else` raises an error when no clause matches.
+
+Examples:
+
+(match '(10 20) [(,x ,y) (+ x y)])
+;; => 30
+
+(match '(1 2 3) [(,x ...) x])
+;; => (1 2 3)
+
+(match (make-Point 10 20)
+  [,(record Point :fields (y ,y) (x ,x)) (list x y)])
+;; => (10 20)
+  |#
+
   #|macro:match
   The `match` macro evaluates its input once and tries its pattern clauses in order.
   `,name` captures a value, `` `name `` compares against a bound value, and `_` ignores a value.

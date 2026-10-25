@@ -96,10 +96,16 @@
         [_ (syntax-error pattern "match: expected (record type :fields/:values pattern ...):")])))
 
   #|proc:extension-subpatterns
-  The `extension-subpatterns` procedure identifies subpatterns in an extension.
-  `compile-environment` maps syntax identifiers to their compile-time bindings, and `pattern`
-  is the extension syntax without its leading unquote. The result lists only subpatterns;
-  embedded expressions, record type names, and field names are excluded.
+  The `extension-subpatterns` procedure returns the pattern positions of an extension.
+  `compile-environment` resolves extension expanders, and `pattern` is the syntax after the
+  leading comma. The result is a list of syntax objects that declare captures; extension
+  expressions, record type names, and named field identifiers are excluded.
+
+  Example input:
+  ```scheme
+  (extension-subpatterns rho #'(record Point :fields (x ,x)))
+  ```
+  Example output: a one-element list containing the syntax object for `,x`.
   |#
   (define extension-subpatterns
     (lambda (compile-environment pattern)
@@ -130,6 +136,12 @@
            [else arguments])))))
 
 
+  #|macro:define-match-expander
+  The `define-match-expander` macro registers `name` as a custom `match` extension.
+  `expander` receives `(process-pattern rho expr-id pattern body failure)` and returns
+  expansion syntax. For example, a `pair` expander can make `,(pair ,a ,b)` return the
+  two fields, so `(match (cons 1 2) [,(pair ,x ,y) (+ x y)])` returns `3`.
+  |#
   (define-syntax define-match-expander
     (lambda (stx)
       (syntax-case stx ()
@@ -144,11 +156,12 @@
 
 
   #|proc:record-expander
-  The `record-expander` procedure expands an explicit record pattern `pat` for input `expr-id`.
-  `rho` maps identifiers to expansion bindings. The callback `pp` takes an environment, an input
-  identifier, a subpattern, a success expression, and a failure identifier, and returns syntax.
-  `body` is the success expression; `fk` names a zero-argument failure procedure. The result is
-  matching syntax with lexical captures and validation of the selected descriptor's own fields.
+  The `record-expander` procedure expands the explicit `record` extension.
+  `process-pattern` compiles each field pattern; `compile-environment` resolves the record;
+  `expr-id` is the input identifier; `pattern` is `(Type :fields/:values ...)`; `body` is the
+  success expression; and `failure` is a zero-argument failure procedure. It returns matcher
+  syntax. For example, a `Point` value `(make-Point 10 20)` with
+  `,(record Point :fields (y ,y))` binds `y` to `20`.
   |#
   (define record-expander
     (lambda (pp rho expr-id pat body fk)
@@ -201,6 +214,12 @@
                       (#,fk)))))))))
 
 
+  #|proc:datatype-expander
+  The `datatype-expander` procedure expands a CSPP datatype extension.
+  Its arguments have the same callback, input, pattern, success, and failure meanings as
+  `record-expander`. For example, `,(Tree Leaf)` selects the `Leaf` variant and returns its
+  body; `,(Tree Node (value ,x))` binds the node's `value` field to `x`.
+  |#
   (define datatype-expander
     (lambda (pp rho expr-id pat body fk)
       (syntax-case pat ()
@@ -266,6 +285,11 @@
         [else (syntax-error pat "match: invalid pattern for datatype: ")])))
 
 
+  #|proc:box-expander
+  The `box-expander` procedure expands `,(box <pattern>)`.
+  It checks that the input is a box, applies `<pattern>` to its contents, and calls `failure`
+  otherwise. For example, `(match (box 10) [,(box ,x) x])` returns `10`.
+  |#
   (define box-expander
     (lambda (pp rho expr-id pat body fk)
       (syntax-case pat (unquote)
@@ -278,6 +302,11 @@
         [_ (syntax-error pat "match: invalid box pattern format:")])))
 
 
+  #|proc:regex-expander
+  The `regex-expander` procedure expands `,(regex <expression> <group> ...)`.
+  It matches a string and binds each named or numbered group to its captured substring.
+  For example, `(match "x=10" [,(regex "x=(.*)" (1 ,x)) x])` returns `"10"`.
+  |#
   (define regex-expander
     (lambda (pp rho expr-id pat body fk)
       (define handle-rest
@@ -328,6 +357,12 @@
         [_ (syntax-error pat "match: invalid regex pattern format:")])))
 
 
+  #|proc:hash-expander
+  The `hash-expander` procedure expands `,(hash (<literal> <pattern>) ...)`.
+  It requires every key and the input hashtable to be present, then applies each value pattern.
+  For example, `(match table [,(hash ("key" ,x)) x])` returns the value stored at `"key"`.
+  A list that merely resembles this syntax is matched structurally with a guard in `match`.
+  |#
   (define hash-expander
     (lambda (pp rho expr-id pat body fk)
       (define literal?
