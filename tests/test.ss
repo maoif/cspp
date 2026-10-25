@@ -996,3 +996,22 @@
                         (test-config-with (test-silent-config) '((xfail-strict? . #t)))))])
     (and (eq? (test-result-status loose) 'xpass)
          (eq? (test-result-status strict) 'failed))))
+
+(mat test-compile-leaves-no-wpo
+  (let* ([temporary-wpo?
+          (lambda (name)
+            (and (test-string-contains? name "test-compile-")
+                 (test-string-contains? name ".wpo")))]
+         [before (filter temporary-wpo? (directory-list "."))])
+    (dynamic-wind
+      (lambda () (void))
+      (lambda ()
+        (let ([result (parameterize ([generate-wpo-files #t])
+                        (car (test-run
+                               (list (make-test-compile 'no-wpo '((define x 1) (+ x 2)) '()))
+                               (test-silent-config))))])
+          (and (eq? (test-result-status result) 'passed)
+               (equal? before (filter temporary-wpo? (directory-list "."))))))
+      (lambda ()
+        (for-each (lambda (name) (unless (member name before) (delete-file name)))
+                  (filter temporary-wpo? (directory-list ".")))))))
