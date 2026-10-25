@@ -4,6 +4,7 @@
           test-datum-reporter test-progress-reporter test-report test-summarize)
   (import (cspp chez)
           (cspp utils)
+          (cspp test assertion)
           (cspp test descriptor)
           (cspp test private common))
 
@@ -49,6 +50,9 @@ The `test-summarize` procedure returns a summary record for `results`.
               (fprintf out "  message: ~a\n" message)))
           (let ([raised (test-result-condition result)])
             (when raised
+              (when (test-failure? raised)
+                (fprintf out "  expected: ~s\n" (test-failure-expected raised))
+                (fprintf out "  actual: ~s\n" (test-failure-actual raised)))
               (display "  condition: " out)
               (if (condition? raised) (display-condition raised out) (write raised out))
               (newline out)))
@@ -90,7 +94,7 @@ The `test-summarize` procedure returns a summary record for `results`.
   #|proc:test-text-reporter
 The `test-text-reporter` procedure returns a reporter that writes a plain text
 summary followed by failed, errored, and unexpected-pass case details, including
-parameters, source, conditions and captured output when present.
+parameters, source, conditions, assertion operands and captured output when present.
 |#
   (define test-text-reporter
     (lambda ()

@@ -1153,6 +1153,37 @@
                    "strict-case" "unexpected pass"))))
     (list (test-text-reporter) (test-progress-reporter 'never))))
 
+(mat test-human-reports-show-assertion-operands
+  ;; Error: generic assertion messages alone do not identify the compared values.
+  (for-all
+    (lambda (reporter)
+      (let* ([results (test-run
+                       (list (make-test-case 'operands
+                               (lambda ()
+                                 (test-equal '(expected-unique 1) '(actual-unique 2))) '()))
+                       (test-silent-config))]
+             [text (call-with-string-output-port
+                     (lambda (out) (test-report reporter out (test-summarize results))))])
+        (and (test-string-contains? text "expected: (expected-unique 1)")
+             (test-string-contains? text "actual: (actual-unique 2)"))))
+    (list (test-text-reporter) (test-progress-reporter 'never))))
+
+(mat test-human-reports-show-cyclic-assertion-operands
+  ;; Error: failed assertions may contain cyclic values, including a false expected value.
+  (for-all
+    (lambda (reporter)
+      (let ([actual (list #f)])
+        (set-car! actual actual)
+        (let* ([results (test-run
+                         (list (make-test-case 'cyclic-operands
+                                 (lambda () (test-false actual)) '()))
+                         (test-silent-config))]
+               [text (call-with-string-output-port
+                       (lambda (out) (test-report reporter out (test-summarize results))))])
+          (and (test-string-contains? text "expected: #f")
+               (test-string-contains? text "actual: #0=(#0#)")))))
+    (list (test-text-reporter) (test-progress-reporter 'never))))
+
 (mat test-main-failure-diagnostics
   ;; Error: the CLI must report the failed row's identity, parameters and captured streams.
   (let ([path "tmp-cspp-test-main-diagnostics.ss"])
