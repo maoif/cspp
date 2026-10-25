@@ -369,25 +369,44 @@
           (let loop ([keys keys] [value value])
             (if (null? keys)
                 value
-                (let ([key (car keys)])
-                  (loop (cdr keys)
-                        (key-clear key value
-                                   (lambda (child)
-                                     (let ([entry (clear (cons key child))])
-                                       (if (nav-missing? entry) entry (cdr entry)))))))))
+                (loop
+                 (cdr keys)
+                 (let first-match ([entries value])
+                   (cond [(null? entries)
+                          (nav-focus-error 'nav-clearval "missing key ~s in: ~s"
+                                           (car keys) value)]
+                         [(eq? (caar entries) (car keys))
+                          (let ([entry (clear (car entries))])
+                            (if (nav-missing? entry)
+                                (cdr entries)
+                                (cons entry (cdr entries))))]
+                         [else (cons (car entries) (first-match (cdr entries)))])))))
           (submap-transform keys value clear))))
 
   (define submap-clear!
     (lambda (keys value clear!)
-      (let ([result (submap-clear keys value clear!)])
-        (for-each
-         (lambda (key)
-           (let ([child (keyed-ref/missing result key)])
-             (if (nav-missing? child)
-                 (keyed-delete! value key)
-                 (keyed-set! value key child))))
-         keys)
-        value)))
+      (if (alist? value)
+          (begin
+            (for-each
+             (lambda (key)
+               (let ([entry (assq key value)])
+                 (unless entry
+                   (nav-focus-error 'nav-clearval! "missing key ~s in: ~s" key value))
+                 (let ([updated (clear! entry)])
+                   (if (nav-missing? updated)
+                       (keyed-delete! value key)
+                       (keyed-set! value key (cdr updated))))))
+             keys)
+            value)
+          (let ([result (submap-clear keys value clear!)])
+            (for-each
+             (lambda (key)
+               (let ([child (keyed-ref/missing result key)])
+                 (if (nav-missing? child)
+                     (keyed-delete! value key)
+                     (keyed-set! value key child))))
+             keys)
+            value))))
 
   #|proc:nav/stay
   The `nav/stay` navigator focuses the current value unchanged.
@@ -745,7 +764,9 @@
 
   #|proc:nav/submap
   The `nav/submap` procedure returns a navigator that focuses the subset of
-  association-list entries or hashtable entries named by `keys`.
+  association-list entries or hashtable entries named by `keys`. For alists, each key
+  selects its first matching entry. Other keyed containers focus one submap containing
+  the requested keys. The result is a navigator.
   |#
   (define nav/submap
     (lambda keys

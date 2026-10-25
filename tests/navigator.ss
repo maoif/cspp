@@ -1488,3 +1488,21 @@
 
   ;; A missing suffix outside the optional path must propagate through custom navigation.
   (error? (nav-select (nav/path (nav/maybe passthrough-nav) (nav/key 'missing)) '())))
+
+(mat navigator-review-submap-duplicate-focuses
+  (let ([path (nav/path (nav/submap 'a)
+                        (nav/pred (lambda (entry) (= (cdr entry) 2))))]
+        [data '((a . 1) (a . 2) (b . 3))])
+    (and (null? (nav-select path data))
+         (equal? data (nav-clearval path data))))
+
+  (equal? '((a . 2) (b . 3))
+          (nav-clearval (nav/submap 'a) '((a . 1) (a . 2) (b . 3))))
+
+  (let ([calls 0] [data (list (cons 'a 1) (cons 'a 2))])
+    (nav-clearval! (nav/path (nav/submap 'a)
+                            (nav/pred (lambda (entry) (set! calls (+ calls 1)) #f))) data)
+    (and (= calls 1) (equal? data '((a . 1) (a . 2)))))
+
+  ;; Duplicate alist keys do not make direct entry removal possible in place.
+  (error? (nav-clearval! (nav/submap 'a) (list (cons 'a 1) (cons 'a 2)))))
