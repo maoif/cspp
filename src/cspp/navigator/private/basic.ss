@@ -5,6 +5,7 @@
           nav-register-indexed! nav-register-keyed! nav-register-set!)
   (import (chezscheme)
           (cspp utils)
+          (cspp list)
           (cspp navigator private core)
           (cspp navigator private data))
 
@@ -182,14 +183,34 @@
     (lambda (value key)
       (keyed-ref/missing value key)))
 
+  (define alist-update-values
+    (lambda (value key update absent)
+      (let ([builder (make-list-builder)] [found? #f])
+        (for-each
+         (lambda (entry)
+           (if (eq? (car entry) key)
+               (let ([child (update (cdr entry))])
+                 (set! found? #t)
+                 (unless (nav-missing? child) (builder (cons key child))))
+               (builder entry)))
+         value)
+        (if found? (builder) (absent)))))
+
   (define key-transform
     (lambda (key default insert? value update)
-      (let ([old (keyed-ref/missing value key)])
-        (cond [(nav-missing? old)
-               (if insert?
-                   (keyed-set value key (update default))
-                   (nav-focus-error 'nav-transform "missing key ~s in: ~s" key value))]
-              [else (keyed-set value key (update old))]))))
+      (if (alist? value)
+          (alist-update-values
+           value key update
+           (lambda ()
+             (if insert?
+                 (append value (list (cons key (update default))))
+                 (nav-focus-error 'nav-transform "missing key ~s in: ~s" key value))))
+          (let ([old (keyed-ref/missing value key)])
+            (cond [(nav-missing? old)
+                   (if insert?
+                       (keyed-set value key (update default))
+                       (nav-focus-error 'nav-transform "missing key ~s in: ~s" key value))]
+                  [else (keyed-set value key (update old))])))))
 
   (define key-transform!
     (lambda (key default insert? value update!)
@@ -198,6 +219,12 @@
                (if insert?
                    (keyed-set! value key (update! default))
                    (nav-focus-error 'nav-transform! "missing key ~s in: ~s" key value))]
+              [(alist? value)
+               (for-each (lambda (entry)
+                           (when (eq? key (car entry))
+                             (set-cdr! entry (update! (cdr entry)))))
+                         value)
+               value]
               [else (keyed-set! value key (update! old))]))))
 
   (define list-remove-index
@@ -233,23 +260,37 @@
 
   (define key-clear
     (lambda (key value clear)
-      (let ([old (keyed-ref/missing value key)])
-        (if (nav-missing? old)
-            (nav-focus-error 'nav-clearval "missing key ~s in: ~s" key value)
-            (let ([new-value (clear old)])
-              (if (nav-missing? new-value)
-                  (keyed-delete value key)
-                  (keyed-set value key new-value)))))))
+      (if (alist? value)
+          (alist-update-values
+           value key clear
+           (lambda () (nav-focus-error 'nav-clearval "missing key ~s in: ~s" key value)))
+          (let ([old (keyed-ref/missing value key)])
+            (if (nav-missing? old)
+                (nav-focus-error 'nav-clearval "missing key ~s in: ~s" key value)
+                (let ([child (clear old)])
+                  (if (nav-missing? child)
+                      (keyed-delete value key)
+                      (keyed-set value key child))))))))
 
   (define key-clear!
     (lambda (key value clear!)
       (let ([old (keyed-ref/missing value key)])
-        (if (nav-missing? old)
-            (nav-focus-error 'nav-clearval! "missing key ~s in: ~s" key value)
-            (let ([new-value (clear! old)])
-              (when (nav-missing? new-value)
-                (keyed-delete! value key))
-              value)))))
+        (cond [(nav-missing? old)
+               (nav-focus-error 'nav-clearval! "missing key ~s in: ~s" key value)]
+              [(alist? value)
+               (for-each
+                (lambda (entry)
+                  (when (eq? key (car entry))
+                    (let ([child (clear! (cdr entry))])
+                      (when (nav-missing? child) (keyed-delete! value key))
+                      (set-cdr! entry child))))
+                value)]
+              [else
+               (let ([child (clear! old)])
+                 (if (nav-missing? child)
+                     (keyed-delete! value key)
+                     (keyed-set! value key child)))])
+        value)))
 
   (define empty-subtable
     (lambda (table)
@@ -257,6 +298,22 @@
         (cond [(eq? equivalent? eq?) (make-eq-hashtable)]
               [(eq? equivalent? eqv?) (make-eqv-hashtable)]
               [else (make-hashtable (hashtable-hash-function table) equivalent?)]))))
+
+  (define rebuild-keyed-entries
+    (lambda (value entries)
+      (cond [(hashtable? value)
+             (let ([result (empty-subtable value)])
+               (for-each (lambda (entry) (hashtable-set! result (car entry) (cdr entry)))
+                         entries)
+               result)]
+            [(alist? value) entries]
+            [else
+             (let ([empty (fold-left (lambda (result entry)
+                                       (keyed-delete result (car entry)))
+                                     value (keyed-entries value))])
+               (fold-left (lambda (result entry)
+                            (keyed-set result (car entry) (cdr entry)))
+                          empty entries))])))
 
   (define submap-transform
     (lambda (keys value update)
@@ -393,7 +450,8 @@
 
   #|proc:nav/keys
   The `nav/keys` navigator focuses sequence indexes or hashtable keys for
-  current collection value.
+  current collection value. Pure map transforms replace old keys; if transformed keys
+  collide, the last entry in traversal order wins. Sequence indexes are read-only.
   |#
   (define nav/keys
     (make-basic-nav
@@ -412,13 +470,9 @@
        (cond [(indexed-supported? value) value]
              [(keyed-entries value)
               => (lambda (entries)
-                   (let loop ([entries entries] [copy #f])
-                     (cond [(null? entries) (or copy value)]
-                           [else
-                            (let* ([entry (car entries)]
-                                   [new-key (update (car entry))]
-                                   [next (keyed-set (or copy value) new-key (cdr entry))])
-                              (loop (cdr entries) next))])))]
+                   (rebuild-keyed-entries
+                    value (map (lambda (entry) (cons (update (car entry)) (cdr entry)))
+                               entries)))]
              [else (nav-focus-error 'nav-transform "unsupported collection: ~s" value)]))
      (lambda (value update!)
        (nav-error 'nav-transform! "navigator nav/keys does not support mutation for: ~s" value))
@@ -426,7 +480,10 @@
      (lambda (value clear!) (unsupported-clear 'nav-clearval! value))))
 
   #|proc:nav/entries
-  The `nav/entries` navigator focuses entries as `(key . value)` pairs.
+  The `nav/entries` navigator focuses entries as `(key . value)` pairs. Pure transforms
+  must return pairs. Map keys can change; the last entry in traversal order wins a key
+  collision in maps with unique keys. Alists retain duplicate entries and their order.
+  An indexed collection's entry must retain its index, and its value replaces that element.
   |#
   (define nav/entries
     (make-basic-nav
@@ -444,13 +501,23 @@
      (lambda (value update)
        (cond [(keyed-entries value)
               => (lambda (entries)
-                   (let loop ([entries entries] [copy #f])
-                     (cond [(null? entries) (or copy value)]
-                           [else
-                            (let ([entry (update (car entries))])
-                              (loop (cdr entries)
-                                    (keyed-set (or copy value) (car entry) (cdr entry))))])))]
-             [else (transform-all-values value update)]))
+                   (rebuild-keyed-entries
+                    value (map (lambda (old)
+                                 (let ([entry (update old)])
+                                   (unless (pair? entry)
+                                     (nav-error 'nav-transform "expected entry pair: ~s" entry))
+                                   entry))
+                               entries)))]
+             [(indexed-supported? value)
+              (let ([len (indexed-length value)])
+                (let loop ([i 0] [result value])
+                  (if (fx= i len)
+                      result
+                      (let ([entry (update (cons i (indexed-ref/missing value i)))])
+                        (unless (and (pair? entry) (eqv? (car entry) i))
+                          (nav-error 'nav-transform "entry must retain index ~s: ~s" i entry))
+                        (loop (fx+ i 1) (indexed-set result i (cdr entry)))))))]
+             [else (nav-focus-error 'nav-transform "unsupported collection: ~s" value)]))
      (lambda (value update!)
        (nav-error 'nav-transform! "navigator nav/entries does not support mutation for: ~s" value))
      (lambda (value clear) (unsupported-clear 'nav-clearval value))

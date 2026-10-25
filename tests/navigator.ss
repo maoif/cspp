@@ -1335,3 +1335,47 @@
                             table) data)])
       (and (= 2 (hashtable-ref result (string-copy "a") #f))
            (= 1 (hashtable-ref data (string-copy "a") #f))))))
+
+(mat navigator-review-entry-transforms
+  (equal? '#(11 12)
+          (nav-transform nav/entries
+                         (lambda (entry) (cons (car entry) (+ 10 (cdr entry)))) '#(1 2)))
+
+  (equal? '((a . 2) (a . 3))
+          (nav-transform (nav/key 'a) add1 '((a . 1) (a . 2))))
+
+  (let ([data (list (cons 'a 1) (cons 'a 2))])
+    (and (eq? data (nav-transform!/i (nav/key 'a) (lambda (index value) (+ index value)) data))
+         (equal? '((a . 1) (a . 3)) data)))
+
+  (equal? '((b . 3)) (nav-clearval (nav/key 'a) '((a . 1) (a . 2) (b . 3))))
+
+  (let* ([data (ht 'a 1)]
+         [result (nav-transform nav/keys (lambda (key) 'b) data)])
+    (and (not (hashtable-contains? result 'a))
+         (= 1 (ht-ref result 'b))
+         (= 1 (hashtable-size result))
+         (= 1 (ht-ref data 'a))))
+
+  (let* ([data (ht 'a 1 'b 2)]
+         [result (nav-transform nav/keys (lambda (key) (if (eq? key 'a) 'b 'a)) data)])
+    (and (= 2 (ht-ref result 'a)) (= 1 (ht-ref result 'b))))
+
+  (let* ([data (ht 'a 1)]
+         [result (nav-transform nav/entries (lambda (entry) '(b . 10)) data)])
+    (and (not (hashtable-contains? result 'a))
+         (= 10 (ht-ref result 'b)) (= 1 (hashtable-size result))))
+
+  (let ([result (nav-transform nav/entries (lambda (entry) '(b . 10))
+                                (make-kvbox '((a . 1))))])
+    (equal? '((b . 10)) (kvbox-entries result)))
+
+  (equal? '((b . 1) (b . 2))
+          (nav-transform nav/entries (lambda (entry) (cons 'b (cdr entry)))
+                         '((a . 1) (a . 2))))
+
+  ;; Indexed entries retain their positional key during updates.
+  (error? (nav-transform nav/entries (lambda (entry) (cons 9 (cdr entry))) '#(1 2)))
+
+  ;; Entry transforms must return pairs, including when the source is indexed.
+  (error? (nav-transform nav/entries (lambda (entry) 12) '#(1 2))))
