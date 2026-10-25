@@ -479,7 +479,7 @@
   (define $condition->datum
     (lambda (exn)
       (if (condition? exn)
-          `((who . ,(and (who-condition? exn) (condition-who exn)))
+          `((who . ,(and (who-condition? exn) ($diagnostic-datum (condition-who exn))))
             (message . ,(if (message-condition? exn)
                             (condition-message exn)
                             "benchmark error"))
@@ -2248,7 +2248,7 @@ The `benchmark-save-baseline` procedure writes benchmark `results` to file
 `path` as versioned Scheme data. The file can be read back with
 `benchmark-load-baseline`. Runtime and template argument keys must be readable
 Scheme data; unsupported values such as procedures or ports are rejected before
-changing `path`. Unreadable error irritants are saved as diagnostic strings.
+changing `path`. Unreadable error who fields and irritants are saved as diagnostic strings.
 |#
   (define benchmark-save-baseline
     (lambda (results path)

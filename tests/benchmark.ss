@@ -1265,3 +1265,18 @@
             [comparisons (benchmark-compare-results baseline current)])
        (and (equal? (map benchmark-comparison-baseline-value comparisons) '(20 10))
             (equal? (map benchmark-comparison-current comparisons) current))))
+
+(mat benchmark-baseline-unreadable-who
+     ;; Error: an unreadable diagnostic who field must not prevent baseline saving.
+     (let* ([path (benchmark-temp-file)]
+            [raised (condition (make-error) (make-who-condition make-vector)
+                               (make-message-condition "unreadable who"))]
+            [benchmark (make-benchmark 'diagnostic-who (lambda (state) (raise raised)) '())]
+            [results (benchmark-run benchmark (benchmark-test-config))])
+       (dynamic-wind
+         (lambda () (void))
+         (lambda ()
+           (benchmark-save-baseline results path)
+           (let ([loaded (benchmark-result-error (car (benchmark-load-baseline path)))])
+             (and (condition? loaded) (string? (condition-who loaded)))))
+         (lambda () (when (file-exists? path) (delete-file path))))))
