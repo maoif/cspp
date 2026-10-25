@@ -692,8 +692,62 @@
         (cost-center . ,(benchmark-sample-cost-center sample))
         (counters . ,(benchmark-sample-counters sample)))))
 
+  ;; Validate persisted data once, before constructing records used by statistics/reporters.
+  (define $baseline-check
+    (lambda (predicate value context)
+      (unless (predicate value)
+        (errorf 'benchmark-load-baseline "invalid ~a: ~s" context value))))
+
+  (define $baseline-alist
+    (lambda (datum context)
+      ($baseline-check list? datum context)
+      (let ([seen (make-eq-hashtable)])
+        (for-each
+          (lambda (entry)
+            (unless (and (pair? entry) (symbol? (car entry))
+                         (not (hashtable-contains? seen (car entry))))
+              (errorf 'benchmark-load-baseline "invalid or duplicate ~a field: ~s" context entry))
+            (hashtable-set! seen (car entry) #t))
+          datum))))
+
+  (define $baseline-counters
+    (lambda (datum context)
+      ($baseline-alist datum context)
+      (for-each (lambda (entry) ($baseline-check number? (cdr entry) context)) datum)))
+
+  (define $baseline-summary
+    (lambda (datum)
+      ($baseline-alist datum 'summary)
+      (for-each
+        (lambda (metric)
+          ($baseline-alist (cdr metric) (car metric))
+          (for-each
+            (lambda (entry)
+              (let ([value (cdr entry)])
+                (if (eq? (car entry) 'confidence-interval)
+                    ($baseline-check
+                      (lambda (value)
+                        (and (list? value) (= (length value) 2) (andmap real? value)))
+                      value 'confidence-interval)
+                    ($baseline-check
+                      (lambda (value)
+                        (and (real? value)
+                             (or (not (eq? (car entry) 'stddev)) (>= value 0))))
+                      value (car entry)))))
+            (cdr metric)))
+        datum)))
+
   (define $datum->sample
     (lambda (datum)
+      ($baseline-alist datum 'sample)
+      (for-each
+        (lambda (key)
+          ($baseline-check (lambda (value) (and (natural? value) (exact? value)))
+                           ($alist-ref datum key 0) key))
+        '(iterations cpu-ns real-ns bytes gc-count gc-cpu-ns gc-real-ns gc-bytes))
+      ($baseline-counters ($alist-ref datum 'counters '()) 'sample-counters)
+      (let ([data ($alist-ref datum 'cost-center #f)])
+        (when data ($baseline-counters data 'cost-center)))
       (let ([sstats (make-sstats ($ns->time ($alist-ref datum 'cpu-ns 0))
                                  ($ns->time ($alist-ref datum 'real-ns 0))
                                  ($alist-ref datum 'bytes 0)
@@ -721,6 +775,20 @@
 
   (define $datum->result
     (lambda (datum)
+      ($baseline-alist datum 'result)
+      ($baseline-check symbol? ($alist-ref datum 'name #f) 'result-name)
+      ($baseline-alist ($alist-ref datum 'args '()) 'args)
+      ($baseline-alist ($alist-ref datum 'template-args '()) 'template-args)
+      (when (assq 'samples datum)
+        ($baseline-check list? ($alist-ref datum 'samples) 'samples))
+      ($baseline-summary ($alist-ref datum 'summary '()))
+      ($baseline-counters ($alist-ref datum 'counters '()) 'result-counters)
+      ($baseline-check boolean? ($alist-ref datum 'error? #f) 'error?)
+      (let ([error-datum ($alist-ref datum 'error #f)])
+        (when error-datum
+          ($baseline-alist error-datum 'error)
+          ($baseline-check string? ($alist-ref error-datum 'message "") 'error-message)
+          ($baseline-check list? ($alist-ref error-datum 'irritants '()) 'error-irritants)))
       ($mk-benchmark-result ($alist-ref datum 'name)
                             ($alist-ref datum 'args '())
                             ($alist-ref datum 'template-args '())
@@ -2284,12 +2352,17 @@ changing `path`. Unreadable error who fields and irritants are saved as diagnost
 
   #|proc:benchmark-load-baseline
 The `benchmark-load-baseline` procedure reads benchmark results previously
-written by `benchmark-save-baseline` from file `path`.
+written by `benchmark-save-baseline` from string file `path`, returning a list of
+result records. Malformed records and negative or nonintegral sample measurements
+raise an error identifying the field. Omitted fields retain legacy defaults;
+historical summary-only records are preserved without synthesizing samples.
 |#
   (define benchmark-load-baseline
     (lambda (path)
       (pcheck ([string? path])
               (let ([datum (call-with-input-file path read)])
+                ($baseline-alist datum 'baseline)
+                ($baseline-check list? ($alist-ref datum 'results '()) 'results)
                 (unless (eq? ($alist-ref datum 'format #f) 'cspp-benchmark-baseline)
                   (errorf 'benchmark-load-baseline "invalid benchmark baseline file: ~a" path))
                 (let ([version ($alist-ref datum 'version #f)])

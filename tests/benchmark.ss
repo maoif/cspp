@@ -1423,3 +1423,85 @@
        (and (not (benchmark-result-error result))
             (equal? seen '(1 1))
             (equal? (map benchmark-sample-iterations (benchmark-result-samples result)) '(1 1)))))
+
+(mat benchmark-baseline-rejects-malformed-models
+     ;; Error: decoded records must reject invalid domains instead of clamping or normalizing them.
+     (for-all
+       (lambda (datum)
+         (guard (raised [else
+                         (and (who-condition? raised)
+                              (eq? (condition-who raised) 'benchmark-load-baseline))])
+           (benchmark-results-from-data (list datum))
+           #f))
+       '(((name . malformed) (samples . (((iterations . -1) (bytes . -100)))))
+         ((name . malformed) (samples . (((iterations . 1) (cpu-ns . -1)))))
+         ((name . malformed) (samples . (((iterations . 1) (real-ns . 1/2)))))
+         ((name . malformed) (samples . (((iterations . 1) (gc-count . 1.0)))))
+         ((name . malformed) (samples . (((iterations . 1) (bytes . many)))))
+         ((name . malformed) (samples . (((iterations . 1) (counters . ((n . text)))))))
+         ((name . malformed) (samples . (((iterations . 1) (bytes . 0) (bytes . 1)))))
+         ((name . malformed) (samples . (((iterations . 1) (cost-center . not-an-alist)))))
+         ((name . malformed) (samples . (not-a-sample)))
+         ((name . malformed) (samples . not-a-list))
+         ((name . malformed) (args . ((1 . value))))
+         ((name . malformed) (template-args . ((n . 1) (n . 2))))
+         ((name . malformed) (summary . ((bytes . ((mean . text))))))
+         ((name . malformed) (summary . ((bytes . ((confidence-interval . (1)))))))
+         ((name . malformed) (summary . ((bytes . ((stddev . -1))))))
+         ((name . malformed) (counters . ((n . text))))
+         ((name . malformed) (error . ((message . 1))))
+         ((name . malformed) (error . ((irritants . improper))))
+         ((name . "not-symbolic"))
+         ((samples . ()))
+         ((name . malformed) . improper)
+         not-a-result)))
+
+(mat benchmark-baseline-semantic-roundtrip
+     (let* ([data '(((name . semantic) (args . ((n . 3))) (template-args . ((kind . list)))
+                     (samples . (((iterations . 2) (cpu-ns . 6) (real-ns . 8) (bytes . 10)
+                                  (gc-count . 1) (gc-cpu-ns . 2) (gc-real-ns . 4)
+                                  (gc-bytes . 6) (counters . ((work . 7))))))
+                     (summary . ((bytes . ((mean . 5))))) (counters . ((work . 7)))))]
+            [before (car (benchmark-results-from-data data))]
+            [path (benchmark-temp-file)])
+       (dynamic-wind
+         (lambda () (void))
+         (lambda ()
+           (benchmark-save-baseline (list before) path)
+           (let* ([after (car (benchmark-load-baseline path))]
+                  [sample (car (benchmark-result-samples after))]
+                  [stats (benchmark-sample-sstats sample)])
+             (and (equal? (benchmark-result-args after) '((n . 3)))
+                  (equal? (benchmark-result-template-args after) '((kind . list)))
+                  (equal? (benchmark-result-summary after) (benchmark-result-summary before))
+                  (equal? (benchmark-result-counters after) '((work . 7)))
+                  (equal? (benchmark-sample-counters sample) '((work . 7)))
+                  (= (benchmark-sample-iterations sample) 2)
+                  (= (sstats-bytes stats) 10) (= (sstats-gc-count stats) 1)
+                  (= (sstats-gc-bytes stats) 6)
+                  (= (time-nanosecond (sstats-cpu stats)) 6)
+                  (= (time-nanosecond (sstats-real stats)) 8)
+                  (= (time-nanosecond (sstats-gc-cpu stats)) 2)
+                  (= (time-nanosecond (sstats-gc-real stats)) 4))))
+         (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat benchmark-baseline-rejects-malformed-envelopes
+     ;; Error: valid reader data is not necessarily a baseline envelope or result collection.
+     (for-all
+       (lambda (datum)
+         (let ([path (benchmark-temp-file)])
+           (dynamic-wind
+             (lambda () (void))
+             (lambda ()
+               (benchmark-write-datum-file path datum)
+               (guard (raised [else (and (who-condition? raised)
+                                        (eq? (condition-who raised) 'benchmark-load-baseline))])
+                 (benchmark-load-baseline path)
+                 #f))
+             (lambda () (when (file-exists? path) (delete-file path))))))
+       '(not-an-envelope
+         ((format . cspp-benchmark-baseline) . improper)
+         ((format . cspp-benchmark-baseline) (version . 1) (results . improper))
+         ((format . cspp-benchmark-baseline) (version . 1) (results . (result)))
+         ((format . cspp-benchmark-baseline) (version . 2) (results . ()))
+         ((format . another-format) (version . 1) (results . ())))))
