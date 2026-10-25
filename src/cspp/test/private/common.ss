@@ -47,28 +47,6 @@
        [(> (car left) (car right)) 1]
        [else ($version-compare (cdr left) (cdr right))])))
 
-  (define $digit?
-    (lambda (char)
-      (char<=? #\0 char #\9)))
-
-  (define $parse-version
-    (lambda (string)
-      (let ([end (string-length string)])
-        (let loop ([index 0] [number #f] [out '()])
-          (cond
-           [(fx= index end)
-            (reverse (if number (cons number out) out))]
-           [(char=? (string-ref string index) #\.)
-            (loop (fx+ index 1) #f (cons (or number 0) out))]
-           [($digit? (string-ref string index))
-            (loop (fx+ index 1)
-                  (+ (* (or number 0) 10)
-                     (- (char->integer (string-ref string index))
-                        (char->integer #\0)))
-                  out)]
-           [else
-            (reverse (if number (cons number out) out))])))))
-
   #|proc:test-alist-ref
 The `test-alist-ref` procedure returns the value associated with symbol `key`
 in association list `alist`. When `default` is supplied, it is returned for a
@@ -133,11 +111,11 @@ natural-number version components.
 
   #|proc:chez-version
 The `chez-version` procedure returns the running Chez Scheme version as a list
-of natural-number components parsed from `(scheme-version)`.
+of natural-number components from Chez's `scheme-version-number`.
 |#
   (define chez-version
     (lambda ()
-      ($parse-version (scheme-version))))
+      (call-with-values scheme-version-number list)))
 
   #|proc:chez-version<?
 The `chez-version<?` procedure returns whether version list `left` is less than

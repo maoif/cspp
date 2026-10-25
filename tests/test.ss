@@ -963,3 +963,13 @@
                       (test-silent-config)))])
     (and (eq? (test-result-status result) 'errored)
          (eq? (condition-who (test-result-condition result)) 'cleanup))))
+
+(mat test-current-chez-version
+  (equal? (chez-version) (call-with-values scheme-version-number list))
+
+  (let ([called? #f])
+    (let ([results (test-run
+                    (list (make-test-case 'supported-version (lambda () (set! called? #t))
+                            `((requires-chez-version . ,(call-with-values scheme-version-number list)))))
+                    (test-silent-config))])
+      (and called? (equal? (map test-result-status results) '(passed))))))
