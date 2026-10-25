@@ -1370,7 +1370,7 @@ Scheme datum per result to the output port.
 The `benchmark-csv-reporter` procedure returns a reporter that writes benchmark
 results as comma-separated values. Each row contains the result name, argument
 data, template data, summary means, counters, and whether the result captured an
-error.
+error. Missing metrics or means in legacy summaries are reported as zero.
 |#
   (define benchmark-csv-reporter
     (lambda ()
@@ -1378,10 +1378,9 @@ error.
        (lambda (results out)
          (fprintf out "name,args,template_args,cpu_ns_mean,real_ns_mean,bytes_mean,counters,error~%"))
        (lambda (result out)
-         (let* ([summary (benchmark-result-summary result)]
-                [cpu (cdr (assq 'mean (cdr (assq 'cpu-ns summary))))]
-                [real (cdr (assq 'mean (cdr (assq 'real-ns summary))))]
-                [bytes (cdr (assq 'mean (cdr (assq 'bytes summary))))])
+         (let ([cpu ($metric-mean result 'cpu-ns)]
+               [real ($metric-mean result 'real-ns)]
+               [bytes ($metric-mean result 'bytes)])
            (fprintf out "~a,~a,~a,~a,~a,~a,~a,~a~%"
                     ($csv-field (benchmark-result-name result))
                     ($csv-field (benchmark-result-args result))

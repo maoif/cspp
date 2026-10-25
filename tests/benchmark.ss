@@ -1572,6 +1572,22 @@
                           (benchmark-result-summary (car results))))))
          (lambda () (when (file-exists? path) (delete-file path))))))
 
+(mat benchmark-csv-reports-partial-legacy-summaries
+     ;; Error: accepted legacy summaries may omit metrics or individual mean fields.
+     (let* ([results (benchmark-results-from-data
+                      '(((name . real-only) (summary . ((real-ns . ((mean . 100))))))
+                        ((name . no-summary))
+                        ((name . no-means)
+                         (summary . ((cpu-ns . ((median . 3))) (real-ns . ())
+                                     (bytes . ((mean . 7))))))))]
+            [text (call-with-string-output-port
+                    (lambda (out) (benchmark-report results (benchmark-csv-reporter) out)))])
+       (equal? (benchmark-string-lines text)
+               '("name,args,template_args,cpu_ns_mean,real_ns_mean,bytes_mean,counters,error"
+                 "\"real-only\",\"()\",\"()\",\"0\",\"100\",\"0\",\"()\",\"#f\""
+                 "\"no-summary\",\"()\",\"()\",\"0\",\"0\",\"0\",\"()\",\"#f\""
+                 "\"no-means\",\"()\",\"()\",\"0\",\"0\",\"7\",\"()\",\"#f\""))))
+
 (mat benchmark-calibration-growth-and-retained-samples
      ;; An unreachable target makes growth deterministic without replacing the measurement backend.
      (let* ([setups '()] [calls 0]
