@@ -434,8 +434,10 @@ association-list filters as `test-select`.
           (lambda ()
             (call-with-output-file path
               (lambda (out)
-                (for-each (lambda (form) (write form out) (newline out))
-                          (test-descriptor-body descriptor)))
+                ;; Compiler input must retain complete source regardless of diagnostic limits.
+                (parameterize ([print-graph #t] [print-level #f] [print-length #f])
+                  (for-each (lambda (form) (write form out) (newline out))
+                            (test-descriptor-body descriptor))))
               'replace)
             (parameterize ([compile-file-message #f] [generate-wpo-files #f])
               (compile-file path)))

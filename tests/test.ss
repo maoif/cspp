@@ -1206,6 +1206,24 @@
           '(() ("--reporter" "progress"))))
       (lambda () (when (file-exists? path) (delete-file path))))))
 
+(mat test-compile-preserves-source-under-printer-limits
+  ;; Error: truncating invalid source must not turn a compiler rejection into a pass.
+  (for-all
+    (lambda (limits)
+      (let* ([invalid '((define bad (lambda (x x) x)))]
+             [descriptors
+              (list (make-test-compile 'invalid invalid '())
+                    (make-test-compile 'expected-invalid invalid
+                      `((raises . ,syntax-violation?)))
+                    (make-test-compile 'valid
+                      '((define good (lambda (x) (+ x 1)))) '()))]
+             [results (parameterize ([print-length (car limits)]
+                                     [print-level (cadr limits)])
+                        (test-run descriptors (test-silent-config)))])
+        (and (equal? (map test-result-status results) '(errored passed passed))
+             (syntax-violation? (test-result-condition (car results))))))
+    '((#f #f) (1 #f) (#f 1) (1 1))))
+
 (mat test-human-reports-allow-absent-messages
   ;; Results constructed by callers may omit messages, including on failures and loose xpass.
   (for-all
