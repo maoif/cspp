@@ -448,9 +448,64 @@ MANUAL_REFRESH_STOP = r'''
         (error 'manual-refresh-stop "shutdown cleanup was left pending")))))
 '''
 
+STATUS_INITIAL_STOP = r'''
+(import (cspp))
+(for-each
+ (lambda (child?)
+   (let ([status #f] [calls 0])
+     (rich-register-renderer! (lambda (candidate) (eq? candidate status))
+       (lambda (_)
+         (set! calls (+ calls 1))
+         (if child?
+             (thread-join (fork-thread (lambda () (rich-status-stop! status))))
+             (rich-status-stop! status))
+         "ok"))
+     (call-with-port (open-output-string)
+       (lambda (output)
+         (set! status (make-rich-status "working" (rich-console :output-port output)
+                                        '("*") 10000))
+         (rich-status-start! status)
+         (rich-status-start! status)
+         (rich-status-stop! status)
+         (unless (= calls 2)
+           (error 'status-initial-stop "initial renderer could not stop and restart status"))))))
+ '(#f #t))
+'''
+
+STATUS_INITIAL_SETTERS = r'''
+(import (cspp))
+(let ([status #f] [calls 0] [observed #f])
+  (call-with-port (open-output-string)
+    (lambda (first)
+      (call-with-port (open-output-string)
+        (lambda (second)
+          (rich-register-renderer! (lambda (candidate) (eq? candidate status))
+            (lambda (_)
+              (set! calls (+ calls 1))
+              (if (= calls 1)
+                  (begin
+                    (rich-status-console-set! status (rich-console :output-port second))
+                    (rich-status-interval-set! status 0.125))
+                  (rich-status-stop! status))
+              "frame"))
+          (set! status (make-rich-status "working" (rich-console :output-port first)
+                                         '("*") 10000))
+          (parameterize ([rich-sleep (lambda (seconds) (set! observed seconds))])
+            (rich-status-start! status)
+            (let wait ([remaining 1000])
+              (when (and (< calls 2) (positive? remaining))
+                (milisleep 1) (wait (- remaining 1))))
+            (rich-status-stop! status))
+          (unless (and (= calls 2) (real? observed) (= observed 0.125)
+                       (string=? (get-output-string first) "frame")
+                       (string=? (get-output-string second) "frame"))
+            (error 'status-initial-setters "initial renderer setters did not reach live display")))))))
+'''
+
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-live-") as directory:
-        cases = (("manual-refresh-stop", MANUAL_REFRESH_STOP), ("concurrent-capture", CONCURRENT_CAPTURE),
+        cases = (("status-initial-stop", STATUS_INITIAL_STOP),
+                 ("status-initial-setters", STATUS_INITIAL_SETTERS), ("manual-refresh-stop", MANUAL_REFRESH_STOP), ("concurrent-capture", CONCURRENT_CAPTURE),
                  ("concurrent-width", CONCURRENT_WIDTH), ("external-stop", EXTERNAL_STOP), ("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE),
                  ("false-failure", FAILURE.replace(
                      '(error \'worker-recovery "later frame failed")', "(raise #f)")),

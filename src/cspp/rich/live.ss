@@ -653,8 +653,14 @@
                                             (rich-status-console status)
                                             (/ 1 (inexact->exact (rich-status-interval status)))
                                             #f)])
-                  (rich-live-start! live)
-                  ($rich-status-live-set! status live)))
+                  ;; Initial renderers must be able to stop or update this live display.
+                  ($rich-status-live-set! status live)
+                  (guard (condition
+                          [else
+                           (when (eq? live ($rich-status-live status))
+                             ($rich-status-live-set! status #f))
+                           (raise condition)])
+                    (rich-live-start! live))))
               status)))
 
   #|proc:rich-status-stop!
