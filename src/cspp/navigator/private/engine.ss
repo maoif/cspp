@@ -356,30 +356,39 @@
   (define nav-traverse->iter
     (lambda (path data)
       (let ([compiled (nav-compile-path path)]
-            [resume #f]
-            [done? #f])
+            [resume #f] [return #f] [done? #f])
         (define reset!
           (lambda ()
+            (set! return #f)
+            (set! done? #f)
             (set! resume
                   (lambda ()
-                    (call/cc
-                     (lambda (return)
-                       (select-path compiled data
-                                    (lambda (value)
-                                      (call/cc
-                                       (lambda (continue)
-                                         (set! resume continue)
-                                         (return value)))))
-                       (set! done? #t)
-                       iter-end))))
-            (set! done? #f)))
+                    (select-path
+                     compiled data
+                     (lambda (value)
+                       ;; Suspend each producer segment once, until the next advance.
+                       (call/1cc
+                        (lambda (continue)
+                          (set! resume continue)
+                          (return value)))))
+                    (set! done? #t)
+                    (set! resume #f)
+                    (return iter-end)))))
         (reset!)
         (make-iter
          (lambda ()
            (if done?
                iter-end
-               (resume)))
-         reset!))))
+               ;; Each advance supplies its own one-shot consumer continuation.
+               (call/1cc
+                (lambda (consumer)
+                  (set! return consumer)
+                  (resume)))))
+         reset!
+         (lambda ()
+           (set! done? #t)
+           (set! resume #f)
+           (set! return #f))))))
 
   #|proc:nav-selected->vector
   The `nav-selected->vector` procedure returns a vector of all values selected
@@ -411,21 +420,19 @@
           out))))
 
   #|proc:nav-selected-transduce
-  The `nav-selected-transduce` procedure applies transducer `xform` and reducer
-  `reducer` to values selected by `path` from `data`.
+  The `nav-selected-transduce` procedure applies transducer record `xform` and reducer
+  record `reducer` to values selected by `path` from `data`, returning the completed
+  reduction result. The four-argument form uses the reducer's initializer; the
+  five-argument form uses `init`. Traversal stops when the reduction terminates early.
   |#
   (define nav-selected-transduce
     (case-lambda
       [(path xform reducer data)
-       (nav-selected-transduce path xform reducer (reducer) data)]
+       (pcheck ([transducer? xform] [reducer? reducer])
+               (transduce xform reducer (nav-traverse->iter path data)))]
       [(path xform reducer init data)
-       (pcheck ([procedure? xform reducer])
-               (let ([step (xform reducer)]
-                     [acc init])
-                 (select-path path data
-                              (lambda (value)
-                                (set! acc (step acc value))))
-                 acc))]))
+       (pcheck ([transducer? xform] [reducer? reducer])
+               (transduce xform reducer init (nav-traverse->iter path data)))]))
 
   #|proc:nav-transform
   The `nav-transform` procedure returns a rebuilt `data` value with each value

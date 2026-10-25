@@ -820,15 +820,13 @@
               (= count 1))))
      (= 6
         (nav-selected-transduce nav/all
-                                (lambda (reducer) reducer)
-                                (case-lambda
-                                  [() 0]
-                                  [(acc value) (+ acc value)])
+                                (tidentity)
+                                (rfsum)
                                 '(1 2 3)))
      (= 6
         (nav-selected-transduce nav/all
-                                (lambda (reducer) reducer)
-                                (lambda (acc value) (+ acc value))
+                                (tidentity)
+                                (rfsum)
                                 0
                                 '(1 2 3))))
 
@@ -859,10 +857,8 @@
              (nav-selected->vector deep-numbers-path (deep-count-data)))
      (= 6
         (nav-selected-transduce deep-numbers-path
-                                (lambda (reducer) reducer)
-                                (case-lambda
-                                  [() 0]
-                                  [(acc value) (+ acc value)])
+                                (tidentity)
+                                (rfsum)
                                 (deep-count-data)))
      (let ([updated (nav-transform deep-fx-path add1 (deep-mixed-data))])
        (equal? '(1 2 4)
@@ -1147,3 +1143,46 @@
      ;; negative: set protocol registration requires procedure callbacks.
      (error? (nav-register-set! 'not-a-procedure values values values values values))
      (error? (nav-register-set! pair? values values values values 'not-a-procedure)))
+
+(mat navigator-review-iterator-and-transduction
+  (let ([iterator (nav-traverse->iter nav/all '(a b c))]
+        [events '()] [attempts 0])
+    (equal? '((first a) (second b))
+            ;; Bound reentry into the first caller if a generator continuation is wrong.
+            (call/1cc
+             (lambda (stop)
+               (set! events (cons (list 'first (iter-next! iterator)) events))
+               (set! attempts (+ attempts 1))
+               (when (= attempts 4) (stop (reverse events)))
+               (set! events (cons (list 'second (iter-next! iterator)) events))
+               (reverse events)))))
+
+  (let ([iterator (nav-traverse->iter nav/all '(a b))])
+    (and (eq? 'a (iter-next! iterator))
+         (begin (iter-reset! iterator) #t)
+         (eq? 'a (iter-next! iterator))
+         (eq? 'b (iter-next! iterator))
+         (iter-end? (iter-next! iterator))
+         (iter-end? (iter-next! iterator))
+         (begin (iter-reset! iterator) #t)
+         (eq? 'a (iter-next! iterator))))
+
+  (equal? '(#(1 2) #(3))
+          (nav-selected-transduce nav/all (tpartition-all 2) (rflist) '(1 2 3)))
+
+  (= 19 (nav-selected-transduce nav/all (tmap add1) (rfsum) 10 '(1 2 3)))
+
+  (let ([visited 0])
+    (and (equal? '(1 2)
+                 (nav-selected-transduce
+                  (nav/path nav/all (nav/getter 'observe
+                                               (lambda (value)
+                                                 (set! visited (+ visited 1)) value)))
+                  (ttake 2) (rflist) '(1 2 3 4)))
+         (= visited 2)))
+
+  ;; The transducer boundary rejects obsolete procedure arguments before traversal.
+  (error? (nav-selected-transduce nav/all (lambda (reducer) reducer) (rfsum) '(1)))
+
+  ;; The reducer boundary rejects obsolete procedure arguments before traversal.
+  (error? (nav-selected-transduce nav/all (tidentity) + '(1))))
