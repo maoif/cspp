@@ -1,6 +1,6 @@
 (library (cspp navigator private data)
   (export byte? indexed-length indexed-ref/missing indexed-set indexed-set!
-          indexed-supported?
+          indexed-supported? indexed-transform
           keyed-supported? keyed-ref/missing keyed-set keyed-set!
           keyed-delete keyed-delete! keyed-entries keyed-keys keyed-values
           set-supported? set-values set-replace set-replace!
@@ -173,6 +173,42 @@
                       (($indexed-protocol-ref-proc protocol) value index)
                       nav-missing))]
             [else (nav-focus-error 'nav/nth "unsupported indexed value: ~s" value)])))
+
+  ;; Built-in containers need one copy per pure update. Registered protocols retain
+  ;; their pure setter contract because a generic container has no cloning operation.
+  (define indexed-transform
+    (lambda (value indexes update)
+      (cond [(null? indexes) value]
+            [(list? value)
+             (let loop ([items value] [indexes indexes] [index 0])
+               (cond [(null? indexes) items]
+                     [(null? items)
+                      (nav-focus-error 'nav-transform "index ~s out of range for: ~s"
+                                       (car indexes) value)]
+                     [(= index (car indexes))
+                      (let ([child (update (car items))])
+                        (cons child (loop (cdr items) (cdr indexes) (fx+ index 1))))]
+                     [else (cons (car items) (loop (cdr items) indexes (fx+ index 1)))]))]
+            [else
+             (let ([copy (cond [(vector? value) (vector-copy value)]
+                               [(fxvector? value) (fxvector-copy value)]
+                               [(flvector? value) (flvector-copy value)]
+                               [(bytevector? value) (bytevector-copy value)]
+                               [(string? value) (string-copy value)]
+                               [else #f])])
+               (let loop ([indexes indexes] [result (or copy value)])
+                 (if (null? indexes)
+                     result
+                     (let* ([index (car indexes)]
+                            [old (indexed-ref/missing result index)])
+                       (when (nav-missing? old)
+                         (nav-focus-error 'nav-transform "index ~s out of range for: ~s"
+                                          index value))
+                       (let ([child (update old)])
+                         (if copy
+                             (begin (indexed-set! copy index child)
+                                    (loop (cdr indexes) copy))
+                             (loop (cdr indexes) (indexed-set result index child))))))))])))
 
   (define indexed-set
     (lambda (value index new-value)

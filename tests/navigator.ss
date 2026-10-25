@@ -1379,3 +1379,35 @@
 
   ;; Entry transforms must return pairs, including when the source is indexed.
   (error? (nav-transform nav/entries (lambda (entry) 12) '#(1 2))))
+
+(mat navigator-review-indexed-copying
+  (let ([source (vector 1 2 3 4)] [seen '()])
+    (let ([result (nav-transform (nav/slice 1 4 2)
+                                 (lambda (value) (set! seen (cons value seen)) (+ 10 value))
+                                 source)])
+      (and (equal? source '#(1 2 3 4))
+           (equal? result '#(1 12 3 14))
+           (equal? seen '(4 2))
+           (not (eq? source result)))))
+
+  (let* ([source (list 1 2 3 4)]
+         [result (nav-transform (nav/slice 0 3 2) add1 source)])
+    (and (equal? source '(1 2 3 4))
+         (equal? result '(2 2 4 4))
+         (eq? (cdddr source) (cdddr result))))
+
+  (let ([source (vector 1 2)])
+    (eq? source (nav-transform (nav/slice 2 2) add1 source)))
+
+  (equal? '#vfx(2 3) (nav-transform nav/all add1 '#vfx(1 2)))
+
+  (equal? '#vfl(2.0 3.0) (nav-transform nav/all (lambda (value) (fl+ value 1.0))
+                                      '#vfl(1.0 2.0)))
+
+  (equal? #vu8(2 3) (nav-transform nav/all add1 #vu8(1 2)))
+
+  (string=? "ABC" (nav-transform nav/all char-upcase (string-copy "abc")))
+
+  (let ([source (make-ixbox '#(1 2 3))])
+    (and (equal? '#(1 2 3) (ixbox-items source))
+         (equal? '#(2 3 4) (ixbox-items (nav-transform nav/all add1 source))))))

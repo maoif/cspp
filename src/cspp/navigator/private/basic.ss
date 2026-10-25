@@ -34,18 +34,6 @@
             (reverse acc)
             (loop (+ i 1) (cons i acc))))))
 
-  (define indexed-transform
-    (lambda (value indexes update)
-      (let loop ([indexes indexes] [value value])
-        (if (null? indexes)
-            value
-            (let* ([index (car indexes)]
-                   [old (indexed-ref/missing value index)])
-              (if (nav-missing? old)
-                  (nav-focus-error 'nav-transform "index ~s out of range for: ~s" index value)
-                  (loop (cdr indexes)
-                        (indexed-set value index (update old)))))))))
-
   (define indexed-transform!
     (lambda (value indexes update!)
       (for-each
@@ -509,14 +497,15 @@
                                    entry))
                                entries)))]
              [(indexed-supported? value)
-              (let ([len (indexed-length value)])
-                (let loop ([i 0] [result value])
-                  (if (fx= i len)
-                      result
-                      (let ([entry (update (cons i (indexed-ref/missing value i)))])
-                        (unless (and (pair? entry) (eqv? (car entry) i))
-                          (nav-error 'nav-transform "entry must retain index ~s: ~s" i entry))
-                        (loop (fx+ i 1) (indexed-set result i (cdr entry)))))))]
+              (let ([index 0])
+                (indexed-transform
+                 value (index-list (indexed-length value))
+                 (lambda (old)
+                   (let ([entry (update (cons index old))])
+                     (unless (and (pair? entry) (eqv? (car entry) index))
+                       (nav-error 'nav-transform "entry must retain index ~s: ~s" index entry))
+                     (set! index (fx+ index 1))
+                     (cdr entry)))))]
              [else (nav-focus-error 'nav-transform "unsupported collection: ~s" value)]))
      (lambda (value update!)
        (nav-error 'nav-transform! "navigator nav/entries does not support mutation for: ~s" value))
