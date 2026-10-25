@@ -606,19 +606,90 @@ NESTED_INITIAL_STOP = NESTED_STOP.replace(
     ':output-port out) 100 #t', ':output-port out) 0 #t').replace(
     r'"outer\r\033[2Kouter\r\033[2K"', r'"outer\r\033[2K"')
 
+FAILED_CLEANUP_CONTEXT = r'''
+(import (cspp))
+(define lock (make-mutex))
+(define ready (make-condition))
+(define released? #f)
+(define child #f)
+(define live #f)
+(define writes 0)
+(define calls 0)
+(define value (vector 'failed-cleanup))
+(rich-register-renderer! (lambda (candidate) (eq? candidate value))
+  (lambda (_)
+    (set! calls (+ calls 1))
+    (when (= calls 2)
+      (set! child
+        (fork-thread
+          (lambda ()
+            (with-mutex lock
+              (let wait () (unless released? (condition-wait ready lock) (wait))))
+            (rich-live-stop! live))))
+      (rich-live-stop! live))
+    "ok"))
+(call-with-port
+  (make-custom-textual-output-port "failed-cleanup"
+    (lambda (text start count)
+      (with-mutex lock
+        (set! writes (+ writes 1))
+        (condition-broadcast ready))
+      ;; The final transient erase fails inside the worker's deferred-stop cleanup.
+      (when (= writes 3) (raise 'cleanup-failure))
+      count)
+    #f #f #f)
+  (lambda (output)
+    (set! live (make-rich-live value (rich-console :output-port output) 100 #t))
+    (rich-live-start! live)
+    (with-mutex lock
+      (let wait () (unless (>= writes 3) (condition-wait ready lock) (wait))))
+    (let ([failure (guard (condition [else condition]) (rich-live-stop! live) #f)])
+      (unless (eq? failure 'cleanup-failure)
+        (error 'failed-cleanup "worker cleanup failure was not reported")))
+    (call-with-port (open-output-string)
+      (lambda (repaired)
+        (rich-live-console-set! live (rich-console :output-port repaired))
+        (rich-live-refresh-rate-set! live 0)
+        (rich-live-start! live)
+        (with-mutex lock (set! released? #t) (condition-broadcast ready))
+        (thread-join child)
+        (unless (string=? (get-output-string repaired) "ok\r\033[2K")
+          (error 'failed-cleanup "stale child deferred shutdown after failed cleanup"))
+        (rich-live-stop! live)
+        (unless (string=? (get-output-string repaired) "")
+          (error 'failed-cleanup "cleanup or failure repeated"))))))
+'''
+
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-live-") as directory:
-        cases = (("nested-stop", NESTED_STOP), ("nested-initial-stop", NESTED_INITIAL_STOP), ("initial-external-stop", EXTERNAL_INITIAL_STOP),
-                 ("manual-external-failure", EXTERNAL_MANUAL_FAILURE), ("manual-external-stop", EXTERNAL_MANUAL_STOP), ("status-initial-stop", STATUS_INITIAL_STOP),
-                 ("status-initial-setters", STATUS_INITIAL_SETTERS), ("manual-refresh-stop", MANUAL_REFRESH_STOP), ("concurrent-capture", CONCURRENT_CAPTURE),
-                 ("concurrent-width", CONCURRENT_WIDTH), ("external-stop", EXTERNAL_STOP), ("pause", PAUSE), ("recovery", RECOVERY), ("failure", FAILURE),
-                 ("false-failure", FAILURE.replace(
-                     '(error \'worker-recovery "later frame failed")', "(raise #f)")),
-                 ("stop", STOP), ("status", STATUS), ("self-stop", SELF_STOP),
-                 ("initial-stop", INITIAL_STOP), ("child-stop", CHILD_STOP), ("cleanup-child-stop", CLEANUP_CHILD_STOP),
-                 ("stale-child-stop", STALE_CHILD_STOP),
-                 ("status-recovery", STATUS_RECOVERY),
-                 ("extreme-timing", EXTREME_TIMING))
+        cases = (
+            ("pause", PAUSE),
+            ("recovery", RECOVERY),
+            ("failure", FAILURE),
+            ("false-failure", FAILURE.replace(
+                '(error \'worker-recovery "later frame failed")', "(raise #f)")),
+            ("stop", STOP),
+            ("status", STATUS),
+            ("self-stop", SELF_STOP),
+            ("initial-stop", INITIAL_STOP),
+            ("child-stop", CHILD_STOP),
+            ("cleanup-child-stop", CLEANUP_CHILD_STOP),
+            ("stale-child-stop", STALE_CHILD_STOP),
+            ("failed-cleanup-context", FAILED_CLEANUP_CONTEXT),
+            ("status-recovery", STATUS_RECOVERY),
+            ("status-initial-stop", STATUS_INITIAL_STOP),
+            ("status-initial-setters", STATUS_INITIAL_SETTERS),
+            ("manual-refresh-stop", MANUAL_REFRESH_STOP),
+            ("concurrent-capture", CONCURRENT_CAPTURE),
+            ("concurrent-width", CONCURRENT_WIDTH),
+            ("external-stop", EXTERNAL_STOP),
+            ("initial-external-stop", EXTERNAL_INITIAL_STOP),
+            ("manual-external-failure", EXTERNAL_MANUAL_FAILURE),
+            ("manual-external-stop", EXTERNAL_MANUAL_STOP),
+            ("nested-stop", NESTED_STOP),
+            ("nested-initial-stop", NESTED_INITIAL_STOP),
+            ("extreme-timing", EXTREME_TIMING),
+        )
         for name, source in cases:
             probe = Path(directory) / (name + ".ss")
             probe.write_text(source)

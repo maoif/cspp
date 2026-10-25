@@ -1069,6 +1069,12 @@
 
      )
 
+(mat rich-live-lifecycle
+
+     (= 0 (system "cd .. && python3 tests/integration/rich-live.py"))
+
+     )
+
 (mat rich-terminal-sizing
 
      (or (eq? (system-platform) 'windows)
