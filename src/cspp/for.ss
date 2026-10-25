@@ -17,7 +17,7 @@
            <index-clause>?    ; global index
            <finish-clause>?
            <iter-clause>+
-           <for-config-clasue>*)
+           <for-config-clause>*)
   <body>+)
 
 ;; used to introduce an accumulator value
@@ -342,7 +342,6 @@
 
 <for*-config-clause> := <break-clause>      ; in for*, break one level of loop
                      |  <guard-clasue>
-                     |  <index-clause>      ; TODO for* can have local indices
                      |  <bind-clause>
                      |  <stop-clause>       ; only in for*, stop the entire iter
   |#
