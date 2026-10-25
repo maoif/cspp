@@ -18,20 +18,22 @@
 
   (define path-selected?
     (lambda (path value)
-      (guard [exn [else #f]]
+      (guard [exn [(nav-focus-error? exn) #f]]
         ;; Use a one-shot continuation to stop traversal after the first focus.
         (call/1cc
          (lambda (return)
            (select-path path value (lambda (child) (return #t)))
            #f)))))
 
-  (define clear-path
-    (lambda (path data)
-      (nav-clearval path data)))
-
-  (define clear-path!
-    (lambda (path data)
-      (nav-clearval! path data)))
+  ;; A missing focus in a wrapped path is optional; a downstream failure is not.
+  (define optional-focus
+    (lambda (run callback default)
+      (let ([downstream-condition #f])
+        (guard (exn [(and (nav-focus-error? exn)
+                          (not (eq? exn downstream-condition))) default])
+          (run (lambda (value)
+                 (guard (exn [else (set! downstream-condition exn) (raise exn)])
+                   (callback value))))))))
 
   #|proc:nav/pred
   The `nav/pred` procedure returns a navigator that focuses the current value
@@ -64,7 +66,8 @@
               (nav/pred (lambda (value) (not (predicate value)))))))
 
   #|proc:nav/maybe
-  The `nav/maybe` procedure wraps `path` so missing selections become no-ops.
+  The `nav/maybe` procedure wraps `path` so absent or unsupported focuses become no-ops.
+  Errors from user callbacks or later path steps propagate normally. The result is a navigator.
   |#
   (define nav/maybe
     (lambda (path)
@@ -72,20 +75,20 @@
         (make-conditional-nav
          'nav/maybe '(nav/maybe)
          (lambda (value emit)
-           (guard [exn [else (void)]]
-             (select-path compiled value emit)))
+           (optional-focus (lambda (callback) (select-path compiled value callback))
+                           emit (void)))
          (lambda (value update)
-           (guard [exn [else value]]
-             (transform-path compiled update value)))
+           (optional-focus (lambda (callback) (transform-path compiled callback value))
+                           update value))
          (lambda (value update!)
-           (guard [exn [else value]]
-             (transform-path! compiled update! value)))
+           (optional-focus (lambda (callback) (transform-path! compiled callback value))
+                           update! value))
          (lambda (value clear)
-           (guard [exn [else value]]
-             (clear-path compiled value)))
+           (optional-focus (lambda (callback) (clear-path compiled callback value))
+                           clear value))
          (lambda (value clear!)
-           (guard [exn [else value]]
-             (clear-path! compiled value)))))))
+           (optional-focus (lambda (callback) (clear-path! compiled callback value))
+                           clear! value))))))
 
   #|proc:nav/must
   The `nav/must` procedure wraps `path` so selecting no values signals an error.
@@ -113,11 +116,11 @@
                (nav-error 'nav/must "required path selected no values")))
          (lambda (value clear)
            (if (path-selected? compiled value)
-               (clear-path compiled value)
+               (clear-path compiled clear value)
                (nav-error 'nav/must "required path selected no values")))
          (lambda (value clear!)
            (if (path-selected? compiled value)
-               (clear-path! compiled value)
+               (clear-path! compiled clear! value)
                (nav-error 'nav/must "required path selected no values")))))))
 
   #|proc:nav/if
@@ -141,9 +144,9 @@
          (lambda (value update!)
            (transform-path! (choose value) update! value))
          (lambda (value clear)
-           (clear-path (choose value) value))
+           (clear-path (choose value) clear value))
          (lambda (value clear!)
-           (clear-path! (choose value) value))))))
+           (clear-path! (choose value) clear! value))))))
 
   #|proc:nav/when
   The `nav/when` procedure chooses `then-path` when `test-path` selects at
@@ -182,12 +185,14 @@
            value)
          (lambda (value clear)
            (let loop ([paths compiled] [value value])
-             (if (null? paths)
+             (if (or (null? paths) (nav-missing? value))
                  value
-                 (loop (cdr paths) (clear-path (car paths) value)))))
+                 (loop (cdr paths) (clear-path (car paths) clear value)))))
          (lambda (value clear!)
-           (for-each (lambda (path) (clear-path! path value)) compiled)
-           value)))))
+           (let loop ([paths compiled] [value value])
+             (if (or (null? paths) (nav-missing? value))
+                 value
+                 (loop (cdr paths) (clear-path! (car paths) clear! value)))))))))
 
   #|proc:nav/choice
   The `nav/choice` procedure returns a navigator that uses the first path in
@@ -211,6 +216,6 @@
          (lambda (value update!)
            (transform-path! (choose value) update! value))
          (lambda (value clear)
-           (clear-path (choose value) value))
+           (clear-path (choose value) clear value))
          (lambda (value clear!)
-           (clear-path! (choose value) value)))))))
+           (clear-path! (choose value) clear! value)))))))

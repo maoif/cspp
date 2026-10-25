@@ -41,7 +41,7 @@
             (let* ([index (car indexes)]
                    [old (indexed-ref/missing value index)])
               (if (nav-missing? old)
-                  (nav-error 'nav-transform "index ~s out of range for: ~s" index value)
+                  (nav-focus-error 'nav-transform "index ~s out of range for: ~s" index value)
                   (loop (cdr indexes)
                         (indexed-set value index (update old)))))))))
 
@@ -51,7 +51,7 @@
        (lambda (index)
          (let ([old (indexed-ref/missing value index)])
            (if (nav-missing? old)
-               (nav-error 'nav-transform! "index ~s out of range for: ~s" index value)
+               (nav-focus-error 'nav-transform! "index ~s out of range for: ~s" index value)
                (indexed-set! value index (update! old)))))
        indexes)
       value))
@@ -94,7 +94,7 @@
              => (lambda (values) (for-each emit values))]
             [(set-values value)
              => (lambda (values) (for-each emit values))]
-            [else (nav-error 'nav/all "unsupported collection: ~s" value)])))
+            [else (nav-focus-error 'nav/all "unsupported collection: ~s" value)])))
 
   (define transform-all-values
     (lambda (value update)
@@ -111,7 +111,7 @@
             [(set-values value)
              => (lambda (values)
                   (set-replace value (map update values)))]
-            [else (nav-error 'nav-transform "unsupported collection: ~s" value)])))
+            [else (nav-focus-error 'nav-transform "unsupported collection: ~s" value)])))
 
   (define transform-all-values!
     (lambda (value update!)
@@ -127,7 +127,7 @@
             [(set-values value)
              => (lambda (values)
                   (set-replace! value (map update! values)))]
-            [else (nav-error 'nav-transform! "unsupported collection: ~s" value)])))
+            [else (nav-focus-error 'nav-transform! "unsupported collection: ~s" value)])))
 
   (define clear-all-values
     (lambda (value clear)
@@ -172,7 +172,7 @@
       (let loop ([xs alist] [selected? #f])
         (cond [(null? xs)
                (unless selected?
-                 (nav-error 'nav/key "missing key ~s in: ~s" key alist))]
+                 (nav-focus-error 'nav/key "missing key ~s in: ~s" key alist))]
               [(eq? (caar xs) key)
                (emit (cdar xs))
                (loop (cdr xs) #t)]
@@ -188,7 +188,7 @@
         (cond [(nav-missing? old)
                (if insert?
                    (keyed-set value key (update default))
-                   (nav-error 'nav-transform "missing key ~s in: ~s" key value))]
+                   (nav-focus-error 'nav-transform "missing key ~s in: ~s" key value))]
               [else (keyed-set value key (update old))]))))
 
   (define key-transform!
@@ -197,14 +197,14 @@
         (cond [(nav-missing? old)
                (if insert?
                    (keyed-set! value key (update! default))
-                   (nav-error 'nav-transform! "missing key ~s in: ~s" key value))]
+                   (nav-focus-error 'nav-transform! "missing key ~s in: ~s" key value))]
               [else (keyed-set! value key (update! old))]))))
 
   (define list-remove-index
     (lambda (value index)
       (let loop ([xs value] [i index])
         (cond [(null? xs)
-               (nav-error 'nav-clearval "index ~s out of range for: ~s" index value)]
+               (nav-focus-error 'nav-clearval "index ~s out of range for: ~s" index value)]
               [(= i 0) (cdr xs)]
               [else (cons (car xs) (loop (cdr xs) (- i 1)))]))))
 
@@ -212,7 +212,7 @@
     (lambda (index value clear)
       (let ([old (indexed-ref/missing value index)])
         (if (nav-missing? old)
-            (nav-error 'nav-clearval "index ~s out of range for: ~s" index value)
+            (nav-focus-error 'nav-clearval "index ~s out of range for: ~s" index value)
             (let ([new-value (clear old)])
               (if (nav-missing? new-value)
                   (if (list? value)
@@ -224,7 +224,7 @@
     (lambda (index value clear!)
       (let ([old (indexed-ref/missing value index)])
         (if (nav-missing? old)
-            (nav-error 'nav-clearval! "index ~s out of range for: ~s" index value)
+            (nav-focus-error 'nav-clearval! "index ~s out of range for: ~s" index value)
             (let ([new-value (clear! old)])
               (if (nav-missing? new-value)
                   (unsupported-clear 'nav-clearval! value)
@@ -235,7 +235,7 @@
     (lambda (key value clear)
       (let ([old (keyed-ref/missing value key)])
         (if (nav-missing? old)
-            (nav-error 'nav-clearval "missing key ~s in: ~s" key value)
+            (nav-focus-error 'nav-clearval "missing key ~s in: ~s" key value)
             (let ([new-value (clear old)])
               (if (nav-missing? new-value)
                   (keyed-delete value key)
@@ -245,7 +245,7 @@
     (lambda (key value clear!)
       (let ([old (keyed-ref/missing value key)])
         (if (nav-missing? old)
-            (nav-error 'nav-clearval! "missing key ~s in: ~s" key value)
+            (nav-focus-error 'nav-clearval! "missing key ~s in: ~s" key value)
             (let ([new-value (clear! old)])
               (when (nav-missing? new-value)
                 (keyed-delete! value key))
@@ -259,7 +259,7 @@
                 (lambda (key)
                   (let ([selected (keyed-ref/missing value key)])
                     (if (nav-missing? selected)
-                        (nav-error 'nav-transform "missing key ~s in: ~s" key value)
+                        (nav-focus-error 'nav-transform "missing key ~s in: ~s" key value)
                         (hashtable-set! subtable key selected))))
                 keys)
                (let ([updated (update subtable)])
@@ -278,8 +278,7 @@
                                 (let ([entry (assq key value)])
                                   (if entry
                                       entry
-                                      (nav-error 'nav-transform
-                                                 "missing key ~s in: ~s"
+                                      (nav-focus-error 'nav-transform "missing key ~s in: ~s"
                                                  key value))))
                               keys))])
                (let loop ([xs value])
@@ -294,8 +293,7 @@
                                           (reverse entries)
                                           (let ([selected (keyed-ref/missing value (car keys))])
                                             (if (nav-missing? selected)
-                                                (nav-error 'nav-transform
-                                                           "missing key ~s in: ~s"
+                                                (nav-focus-error 'nav-transform "missing key ~s in: ~s"
                                                            (car keys) value)
                                                 (loop (cdr keys)
                                                       (cons (cons (car keys) selected)
@@ -308,7 +306,7 @@
                              (if entry
                                  (keyed-set value (car keys) (cdr entry))
                                  (keyed-delete value (car keys))))))))]
-            [else (nav-error 'nav-transform "unsupported keyed value: ~s" value)])))
+            [else (nav-focus-error 'nav-transform "unsupported keyed value: ~s" value)])))
 
   #|proc:nav/stay
   The `nav/stay` navigator focuses the current value unchanged.
@@ -321,8 +319,8 @@
                       (nav-error 'nav-transform!
                                  "cannot replace root focus in place: ~s"
                                  value))
-                    (lambda (value clear) (unsupported-clear 'nav-clearval value))
-                    (lambda (value clear!) (unsupported-clear 'nav-clearval! value))))
+                    (lambda (value clear) (clear value))
+                    (lambda (value clear!) (clear! value))))
 
   #|proc:nav/none
   The `nav/none` navigator selects no values from the current value.
@@ -373,7 +371,7 @@
                     (loop (+ i 1)))))]
              [(keyed-keys value)
               => (lambda (keys) (for-each emit keys))]
-             [else (nav-error 'nav/keys "unsupported collection: ~s" value)]))
+             [else (nav-focus-error 'nav/keys "unsupported collection: ~s" value)]))
      (lambda (value update)
        (cond [(indexed-supported? value) value]
              [(keyed-entries value)
@@ -385,7 +383,7 @@
                                    [new-key (update (car entry))]
                                    [next (keyed-set (or copy value) new-key (cdr entry))])
                               (loop (cdr entries) next))])))]
-             [else (nav-error 'nav-transform "unsupported collection: ~s" value)]))
+             [else (nav-focus-error 'nav-transform "unsupported collection: ~s" value)]))
      (lambda (value update!)
        (nav-error 'nav-transform! "navigator nav/keys does not support mutation for: ~s" value))
      (lambda (value clear) (unsupported-clear 'nav-clearval value))
@@ -406,7 +404,7 @@
                     (loop (+ i 1)))))]
              [(keyed-entries value)
               => (lambda (entries) (for-each emit entries))]
-             [else (nav-error 'nav/entries "unsupported collection: ~s" value)]))
+             [else (nav-focus-error 'nav/entries "unsupported collection: ~s" value)]))
      (lambda (value update)
        (cond [(keyed-entries value)
               => (lambda (entries)
@@ -435,17 +433,17 @@
                (lambda (value emit)
                  (let ([selected (indexed-ref/missing value index)])
                    (if (nav-missing? selected)
-                       (nav-error 'nav/nth "index ~s out of range for: ~s" index value)
+                       (nav-focus-error 'nav/nth "index ~s out of range for: ~s" index value)
                        (emit selected))))
                (lambda (value update)
                  (let ([selected (indexed-ref/missing value index)])
                    (if (nav-missing? selected)
-                       (nav-error 'nav-transform "index ~s out of range for: ~s" index value)
+                       (nav-focus-error 'nav-transform "index ~s out of range for: ~s" index value)
                        (indexed-transform value (list index) update))))
                (lambda (value update!)
                  (let ([selected (indexed-ref/missing value index)])
                    (if (nav-missing? selected)
-                       (nav-error 'nav-transform! "index ~s out of range for: ~s" index value)
+                       (nav-focus-error 'nav-transform! "index ~s out of range for: ~s" index value)
                        (begin
                          (indexed-set! value index (update! selected))
                          value))))
@@ -503,12 +501,12 @@
        (let ([len (indexed-length value)])
          (if (and len (> len 0))
              (emit (indexed-ref/missing value (- len 1)))
-             (nav-error 'nav/last "unsupported or empty sequence: ~s" value))))
+             (nav-focus-error 'nav/last "unsupported or empty sequence: ~s" value))))
      (lambda (value update)
        (let ([len (indexed-length value)])
          (if (and len (> len 0))
              (indexed-transform value (list (- len 1)) update)
-             (nav-error 'nav-transform "unsupported or empty sequence: ~s" value))))
+             (nav-focus-error 'nav-transform "unsupported or empty sequence: ~s" value))))
      (lambda (value update!)
        (let ([len (indexed-length value)])
          (if (and len (> len 0))
@@ -516,7 +514,7 @@
                (indexed-set! value (- len 1)
                              (update! (indexed-ref/missing value (- len 1))))
                value)
-             (nav-error 'nav-transform! "unsupported or empty sequence: ~s" value))))
+             (nav-focus-error 'nav-transform! "unsupported or empty sequence: ~s" value))))
      (lambda (value clear)
        (unsupported-clear 'nav-clearval value))
      (lambda (value clear!)
@@ -545,7 +543,7 @@
                 (lambda (value update)
                   (let ([len (indexed-length value)])
                     (unless len
-                      (nav-error 'nav-transform "unsupported collection: ~s" value))
+                      (nav-focus-error 'nav-transform "unsupported collection: ~s" value))
                     (let ([limit (min stop len)])
                       (let loop ([i start] [indexes '()])
                         (if (< i limit)
@@ -554,7 +552,7 @@
                 (lambda (value update!)
                   (let ([len (indexed-length value)])
                     (unless len
-                      (nav-error 'nav-transform! "unsupported collection: ~s" value))
+                      (nav-focus-error 'nav-transform! "unsupported collection: ~s" value))
                     (let ([limit (min stop len)])
                       (let loop ([i start])
                         (when (< i limit)
@@ -582,7 +580,7 @@
                        [else
                         (let ([selected (key-ref/missing value key)])
                           (if (nav-missing? selected)
-                              (nav-error 'nav/key "missing key ~s in: ~s" key value)
+                              (nav-focus-error 'nav/key "missing key ~s in: ~s" key value)
                               (emit selected)))]))
        (lambda (value update)
          (key-transform key nav-missing #f value update))
@@ -663,7 +661,7 @@
                    (lambda (key)
                      (let ([selected (keyed-ref/missing value key)])
                        (if (nav-missing? selected)
-                           (nav-error 'nav/submap "missing key ~s in: ~s" key value)
+                           (nav-focus-error 'nav/submap "missing key ~s in: ~s" key value)
                            (hashtable-set! table key selected))))
                    keys)
                   (emit table))]
@@ -673,7 +671,7 @@
                    (let ([entry (assq key value)])
                      (if entry
                          (emit entry)
-                         (nav-error 'nav/submap "missing key ~s in: ~s" key value))))
+                         (nav-focus-error 'nav/submap "missing key ~s in: ~s" key value))))
                  keys)]
                [(keyed-supported? value)
                 (let loop ([keys keys] [entries '()])
@@ -681,10 +679,10 @@
                       (emit (reverse entries))
                       (let ([selected (keyed-ref/missing value (car keys))])
                         (if (nav-missing? selected)
-                            (nav-error 'nav/submap "missing key ~s in: ~s" (car keys) value)
+                            (nav-focus-error 'nav/submap "missing key ~s in: ~s" (car keys) value)
                             (loop (cdr keys)
                                   (cons (cons (car keys) selected) entries))))))]
-               [else (nav-error 'nav/submap "unsupported keyed value: ~s" value)]))
+               [else (nav-focus-error 'nav/submap "unsupported keyed value: ~s" value)]))
        (lambda (value update)
          (submap-transform keys value update))
        (lambda (value update!)
@@ -710,17 +708,17 @@
      (lambda (value emit)
        (if (pair? value)
            (emit (car value))
-           (nav-error 'nav/car "not a pair: ~s" value)))
+           (nav-focus-error 'nav/car "not a pair: ~s" value)))
      (lambda (value update)
        (if (pair? value)
            (cons (update (car value)) (cdr value))
-           (nav-error 'nav-transform "not a pair: ~s" value)))
+           (nav-focus-error 'nav-transform "not a pair: ~s" value)))
      (lambda (value update!)
        (if (pair? value)
            (begin
              (set-car! value (update! (car value)))
              value)
-           (nav-error 'nav-transform! "not a pair: ~s" value)))
+           (nav-focus-error 'nav-transform! "not a pair: ~s" value)))
      (lambda (value clear) (unsupported-clear 'nav-clearval value))
      (lambda (value clear!) (unsupported-clear 'nav-clearval! value))))
 
@@ -733,17 +731,17 @@
      (lambda (value emit)
        (if (pair? value)
            (emit (cdr value))
-           (nav-error 'nav/cdr "not a pair: ~s" value)))
+           (nav-focus-error 'nav/cdr "not a pair: ~s" value)))
      (lambda (value update)
        (if (pair? value)
            (cons (car value) (update (cdr value)))
-           (nav-error 'nav-transform "not a pair: ~s" value)))
+           (nav-focus-error 'nav-transform "not a pair: ~s" value)))
      (lambda (value update!)
        (if (pair? value)
            (begin
              (set-cdr! value (update! (cdr value)))
              value)
-           (nav-error 'nav-transform! "not a pair: ~s" value)))
+           (nav-focus-error 'nav-transform! "not a pair: ~s" value)))
      (lambda (value clear) (unsupported-clear 'nav-clearval value))
      (lambda (value clear!) (unsupported-clear 'nav-clearval! value))))
 

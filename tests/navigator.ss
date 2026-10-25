@@ -1213,3 +1213,69 @@
 
   (equal? '(1) (iter->list (nav-traverse->iter nested-group-path
                                             '((a . ((x . 1) (y . 2))))))))
+
+(define conditional-a-paths
+  (list (nav/maybe (nav/key 'a))
+        (nav/must (nav/key 'a))
+        (nav/if nav/stay (nav/key 'a) nav/none)
+        (nav/multi-path (nav/key 'a))
+        (nav/choice (nav/key 'a))))
+
+(mat navigator-review-conditional-clearing
+  (andmap
+   (lambda (wrapper)
+     (equal? '((a . ((y . 2))) (b . 3))
+             (nav-clearval (nav/path wrapper (nav/key 'x))
+                           '((a . ((x . 1) (y . 2))) (b . 3)))))
+   conditional-a-paths)
+
+  (andmap
+   (lambda (wrapper)
+     (let ([data (ht 'a (ht 'x 1 'y 2) 'b 3)])
+       (and (eq? data (nav-clearval! (nav/path wrapper (nav/key 'x)) data))
+            (= 2 (ht-ref (ht-ref data 'a) 'y))
+            (not (hashtable-contains? (ht-ref data 'a) 'x))
+            (= 3 (ht-ref data 'b)))))
+   conditional-a-paths)
+
+  (andmap
+   (lambda (wrapper)
+     (equal? '((a . 1))
+             (nav-clearval (nav/path wrapper nav/none) '((a . 1)))))
+   conditional-a-paths)
+
+  (equal? '((b . 3)) (nav-clearval (nav/maybe (nav/key 'a)) '((a . 1) (b . 3))))
+
+  (equal? '((b . 3)) (nav-clearval (nav/maybe (nav/key 'a)) '((b . 3))))
+
+  ;; Optional navigation must not hide failures raised by the user's updater.
+  (error? (nav-transform (nav/maybe nav/stay)
+                         (lambda (value) (error 'callback "failure")) 1))
+
+  ;; Missing focuses in a suffix outside nav/maybe must still raise.
+  (error? (nav-select (nav/path (nav/maybe nav/stay) (nav/key 'missing)) '()))
+
+  ;; Optional selection must not hide a failing user predicate.
+  (error? (nav-select (nav/maybe (nav/pred (lambda (value) (error 'pred "failure")))) 1))
+
+  ;; Convenience selection must not convert failing callbacks into absent focuses.
+  (error? (nav-select-first (nav/pred (lambda (value) (error 'pred "failure"))) 1))
+
+  ;; Selection predicates must not suppress application failures.
+  (error? (nav-selected? (nav/pred (lambda (value) (error 'pred "failure"))) 1))
+
+  ;; Removing the root remains an error even through optional identity navigation.
+  (error? (nav-clearval (nav/maybe nav/stay) 1))
+
+  ;; Mutation cannot remove the root through a conditional predicate.
+  (error? (nav-clearval! (nav/pred number?) 1)))
+
+(mat navigator-review-clear-markers
+  (equal? '((b . 2))
+          (nav-clearval (nav/path (nav/key 'a) (nav/multi-path nav/stay))
+                        '((a . 1) (b . 2))))
+
+  (let ([data (ht 'a 1 'b 2)])
+    (and (eq? data (nav-clearval! (nav/path (nav/key 'a) (nav/multi-path nav/stay)) data))
+         (not (hashtable-contains? data 'a))
+         (= 2 (ht-ref data 'b)))))

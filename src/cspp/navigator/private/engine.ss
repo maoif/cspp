@@ -4,7 +4,7 @@
           nav-transform nav-transform/i nav-transform! nav-transform!/i
           nav-setval nav-setval! nav-clearval nav-clearval!
           nav-selected->list nav-selected->vector nav-selected-transduce
-          select-path transform-path transform-path!)
+          select-path transform-path transform-path! clear-path clear-path!)
   (import (chezscheme)
           (cspp iter)
           (cspp list)
@@ -204,66 +204,74 @@
                   [else (nav-error 'nav-transform! "unsupported path step: ~s" step)])))))
 
   (define run-clear
-    (lambda (steps tails value)
+    (lambda (steps tails value clear)
       (if (null? steps)
           (if (null? tails)
-              nav-missing
+              (clear value)
               (parameterize ([current-recursive-env (caar tails)])
-                (run-clear (cdar tails) (cdr tails) value)))
+                (run-clear (cdar tails) (cdr tails) value clear)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
                    (($navigator-clear-proc step)
                     value
                     (lambda (child)
-                      (run-clear rest tails child)))]
+                      (run-clear rest tails child clear)))]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
                      (parameterize ([current-recursive-env step])
                      (run-clear (nav-path-steps (nav-compile-path
                                                  ($recursive-nav-group-root step)))
                                 tails
-                                value)))]
+                                value clear)))]
                   [($nav-ref? step)
                    (run-clear (nav-path-steps (nav-compile-path
                                                (resolve-nav-ref 'nav-clearval step)))
                               (push-tail rest tails)
-                              value)]
+                              value clear)]
                   [($path? step)
-                   (run-clear ($path-steps step) (push-tail rest tails) value)]
+                   (run-clear ($path-steps step) (push-tail rest tails) value clear)]
                   [else (nav-error 'nav-clearval "unsupported path step: ~s" step)])))))
 
   (define run-clear!
-    (lambda (steps tails value)
+    (lambda (steps tails value clear!)
       (if (null? steps)
           (if (null? tails)
-              nav-missing
+              (clear! value)
               (parameterize ([current-recursive-env (caar tails)])
-                (run-clear! (cdar tails) (cdr tails) value)))
+                (run-clear! (cdar tails) (cdr tails) value clear!)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
                    (($navigator-clear!-proc step)
                     value
                     (lambda (child)
-                      (run-clear! rest tails child)))]
+                      (run-clear! rest tails child clear!)))]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
                      (parameterize ([current-recursive-env step])
                      (run-clear! (nav-path-steps (nav-compile-path
                                                   ($recursive-nav-group-root step)))
                                  tails
-                                 value)))]
+                                 value clear!)))]
                   [($nav-ref? step)
                    (run-clear! (nav-path-steps (nav-compile-path
                                                 (resolve-nav-ref 'nav-clearval! step)))
                                (push-tail rest tails)
-                               value)]
+                               value clear!)]
                   [($path? step)
-                   (run-clear! ($path-steps step) (push-tail rest tails) value)]
+                   (run-clear! ($path-steps step) (push-tail rest tails) value clear!)]
                   [else (nav-error 'nav-clearval! "unsupported path step: ~s" step)])))))
 
   (define transform-path!
     (lambda (path proc data)
       (run-transform! (nav-path-steps (nav-compile-path path)) '() data proc)))
+
+  (define clear-path
+    (lambda (path proc data)
+      (run-clear (nav-path-steps (nav-compile-path path)) '() data proc)))
+
+  (define clear-path!
+    (lambda (path proc data)
+      (run-clear! (nav-path-steps (nav-compile-path path)) '() data proc)))
 
   #|proc:nav-traverse
   The `nav-traverse` procedure calls `proc` once for each value selected by
@@ -321,7 +329,7 @@
   |#
   (define nav-selected?
     (lambda (path data)
-      (guard [exn [else #f]]
+      (guard [exn [(nav-focus-error? exn) #f]]
         ;; Use a one-shot continuation to stop traversal after the first focus.
         (call/1cc
          (lambda (return)
@@ -337,7 +345,7 @@
     (case-lambda
       [(path data) (nav-select-first path data #f)]
       [(path data default)
-       (guard [exn [else default]]
+       (guard [exn [(nav-focus-error? exn) default]]
          ;; Use a one-shot continuation to return the first selected value.
          (call/1cc
           (lambda (return)
@@ -514,7 +522,7 @@
   |#
   (define nav-clearval
     (lambda (path data)
-      (let ([result (run-clear (nav-path-steps (nav-compile-path path)) '() data)])
+      (let ([result (clear-path path (lambda (value) nav-missing) data)])
         (if (nav-missing? result)
             (nav-error 'nav-clearval "cannot remove root value")
             result))))
@@ -525,5 +533,7 @@
   |#
   (define nav-clearval!
     (lambda (path data)
-      (run-clear! (nav-path-steps (nav-compile-path path)) '() data)
-      data)))
+      (let ([result (clear-path! path (lambda (value) nav-missing) data)])
+        (if (nav-missing? result)
+            (nav-error 'nav-clearval! "cannot remove root value")
+            result)))))

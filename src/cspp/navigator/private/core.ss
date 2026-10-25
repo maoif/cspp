@@ -9,7 +9,7 @@
           nav? nav-path? nav/empty-path nav-empty-path?
           make-nav nav-name nav-coerce nav/path nav-compile-path nav/path-append
           make-nav-ref nav-ref? nav-missing nav-missing?
-          nav-error nav-unsupported-error nav-required-error
+          nav-error nav-focus-error nav-focus-error? nav-unsupported-error nav-required-error
           nav-path-steps nav-normalize-step nav-debug-name-core nav->datum-core
           install-nav-key-proc! install-nav-nth-proc!)
   (import (chezscheme)
@@ -73,6 +73,15 @@
   (define nav-error
     (lambda (who fmt . args)
       (apply errorf who fmt args)))
+
+  (define-condition-type &nav-focus-error &error
+    make-nav-focus-error nav-focus-error?)
+
+  (define nav-focus-error
+    (lambda (who fmt . args)
+      (raise (condition (make-nav-focus-error)
+                        (make-who-condition who)
+                        (make-message-condition (apply format fmt args))))))
 
   (define nav-unsupported-error
     (lambda (who nav value action)

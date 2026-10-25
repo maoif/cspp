@@ -172,14 +172,14 @@
                   (if (< index (($indexed-protocol-length-proc protocol) value))
                       (($indexed-protocol-ref-proc protocol) value index)
                       nav-missing))]
-            [else (nav-error 'nav/nth "unsupported indexed value: ~s" value)])))
+            [else (nav-focus-error 'nav/nth "unsupported indexed value: ~s" value)])))
 
   (define indexed-set
     (lambda (value index new-value)
       (cond [(list? value)
              (let loop ([xs value] [i index])
                (cond [(null? xs)
-                      (nav-error 'nav-transform "index ~s out of range for: ~s" index value)]
+                      (nav-focus-error 'nav-transform "index ~s out of range for: ~s" index value)]
                      [(= i 0) (cons new-value (cdr xs))]
                      [else (cons (car xs) (loop (cdr xs) (- i 1)))]))]
             [(vector? value)
@@ -221,14 +221,14 @@
             [(find-indexed-protocol value)
              => (lambda (protocol)
                   (($indexed-protocol-set-proc protocol) value index new-value))]
-            [else (nav-error 'nav-transform "unsupported indexed value: ~s" value)])))
+            [else (nav-focus-error 'nav-transform "unsupported indexed value: ~s" value)])))
 
   (define indexed-set!
     (lambda (value index new-value)
       (cond [(list? value)
              (let loop ([xs value] [i index])
                (cond [(null? xs)
-                      (nav-error 'nav-transform! "index ~s out of range for: ~s" index value)]
+                      (nav-focus-error 'nav-transform! "index ~s out of range for: ~s" index value)]
                      [(= i 0) (set-car! xs new-value)]
                      [else (loop (cdr xs) (- i 1))]))]
             [(vector? value) (vector-set! value index new-value)]
@@ -259,7 +259,7 @@
             [(find-indexed-protocol value)
              => (lambda (protocol)
                   (($indexed-protocol-set!-proc protocol) value index new-value))]
-            [else (nav-error 'nav-transform! "unsupported indexed value: ~s" value)])))
+            [else (nav-focus-error 'nav-transform! "unsupported indexed value: ~s" value)])))
 
   (define alist?
     (lambda (value)
@@ -292,7 +292,7 @@
             [(find-keyed-protocol value)
              => (lambda (protocol)
                   (($keyed-protocol-ref-proc protocol) value key nav-missing))]
-            [else (nav-error 'nav/key "unsupported keyed value: ~s" value)])))
+            [else (nav-focus-error 'nav/key "unsupported keyed value: ~s" value)])))
 
   (define keyed-set
     (lambda (value key new-value)
@@ -308,7 +308,7 @@
             [(find-keyed-protocol value)
              => (lambda (protocol)
                   (($keyed-protocol-set-proc protocol) value key new-value))]
-            [else (nav-error 'nav-transform "unsupported keyed value: ~s" value)])))
+            [else (nav-focus-error 'nav-transform "unsupported keyed value: ~s" value)])))
 
   (define keyed-set!
     (lambda (value key new-value)
@@ -318,7 +318,7 @@
             [(alist? value)
              (let loop ([xs value])
                (cond [(null? xs)
-                      (nav-error 'nav-transform! "missing key ~s in: ~s" key value)]
+                      (nav-focus-error 'nav-transform! "missing key ~s in: ~s" key value)]
                      [(eq? (caar xs) key)
                       (set-cdr! (car xs) new-value)
                       value]
@@ -327,7 +327,7 @@
              => (lambda (protocol)
                   (($keyed-protocol-set!-proc protocol) value key new-value)
                   value)]
-            [else (nav-error 'nav-transform! "unsupported keyed value: ~s" value)])))
+            [else (nav-focus-error 'nav-transform! "unsupported keyed value: ~s" value)])))
 
   (define alist-remove-key
     (lambda (key value)
@@ -346,7 +346,7 @@
             [(find-keyed-protocol value)
              => (lambda (protocol)
                   (($keyed-protocol-delete-proc protocol) value key))]
-            [else (nav-error 'nav-clearval "unsupported keyed value: ~s" value)])))
+            [else (nav-focus-error 'nav-clearval "unsupported keyed value: ~s" value)])))
 
   (define keyed-delete!
     (lambda (value key)
@@ -359,7 +359,7 @@
              => (lambda (protocol)
                   (($keyed-protocol-delete!-proc protocol) value key)
                   value)]
-            [else (nav-error 'nav-clearval! "unsupported keyed value: ~s" value)])))
+            [else (nav-focus-error 'nav-clearval! "unsupported keyed value: ~s" value)])))
 
   (define keyed-entries
     (lambda (value)
