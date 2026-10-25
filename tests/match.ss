@@ -1,4 +1,17 @@
-(import (cspp))
+(import (cspp) (cspp private match))
+
+(define-match-expander tagged-expander
+  (lambda (pp rho expr-id pat body fk)
+    (syntax-case pat ()
+      [(_ ignored sub)
+       (pp rho expr-id #'sub body fk)])))
+
+(mat custom-expander-captures-only-subpatterns
+     ;; The ignored selector is an expression, so it must not become a repeated capture.
+     (equal? '((10 20) 99)
+             (let ([outer 99])
+               (match '(10 20)
+                 [(,(tagged ,outer ,x) ...) (list x outer)]))))
 
 
 (mat else-clause

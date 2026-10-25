@@ -133,7 +133,24 @@
             (map pattern-value (cdr arguments))]
            [(and (not expander) (eq? (syntax->datum extension) 'hash))
             (map pattern-value arguments)]
-           [else arguments])))))
+           [(and (not expander) (eq? (syntax->datum extension) 'box))
+            arguments]
+           [else
+            ;; Custom expanders decide which arguments are patterns.  Ask the
+            ;; expander through a collector callback instead of treating every
+            ;; argument as a capture-bearing pattern.  This keeps expression
+            ;; arguments and ignored selectors out of ellipsis captures.
+            (let ([captures '()]
+                  [expr-id (car (generate-temporaries '(expr)))]
+                  [failure (car (generate-temporaries '(failure)))])
+              (define (collect pp-rho pp-expr-id pp-pattern pp-body pp-failure)
+                (set! captures (cons pp-pattern captures))
+                #'#t)
+              (if expander
+                  (begin
+                    (expander collect compile-environment expr-id pattern #'#t failure)
+                    (reverse captures))
+                  arguments))])))))
 
 
   #|macro:define-match-expander
