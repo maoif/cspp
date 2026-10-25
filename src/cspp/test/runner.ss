@@ -509,7 +509,12 @@ list of file path strings, and `config` is a test runner configuration.
       (let loop ([argv argv] [reporter 'text] [files '()])
         (cond
          [(null? argv) (values reporter (reverse files))]
-         [(and (pair? (cdr argv)) (string=? (car argv) "--reporter"))
+         [(string=? (car argv) "--reporter")
+          (unless (pair? (cdr argv))
+            (errorf 'test-main "--reporter requires text, datum, or progress"))
+          (let ([reporter (string->symbol (cadr argv))])
+            (unless (memq reporter '(text datum progress))
+              (errorf 'test-main "unknown reporter: ~a" (cadr argv))))
           (loop (cddr argv) (string->symbol (cadr argv)) files)]
          [else
           (loop (cdr argv) reporter (cons (car argv) files))]))))
@@ -517,11 +522,12 @@ list of file path strings, and `config` is a test runner configuration.
   #|proc:test-main
 The `test-main` procedure runs test files described by `argv` and returns a
 process-style status code. `argv` is a list of strings; it accepts
-`--reporter text`, `--reporter datum`, and file paths.
+`--reporter text`, `--reporter datum`, `--reporter progress`, and file paths.
+Unknown reporter names and missing reporter arguments raise an error.
 |#
   (define test-main
     (lambda (argv)
-      (pcheck ([list? argv])
+      (pcheck ([(lambda (value) (and (list? value) (for-all string? value))) argv])
               (call-with-values
                 (lambda () ($parse-test-main-argv argv))
                 (lambda (reporter-name files)

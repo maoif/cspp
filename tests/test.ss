@@ -1015,3 +1015,16 @@
       (lambda ()
         (for-each (lambda (name) (unless (member name before) (delete-file name)))
                   (filter temporary-wpo? (directory-list ".")))))))
+
+(mat test-main-reporter-validation
+  ;; Unknown reporters and missing option values must be rejected before file loading.
+  (for-all (lambda (arguments)
+             (guard (condition [else #t]) (test-main arguments) #f))
+           '(("--reporter" "bogus") ("--reporter")))
+
+  (call-with-port (open-output-string)
+    (lambda (out)
+      (parameterize ([current-output-port out])
+        (and (= (test-main '("--reporter" "text")) 0)
+             (= (test-main '("--reporter" "datum")) 0)
+             (= (test-main '("--reporter" "progress")) 0))))))
