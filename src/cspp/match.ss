@@ -102,8 +102,24 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
   `,name` captures a value, `` `name `` compares against a bound value, and `_` ignores a value.
   List and vector patterns destructure their elements; `...` repeats a pattern zero or more times,
   collecting its captures in lists. Captures preceding a suffix are visible to its backreferences.
-  Extension patterns destructure records, datatypes, boxes, hashes, and regex matches. Expressions
-  embedded in extensions are evaluated as expressions and do not declare pattern captures.
+  Records use `,(record Type :fields (field pattern) ...)` for a named subset of fields,
+  or `,(record Type :values pattern ...)` for all fields in declaration order. Both native Chez
+  and CSPP record types are supported. Empty `:fields` checks only the type; empty `:values`
+  requires a type with no fields. Fields belong to the selected type, excluding inherited fields.
+  Named fields must be unique; unknown fields and wrong positional counts are errors. These are
+  syntax errors for static descriptors and runtime errors for local generative descriptors when
+  the input has the selected type. Malformed modes and selectors are always syntax errors.
+  Record syntax requires the explicit wrapper; the old `,(Type ...)` form is unsupported.
+  The `record`, `:fields`, and `:values` tags are recognized by spelling. Other extension heads
+  retain custom-expander dispatch; a record named `hash` uses `,(record hash :values ...)`.
+  Datatype, box, hash, and regex extensions retain their existing forms. Expressions embedded in
+  extensions are evaluated as expressions and do not declare pattern captures.
+  The reader treats `,(hash ...)` as `(unquote (hash ...))`, which invokes the hash extension.
+  To match such a list as data, capture its head and use a guard, for example:
+  ```scheme
+  (match '(unquote (hash ("key" 42)))
+    [(,head (hash ("key" ,value))) (guard (eq? head 'unquote)) value]) ; => 42
+  ```
   A clause may have `(guard predicate ...)` before its body. Failed clauses try the next clause;
   a final `else` provides a fallback, and an unmatched input without a fallback raises an error.
   The selected body supplies the result values.
@@ -121,24 +137,20 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                 (string? p)
                 (char? p)))))
       (define handle-extension
-        (lambda (ext rho expr-id pat body fk share-body protect-body)
+        (lambda (ext rho expr-id pat body fk)
           (define (match-expander? ext)
             (let* ([n ($construct-name ext ext "-expander")]
                    [?p (rho n)])
               (and ?p (eq? '*MATCH-EXPANDER* (car ?p)))))
-          (define (record? ext)
-            (or (valid-record-type? rho ext)
-                (valid-record-type? rho ($construct-name ext "$record-" ext))))
           (cond
+           [(eq? 'record (syntax->datum ext))
+            (record-expander process-pattern rho expr-id pat body fk)]
            [(match-expander? ext)
             (let ([expander (cdr (rho ($construct-name ext ext "-expander")))])
+              (when (eq? expander record-expander)
+                (syntax-error pat "match: use (record type :fields/:values pattern ...):"))
               (assert (procedure? expander))
               (expander process-pattern rho expr-id pat body fk))]
-           ;; TODO make this dispatch extensible
-           [(valid-record-type? rho ext)
-            (system-record-expander process-pattern rho expr-id pat body fk share-body protect-body)]
-           [(record? ext)
-            (record-expander process-pattern rho expr-id pat body fk)]
            [(eq? 'box (syntax->datum ext))
             (box-expander process-pattern rho expr-id pat body fk)]
            [(eq? 'regex (syntax->datum ext))
@@ -430,10 +442,9 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                (identifier? #'nref)
                #`(let ([nref expr-id])
                    #,(process-pattern rho #'expr-id #'pat body fk))]
-              [,(?match-extension special-pats ...)
+              [,(?match-extension . special-pats)
                (identifier? #'?match-extension)
-               (handle-extension #'?match-extension rho #'expr-id #'(?match-extension special-pats ...) body fk
-                                 share-record-body protect-record-body)]
+               (handle-extension #'?match-extension rho #'expr-id #'(?match-extension . special-pats) body fk)]
               ;; ... in the end
               [(pat dots)
                (eq? (datum dots) '...)

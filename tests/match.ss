@@ -735,21 +735,21 @@
        (define-record-type ReviewPoint (fields x y))
        (equal? '(10 20)
                (match (make-ReviewPoint 10 20)
-                 [,(ReviewPoint ,x ,y) (list x y)]
+                 [,(record ReviewPoint :values ,x ,y) (list x y)]
                  [else #f])))
 
      (let ()
        (define-record-type ReviewPoint (fields x y))
        (equal? 20
                (match (make-ReviewPoint 10 20)
-                 [,(ReviewPoint (y ,y)) y]
+                 [,(record ReviewPoint :fields (y ,y)) y]
                  [else #f])))
 
      ;; A native record pattern must fall through for other value types.
      (let ()
        (define-record-type ReviewPoint (fields x))
        (match 10
-         [,(ReviewPoint ,x) #f]
+         [,(record ReviewPoint :values ,x) #f]
          [else #t])))
 
 (mat extension-fallbacks
@@ -806,28 +806,28 @@
 (mat native-record-descriptor-boundaries
      (let ()
        (define-record-type StaticPoint (nongenerative review-static-point) (fields x))
-       (= 10 (match (make-StaticPoint 10) [,(StaticPoint ,x) x])))
+       (= 10 (match (make-StaticPoint 10) [,(record StaticPoint :values ,x) x])))
 
      (let ()
        (define-record-type StaticEmpty (nongenerative review-static-empty) (fields))
-       (match (make-StaticEmpty) [,(StaticEmpty) #t] [else #f]))
+       (match (make-StaticEmpty) [,(record StaticEmpty :values) #t] [else #f]))
 
      (let ()
        (define-record-type DynamicEmpty (fields))
-       (match (make-DynamicEmpty) [,(DynamicEmpty) #t] [else #f]))
+       (match (make-DynamicEmpty) [,(record DynamicEmpty :values) #t] [else #f]))
 
      ;; A zero-field pattern is invalid for a record with a field.
      (let ()
        (define-record-type Nonempty (fields x))
        (guard (e [else (string-contains? (condition-message e) "invalid record pattern")])
-         (match (make-Nonempty 10) [,(Nonempty) #f] [else #f]))))
+         (match (make-Nonempty 10) [,(record Nonempty :values) #f] [else #f]))))
 
 (mat native-record-syntax-named-field
      ;; A field name may also be a pattern keyword; its named pattern remains valid.
      (let ()
        (define-record-type SyntaxField (fields unquote))
        (= 10 (match (make-SyntaxField 10)
-               [,(SyntaxField (unquote ,x)) x]
+               [,(record SyntaxField :fields (unquote ,x)) x]
                [else #f]))))
 
 (mat ellipsis-suffix-backreferences
@@ -877,19 +877,19 @@
      (let ()
        (define-record-type SyntaxLiteral (fields unquote))
        (match (list (make-SyntaxLiteral 'marker) (make-SyntaxLiteral 'marker))
-         [(,(SyntaxLiteral (unquote marker)) ...) #t]
+         [(,(record SyntaxLiteral :fields (unquote marker)) ...) #t]
          [else #f]))
 
      (let ()
        (define-record-type SyntaxLiteral (fields unquote))
        (match (vector (make-SyntaxLiteral 'marker))
-         [#(,(SyntaxLiteral (unquote marker)) ...) #t]
+         [#(,(record SyntaxLiteral :fields (unquote marker)) ...) #t]
          [else #f]))
 
      (let ()
        (define-record-type SyntaxLiteral (nongenerative round4-syntax-literal) (fields unquote))
        (match (list (make-SyntaxLiteral 'marker))
-         [(,(SyntaxLiteral (unquote marker)) ...) #t]
+         [(,(record SyntaxLiteral :fields (unquote marker)) ...) #t]
          [else #f]))
 
      ;; The same surface syntax is a positional capture for a differently named field.
@@ -897,7 +897,7 @@
        (define-record-type Positional (fields value))
        (equal? '(10 20)
                (match (list (make-Positional 10) (make-Positional 20))
-                 [(,(Positional ,item) ...) item]
+                 [(,(record Positional :values ,item) ...) item]
                  [else #f]))))
 
 (mat extension-capture-composition
@@ -909,7 +909,7 @@
        (record CaptureRecord (value))
        (equal? '(10 20)
                (match (list (CaptureRecord 10) (CaptureRecord 20))
-                 [(,(CaptureRecord (value ,x)) ...) x] [else #f])))
+                 [(,(record CaptureRecord :fields (value ,x)) ...) x] [else #f])))
 
      (let ()
        (datatype CaptureType [Item value])
@@ -921,7 +921,7 @@
        (define-record-type DynamicCapture (fields unquote))
        (equal? '(10 20)
                (match (list (make-DynamicCapture 10) (make-DynamicCapture 20))
-                 [(,(DynamicCapture (unquote ,x)) ...) x] [else #f])))
+                 [(,(record DynamicCapture :fields (unquote ,x)) ...) x] [else #f])))
 
      ;; Two descriptors with different named/positional interpretations may coexist.
      (let ()
@@ -930,7 +930,7 @@
        (equal? '(10 20)
                (match (list (list (make-DynamicLiteral 'marker) (make-DynamicValue 10))
                             (list (make-DynamicLiteral 'marker) (make-DynamicValue 20)))
-                 [((,(DynamicLiteral (unquote marker)) ,(DynamicValue ,x)) ...) x]
+                 [((,(record DynamicLiteral :fields (unquote marker)) ,(record DynamicValue :values ,x)) ...) x]
                  [else #f]))))
 
 (mat middle-ellipsis-materialization
@@ -968,7 +968,7 @@
              (expand '(lambda ()
                         (define-record-type P (fields value))
                         (match '()
-                          [((,(P ,a) ,(P ,b) ,(P ,c) ,(P ,d)) ...) #t]
+                          [((,(record P :values ,a) ,(record P :values ,b) ,(record P :values ,c) ,(record P :values ,d)) ...) #t]
                           [else #f])))]
             [allocated (sstats-bytes (sstats-difference (statistics) before))])
        (and (pair? expanded) (< allocated 10000000))))
@@ -978,17 +978,17 @@
        (define-record-type LiteralCapture (fields unquote))
        (and (eq? 'outer
                  (match (list (make-LiteralCapture 'marker))
-                   [(,(LiteralCapture (unquote marker)) ...) marker]))
+                   [(,(record LiteralCapture :fields (unquote marker)) ...) marker]))
             (eq? 'changed
                  (match (list (make-LiteralCapture 'marker))
-                   [(,(LiteralCapture (unquote marker)) ...) (set! marker 'changed) marker]))
+                   [(,(record LiteralCapture :fields (unquote marker)) ...) (set! marker 'changed) marker]))
             (eq? marker 'changed)))
 
      ;; An inactive capture keeps its outer binding visible to later backreferences.
      (let ([marker 'outer])
        (define-record-type LiteralCapture (fields unquote))
        (match (list (list (make-LiteralCapture 'marker) 'outer))
-         [((,(LiteralCapture (unquote marker)) `marker) ...) #t]
+         [((,(record LiteralCapture :fields (unquote marker)) `marker) ...) #t]
          [else #f]))
 
      (let ([x 99])
@@ -996,10 +996,10 @@
        (and (equal? '(10 20)
                     (match (list (list (make-ValueCapture 10) 10)
                                  (list (make-ValueCapture 20) 20))
-                      [((,(ValueCapture ,x) `x) ...) x] [else #f]))
+                      [((,(record ValueCapture :values ,x) `x) ...) x] [else #f]))
             (equal? '(changed)
                     (match (list (make-ValueCapture 10))
-                      [(,(ValueCapture ,x) ...) (set! x '(changed)) x]))
+                      [(,(record ValueCapture :values ,x) ...) (set! x '(changed)) x]))
             (= x 99)))
 
      (let ()
@@ -1007,7 +1007,7 @@
        (equal? '((10 20) (30))
                (match (list (list (make-ValueCapture 10) (make-ValueCapture 20))
                             (list (make-ValueCapture 30)))
-                 [((,(ValueCapture ,x) ...) ...) x] [else #f]))))
+                 [((,(record ValueCapture :values ,x) ...) ...) x] [else #f]))))
 
 (mat record-pattern-shared-continuations
      ;; A seven-record tuple should produce a modest expansion, including capture consumers.
@@ -1019,8 +1019,8 @@
        (< (size (expand '(lambda ()
                           (define-record-type P (fields value))
                           (match '()
-                            [((,(P ,a) ,(P ,b) ,(P ,c) ,(P ,d)
-                               ,(P ,e) ,(P ,f) ,(P ,g)) ...)
+                            [((,(record P :values ,a) ,(record P :values ,b) ,(record P :values ,c) ,(record P :values ,d)
+                               ,(record P :values ,e) ,(record P :values ,f) ,(record P :values ,g)) ...)
                              (list a b c d e f g)]
                             [else #f]))))
           20000)))
@@ -1031,7 +1031,7 @@
        (define-record-type LocationRecord (fields a b))
        (equal? '(20 20)
                (match (make-LocationRecord 10 "a")
-                 [,(LocationRecord (a ,x)
+                 [,(record LocationRecord :fields (a ,x)
                                    (b ,(regex (begin (set! saved (lambda () x)) "a"))))
                   (set! x 20)
                   (list x (saved))]
@@ -1059,8 +1059,8 @@
                 (define run
                   (lambda ()
                     (define-record-type P (fields value))
-                    (list (match (make-P 10) [,(P ,map) map])
-                          (match (list (make-P 20)) [(,(P ,x) ...) x])))))
+                    (list (match (make-P 10) [,(record P :values ,map) map])
+                          (match (list (make-P 20)) [(,(record P :values ,x) ...) x])))))
              (copy-environment (environment '(cspp)) #t))
        (equal? '(10 (20))
                ((eval 'run (environment '(match-tests local-record-capture)))))))
@@ -1068,30 +1068,30 @@
 (mat shared-named-record-fields
      (let ()
        (define-record-type NamedRecord (fields a))
-       (= 10 (match (make-NamedRecord 10) [,(NamedRecord (a ,x)) x] [else #f])))
+       (= 10 (match (make-NamedRecord 10) [,(record NamedRecord :fields (a ,x)) x] [else #f])))
 
      ;; Without a matching field name the original two-element list pattern is positional.
      (let ()
        (define-record-type PositionalRecord (fields value))
        (= 10 (match (make-PositionalRecord '(a 10))
-               [,(PositionalRecord (a ,x)) x] [else #f])))
+               [,(record PositionalRecord :values (a ,x)) x] [else #f])))
 
      (let ()
        (define-record-type PositionalRecord (fields value))
        (match (make-PositionalRecord '(b 10))
-         [,(PositionalRecord (a ,x)) #f] [else #t]))
+         [,(record PositionalRecord :values (a ,x)) #f] [else #t]))
 
      ;; The wildcard head retains its positional meaning when it is not a field name.
      (let ()
        (define-record-type PositionalRecord (fields value))
        (= 10 (match (make-PositionalRecord '(b 10))
-               [,(PositionalRecord (_ ,x)) x] [else #f]))))
+               [,(record PositionalRecord :values (_ ,x)) x] [else #f]))))
 
 (mat nested-record-pattern-expansion-growth
      ;; Nested named fields share the same inner matcher for named and positional inputs.
      (let* ([pattern (let loop ([depth 6])
                        (if (= depth 0) '(unquote x)
-                           (list 'unquote (list 'P (list 'a (loop (- depth 1)))))))]
+                           (list 'unquote (list 'record 'P ':fields (list 'a (loop (- depth 1)))))))]
             [before (statistics)]
             [expanded (expand `(lambda ()
                                  (define-record-type P (fields a))
@@ -1105,7 +1105,7 @@
        (define-record-type AllocationRecord (fields value))
        (let* ([source (map make-AllocationRecord (iota 1000))]
               [before (statistics)]
-              [result (match source [(,(AllocationRecord ,x) ...) (length x)] [else #f])]
+              [result (match source [(,(record AllocationRecord :values ,x) ...) (length x)] [else #f])]
               [allocated (sstats-bytes (sstats-difference (statistics) before))])
          (and (= result 1000) (< allocated 60000)))))
 
@@ -1138,11 +1138,11 @@
                 (define run
                   (lambda ()
                     (define-record-type P (fields value))
-                    (list (match (make-P 10) [,(P ,x) x])
-                          (match (make-P 10) [,(P ,map) (set! map 20) map])
+                    (list (match (make-P 10) [,(record P :values ,x) x])
+                          (match (make-P 10) [,(record P :values ,map) (set! map 20) map])
                           (match (list (make-P 10))
-                            [(,(P ,if) ...) (set! if '(30)) if])
-                          (match (vector (make-P 10)) [#(,(P ,P) ...) P])))))
+                            [(,(record P :values ,if) ...) (set! if '(30)) if])
+                          (match (vector (make-P 10)) [#(,(record P :values ,P) ...) P])))))
              (copy-environment (environment '(cspp)) #t))
        (equal? '(10 20 (30) (10))
                ((eval 'run (environment '(match-tests native-capture-bindings))))))
@@ -1154,16 +1154,16 @@
                           (reference outer)
                           ((set! reference value) (set! outer value)))])
          (and (eq? map (match (list (make-SyntaxField 'map))
-                        [(,(SyntaxField (unquote map)) ...) map]))
+                        [(,(record SyntaxField :fields (unquote map)) ...) map]))
               (= 20 (match (list (make-SyntaxField 'name))
-                      [(,(SyntaxField (unquote name)) ...) (set! name 20) name]))
+                      [(,(record SyntaxField :fields (unquote name)) ...) (set! name 20) name]))
               (= outer 20))))
 
      ;; Short and substantial bodies must accept the same record capture bindings.
      (let ()
        (define-record-type P (fields value))
        (= 40 (match (make-P 10)
-               [,(P ,map)
+               [,(record P :values ,map)
                 (begin 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
                        0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
                        (set! map 40) map)]))))
@@ -1173,12 +1173,12 @@
      (let ()
        (define-record-type SyntaxField (fields unquote))
        (eq? 'ok (match (make-SyntaxField 'if)
-                  [,(SyntaxField ,if) (if #t 'ok 'bad)])))
+                  [,(record SyntaxField :fields (unquote if)) (if #t 'ok 'bad)])))
 
      (let ()
        (define-record-type SyntaxField (fields unquote))
        (eq? 'ok (match (list (make-SyntaxField 'if))
-                  [(,(SyntaxField ,if) ...) (if #t 'ok 'bad)])))
+                  [(,(record SyntaxField :fields (unquote if)) ...) (if #t 'ok 'bad)])))
 
      ;; Inspecting fallback bindings must not speculatively expand identifier macros.
      (let ()
@@ -1188,7 +1188,7 @@
            (lambda (stx)
              (set! count (+ count 1))
              (datum->syntax stx count))))
-       (= 1 (match (make-SyntaxField 'counter) [,(SyntaxField ,counter) counter])))
+       (= 1 (match (make-SyntaxField 'counter) [,(record SyntaxField :fields (unquote counter)) counter])))
 
      (let ()
        (define-record-type SyntaxField (fields unquote))
@@ -1198,7 +1198,7 @@
              (set! count (+ count 1))
              (datum->syntax stx count))))
        (= 1 (match (list (make-SyntaxField 'counter))
-              [(,(SyntaxField ,counter) ...) counter])))
+              [(,(record SyntaxField :fields (unquote counter)) ...) counter])))
 
      ;; Forwarded macros preserve definition-site bindings and temporary-variable hygiene.
      (let ([outer 10])
@@ -1206,7 +1206,7 @@
        (define-syntax value
          (lambda (stx) #'(let ([temporary 1]) (+ outer temporary))))
        (let ([outer 100] [temporary 100])
-         (= 11 (match (make-SyntaxField 'value) [,(SyntaxField ,value) value]))))
+         (= 11 (match (make-SyntaxField 'value) [,(record SyntaxField :fields (unquote value)) value]))))
 
      ;; Macro lookup callbacks and compile-time properties survive fallback forwarding.
      (let ()
@@ -1214,14 +1214,14 @@
        (define-syntax property-key (syntax-rules () [(_) #f]))
        (define-syntax value (lambda (stx) (lambda (lookup) #'42)))
        (define-property value property-key #t)
-       (= 42 (match (make-SyntaxField 'value) [,(SyntaxField ,value) value]))))
+       (= 42 (match (make-SyntaxField 'value) [,(record SyntaxField :fields (unquote value)) value]))))
 
 (mat shared-record-operator-bindings
      ;; A captured procedure may shadow core syntax even if its arity differs.
      (let ()
        (define-record-type P (fields value))
        (= 43 (match (make-P (lambda (value) (+ value 1)))
-               [,(P ,if)
+               [,(record P :values ,if)
                 (begin 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
                        0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
                        (if 42))])))
@@ -1229,7 +1229,7 @@
      (let ()
        (define-record-type P (fields value))
        (eq? 'zero (match (make-P (lambda () 'zero))
-                    [,(P ,if)
+                    [,(record P :values ,if)
                      (begin 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
                             0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
                             (if))])))
@@ -1243,12 +1243,129 @@
              (set! count (+ count 1))
              (datum->syntax stx count))))
        (= 1 (match (make-P (lambda (value) value))
-              [,(P ,if)
+              [,(record P :values ,if)
                (begin 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
                       0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
                       (if counter))])))
 
-     ;; An invalid fallback raises an error when its inactive interpretation is selected.
-     (error? (let ()
-               (define-record-type SyntaxField (fields unquote))
-               (match (make-SyntaxField 'if) [,(SyntaxField ,if) (if)]))))
+     ;; Old automatic native-record syntax is rejected at expansion time.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (expand '(let ()
+                  (define-record-type OldRecord (fields value))
+                  (match (make-OldRecord 10) [,(OldRecord ,x) x])))
+       #f))
+
+(mat explicit-record-modes
+     ;; The explicit wrapper must select positional matching without inspecting field names.
+     (equal? '(10 20)
+             (eval '(let ()
+                      (define-record-type ExplicitPoint (fields x y))
+                      (match (make-ExplicitPoint 10 20)
+                        [,(record ExplicitPoint :values ,x ,y) (list x y)]))
+                   (environment '(cspp))))
+
+     (equal? '(20 10)
+             (eval '(let ()
+                      (define-record-type ExplicitPoint (fields x y))
+                      (match (make-ExplicitPoint 10 20)
+                        [,(record ExplicitPoint :fields (y ,y) (x ,x)) (list y x)]))
+                   (environment '(cspp)))))
+
+(mat explicit-record-disambiguation
+     (let ()
+       (define-record-type BothModes (fields unquote))
+       (and (= 10 (match (make-BothModes 10) [,(record BothModes :values ,x) x]))
+            (= 20 (match (make-BothModes 20)
+                    [,(record BothModes :fields (unquote ,x)) x]))
+            (= 30 (match (make-BothModes '(tag 30))
+                    [,(record BothModes :values (tag ,x)) x]))))
+
+     ;; A positional list pattern stays positional even when its head names a field.
+     (let ()
+       (define-record-type PairField (fields tag))
+       (= 30 (match (make-PairField '(tag 30))
+               [,(record PairField :values (tag ,x)) x])))
+
+     ;; A named field pattern never declares a capture for a literal symbol.
+     (let ([marker 'outer])
+       (define-record-type LiteralField (fields unquote))
+       (eq? 'outer (match (list (make-LiteralField 'marker))
+                     [(,(record LiteralField :fields (unquote marker)) ...) marker])))
+
+     (let ()
+       (record WrappedRecord (value))
+       (and (= 42 (match (WrappedRecord 42)
+                    [,(record WrappedRecord :values ,x) x]))
+            (= 42 (match (WrappedRecord 42)
+                    [,(record WrappedRecord :fields (value ,x)) x]))))
+
+     ;; The reserved wrapper and modes use their spelling even with lexical bindings.
+     (let ([record #f] [:fields #f] [:values #f])
+       (define-record-type KeywordBindings (fields value))
+       (= 42 (match (make-KeywordBindings 42)
+               [,(record KeywordBindings :values ,x) x])))
+
+     ;; A record named hash is reached explicitly, leaving the hash extension usable.
+     (let ()
+       (define-record-type hash (fields value))
+       (let ([table (make-hashtable string-hash string=?)])
+         (hashtable-set! table "key" 20)
+         (and (= 10 (match (make-hash 10) [,(record hash :values ,x) x]))
+              (= 20 (match table [,(hash ("key" ,x)) x])))))
+
+     (let ()
+       (define-record-type NonemptySelection (fields value))
+       (match (make-NonemptySelection 10) [,(record NonemptySelection :fields) #t]))
+
+     (let ()
+       (define-record-type EmptySelection (fields))
+       (and (match (make-EmptySelection) [,(record EmptySelection :fields) #t])
+            (match (make-EmptySelection) [,(record EmptySelection :values) #t])))
+
+     ;; A list whose reader form resembles a hash extension is data, matched with a guard.
+     (= 42 (match '(unquote (hash ("key" 42)))
+             [(,head (hash ("key" ,value))) (guard (eq? head 'unquote)) value]
+             [else #f]))
+
+     ;; The guard must reject the same list with a different head symbol.
+     (match '(other (hash ("key" 42)))
+       [(,head (hash ("key" ,value))) (guard (eq? head 'unquote)) #f]
+       [else #t]))
+
+(mat explicit-record-errors
+     ;; Malformed selectors, missing modes, duplicate fields, and old forms are syntax errors.
+     (for-all
+      (lambda (pattern)
+        (guard (condition [(syntax-violation? condition) #t] [else #f])
+          (expand `(let ()
+                     (define-record-type InvalidRecord
+                       (nongenerative explicit-invalid-record) (fields value))
+                     (match #f [,(list 'unquote pattern) #t] [else #f])))
+          #f))
+      '((record InvalidRecord)
+        (record InvalidRecord :unknown ,x)
+        (record InvalidRecord :fields ,x)
+        (record InvalidRecord :fields (value ,x extra))
+        (record InvalidRecord :fields (42 ,x))
+        (record InvalidRecord :fields (value ,x) (value ,y))
+        (record InvalidRecord :fields (missing ,x))
+        (record InvalidRecord :values)
+        (record InvalidRecord :values ,x ,y)
+        (record InvalidRecord :values . tail)
+        (record 42 :values ,x)
+        (record MissingRecord :values ,x)
+        (InvalidRecord ,x)))
+
+     ;; CSPP records also require the explicit wrapper.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (expand '(let ()
+                  (record OldWrapped (value))
+                  (match (OldWrapped 10) [,(OldWrapped ,x) x])))
+       #f)
+
+     ;; Unknown local fields are validated when their generative descriptor is available.
+     (let ()
+       (define-record-type DynamicInvalid (fields value))
+       (guard (condition [(error? condition) #t] [else #f])
+         (match (make-DynamicInvalid 10) [,(record DynamicInvalid :fields (missing ,x)) x])
+         #f)))
