@@ -795,6 +795,27 @@
          [,(record ReviewPoint :values ,x) #f]
          [else #t])))
 
+(mat hash-pattern-grammar
+     ;; With no required keys, the pattern checks only that the input is a hashtable.
+     (match (make-eq-hashtable) [,(hash) #t] [else #f])
+
+     (match 42 [,(hash) #f] [else #t])
+
+     (let ([key 'wrong] [table (make-eq-hashtable)])
+       (hashtable-set! table 'key 42)
+       (= 42 (match table [,(hash (key ,value)) value])))
+
+     (let ([table (make-eq-hashtable)])
+       (hashtable-set! table 'key #f)
+       (equal? '(#f #f)
+               (match (list table table) [(,(hash (key ,value)) ...) value])))
+
+     (match (make-eq-hashtable) [,(hash (missing ,value)) #f] [else #t])
+
+     ;; Keys are literal data; compound expressions are not key expressions.
+     (error? (eval '(match (make-eq-hashtable)
+                     [,(hash ((string-append "k" "ey") ,value)) value]))))
+
 (mat extension-fallbacks
      ;; An absent key must fail, while a stored #f is a valid value.
      (match (make-hashtable string-hash string=?)

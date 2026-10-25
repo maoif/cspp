@@ -381,6 +381,8 @@
   The `hash-expander` procedure expands `,(hash (<literal> <pattern>) ...)`.
   It requires every key and the input hashtable to be present, then applies each value pattern.
   For example, `(match table [,(hash ("key" ,x)) x])` returns the value stored at `"key"`.
+  Keys are literal numbers, booleans, strings, characters, or bare symbols, never expressions.
+  An empty `,(hash)` checks only that the input is a hashtable.
   A list that merely resembles this syntax is matched structurally with a guard in `match`.
   |#
   (define hash-expander
@@ -388,21 +390,22 @@
       (define literal?
         (lambda (lit)
           (let ([p (syntax->datum lit)])
-            (or (number? p)
+            (or (symbol? p)
+                (number? p)
                 (boolean? p)
                 (string? p)
                 (char? p)))))
       (syntax-case pat ()
         ;; `k`s are just literals right now
-        [(h (k pat0) (k* pat*) ...)
-         (andmap literal? (cons #'k #'(k* ...)))
+        [(h (k pat) ...)
+         (andmap literal? #'(k ...))
          #`(if (hashtable? #,expr-id)
-               #,(let loop ([k* (cons #'k #'(k* ...))] [pat* (cons #'pat0 #'(pat* ...))])
+               #,(let loop ([k* #'(k ...)] [pat* #'(pat ...)])
                    (if (null? k*)
                        body
                        (with-syntax ([(v) (generate-temporaries '(v))])
-                         #`(if (hashtable-contains? #,expr-id #,(car k*))
-                               (let ([v (hashtable-ref #,expr-id #,(car k*) #f)])
+                         #`(if (hashtable-contains? #,expr-id '#,(car k*))
+                               (let ([v (hashtable-ref #,expr-id '#,(car k*) #f)])
                                  #,(pp rho #'v (car pat*)
                                        (loop (cdr k*) (cdr pat*))
                                        fk))

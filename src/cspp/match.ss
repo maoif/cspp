@@ -92,6 +92,7 @@ Examples:
   retain custom-expander dispatch; a record named `hash` uses `,(record hash :values ...)`.
   Datatype, box, hash, and regex extensions retain their existing forms. Expressions embedded in
   extensions are evaluated as expressions and do not declare pattern captures.
+  Hash keys are literal data, including bare symbols. An empty `,(hash)` checks the input type.
   Pattern variables intentionally shadow outer bindings in the selected body. Generated matcher
   bindings remain hygienic, so names such as `rtd`, `fields`, and `indices` in a pattern cannot
   capture or rename the matcher's internal temporaries.
