@@ -341,7 +341,7 @@
 <for*-clause> := <iter-clause> <for*-config-clause>*
 
 <for*-config-clause> := <break-clause>      ; in for*, break one level of loop
-                     |  <guard-clasue>
+                     |  <guard-clause>
                      |  <bind-clause>
                      |  <stop-clause>       ; only in for*, stop the entire iter
   |#

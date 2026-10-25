@@ -100,6 +100,9 @@
   `compile-environment` resolves extension expanders, and `pattern` is the syntax after the
   leading comma. The result is a list of syntax objects that declare captures; extension
   expressions, record type names, and named field identifiers are excluded.
+  For custom expanders, capture discovery invokes the expander with a collector callback;
+  every pattern passed to that callback is treated as a subpattern. Expanders should call the
+  callback only for positions that are matched, and should keep expansion free of side effects.
 
   Example input:
   ```scheme
