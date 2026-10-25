@@ -34,6 +34,7 @@
           (cspp utils)
           (only (cspp list) make-list-builder)
           (cspp rich private lines)
+          (cspp rich private render)
           (cspp rich private common)
           (cspp rich style)
           (cspp rich segment)
@@ -359,14 +360,6 @@
           (rich-console-output-port target)
           target)))
 
-  (define $rich-segment-list?
-    (lambda (x)
-      (and (list? x) (rich-list-every? rich-segment? x))))
-
-  (define $rich-segment-line-list?
-    (lambda (x)
-      (and (list? x) (rich-list-every? $rich-segment-list? x))))
-
   (define $rich-direct-value?
     (lambda (value)
       (or (string? value)
@@ -418,19 +411,9 @@
                    ($emit port ansi #t)
                    #t))))))
 
-  (define $valid-rendered-value?
-    (lambda (value)
-      (or (string? value) ($rich-segment-line-list? value))))
-
-  (define $check-rendered-value
-    (lambda (who value)
-      (if ($valid-rendered-value? value)
-          value
-          (errorf who "renderer returned invalid value: ~a" value))))
-
   (define $write-rendered-value
     (lambda (port value)
-      (let ([value ($check-rendered-value 'rich-print value)])
+      (let ([value (rich-check-rendered-value 'rich-print value)])
         (cond [(string? value) ($emit port value #f)]
               [else ($write-segment-lines port value)]))))
 
@@ -451,7 +434,7 @@
 
   (define $write-rendered-value/plain
     (lambda (port value)
-      (let ([value ($check-rendered-value 'rich-export-text value)])
+      (let ([value (rich-check-rendered-value 'rich-export-text value)])
         (if (string? value)
             (display value port)
             ($write-segment-lines/plain port value)))))
@@ -514,7 +497,7 @@
 
   (define $write-rendered-value/ansi
     (lambda (console port color-system active-style value style-emitted?)
-      (let ([value ($check-rendered-value 'rich-print value)])
+      (let ([value (rich-check-rendered-value 'rich-print value)])
         (cond [(string? value)
                ($emit port value #f)
               style-emitted?]
@@ -644,13 +627,13 @@
                              [rich-render-ascii-only? (rich-console-ascii-only? console)])
                 (let ([renderer (rich-renderer-for value)])
                   (cond [renderer
-                       ($check-rendered-value 'rich-render (renderer value))]
+                       (rich-check-rendered-value 'rich-render (renderer value))]
                       [(or (rich-style? value)
                            (rich-reset? value)
                            ($rich-direct-value? value))
                        value]
                       [else
-                       ($check-rendered-value 'rich-render
+                       (rich-check-rendered-value 'rich-render
                                              (rich-pretty-render value))]))))))
 
   #|proc:rich-export-text

@@ -2514,3 +2514,35 @@
      (error? (rich-panel-height-set! (make-rich-panel "x") 'tall))
 
      )
+
+(mat rich-container-renderer-contract
+
+     ;; Invalid renderer results must be rejected at every container boundary.
+     (let ([value (vector 'invalid-container-renderer)])
+       (rich-register-renderer! (lambda (candidate) (eq? candidate value))
+                                (lambda (_) (list (list "not-a-segment"))))
+       (andmap
+        (lambda (container)
+          (guard (condition [(error? condition) #t])
+            (rich-render (make-rich-console) container)
+            #f))
+        (list (make-rich-padding value) (make-rich-panel value) (make-rich-tree value)
+              (rich-table :columns ("A") :rows (list (list value))))))
+
+     (let ([value (vector 'renderer-precedence)])
+       (rich-register-renderer! (lambda (candidate) (eq? candidate value))
+                                (lambda (_) "old"))
+       (rich-register-renderer! (lambda (candidate) (eq? candidate value))
+                                (lambda (_) "new"))
+       (and (string=? (rich-export-text value) "new")
+            (string-contains? (rich-export-text (make-rich-panel value)) "new")))
+
+     (let ([value (vector 'normalized-renderer)] [style (rich-style 'red)])
+       (rich-register-renderer! (lambda (candidate) (eq? candidate value))
+         (lambda (_) (list (list (rich-segment "a\tb\r\nc" style)))))
+       (let* ([lines (rich-render (rich-console :width 20) (make-rich-padding value))]
+              [segments (apply append lines)])
+         (and (equal? (map rich-segments->plain lines) '("a       b" "c"))
+              (andmap (lambda (segment) (eq? style (rich-segment-style segment))) segments))))
+
+     )

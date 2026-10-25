@@ -26,7 +26,7 @@
           (cspp rich box)
           (cspp rich segment)
           (cspp rich renderable)
-          (cspp rich pretty))
+          (cspp rich private render))
 
   (define-record-type (rich-table-record $make-rich-table-record $rich-table?)
     (fields (mutable title $rich-table-title $rich-table-title-set!)
@@ -56,40 +56,10 @@
     (lambda (x)
       (memq x '(left center right))))
 
-  (define $string->segment-lines
-    (lambda (text)
-      (rich-lines-normalize (list (list (rich-segment text))))))
-
-  (define $rich-segment-list?
-    (lambda (x)
-      (and (list? x) (rich-list-every? rich-segment? x))))
-
-  (define $rich-segment-line-list?
-    (lambda (x)
-      (and (list? x) (rich-list-every? $rich-segment-list? x))))
-
-  (define $rendered->segment-lines
-    (lambda (who value)
-      (cond [(string? value) ($string->segment-lines value)]
-            [($rich-segment-line-list? value) (rich-lines-normalize value)]
-            [else (errorf who "renderer returned invalid value: ~a" value)])))
+  (define $string->segment-lines rich-string->lines)
 
   (define $value->segment-lines
-    (lambda (value)
-      (cond [(rich-renderer-for value) =>
-             (lambda (renderer)
-               ($rendered->segment-lines 'rich-table-render (renderer value)))]
-            [(string? value)
-             ($string->segment-lines value)]
-            [(or (char? value) (number? value) (symbol? value))
-             ($string->segment-lines
-              (rich-string-output
-               (lambda (port)
-                 (if (char? value)
-                     (write-char value port)
-                     (display value port)))))]
-            [else
-             (rich-pretty-render value)])))
+    (lambda (value) (rich-value->lines 'rich-table-render value)))
 
   (define $string-repeat
     (lambda (text count)
