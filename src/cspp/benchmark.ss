@@ -335,12 +335,6 @@
             (write-char (string-ref text i) out)
             (loop (+ i 1))])))))
 
-  (define $display-string
-    (lambda (value)
-      (let ([out (open-output-string)])
-        (display value out)
-        (get-output-string out))))
-
   (define $write-string
     (lambda (value)
       (parameterize ([print-graph #t] [print-level #f] [print-length #f])
@@ -388,9 +382,11 @@
 
   (define $json-key
     (lambda (key)
-      (if (symbol? key)
-          (symbol->string key)
-          ($display-string key))))
+      (cond
+       [(symbol? key) (symbol->string key)]
+       [(string? key) key]
+       [(char? key) (string key)]
+       [else ($write-string key)])))
 
   (define $json-number-string
     (lambda (n)
@@ -439,38 +435,41 @@
            (andmap pair? x))))
 
   (define $write-json-list
-    (lambda (xs out)
+    (lambda (xs out ancestors)
       (display "[" out)
       (let loop ([xs xs] [first? #t])
         (unless (null? xs)
           (unless first? (display "," out))
-          ($write-json (car xs) out)
+          ($write-json (car xs) out ancestors)
           (loop (cdr xs) #f)))
       (display "]" out)))
 
   (define $write-json-object
-    (lambda (alist out)
+    (lambda (alist out ancestors)
       (display "{" out)
       (let loop ([alist alist] [first? #t])
         (unless (null? alist)
           (unless first? (display "," out))
           ($json-string ($json-key (caar alist)) out)
           (display ":" out)
-          ($write-json (cdar alist) out)
+          ($write-json (cdar alist) out ancestors)
           (loop (cdr alist) #f)))
       (display "}" out)))
 
   (define $write-json
-    (lambda (datum out)
+    (lambda (datum out ancestors)
       (cond
+       ;; Only ancestors indicate recursion; shared acyclic values keep their JSON shape.
+       [(and (pair? datum) (memq datum ancestors))
+        ($json-string ($write-string datum) out)]
        [(eq? datum #t) (display "true" out)]
        [(eq? datum #f) (display "false" out)]
        [(number? datum) ($write-json-number datum out)]
        [(string? datum) ($json-string datum out)]
        [(symbol? datum) ($json-string (symbol->string datum) out)]
        [(null? datum) (display "[]" out)]
-       [($alist? datum) ($write-json-object datum out)]
-       [(list? datum) ($write-json-list datum out)]
+       [($alist? datum) ($write-json-object datum out (cons datum ancestors))]
+       [(list? datum) ($write-json-list datum out (cons datum ancestors))]
        [else ($json-string ($write-string datum) out)])))
 
   (define $captured-benchmark-error
@@ -1293,6 +1292,7 @@ error.
 The `benchmark-json-reporter` procedure returns a reporter that writes benchmark
 results as one JSON object containing a `results` array. The JSON writer is
 self-contained and supports the Scheme data emitted by benchmark results.
+Cyclic substructures use readable Scheme strings when recursion would repeat a value.
 |#
   (define benchmark-json-reporter
     (lambda ()
@@ -1305,7 +1305,7 @@ self-contained and supports the Scheme data emitted by benchmark results.
            (unless first?
              (display "," out))
            (set! first? #f)
-           ($write-json ($result->json result) out))
+           ($write-json ($result->json result) out '()))
          (lambda (results out)
            (display "]}" out)
            (newline out)

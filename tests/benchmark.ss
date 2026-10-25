@@ -1336,3 +1336,25 @@
                      (benchmark-result-samples result))
             (= (cdr (assq 'calls (benchmark-result-counters result))) 4)
             (= (cdr (assq 'other (benchmark-result-counters result))) 8))))
+
+(mat benchmark-json-terminates-on-cyclic-arguments
+     ;; Cycles through keys, object values, or list tails must not hang JSON reporting.
+     (let ([key-cycle (list #f)]
+           [value-cycle (list (cons 'self #f))]
+           [tail-cycle (list 1)])
+       (set-car! key-cycle key-cycle)
+       (set-cdr! (car value-cycle) value-cycle)
+       (set-cdr! tail-cycle tail-cycle)
+       (for-all
+         (lambda (value)
+           (let* ([benchmark (make-benchmark 'cyclic (lambda (state value) (void))
+                              `((args (value) (,value))))]
+                  [results (benchmark-run benchmark (benchmark-test-config))])
+             (call-with-port (open-output-string)
+               (lambda (out)
+                 (parameterize ([print-graph #f])
+                   (benchmark-report results (benchmark-json-reporter) out))
+                 (let ([text (get-output-string out)])
+                   (and (json5-document? (parse-json5 text))
+                        (benchmark-string-contains? text "#0=")))))))
+         (list key-cycle value-cycle tail-cycle))))
