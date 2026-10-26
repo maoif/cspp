@@ -2270,3 +2270,31 @@
                               :step (+ (most-positive-fixnum) 1)]) x))
 
      (equal? '(2 1 0) (for/list ([x :vector '#(0 1 2) :from 2 :to -1]) x)))
+
+(mat typed-bytevector-reverse-chunks
+     (equal? '((2 515) (0 1))
+             (for/list ([x :bytevector #vu8(0 1 2 3 4) :type u16 :big :rev :index i])
+               (list i x)))
+
+     (equal? '((1 66051))
+             (for/list ([x :bytevector #vu8(0 1 2 3 4 5 6)
+                           :from 1 :to 6 :type u24 :big :rev :index i])
+               (list i x)))
+
+     (equal? '((6 395016) (3 197637) (0 258))
+             (for/list ([x :bytevector #vu8(0 1 2 3 4 5 6 7 8 9 10)
+                           :type u24 :big :rev :index i])
+               (list i x)))
+
+     (equal? '((6 395016) (0 258))
+             (for/list ([x :bytevector #vu8(0 1 2 3 4 5 6 7 8 9 10)
+                           :type u24 :big :rev :step 2 :index i])
+               (list i x)))
+
+     (equal? '((4 263430))
+             (for/list ([x :bytevector #vu8(0 1 2 3 4 5 6)
+                           :from 6 :to 1 :type u24 :big :rev :index i])
+               (list i x)))
+
+     (equal? '()
+             (for/list ([x :bytevector #vu8(0 1) :type u24 :rev]) x)))

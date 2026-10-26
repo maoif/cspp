@@ -89,7 +89,9 @@
   Local guards share item and index bindings with the body. They see surrounding lexical
   bindings and their own source bindings, before the fold accumulator and global index aliases.
   Sequence positions survive `:from`, `:to`, `:step`, and `:rev`; typed bytevector positions are
-  byte offsets. Numeric ranges, hashtables, and iterators count source items starting from zero.
+  byte offsets. Typed bytevector traversal ignores an incomplete final chunk; `:rev` preserves
+  the complete chunks anchored at the original start, then traverses them in reverse order.
+  Numeric ranges, hashtables, and iterators count source items starting from zero.
   Lists support the sequence traversal options; sliced or reversed list traversal uses O(n) space.
   Sequence `:from` and `:to` require fixnum source positions within the selected source.
   Ascending slices use `0 <= from <= to <= length`; descending slices use

@@ -949,9 +949,11 @@
                                                  t-from t-to t-len))
                                        t-from)]
                                       [t-from #,(if op-rev
-                                                    #'(if (<= t-from t-to)
-                                                          (sub1 t-to)
-                                                          (add1 t-to))
+                                                    #`(if (fx<= t-from t-to)
+                                                          (fx- t-to 1
+                                                               (fxmodulo (fx- t-to t-from) #,size))
+                                                          (fx+ t-to 1
+                                                               (fxmodulo (fx- t-from t-to) #,size)))
                                                     #'t-from)]
                                       [t-to   #,(if op-rev
                                                     #'(if (<= tt-from t-to)
