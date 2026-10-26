@@ -1752,3 +1752,38 @@
      (equal? '(1 2)
              (match '(1 2 "stop")
                [(,x ... ,(regex (if (= (length x) 2) "^stop$" "never"))) x])))
+
+(mat constant-regex-repetition-allocation
+     ;; A literal regex compiles once per match invocation, rather than once per item.
+     (let* ([input (make-list 1000 "stop")]
+            [before (statistics)]
+            [result (match input [(,(regex "^stop$" (0 ,x)) ...) (length x)])]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= result 1000) (< allocated 500000)))
+
+     (let* ([input (make-vector 1000 "stop")]
+            [before (statistics)]
+            [result (match input [#(,(regex '(: bos "stop" eos) (0 ,x)) ...) (length x)])]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= result 1000) (< allocated 500000))))
+
+(mat regex-cache-evaluation-and-hygiene
+     ;; Invalid constants in unvisited clauses remain unevaluated.
+     (= 42 (match 42 [,x x] [,(regex "(") #f]))
+
+     ;; Regex expressions remain ordinary expressions, evaluated for every visited element.
+     (let ([calls 0])
+       (and (equal? '("a" "b")
+                    (match '("a" "b")
+                      [(,(regex (begin (set! calls (+ calls 1)) ".") (0 ,x)) ...) x]))
+            (= calls 2)))
+
+     (let ([compiled 99] [regex-cache 100])
+       (and (equal? '("a" "b")
+                    (match '("a" "b") [(,(regex "." (0 ,compiled)) ...) compiled]))
+            (= compiled 99) (= regex-cache 100)))
+
+     ;; Each invocation has its own cache and independent capture locations.
+     (let ([matcher (mlambda [(,(regex "." (0 ,x)) ...) x])])
+       (and (equal? '("a") (matcher '("a")))
+            (equal? '("b") (matcher '("b"))))))

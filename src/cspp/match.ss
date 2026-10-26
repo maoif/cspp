@@ -99,6 +99,9 @@ Examples:
   retain custom-expander dispatch; a record named `hash` uses `,(record hash :values ...)`.
   Box, hash, and regex extensions retain their existing forms. Expressions embedded in
   extensions are evaluated as expressions and do not declare pattern captures.
+  Literal regex strings and quoted SREs compile lazily once per match invocation, including
+  its catamorphism calls. Other regex expressions are evaluated on every visited candidate.
+  Regex group numbers require exact nonnegative integers; group names are literal symbols.
   Hash keys are literal data, including bare symbols. An empty `,(hash)` checks the input type.
   Pattern variables intentionally shadow outer bindings in the selected body. Generated matcher
   bindings remain hygienic, so names such as `rtd`, `fields`, and `indices` in a pattern cannot
@@ -131,6 +134,29 @@ Examples:
                 (char? p)))))
       ;; A collector is active only while compiling a repeated element pattern.
       (define capture-collector #f)
+      (define regex-cache-bindings '())
+      #|proc:cache-constant-regex
+      The `cache-constant-regex` helper rewrites a regex extension `pattern` to compile a literal
+      string or quoted SRE once, when first reached during a match invocation. It records a
+      private cache binding outside the recursive matcher. For example, `(regex "." (0 ,x))`
+      becomes an equivalent pattern with a cached compiled regex; `(regex expression (0 ,x))`
+      retains its original evaluation on every visit when `expression` is not a constant.
+      |#
+      (define cache-constant-regex
+        (lambda (pattern)
+          (syntax-case pattern ()
+            [(extension expression . groups)
+             (if (or (string? (syntax->datum #'expression))
+                     (syntax-case #'expression (quote) [(quote datum) #t] [_ #f]))
+                 (with-syntax ([(cache compiled) (generate-temporaries '(cache compiled))])
+                   (set! regex-cache-bindings (cons #'[cache #f] regex-cache-bindings))
+                   #'(extension
+                      (or cache
+                          (let ([compiled (irregex expression)])
+                            (set! cache compiled)
+                            compiled))
+                      . groups))
+                 pattern)])))
       #|proc:pattern-identifier?
       The `pattern-identifier?` helper checks whether `variable` occurs in the original syntax
       of `pattern`, comparing identifiers hygienically. For example, `x` occurs in `(tag ,x)`,
@@ -218,7 +244,7 @@ Examples:
            [(eq? 'box (syntax->datum ext))
             (box-expander process-pattern rho expr-id pat body fk)]
            [(eq? 'regex (syntax->datum ext))
-            (regex-expander process-pattern rho expr-id pat body fk)]
+            (regex-expander process-pattern rho expr-id (cache-constant-regex pat) body fk)]
            [(eq? 'hash (syntax->datum ext))
             (hash-expander process-pattern rho expr-id pat body fk)]
            [(match-expander? ext)
@@ -551,8 +577,9 @@ Examples:
          ;; `match-loop` recursively applies the same clauses for `,@` patterns.
          ;; `rho`: compile-time environment
          (lambda (rho)
-           #`(let match-loop ([v e])
-               #,(generate-skeleton rho #'v #'(cl* ...) #'(begin e0 e* ...))))]
+           (let ([matcher (generate-skeleton rho #'v #'(cl* ...) #'(begin e0 e* ...))])
+             #`(let (#,@(reverse regex-cache-bindings))
+                 (let match-loop ([v e]) #,matcher))))]
         [(k e cl0 cl* ...)
          #'(let ([v e])
              (match v cl0 cl* ...

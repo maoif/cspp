@@ -259,6 +259,7 @@
   The `regex-expander` procedure expands `,(regex <expression> <group> ...)`.
   It matches a string and binds each named or numbered group to its captured substring.
   For example, `(match "x=10" [,(regex "x=(.*)" (1 ,x)) x])` returns `"10"`.
+  Numbered groups require exact nonnegative integers; named groups use literal symbols.
   |#
   (define regex-expander
     (lambda (pp rho expr-id pat body fk)
@@ -297,17 +298,10 @@
                        (#,fk))))]
             [_ (syntax-error pat "match: invalid regex pattern:")])))
       (syntax-case pat ()
-        ;; TODO reg is a var ref
         [(_ reg . rest)
-         (let ([reg (syntax->datum #'reg)])
-           (or (string? reg) (list reg)))
-         ;; how to directly embed the compiled regex obj?
          (with-syntax ([(regex) (generate-temporaries '(regex))])
            #`(let ([regex (irregex reg)])
                #,(handle-rest expr-id #'regex #'rest body fk)))]
-        [(_ reg . rest)
-         ;; `reg` could be arbitrary expression, check whether it evals to string/reg
-         (todo)]
         [_ (syntax-error pat "match: invalid regex pattern format:")])))
 
 
