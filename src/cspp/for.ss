@@ -558,11 +558,12 @@
                                                        (kw:break? #':break)
                                                        #`(if e1
                                                              #,(if last-forloop
-                                                                   #`(let ([break-result e2])
-                                                                       (#,last-forloop
-                                                                        #,@(if frag-init (list #'break-result) '())
-                                                                        #,@(if frag-index (list index-var) '())
-                                                                        #,last-update))
+                                                                   (if frag-init
+                                                                       #`(let ([break-result e2])
+                                                                           (#,last-forloop break-result
+                                                                            #,@(if frag-index (list index-var) '())
+                                                                            #,last-update))
+                                                                       #`(begin e2 #,call-lastforloop))
                                                                    #'e2)
                                                              #,(lp-configs (cdr configs) shadowed))]
                                                       [(:stop e1 e2)

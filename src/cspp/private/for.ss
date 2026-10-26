@@ -1121,14 +1121,16 @@
              [advance (list-ref fragment 3)]
              [bind-public
               (lambda (body)
-                #`(let-syntax
-                      (#,@(map (lambda (name value)
-                                 #`[#,name
-                                    (identifier-syntax
-                                     (reference #,value)
-                                     ((set! reference expression) (set! #,value expression)))])
-                               public private))
-                    #,body))])
+                ;; The index may shadow the item, as in the direct-source getter.
+                (let bind ([names public] [values private])
+                  (if (null? names)
+                      body
+                      #`(let-syntax
+                            ([#,(car names)
+                              (identifier-syntax
+                               (reference #,(car values))
+                               ((set! reference expression) (set! #,(car values) expression)))])
+                          #,(bind (cdr names) (cdr values))))))])
         (with-syntax ([(seek) (generate-temporaries '(seek))])
           (list (car fragment) binding termination advance bind-public
                 (list-ref fragment 5) public

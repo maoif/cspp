@@ -2199,3 +2199,40 @@
                                   [x :iota (error 'fill-length "source evaluated")])
                        (error 'fill-length "body evaluated"))])
          (and (equal? '#() result) (= calls 1)))))
+
+(mat parallel-item-index-shadowing
+     (guard (condition [#t #f])
+       (equal? '(0 1 2)
+               (eval '(for/list ([x :nums 10 13 :index x :guard #t] [y 3]) x)
+                     (environment '(cspp)))))
+
+     (guard (condition [#t #f])
+       (equal? '(1)
+               (eval '(for/list ([x :vector '#(10 11 12) :index x :guard (odd? x)] [y 3]) x)
+                     (environment '(cspp)))))
+
+     (guard (condition [#t #f])
+       (equal? '(10 11)
+               (eval '(let ([read-index #f])
+                        (for/list ([x :fxiota 2 :index x
+                                     :guard (begin (set! read-index (lambda () x)) #t)]
+                                   [y 2])
+                          (set! x (+ x 10))
+                          (read-index)))
+                     (environment '(cspp))))))
+
+(mat inner-break-discarded-values
+     (guard (condition [#t #f])
+       (equal? '()
+               (for*/list ([x 2] [y 2] [:break #t (values 1 2)]) (list x y))))
+
+     (guard (condition [#t #f])
+       (equal? '()
+               (for*/list ([x 2] [y 2] [:break #t (values)]) (list x y))))
+
+     (guard (condition [#t #f])
+       (let ([calls 0])
+         (for* ([x 3] [y 2]
+                [:break #t (begin (set! calls (+ calls 1)) (values 1 2))])
+           (error 'break-values "body evaluated"))
+         (= calls 3))))
