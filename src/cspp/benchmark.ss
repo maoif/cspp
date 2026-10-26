@@ -337,7 +337,8 @@
 
   (define $write-readable-datum
     (lambda (value out)
-      (parameterize ([print-graph #t] [print-level #f] [print-length #f] [print-gensym #t])
+      (parameterize ([print-graph #t] [print-level #f] [print-length #f] [print-gensym #t]
+                     [case-sensitive #t])
         (write value out))))
 
   (define $write-string
@@ -348,7 +349,7 @@
     (lambda (value text)
       (guard (raised [else #f])
         (call-with-port (open-input-string text)
-          (lambda (in) (equal? value (read in)))))))
+          (lambda (in) (parameterize ([case-sensitive #t]) (equal? value (read in))))))))
 
   (define $diagnostic-datum
     (lambda (value)
@@ -387,6 +388,7 @@
   (define $json-key
     (lambda (key)
       (cond
+       [(gensym? key) ($write-string key)]
        [(symbol? key) (symbol->string key)]
        [(string? key) key]
        [(char? key) (string key)]
@@ -396,9 +398,14 @@
     (lambda (n)
       ;; Chez's optional mantissa-width suffix is Scheme syntax, not JSON numeric syntax.
       (parameterize ([print-precision #f] [print-subnormal-precision #f])
-        (number->string (if (and (rational? n) (not (integer? n)))
-                            (exact->inexact n)
-                            n)))))
+        (number->string
+          (if (and (exact? n) (rational? n) (not (integer? n)))
+              (let ([approximation (exact->inexact n)])
+                ;; Keep a readable exact string if conversion loses the range entirely.
+                (if (and (finite? approximation) (not (zero? approximation)))
+                    approximation
+                    n))
+              n)))))
 
   (define $json-safe-number-string?
     (lambda (text)
@@ -1416,6 +1423,8 @@ The `benchmark-json-reporter` procedure returns a reporter that writes benchmark
 results as one JSON object containing a `results` array. The JSON writer is
 self-contained and supports the Scheme data emitted by benchmark results.
 Cyclic substructures use readable Scheme strings when recursion would repeat a value.
+Generated symbol keys use their readable unique names. Exact fractions outside the
+nonzero finite flonum range use exact Scheme strings; other fractions use decimal numbers.
 |#
   (define benchmark-json-reporter
     (lambda ()
@@ -2413,7 +2422,8 @@ historical summary-only records are preserved without synthesizing samples.
   (define benchmark-load-baseline
     (lambda (path)
       (pcheck ([string? path])
-              (let ([datum (call-with-input-file path read)])
+              (let ([datum (parameterize ([case-sensitive #t])
+                             (call-with-input-file path read))])
                 ($baseline-alist datum 'baseline)
                 ($baseline-check list? ($alist-ref datum 'results '()) 'results)
                 (unless (eq? ($alist-ref datum 'format #f) 'cspp-benchmark-baseline)

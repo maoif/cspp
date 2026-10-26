@@ -1889,3 +1889,55 @@
                      (= (length (benchmark-compare-results loaded results)) 2)))))
           '(#t #f pretty)))
       (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat benchmark-baseline-isolates-reader-case
+  ;; Error: ambient case folding must neither reject saving nor rename loaded identities.
+  (let* ([benchmark (make-benchmark 'UPPER (lambda (state value) (void))
+                      '((args (SIZE) (SomeSymbol))))]
+         [results (benchmark-run benchmark (benchmark-test-config))]
+         [path (benchmark-temp-file)])
+    (dynamic-wind
+      (lambda () (void))
+      (lambda ()
+        (guard (raised [else #f])
+          (parameterize ([case-sensitive #f])
+            (benchmark-save-baseline results path)
+            (let ([loaded (benchmark-load-baseline path)])
+              (and (eq? (benchmark-result-name (car loaded)) 'UPPER)
+                   (equal? (benchmark-result-args (car loaded)) '((SIZE . SomeSymbol)))
+                   (= (length (benchmark-compare-results results loaded)) 1))))))
+      (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat benchmark-json-preserves-extreme-rationals
+  ;; Error: finite nonzero rationals outside flonum range must not become zero or infinity.
+  (let* ([tiny (/ 1 (expt 10 400))] [huge (/ (expt 10 400) 3)]
+         [benchmark (make-benchmark 'exact-json
+                      (lambda (state)
+                        (benchmark-state-counter-set! state 'tiny tiny)
+                        (benchmark-state-counter-set! state 'huge huge)) '())]
+         [results (benchmark-run benchmark (benchmark-test-config))]
+         [text (call-with-string-output-port
+                 (lambda (out) (benchmark-report results (benchmark-json-reporter) out)))])
+    (and (json5-document? (parse-json5 text))
+         (benchmark-string-contains? text (string-append "\"tiny\":\"" (number->string (* 2 tiny)) "\""))
+         (benchmark-string-contains? text (string-append "\"huge\":\"" (number->string (* 2 huge)) "\"")))))
+
+(mat benchmark-json-distinguishes-generated-keys
+  ;; Error: generated keys with identical pretty names must not emit duplicate JSON names.
+  (let* ([left (gensym "n")] [right (gensym "n")]
+         [benchmark (make-benchmark 'generated-json (lambda (state a b) (void))
+                      (list (cons 'args (list (list left right) '(1 2)))))]
+         [results (benchmark-run benchmark (benchmark-test-config))]
+         [text (call-with-string-output-port
+                 (lambda (out) (benchmark-report results (benchmark-json-reporter) out)))])
+    (let* ([document (parse-json5 text)]
+           [root (json5-document-value document)]
+           [object-ref (lambda (object name)
+                         (json5-member-value
+                           (find (lambda (member) (string=? name (json5-member-name member)))
+                                 (vector->list (json5-object-members object)))))]
+           [result (vector-ref (json5-array-elements (object-ref root "results")) 0)]
+           [members (json5-object-members (object-ref result "args"))])
+      (and (= (vector-length members) 2)
+           (not (string=? (json5-member-name (vector-ref members 0))
+                          (json5-member-name (vector-ref members 1))))))))
