@@ -1686,3 +1686,37 @@
         (and (equal? (map test-result-status results) '(passed errored passed))
              (syntax-violation? (test-result-condition (cadr results))))))
     '(#t #f pretty)))
+
+(mat test-rejects-invalid-runtime-arity
+  ;; Error: an unusable body must be rejected before raises can accept a runner error.
+  (test-error-message-contains?
+    (lambda () (make-test-case 'bad-arity (lambda (a b) #t)
+                 (list (cons 'raises error?))))
+    "zero or one"))
+
+(mat test-compound-warnings-retain-failures
+  ;; Error: a warning component must not suppress a test failure or serious condition.
+  (for-all
+    (lambda (row)
+      (let* ([resumed? #f]
+             [result (car (test-run
+                            (list (make-test-case 'compound-warning
+                                    (lambda ()
+                                      (raise-continuable (condition (make-warning) (car row)))
+                                      (set! resumed? #t))
+                                    '()))
+                            (test-silent-config)))])
+        (and (eq? (test-result-status result) (cdr row)) (not resumed?))))
+    (list (cons (make-test-failure "failure" #t #f) 'failed)
+          (cons (make-error) 'errored))))
+
+(mat test-compile-preparation-is-not-an-expected-condition
+  ;; Error: inability to create compiler input must not satisfy a raises expectation.
+  (or (not (file-exists? "/proc/self"))
+      (let ([result
+             (parameterize ([current-directory "/proc"])
+               (car (test-run
+                      (list (make-test-compile 'unwritable '((define x 1))
+                              (list (cons 'raises i/o-error?))))
+                      (test-silent-config))))])
+        (eq? (test-result-status result) 'errored))))

@@ -179,6 +179,9 @@ registry.
   (define make-test-case
     (lambda (name body metadata)
       (pcheck ([symbol? name] [procedure? body] [list? metadata])
+              (unless (or (logbit? 0 (procedure-arity-mask body))
+                          (logbit? 1 (procedure-arity-mask body)))
+                (errorf 'make-test-case "body must accept zero or one argument: ~s" body))
               ($make-test-descriptor 'case name 'runtime metadata '() body))))
 
   #|proc:make-test-suite

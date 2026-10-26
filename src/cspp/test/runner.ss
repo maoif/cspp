@@ -265,9 +265,10 @@ association-list filters as `test-select`.
             [(handled) 'passed]
             [(failed) 'failed]
             [else 'errored])]
+         [(test-failure? condition) 'failed]
+         [(serious-condition? condition) 'errored]
          [(and (warning? condition) (eq? warnings 'error)) 'failed]
          [(warning? condition) 'passed]
-         [(test-failure? condition) 'failed]
          [else 'errored]))))
 
   (define $condition-message
@@ -358,15 +359,15 @@ association-list filters as `test-select`.
            ($run-with-expected-condition
             metadata (lambda () (expand (test-descriptor-body descriptor)
                                          (environment '(cspp)))))]
-          [(compile)
-           ($run-with-expected-condition metadata
-             (lambda () ($compile-case descriptor)))]
+          [(compile) ($compile-case descriptor metadata)]
           [else (errorf 'test-run "unsupported test phase: ~a"
                         (test-descriptor-phase descriptor))]))))
 
   (define $allowed-warning?
     (lambda (metadata condition)
       (and (warning? condition)
+           (not (serious-condition? condition))
+           (not (test-failure? condition))
            (not (test-metadata-ref metadata 'condition-handler #f))
            (not (eq? (test-metadata-ref metadata 'warnings 'allow) 'error)))))
 
@@ -448,7 +449,7 @@ association-list filters as `test-select`.
             (string-append path ".so")))))
 
   (define $compile-case
-    (lambda (descriptor)
+    (lambda (descriptor metadata)
       (let ([path ($compile-temp-path)])
         (dynamic-wind
           (lambda () (void))
@@ -461,8 +462,10 @@ association-list filters as `test-select`.
                   (for-each (lambda (form) (write form out) (newline out))
                             (test-descriptor-body descriptor))))
               'replace)
-            (parameterize ([compile-file-message #f] [generate-wpo-files #f])
-              (compile-file path)))
+            ($run-with-expected-condition metadata
+              (lambda ()
+                (parameterize ([compile-file-message #f] [generate-wpo-files #f])
+                  (compile-file path)))))
           (lambda ()
             (when (file-exists? path) (delete-file path))
             (let ([output-path ($compile-output-path path)])
