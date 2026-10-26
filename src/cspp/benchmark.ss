@@ -2429,17 +2429,18 @@ numeric measurements `baseline` and `current`.
 
   #|proc:benchmark-percent-difference
 The `benchmark-percent-difference` procedure returns the percent change from
-numeric measurement `baseline` to numeric measurement `current`. When
+real measurement `baseline` to real measurement `current`. Complex inputs are rejected. When
 `baseline` is zero, equal values return zero and non-equal values return
-positive or negative infinity.
+positive or negative infinity according to the sign of `current`. NaN inputs propagate NaN.
 |#
   (define benchmark-percent-difference
     (lambda (baseline current)
-      (pcheck ([number? baseline current])
+      (pcheck ([real? baseline current])
               (cond
                [(zero? baseline)
                 (cond
                  [(zero? current) 0]
+                 [(nan? current) +nan.0]
                  [(positive? current) +inf.0]
                  [else -inf.0])]
                [else (* 100 (/ (- current baseline) baseline))]))))

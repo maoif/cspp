@@ -1812,3 +1812,26 @@
                           (benchmark-config-with (benchmark-test-config) '((samples . 1)))))])
       (and (not (benchmark-result-error result))
            (equal? (reverse events) '(setup fixture-value fixture-value))))))
+
+(mat benchmark-percent-difference-real-domain
+  ;; Error: complex inputs must be rejected consistently for zero and nonzero baselines.
+  (for-all
+    (lambda (arguments)
+      (guard (condition
+              [else
+               (and (who-condition? condition)
+                    (eq? (condition-who condition) 'pcheck))])
+        (apply benchmark-percent-difference arguments)
+        #f))
+    '((0 1+2i) (1 1+2i) (1+2i 0) (1+2i 1) (0 invalid) (invalid 0)))
+
+  ;; Signed changes, exact rational inputs, and both signed inexact zeros keep their semantics.
+  (for-all
+    (lambda (row)
+      (= (benchmark-percent-difference (car row) (cadr row)) (caddr row)))
+    '((100 110 10) (100 90 -10) (1/2 3/4 50) (0 0 0) (0.0 0.0 0)
+      (-0.0 1 +inf.0) (0.0 -1 -inf.0) (0 +inf.0 +inf.0) (0 -inf.0 -inf.0)))
+
+  ;; A real NaN measurement propagates NaN rather than acquiring a negative direction at zero.
+  (and (nan? (benchmark-percent-difference 0 +nan.0))
+       (nan? (benchmark-percent-difference +nan.0 1))))
