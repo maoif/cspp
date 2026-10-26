@@ -2328,6 +2328,12 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                             (cons (cons (cons reporter out) (list result)) report-groups))))))))
         (define finish
           (lambda (results)
+            ;; An empty run still owns one configured reporter lifecycle. Descriptor
+            ;; groups take precedence whenever at least one result was collected.
+            (when (and (null? results) (null? report-groups)
+                       (benchmark-config-reporter config) (benchmark-config-output config))
+              ($dispatch-benchmark-report '() (benchmark-config-reporter config)
+                                          (benchmark-config-output config)))
             (for-each (lambda (group)
                         ($dispatch-benchmark-report
                          (reverse (cdr group)) (caar group) (cdar group)))
@@ -2359,7 +2365,8 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
   config)`, and `(benchmark-run benchmarks config)`. Explicit config fields override
   descriptor options, which override defaults. Reporting groups results sharing a
   reporter and output port. Enabled stopping returns results through the first error
-  and skips all later argument cases and descriptors.
+  and skips all later argument cases and descriptors. Empty or fully filtered runs
+  emit an empty report through the configured reporter and output when both are enabled.
   |#
   (define benchmark-run
     (case-lambda

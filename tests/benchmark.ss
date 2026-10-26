@@ -1972,3 +1972,35 @@
                                `((threshold-absolute . ,(expt 10 500)))))] )
          (and (not (benchmark-comparison-improvement? percent))
               (not (benchmark-comparison-improvement? absolute))))))
+
+(mat benchmark-empty-runs-report
+  (for-all
+    (lambda (source)
+      (call-with-port (open-output-string)
+        (lambda (out)
+          (let* ([events '()]
+                 [reporter (make-benchmark-reporter
+                             (lambda (results out) (set! events (cons 'start events)))
+                             (lambda (result out) (set! events (cons 'result events)))
+                             (lambda (results out) (set! events (cons 'finish events))))]
+                 [config (benchmark-config-with (benchmark-test-config)
+                           `((reporter . ,reporter) (output . ,out) (filter . "unmatched")))])
+            (and (null? (benchmark-run source config))
+                 (equal? (reverse events) '(start finish)))))))
+    (list '()
+          (make-benchmark 'filtered (lambda (state) (void)) '())
+          (make-benchmark 'no-rows (lambda (state value) (void)) '((args (value))))))
+
+  (call-with-port (open-output-string)
+    (lambda (out)
+      (and (null? (benchmark-run '()
+                    (benchmark-config-with (benchmark-test-config)
+                      `((reporter . ,(benchmark-json-reporter)) (output . ,out)))))
+           (string=? (get-output-string out) "{\"results\":[]}\n"))))
+
+  (call-with-port (open-output-string)
+    (lambda (out)
+      (and (null? (benchmark-run '()
+                    (benchmark-config-with (benchmark-test-config)
+                      `((reporter . ,(benchmark-csv-reporter)) (output . ,out)))))
+           (benchmark-string-contains? (get-output-string out) "name,args,template_args")))))
