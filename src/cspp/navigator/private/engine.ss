@@ -19,6 +19,27 @@
   ;; Public selection entry points start a fresh context, including reentrant calls.
   (define current-selection-terminal? (make-parameter #t))
 
+  ;; A custom step may delegate through a fresh public operation. Its engine
+  ;; continuation still belongs to the defining traversal, including optional
+  ;; sibling handling, recursive references, and virtual-default update tracking.
+  (define bind-continuation
+    (lambda (continue)
+      (let ([env (current-recursive-env)]
+            [optional? (current-optional-focus?)]
+            [counter (current-update-count)]
+            [terminal? (current-selection-terminal?)])
+        (lambda (value)
+          (if (and (eq? env (current-recursive-env))
+                   (eq? optional? (current-optional-focus?))
+                   (eq? counter (current-update-count))
+                   (eq? terminal? (current-selection-terminal?)))
+              (continue value)
+              (parameterize ([current-recursive-env env]
+                             [current-optional-focus? optional?]
+                             [current-update-count counter]
+                             [current-selection-terminal? terminal?])
+                (continue value)))))))
+
   (define emit-descendant-children
     (lambda (value emit)
       (emit-children
@@ -89,9 +110,10 @@
                          (parameterize ([current-selection-terminal? terminal?])
                            (nav-call-step
                             ($navigator-select-proc step) value
-                            (lambda (child)
-                              (parameterize ([current-selection-terminal? outer-terminal?])
-                                (run-select rest tails child emit)))
+                            (bind-continuation
+                             (lambda (child)
+                               (parameterize ([current-selection-terminal? outer-terminal?])
+                                 (run-select rest tails child emit))))
                             (void)))))]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
@@ -130,8 +152,9 @@
             (cond [($navigator? step)
                    (nav-call-step ($navigator-transform-proc step)
                     value
-                    (lambda (child)
-                      (run-transform rest tails child update)) value)]
+                    (bind-continuation
+                     (lambda (child)
+                       (run-transform rest tails child update))) value)]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
                      (parameterize ([current-recursive-env ($recursive-nav-group-env step)])
@@ -165,8 +188,9 @@
             (cond [($navigator? step)
                    (nav-call-step ($navigator-transform!-proc step)
                     value
-                    (lambda (child)
-                      (run-transform! rest tails child update!)) value)]
+                    (bind-continuation
+                     (lambda (child)
+                       (run-transform! rest tails child update!))) value)]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
                      (parameterize ([current-recursive-env ($recursive-nav-group-env step)])
@@ -196,8 +220,9 @@
             (cond [($navigator? step)
                    (nav-call-step ($navigator-clear-proc step)
                     value
-                    (lambda (child)
-                      (run-clear rest tails child clear)) value)]
+                    (bind-continuation
+                     (lambda (child)
+                       (run-clear rest tails child clear))) value)]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
                      (parameterize ([current-recursive-env ($recursive-nav-group-env step)])
@@ -226,8 +251,9 @@
             (cond [($navigator? step)
                    (nav-call-step ($navigator-clear!-proc step)
                     value
-                    (lambda (child)
-                      (run-clear! rest tails child clear!)) value)]
+                    (bind-continuation
+                     (lambda (child)
+                       (run-clear! rest tails child clear!))) value)]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
                      (parameterize ([current-recursive-env ($recursive-nav-group-env step)])

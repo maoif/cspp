@@ -1,6 +1,6 @@
 (library (cspp private rbtree)
   (export rbtree make-rbtree rbtree-=? rbtree-<?
-          rbtree-ref rbtree-set! rbtree-delete!
+          rbtree-ref rbtree-ref-key rbtree-set! rbtree-delete!
           rbtree-clear! rbtree-size rbtree-fixnum? rbtree-root
           rbtree-contains? rbtree-contains/p?
           rbtree-search
@@ -185,6 +185,15 @@
                      [(<? k (K n)) (loop (L n))]
                      [else  (loop (R n))]))))]))
 
+
+  (define rbtree-ref-key
+    (lambda (tree key default)
+      (let ([same? (rbtree-=? tree)] [less? (rbtree-<? tree)])
+        (let loop ([node (rbtree-root tree)])
+          (cond [(null-rbnode? node) default]
+                [(same? key (K node)) (K node)]
+                [(less? key (K node)) (loop (L node))]
+                [else (loop (R node))])))))
 
   (define rbtree-set!
     (lambda (who tree fx? key value)

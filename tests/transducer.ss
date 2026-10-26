@@ -1,6 +1,5 @@
 (import (cspp))
 
-
 (mat registered-source-transduction
      (= 15 (transduce (tcompose (tfilter even?) (tmap add1))
                       (rffxsum)
@@ -953,11 +952,11 @@
     (let* ([source (make-review-escaping-source (lambda () (interrupt)) 0)]
            [output (sequence (tidentity) source)])
       (and (eq? 'escaped
-                ;; An owned producer may escape before supplying any value.
+                ;; Source escapes exhaust the pass; explicit finalization releases ownership.
                 (call/1cc (lambda (escape)
                            (set! interrupt (lambda () (escape 'escaped)))
                            (iter-next! output))))
-           (= 1 (review-escaping-source-finalizations source))
+           (= 0 (review-escaping-source-finalizations source))
            (iter-end? (iter-next! output))
            (begin (iter-finalize! output)
                   (= 1 (review-escaping-source-finalizations source)))))))
@@ -983,3 +982,198 @@
   (equal? '(#(1 2) #(3 4))
           (into 'list (tcompose (tcat) (tpartition-all 2))
                 (list (eduction (tidentity) '(1 2 3)) '(4)))))
+
+(define-record-type (review-generator-source make-review-generator-source review-generator-source?)
+  (fields path items (mutable finalizations)))
+
+(iter-register-source!
+ review-generator-source?
+ (lambda (source)
+   (let ([producer (nav-traverse->iter (review-generator-source-path source)
+                                      (review-generator-source-items source))])
+     (make-iter
+      (lambda () (iter-next! producer))
+      (lambda () (iter-reset! producer))
+      (lambda ()
+        (review-generator-source-finalizations-set!
+         source (+ 1 (review-generator-source-finalizations source)))
+        (iter-finalize! producer))))))
+
+(mat transducer-generator-sequence
+  (equal? '(1 2 3 4)
+          (iter->list (sequence (tidentity) (nav-traverse->iter nav/all '(1 2 3 4)))))
+
+  (equal? '(1 2 3 4)
+          (iter->list (sequence (tidentity)
+                                (sequence (tidentity)
+                                          (nav-traverse->iter nav/all '(1 2 3 4))))))
+
+  (equal? '(#(1 2) #(3))
+          (iter->list (sequence (tpartition-all 2)
+                                (nav-traverse->iter nav/all '(1 2 3)))))
+
+  (let* ([source (make-review-generator-source nav/all '(1 2 3 4) 0)]
+         [output (sequence (tmapcat (lambda (value) (list value value))) source)])
+    (and (= 1 (iter-next! output))
+         (= 1 (iter-next! output))
+         (= 0 (review-generator-source-finalizations source))
+         (equal? '(2 2 3 3 4 4) (transducer-drain output))
+         (= 1 (review-generator-source-finalizations source))
+         (begin (iter-reset! output) #t)
+         (equal? '(1 1 2 2 3 3 4 4) (transducer-drain output))
+         (= 2 (review-generator-source-finalizations source))
+         (begin (iter-finalize! output) #t)
+         (= 2 (review-generator-source-finalizations source))))
+
+  ;; A later producer error must reach the advance that encounters it and close the source.
+  (let* ([path (nav/path nav/all (nav/pred (lambda (value)
+                                           (if (= value 3) (error 'producer "third") #t))))]
+         [source (make-review-generator-source path '(1 2 3 4) 0)]
+         [output (sequence (tidentity) source)])
+    (and (= 1 (iter-next! output)) (= 2 (iter-next! output))
+         (guard (exn [else (and (message-condition? exn)
+                               (string=? "third" (condition-message exn)))])
+           (iter-next! output) #f)
+         (= 1 (review-generator-source-finalizations source))
+         (iter-end? (iter-next! output))
+         (begin (iter-finalize! output) #t)))
+
+  ;; A reducer escape after a generator yield must still exhaust and close an owned pass.
+  (let ([interrupt void])
+    (let* ([source (make-review-generator-source nav/all '(1 2 3) 0)]
+           [output (sequence (ttap (lambda (value) (when (= value 2) (interrupt)))) source)])
+      (and (= 1 (iter-next! output))
+           (eq? 'escaped (call/1cc (lambda (escape)
+                                    (set! interrupt (lambda () (escape 'escaped)))
+                                    (iter-next! output))))
+           (= 1 (review-generator-source-finalizations source))
+           (iter-end? (iter-next! output))
+           (begin (iter-finalize! output) #t)))))
+
+(mat transducer-generator-producer-escape
+  ;; Source escapes exhaust the pass until the caller resets or finalizes it.
+  (andmap
+   (lambda (at)
+     (let ([interrupt void])
+       (let* ([path (nav/path nav/all
+                              (nav/pred (lambda (value)
+                                          (when (= value at) (interrupt)) #t)))]
+              [source (make-review-generator-source path '(1 2 3) 0)]
+              [output (sequence (tidentity) source)])
+         (and (eq? 'escaped
+                   (call/1cc (lambda (escape)
+                               (set! interrupt (lambda () (escape 'escaped)))
+                               (transducer-drain output))))
+              (= 0 (review-generator-source-finalizations source))
+              (iter-end? (iter-next! output))
+              (begin (iter-finalize! output)
+                     (= 1 (review-generator-source-finalizations source)))))))
+   '(1 2 3)))
+
+(define-record-type (review-pipeline-source make-review-pipeline-source review-pipeline-source?)
+  (fields iterator (mutable finalizations)))
+(iter-register-source!
+ review-pipeline-source?
+ (lambda (source)
+   (let ([upstream (review-pipeline-source-iterator source)])
+     (make-iter
+      (lambda () (iter-next! upstream))
+      (lambda () (iter-reset! upstream))
+      (lambda ()
+        (review-pipeline-source-finalizations-set!
+         source (+ 1 (review-pipeline-source-finalizations source)))
+        (iter-finalize! upstream))))))
+
+(mat transducer-generator-pipeline-escape
+  ;; Iterator pipeline callbacks are part of the source pull and use explicit finalization.
+  (andmap
+   (lambda (at)
+     (let ([interrupt void])
+       (let* ([producer (iter-map (lambda (value)
+                                    (when (= value at) (interrupt)) value)
+                                  (nav-traverse->iter nav/all '(1 2 3)))]
+              [source (make-review-pipeline-source producer 0)]
+              [output (sequence (tidentity) source)])
+         (and (eq? 'escaped (call/1cc (lambda (escape)
+                                      (set! interrupt (lambda () (escape 'escaped)))
+                                      (transducer-drain output))))
+              (= 0 (review-pipeline-source-finalizations source))
+              (iter-end? (iter-next! output))
+              (begin (iter-finalize! output)
+                     (= 1 (review-pipeline-source-finalizations source)))))))
+   '(1 2 3)))
+
+;; A source written using only the public iterator API, with no transducer cooperation.
+(define review-continuation-iter
+  (lambda (items)
+    (let ([resume #f] [consumer #f] [done? #f])
+      (define reset!
+        (lambda ()
+          (set! done? #f)
+          (set! consumer #f)
+          (set! resume
+                (lambda ()
+                  (for-each
+                   (lambda (item)
+                     ;; Suspend each producer segment until its next consumer arrives.
+                     (call/1cc (lambda (continue)
+                                 (set! resume continue)
+                                 (consumer item))))
+                   items)
+                  (set! done? #t)
+                  (consumer iter-end)))))
+      (reset!)
+      (make-iter
+       (lambda ()
+         (if done?
+             iter-end
+             ;; Each pull uses the current caller's one-shot return continuation.
+             (call/1cc (lambda (return) (set! consumer return) (resume)))))
+       reset!))))
+
+(mat transducer-independent-continuation-sources
+  (equal? '(1 2 3 4)
+          (iter->list (sequence (tidentity) (review-continuation-iter '(1 2 3 4)))))
+
+  (equal? '(#(1 2) #(3))
+          (iter->list (sequence (tpartition-all 2) (review-continuation-iter '(1 2 3)))))
+
+  (equal? '(1 1 2 2 3 3)
+          (iter->list (sequence (tmapcat (lambda (value) (list value value)))
+                                (sequence (tidentity) (review-continuation-iter '(1 2 3)))))))
+
+(mat transducer-prestarted-continuation-sources
+  (let ([producer (review-continuation-iter '(1 2 3))])
+    (and (= 1 (iter-next! producer))
+         (equal? '(2 3) (iter->list (sequence (tidentity) producer)))))
+
+  (let ([producer (review-continuation-iter '(1 2 3))])
+    (and (= 1 (iter-next! producer))
+         (equal? '(2 3 4) (iter->list (sequence (tcat) (list producer '(4)))))))
+
+  (let ([producer (review-continuation-iter '(1 2 3))])
+    (and (= 1 (iter-next! producer))
+         (equal? '(#(2 3) #(4))
+                 (iter->list (sequence (tcompose (tcat) (tpartition-all 2))
+                                       (list producer '(4)))))))
+
+  (let* ([producer (review-continuation-iter '(1 2 3))]
+         [source (make-review-pipeline-source producer 0)])
+    (and (= 1 (iter-next! producer))
+         (equal? '(2 3) (into 'list (tidentity) source))
+         (= 1 (review-pipeline-source-finalizations source)))))
+
+(mat transducer-nested-source-escape-buffer
+  ;; An escape halfway through a tcat input discards that input's partial output buffer.
+  (let ([interrupt void])
+    (let* ([inner (iter-map (lambda (value) (when (= value 2) (interrupt)) value)
+                            (review-continuation-iter '(1 2 3)))]
+           [source (make-review-source (list inner '(4)) 0)]
+           [output (sequence (tcat) source)])
+      (and (eq? 'escaped (call/1cc (lambda (escape)
+                                   (set! interrupt (lambda () (escape 'escaped)))
+                                   (iter-next! output))))
+           (iter-end? (iter-next! output))
+           (= 0 (review-source-finalizations source))
+           (begin (iter-finalize! output) (iter-finalize! inner) #t)
+           (= 1 (review-source-finalizations source))))))

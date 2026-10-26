@@ -2290,3 +2290,197 @@
 
   ;; Direct removal from a hashtable through entries remains unsupported in mutation.
   (error? (nav-clearval! nav/entries (ht 'a 1))))
+
+(define review-delegated-all
+  (make-nav 'delegated-all
+            (lambda (value emit) (nav-traverse nav/all value emit))
+            (lambda (value update) (nav-transform nav/all update value))
+            (lambda (value update!) (nav-transform! nav/all update! value))))
+
+(mat navigator-delegated-continuation-scopes
+  (let ([path (nav/letrec ([leaf (nav/key 'x)])
+                (nav/path review-delegated-all (make-nav-ref 'leaf)))]
+        [data (list (list (cons 'x 1)) (list (cons 'x 2)))])
+    (and (equal? '(1 2) (nav-select path data))
+         (equal? '(((x . 2)) ((x . 3))) (nav-transform path add1 data))
+         (eq? data (nav-transform! path add1 data))
+         (equal? '(((x . 2)) ((x . 3))) data)))
+
+  (let ([path (nav/maybe (nav/path review-delegated-all (nav/key 'x)))]
+        [data (list (list (cons 'x 1)) (list (cons 'y 2)) (list (cons 'x 3)))])
+    (and (equal? '(1 3) (nav-select path data))
+         (equal? '(((x . 2)) ((y . 2)) ((x . 4))) (nav-transform path add1 data))
+         (eq? data (nav-transform! path add1 data))
+         (equal? '(((x . 2)) ((y . 2)) ((x . 4))) data)))
+
+  (let ([wrapper (make-nav 'delegate-stay
+                          (lambda (value emit) (nav-traverse nav/stay value emit))
+                          (lambda (value update) (nav-transform nav/stay update value))
+                          (lambda (value update!) (update! value)))])
+    (equal? '((x . 1))
+            (nav-transform (nav/path (nav/key/default 'x 0) wrapper) add1 '()))))
+
+(mat navigator-ordered-callbacks
+  (equal? '((a . 0) (a . 1) (b . 2))
+          (nav-transform/i (nav/path nav/entries nav/cdr) (lambda (index value) index)
+                           '((a . 1) (a . 2) (b . 3))))
+
+  (equal? '((0 . 1) (1 . 2) (2 . 3))
+          (nav-transform/i nav/keys (lambda (index key) index) '((a . 1) (b . 2) (c . 3))))
+
+  (andmap
+   (lambda (source)
+     (let ([selected (nav-select nav/all source)] [visited (make-list-builder)])
+       (nav-transform nav/all (lambda (value) (visited value) value) source)
+       (and (equal? selected (visited))
+            (let ([visited (make-list-builder)])
+              (nav-transform! nav/all (lambda (value) (visited value) value) source)
+              (equal? selected (visited))))))
+   (list (hashset 1 2 3) (treeset = < 1 2 3)))
+
+  (let ([source (treemap = < '(1 . a) '(2 . b) '(3 . c))]
+        [visited (make-list-builder)])
+    (nav-transform nav/entries (lambda (entry) (visited (car entry)) entry) source)
+    (equal? '(1 2 3) (visited))))
+
+(mat navigator-default-value-is-public-data
+  (equal? '(#f) (nav-select (nav/key/default 'missing) '()))
+
+  (equal? '((missing . #f)) (nav-transform (nav/key/default 'missing) values '()))
+
+  (let* ([result (nav-transform (nav/key/default 'missing) values (ht))]
+         [fallback (nav-select-one (nav/key/default 'other) '())])
+    (and (hashtable-contains? result 'missing)
+         (equal? '(#f) (nav-select (nav/key 'missing) result))
+         (equal? '((present . #f))
+                 (nav-setval (nav/key 'present) fallback '((present . 1)))))))
+
+(mat navigator-key-clear-suffixes
+  (equal? '((a . 1)) (nav-clearval (nav/path nav/keys nav/none) '((a . 1))))
+
+  (null? (nav-clearval (nav/path nav/keys nav/none) '()))
+
+  (equal? '#(1 2) (nav-clearval (nav/path nav/keys nav/none) '#(1 2)))
+
+  (let* ([key (ht 'x 1 'y 2)] [source (make-eq-hashtable)])
+    (hashtable-set! source key 'payload)
+    (let ([result (nav-clearval (nav/path nav/keys (nav/key 'x)) source)])
+      (and (= 2 (hashtable-size key))
+           (let ([new-key (nav-select-one nav/keys result)])
+             (and (= 1 (hashtable-size new-key))
+                  (eq? 'payload (hashtable-ref result new-key #f)))))))
+
+  ;; A key itself still cannot be removed through the read-only keys navigator.
+  (error? (nav-clearval nav/keys '((a . 1)))))
+
+(define review-map-key-size=?
+  (lambda (left right) (= (hashtable-size left) (hashtable-size right))))
+(define review-map-key-size<?
+  (lambda (left right) (< (hashtable-size left) (hashtable-size right))))
+
+(mat navigator-mutated-map-keys-reindex
+  (andmap
+   (lambda (path)
+     (let ([key (ht 'x 1 'y 2)] [source (make-hashtable hashtable-size eq?)])
+       (hashtable-set! source key 'payload)
+       (and (eq? source (nav-clearval! path source))
+            (= 1 (hashtable-size source))
+            (= 1 (hashtable-size key))
+            (eq? 'payload (hashtable-ref source key #f)))))
+   (list (nav/path nav/entries nav/car (nav/key 'x))
+         (nav/path nav/keys (nav/key 'x))))
+
+  (let* ([one (ht 'a 1)] [two (ht 'a 1 'x 2)] [three (ht 'a 1 'b 2 'x 3)]
+         [source (make-treemap review-map-key-size=? review-map-key-size<?)])
+    (for-each (lambda (key) (treemap-set! source key 'payload)) (list one two three))
+    (and (eq? source (nav-clearval! (nav/path nav/entries nav/car
+                                            (nav/maybe (nav/key 'x))) source))
+         (= 2 (treemap-size source))
+         (equal? '(1 2) (map hashtable-size (nav-select nav/keys source)))))
+
+  ;; A suffix failure after key mutation must still leave the map correctly indexed.
+  (let ([key (ht 'x 1 'y 2)] [source (make-hashtable hashtable-size eq?)])
+    (hashtable-set! source key 'payload)
+    (and (guard (exn [else #t])
+           (nav-clearval! (nav/path nav/keys
+                                   (nav/pred (lambda (key)
+                                               (hashtable-delete! key 'x)
+                                               (error 'key "suffix failed")))) source)
+           #f)
+         (= 1 (hashtable-size source))
+         (eq? 'payload (hashtable-ref source key #f)))))
+
+(mat navigator-submap-canonical-keys
+  (let* ([stored (vector 7 'stored)] [query (vector 7 'query)]
+         [same? (lambda (left right) (= (vector-ref left 0) (vector-ref right 0)))]
+         [less? (lambda (left right) (< (vector-ref left 0) (vector-ref right 0)))]
+         [table (make-hashtable (lambda (key) (vector-ref key 0)) same?)]
+         [tree (make-treemap same? less?)])
+    (hashtable-set! table stored 'payload)
+    (treemap-set! tree stored 'payload)
+    (andmap
+     (lambda (source)
+       (let ([calls 0])
+         (and (eq? stored (nav-select-one (nav/path (nav/submap query) nav/keys) source))
+              (let ([result (nav-transform (nav/path (nav/submap query) nav/none)
+                                           (lambda (value) (set! calls (+ calls 1)) value)
+                                           source)])
+                (and (= 0 calls) (eq? stored (nav-select-one nav/keys result)))))))
+     (list table (hashtable-copy table #f) tree))))
+
+(mat navigator-optional-clear-unsupported
+  (andmap
+   (lambda (path)
+     (and (= 7 (nav-clearval (nav/maybe path) 7))
+          (= 7 (nav-clearval! (nav/maybe path) 7))))
+   (list nav/all nav/values))
+
+  (= 7 (nav-clearval (nav/choice nav/all nav/none) 7))
+
+  ;; Fixed-size focuses are present: removing them must still fail inside nav/maybe.
+  (error? (nav-clearval (nav/maybe nav/all) '#(1))))
+
+(mat navigator-mutating-entry-identity
+  (let* ([child (ht 'x 1 'y 2)] [entry (cons 'a child)] [source (list entry)]
+         [path (nav/path nav/entries (nav/pred (lambda (value) (eq? value entry)))
+                         nav/cdr (nav/key 'x))])
+    (and (eq? source (nav-clearval! path source))
+         (eq? entry (car source))
+         (not (hashtable-contains? child 'x)))))
+
+(define-record-type review-legacy-map (fields table))
+(nav-register-keyed!
+ review-legacy-map?
+ (lambda (value key default) (hashtable-ref (review-legacy-map-table value) key default))
+ (lambda (value key replacement)
+   (let ([copy (hashtable-copy (review-legacy-map-table value) #t)])
+     (hashtable-set! copy key replacement)
+     (make-review-legacy-map copy)))
+ (lambda (value key replacement)
+   (hashtable-set! (review-legacy-map-table value) key replacement))
+ (lambda (value key)
+   (let ([copy (hashtable-copy (review-legacy-map-table value) #t)])
+     (hashtable-delete! copy key)
+     (make-review-legacy-map copy)))
+ (lambda (value key) (hashtable-delete! (review-legacy-map-table value) key))
+ (lambda (value)
+   (let-values ([(keys vals) (hashtable-entries (review-legacy-map-table value))])
+     (map cons (vector->list keys) (vector->list vals)))))
+
+(mat navigator-legacy-keyed-protocol
+  (let* ([stored (vector 1 'stored)] [query (vector 1 'query)]
+         [table (make-hashtable (lambda (key) (vector-ref key 0))
+                                (lambda (left right)
+                                  (= (vector-ref left 0) (vector-ref right 0))))]
+         [source (make-review-legacy-map table)])
+    (hashtable-set! table stored 'value)
+    (and (eq? stored (nav-select-one (nav/path (nav/submap query) nav/keys) source))
+         (let ([result (nav-transform (nav/path (nav/submap query) nav/none) values source)])
+           (eq? stored (nav-select-one nav/keys result)))))
+
+  (let* ([key (ht 'drop 1 'keep 2)] [table (make-hashtable hashtable-size eq?)]
+         [source (make-review-legacy-map table)])
+    (hashtable-set! table key 'value)
+    (and (eq? source (nav-clearval! (nav/path nav/keys (nav/key 'drop)) source))
+         (= 1 (hashtable-size table))
+         (eq? 'value (hashtable-ref table key #f)))))

@@ -29,6 +29,7 @@
   (import (cspp chez)
           (cspp internal)
           (cspp iter)
+          (cspp private iter-scope)
           (cspp list)
           (cspp utils))
 
@@ -204,12 +205,28 @@
   ;; Generated source iterators belong to this traversal; caller-supplied iterators do not.
   (define run-owned-iter
     (lambda (reducer acc iterator)
-      (dynamic-wind
-        void
-        (lambda () (run-iter reducer acc iterator))
-        (lambda ()
-          (unless (iter-finalized? iterator)
-            (iter-finalize! iterator))))))
+      (let ([pulling? #f] [cleanup-attempted? #f] [outer (current-iter-pull)])
+        (define close!
+          (lambda ()
+            (unless (or cleanup-attempted? (iter-finalized? iterator))
+              (set! cleanup-attempted? #t)
+              (iter-finalize! iterator))))
+        (dynamic-wind
+          (lambda () (set! pulling? #f))
+          (lambda ()
+            (guard (exn [else
+                         (close!)
+                         (raise exn)])
+              (parameterize ([current-iter-pull
+                              (lambda (pull)
+                                (let ([previous? pulling?])
+                                  (set! pulling? #t)
+                                  (let ([value (if outer (outer pull) (pull))])
+                                    (set! pulling? previous?)
+                                    value)))])
+                (run-iter reducer acc iterator))))
+          (lambda ()
+            (unless pulling? (close!)))))))
 
   (define run-port-lines
     (lambda (reducer acc port)
@@ -634,7 +651,8 @@
   The `tcat` procedure returns a transducer that concatenates each transducible input collection
   into the output stream, including registered sources, iterators, and eductions.
   Other inputs are emitted as scalar values. Generated iterators are finalized on completion,
-  early termination, or escape. Caller-supplied iterators remain open. Inner eductions complete
+  early termination, errors, or reducer escapes. Source-level nonlocal exits require source
+  code to manage its resources. Caller-supplied iterators remain open. Inner eductions complete
   their own state without completing the surrounding reduction.
   |#
   (define tcat
@@ -1073,7 +1091,8 @@
   accumulator; with four arguments, `init` supplies it and initialization is skipped.
   The result is the reducer's completion value after source exhaustion or an early `reduced`
   result. Iterators created for source adapters are finalized on exhaustion, early termination,
-  errors, or nonlocal exits. Caller-supplied iterators remain open.
+  errors, or reducer escapes. Nonlocal exits from source pulls require source code to manage
+  its resources. Caller-supplied iterators remain open.
   |#
   (define transduce
     (case-lambda
@@ -1119,7 +1138,9 @@
   upstream iterator, including a caller-supplied iterator.
   Initialization emissions are retained, and an initially reduced accumulator finishes without
   pulling input. A failed pass releases an owned source and stays exhausted until reset.
-  An escape during construction, reset, or advance releases an owned source and exhausts the pass.
+  An escape during construction, reset, or a reducer callback releases an owned source
+  and exhausts the pass. Source pulls may use continuations. A nonlocal exit from a source
+  exhausts the pass; reset or explicitly finalize the result to release its owned source.
   Each input value's entire transformed expansion is buffered before returning its first value.
   |#
   (define sequence
@@ -1133,6 +1154,7 @@
                         [effective #f]
                         [acc #f]
                         [done? #f]
+                        [source-incomplete? #f]
                         [q-head '()]
                         [q-tail '()])
                     (define enqueue!
@@ -1192,6 +1214,7 @@
                                       (set! upstream (source->iter source))))
                                 (set! cleanup-attempted? #f)
                                 (set! done? #f)
+                                (set! source-incomplete? #f)
                                 (set! q-head '())
                                 (set! q-tail '())
                                 (set! effective (apply-transducer xform emit-reducer))
@@ -1200,37 +1223,72 @@
                             (lambda ()
                               (unless completed?
                                 (abandon-pass!)))))))
-                    (define finish!
-                      (lambda ()
-                        (unless done?
-                          (set! done? #t)
-                          (set! acc (reducer-complete effective (unreduced acc)))
-                          (unless (iter? source)
-                            (finalize-upstream!)))))
-                    (define next!
-                      (lambda ()
-                        (let ([completed? #f])
+                    ;; Source pulls may transfer to a continuation captured by an
+                    ;; earlier consumer. Only reducer callbacks belong inside an
+                    ;; escape-cleanup wind; source failures are handled by next!'s guard.
+                    (define protect-pass
+                      (lambda (thunk)
+                        (let ([completed? #f] [pulling? #f] [outer (current-iter-pull)])
                           (dynamic-wind
-                            void
+                            (lambda () (set! completed? #f) (set! pulling? #f))
                             (lambda ()
                               (let ([result
-                                     (guard (exn [else (fail! exn)])
-                                       (let loop ()
-                                         (cond [(not (queue-empty?)) (dequeue!)]
-                                               [done? iter-end]
-                                               [(reduced? acc) (finish!) (loop)]
-                                               [else
-                                                (let ([value (iter-next! upstream)])
-                                                  (if (iter-end? value)
-                                                      (finish!)
-                                                      (begin
-                                                        (set! acc (reducer-step effective acc value))
-                                                        (when (reduced? acc) (finish!))))
-                                                  (loop))])))])
+                                     (parameterize
+                                      ([current-iter-pull
+                                        (lambda (pull)
+                                          (let ([previous-done? done?]
+                                                [previous-pull? pulling?]
+                                                [previous-incomplete? source-incomplete?])
+                                            (set! done? #t)
+                                            (set! pulling? #t)
+                                            (set! source-incomplete? #t)
+                                            (let ([value (if outer (outer pull) (pull))])
+                                              (set! done? previous-done?)
+                                              (set! pulling? previous-pull?)
+                                              (set! source-incomplete? previous-incomplete?)
+                                              value)))])
+                                       (thunk))])
                                 (set! completed? #t)
                                 result))
                             (lambda ()
-                              (unless completed? (abandon-pass!)))))))
+                              (unless (or completed? pulling?) (abandon-pass!)))))))
+                    (define finish!
+                      (lambda ()
+                        (unless done?
+                          (protect-pass
+                           (lambda ()
+                             (set! done? #t)
+                             (set! acc (reducer-complete effective (unreduced acc)))
+                             (unless (iter? source)
+                               (finalize-upstream!)))))))
+                    (define next!
+                      (lambda ()
+                        ;; An escaped nested source can leave part of one expansion
+                        ;; buffered. Discard it only on a new external advance: normal
+                        ;; generator transfers finish the pull before returning here.
+                        (when source-incomplete?
+                          (set! q-head '())
+                          (set! q-tail '()))
+                        (guard (exn [else (fail! exn)])
+                          (let loop ()
+                            (cond [(not (queue-empty?)) (dequeue!)]
+                                  [done? iter-end]
+                                  [(reduced? acc) (finish!) (loop)]
+                                  [else
+                                   ;; A source-level nonlocal exit leaves this pass
+                                   ;; exhausted; reset/finalization retains cleanup ownership.
+                                   (set! done? #t)
+                                   (set! source-incomplete? #t)
+                                   (let ([value (iter-next! upstream)])
+                                     (set! done? #f)
+                                     (set! source-incomplete? #f)
+                                     (if (iter-end? value)
+                                         (finish!)
+                                         (protect-pass
+                                          (lambda ()
+                                            (set! acc (reducer-step effective acc value))
+                                            (when (reduced? acc) (finish!)))))
+                                     (loop))])))))
                     (reset-state!)
                     (make-iter next! reset-state! finalize-upstream!))))))
 

@@ -3,6 +3,8 @@
           indexed-supported? indexed-transform indexed-transform!
           indexed-clear-values indexed-clear-values! index-list
           keyed-update-values keyed-update-values! keyed-rebuild-entries
+          keyed-canonical-key
+          keyed-transform-entries!
           child-container? emit-children
           keyed-supported? keyed-ref/missing keyed-set keyed-set!
           keyed-delete keyed-delete! keyed-entries keyed-keys keyed-values
@@ -30,7 +32,9 @@
             (immutable delete-proc)
             (immutable delete!-proc)
             (immutable entries-proc)
-            (immutable empty-proc))
+            (immutable empty-proc)
+            (immutable canonical-proc)
+            (immutable replace!-proc))
     (sealed #t))
 
   (define-record-type ($set-protocol make-$set-protocol $set-protocol?)
@@ -96,18 +100,38 @@
   entries in traversal order. Optional `empty-proc` receives a map and returns a fresh,
   mutable empty map with the same key policy. It enables efficient bulk rebuilding and
   submaps; without it, rebuilding uses the pure delete and set callbacks.
+  Optional `canonical-proc` has signature `(map key default) -> stored-key-or-default`.
+  It returns the stored key equivalent to `key`, preserving its identity, or `default`
+  when absent. Without it, canonical lookup uses pure deletion and an entry scan.
+  Optional `replace!-proc` has signature `(map entries) -> unspecified`; it replaces
+  all membership from the supplied entry list and rebuilds indexes even if the old
+  keys have mutated. This supports clearing inside mutable keys without detaching them first.
   Registration returns an unspecified value.
   |#
   (define nav-register-keyed!
     (case-lambda
       [(predicate ref-proc set-proc set!-proc delete-proc delete!-proc entries-proc)
        (nav-register-keyed! predicate ref-proc set-proc set!-proc delete-proc delete!-proc
-                            entries-proc #f)]
+                            entries-proc #f #f)]
       [(predicate ref-proc set-proc set!-proc delete-proc delete!-proc entries-proc empty-proc)
+       (nav-register-keyed! predicate ref-proc set-proc set!-proc delete-proc delete!-proc
+                            entries-proc empty-proc #f)]
+      [(predicate ref-proc set-proc set!-proc delete-proc delete!-proc entries-proc empty-proc
+                  canonical-proc)
+       (nav-register-keyed! predicate ref-proc set-proc set!-proc delete-proc delete!-proc
+                            entries-proc empty-proc canonical-proc #f)]
+      [(predicate ref-proc set-proc set!-proc delete-proc delete!-proc entries-proc empty-proc
+                  canonical-proc replace!-proc)
        (pcheck ([procedure? predicate ref-proc set-proc set!-proc
                             delete-proc delete!-proc entries-proc])
                (unless (or (not empty-proc) (procedure? empty-proc))
                  (nav-error 'nav-register-keyed! "expected empty-map procedure: ~s" empty-proc))
+               (unless (or (not canonical-proc) (procedure? canonical-proc))
+                 (nav-error 'nav-register-keyed!
+                            "expected canonical-key procedure: ~s" canonical-proc))
+               (unless (or (not replace!-proc) (procedure? replace!-proc))
+                 (nav-error 'nav-register-keyed!
+                            "expected replacement procedure: ~s" replace!-proc))
                (set! keyed-protocols
                      (cons (make-$keyed-protocol
                             (nav-protect-callback predicate)
@@ -117,7 +141,9 @@
                             (nav-protect-callback delete-proc)
                             (nav-protect-callback delete!-proc)
                             (nav-protect-callback entries-proc)
-                            (and empty-proc (nav-protect-callback empty-proc)))
+                            (and empty-proc (nav-protect-callback empty-proc))
+                            (and canonical-proc (nav-protect-callback canonical-proc))
+                            (and replace!-proc (nav-protect-callback replace!-proc)))
                            keyed-protocols))
                (void))]))
 
@@ -460,6 +486,36 @@
                   (($keyed-protocol-ref-proc protocol) value key nav-missing))]
             [else (nav-focus-error 'nav/key "unsupported keyed value: ~s" value)])))
 
+  (define keyed-canonical-key
+    (lambda (value key)
+      (cond [(hashtable? value)
+             (if (nav-call-user hashtable-contains? value key)
+                 (if (hashtable-mutable? value)
+                     (car (nav-call-user hashtable-cell value key nav-missing))
+                     (let ([same? (hashtable-equivalence-function value)])
+                       (let loop ([keys (vector->list (hashtable-keys value))])
+                         (cond [(null? keys) nav-missing]
+                               [(nav-call-user same? key (car keys)) (car keys)]
+                               [else (loop (cdr keys))]))))
+                 nav-missing)]
+            [(alist? value)
+             (let ([entry (assq key value)])
+               (if entry (car entry) nav-missing))]
+            [(find-keyed-protocol value)
+             => (lambda (protocol)
+                  (let ([proc ($keyed-protocol-canonical-proc protocol)])
+                    (if proc
+                        (proc value key nav-missing)
+                        (if (nav-missing? (keyed-ref/missing value key))
+                            nav-missing
+                            (let* ([without (keyed-delete value key)]
+                                   [entry (find (lambda (entry)
+                                                  (nav-missing?
+                                                   (keyed-ref/missing without (car entry))))
+                                                (keyed-entries value))])
+                              (if entry (car entry) nav-missing))))))]
+            [else nav-missing])))
+
   (define keyed-set
     (lambda (value key new-value)
       (cond [(hashtable? value)
@@ -609,6 +665,44 @@
                (keyed-set! value (car entry) child))))
        (keyed-entries value))
       value))
+
+  ;; Entry/key suffixes may mutate hash or ordering fields in a retained key.
+  ;; Work from a snapshot and rebuild membership even if a suffix raises or escapes.
+  ;; Legacy adapters detach first because their delete callback needs the old index.
+  (define keyed-transform-entries!
+    (lambda (value update!)
+      (let* ([entries (map (lambda (entry) (cons (car entry) (cdr entry)))
+                           (keyed-entries value))]
+             [protocol (and (not (or (hashtable? value) (alist? value)))
+                            (find-keyed-protocol value))]
+             [replace! (and protocol ($keyed-protocol-replace!-proc protocol))]
+             [readonly? (and (hashtable? value) (not (hashtable-mutable? value)))])
+        (unless (or (hashtable? value) (alist? value) replace!)
+          (for-each (lambda (entry) (keyed-delete! value (car entry))) entries))
+        (dynamic-wind
+          void
+          (lambda ()
+            (for-each
+             (lambda (old)
+               (let* ([key (car old)] [entry (update! (cons key (cdr old)))])
+                 (unless (and (not (nav-missing? entry)) (pair? entry)
+                              (eq? key (car entry)))
+                   (nav-error 'nav-clearval! "mutable clearing must retain entry key"))
+                 (when readonly? (keyed-set! value key (cdr entry)))
+                 (set-cdr! old (cdr entry))))
+             entries))
+          (lambda ()
+            (cond [readonly? (void)]
+                  [(alist? value)
+                   (for-each (lambda (old entry)
+                               (set-car! old (car entry)) (set-cdr! old (cdr entry)))
+                             value entries)]
+                  [replace! (replace! value entries)]
+                  [else
+                   (when (hashtable? value) (hashtable-clear! value))
+                   (for-each (lambda (entry)
+                               (keyed-set! value (car entry) (cdr entry))) entries)])))
+        value)))
 
   (define keyed-keys
     (lambda (value)

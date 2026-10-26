@@ -1105,7 +1105,11 @@
      (treemap-delete! tm key)
      tm)
    treemap->list
-   (lambda (tm) (make-treemap-like tm)))
+   (lambda (tm) (make-treemap-like tm))
+   rbtree-ref-key
+   (lambda (tm entries)
+     (treemap-clear! tm)
+     (for-each (lambda (entry) (treemap-set! tm (car entry) (cdr entry))) entries)))
 
   (iter-register-source!
    fxtreemap?
@@ -1141,7 +1145,11 @@
      (fxtreemap-delete! tm key)
      tm)
    fxtreemap->list
-   (lambda (tm) (make-fxtreemap-like tm)))
+   (lambda (tm) (make-fxtreemap-like tm))
+   rbtree-ref-key
+   (lambda (tm entries)
+     (fxtreemap-clear! tm)
+     (for-each (lambda (entry) (fxtreemap-set! tm (car entry) (cdr entry))) entries)))
 
   (record-writer (type-descriptor $treemap) write-treemap)
   (record-writer (type-descriptor $fxtreemap) write-treemap)

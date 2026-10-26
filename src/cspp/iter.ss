@@ -22,6 +22,7 @@
           (cspp vector)
           (cspp utils)
           (cspp internal)
+          (cspp private iter-scope)
           (cspp control))
 
   (define-record-type ($iter mk-$iter $iter?)
@@ -80,6 +81,27 @@
 
   ;; Get the next item from the iterator,
   ;; also run the item through the ops pipeline, if any.
+  (define iter-next/raw!
+    (lambda (iter)
+      (if ($iter-finalized? iter)
+          (errorf 'iter-next! "finalized iterator cannot be advanced!")
+          (let ([ops (($iter-ops iter))])
+            (if (null? ops)
+                (($iter-next!-proc iter))
+                (let iter-loop ()
+                  (let ([x (($iter-next!-proc iter))])
+                    (if (eq? x iter-end)
+                        x
+                        (let op-loop ([op* ops] [x x])
+                          (if (null? op*)
+                              x
+                              (let ([ty (caar op*)] [proc (cdar op*)])
+                                (case ty
+                                  [proc (op-loop (cdr op*) (proc x))]
+                                  [filter (if (proc x)
+                                              (op-loop (cdr op*) x)
+                                              (iter-loop))]))))))))))))
+
   #|proc:iter-next!
   Return the next value from `iter`, or `iter-end` when exhausted. It is an error
   to advance a finalized iterator.
@@ -87,25 +109,11 @@
   (define iter-next!
     (lambda (iter)
       (pcheck ([$iter? iter])
-              (if ($iter-finalized? iter)
-                  (errorf 'iter-next! "finalized iterator cannot be advanced!")
-                  (let ([ops (($iter-ops iter))])
-                (if (null? ops)
-                    (($iter-next!-proc iter))
-                    (let iter-loop ()
-                      (let ([x (($iter-next!-proc iter))])
-                        (if (eq? x iter-end)
-                            x
-                            (let op-loop ([op* ops] [x x])
-                              (if (null? op*)
-                                  x
-                                  (let* ([ty (caar op*)]
-                                         [proc (cdar op*)])
-                                    (case ty
-                                      [proc (op-loop (cdr op*) (proc x))]
-                                      [filter (if (proc x)
-                                                  (op-loop (cdr op*) x)
-                                                  (iter-loop))])))))))))))))
+              (let ([pull (current-iter-pull)])
+                (if pull
+                    (pull (lambda () (iter-next/raw! iter)))
+                    (iter-next/raw! iter))))))
+
   #|proc:iter-reset!
   Reset `iter` for a new pass and clear its operation pipeline. It is an error
   to reset a finalized iterator. The procedure returns an unspecified value.

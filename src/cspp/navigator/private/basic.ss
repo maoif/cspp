@@ -9,6 +9,14 @@
           (cspp navigator private core)
           (cspp navigator private data))
 
+  ;; Scheme map does not prescribe callback order. Navigation callbacks always
+  ;; follow selection order, including indexed updates and stateful suffixes.
+  (define map-in-order
+    (lambda (proc items)
+      (let ([builder (make-list-builder)])
+        (for-each (lambda (item) (builder (proc item))) items)
+        (builder))))
+
   (define unsupported-transform!
     (lambda (who nav value)
       (nav-unsupported-error who nav value 'transform!)))
@@ -77,7 +85,7 @@
              (indexed-transform value (index-list (indexed-length value)) update)]
             [(keyed-supported? value) (keyed-update-values value update)]
             [(set-values value)
-             => (lambda (values) (set-replace value (map update values)))]
+             => (lambda (values) (set-replace value (map-in-order update values)))]
             [else (nav-focus-error 'nav-transform "unsupported collection: ~s" value)])))
 
   (define transform-all-values!
@@ -86,7 +94,7 @@
              (indexed-transform! value (index-list (indexed-length value)) update!)]
             [(keyed-supported? value) (keyed-update-values! value update!)]
             [(set-values value)
-             => (lambda (values) (set-replace! value (map update! values)))]
+             => (lambda (values) (set-replace! value (map-in-order update! values)))]
             [else (nav-focus-error 'nav-transform! "unsupported collection: ~s" value)])))
 
   ;; A set's membership policy belongs to its replacement callback. Always rebuild
@@ -107,7 +115,7 @@
             [(keyed-supported? value) (keyed-update-values value clear)]
             [(set-values value)
              => (lambda (members) (clear-set-values value members clear set-replace))]
-            [else (unsupported-clear 'nav-clearval value)])))
+            [else (nav-focus-error 'nav-clearval "unsupported collection: ~s" value)])))
 
   (define clear-all-values!
     (lambda (value clear!)
@@ -116,7 +124,7 @@
             [(keyed-supported? value) (keyed-update-values! value clear!)]
             [(set-values value)
              => (lambda (members) (clear-set-values value members clear! set-replace!))]
-            [else (unsupported-clear 'nav-clearval! value)])))
+            [else (nav-focus-error 'nav-clearval! "unsupported collection: ~s" value)])))
 
   (define emit-alist-key-values
     (lambda (alist key emit)
@@ -246,9 +254,6 @@
                      (keyed-set! value key child)))])
         value)))
 
-  (define empty-subtable
-    (lambda (table) (keyed-rebuild-entries table '())))
-
   (define alist-selected-location
     (lambda (who value key)
       (let loop ([entries value])
@@ -266,14 +271,20 @@
 
   (define selected-submap
     (lambda (keys value)
-      (keyed-rebuild-entries
+      (let ([lookup (if (and (hashtable? value) (not (hashtable-mutable? value)))
+                        (nav-call-user hashtable-copy value #t)
+                        value)])
+        (keyed-rebuild-entries
        value
-       (map (lambda (key)
-              (let ([selected (keyed-ref/missing value key)])
-                (when (nav-missing? selected)
-                  (nav-focus-error 'nav/submap "missing key ~s in: ~s" key value))
-                (cons key selected)))
-            keys))))
+       (map-in-order (lambda (key)
+              (let ([canonical (keyed-canonical-key lookup key)])
+                (let ([selected (if (nav-missing? canonical)
+                                    nav-missing
+                                    (keyed-ref/missing value canonical))])
+                  (when (nav-missing? selected)
+                    (nav-focus-error 'nav/submap "missing key ~s in: ~s" key value))
+                  (cons canonical selected))))
+            keys)))))
 
   (define updated-submap-entries
     (lambda (updated)
@@ -286,24 +297,7 @@
 
   (define submap-transform
     (lambda (keys value update)
-      (cond [(hashtable? value)
-             (let ([subtable (empty-subtable value)])
-               (for-each
-                (lambda (key)
-                  (let ([selected (keyed-ref/missing value key)])
-                    (if (nav-missing? selected)
-                        (nav-focus-error 'nav-transform "missing key ~s in: ~s" key value)
-                        (nav-call-user hashtable-set! subtable key selected))))
-                keys)
-               (let ([entries (updated-submap-entries (update subtable))]
-                     [result (nav-call-user hashtable-copy value #t)])
-                 (for-each (lambda (key) (nav-call-user hashtable-delete! result key)) keys)
-                 (for-each
-                  (lambda (entry)
-                    (nav-call-user hashtable-set! result (car entry) (cdr entry)))
-                  entries)
-                 result))]
-            [(alist? value)
+      (cond [(alist? value)
              (let ([replacements
                     (fold-left
                      (lambda (replacements key)
@@ -322,13 +316,21 @@
                        (cons (if replacement (cdr replacement) (car entries))
                              (loop (cdr entries)))))))]
             [(keyed-supported? value)
-             (let ([updated (update (selected-submap keys value))])
-               (let ([entries (updated-submap-entries updated)]
-                     [remaining (fold-left (lambda (result key) (keyed-delete result key))
-                                           value keys)])
-                 (fold-left (lambda (result entry)
-                              (keyed-set result (car entry) (cdr entry)))
-                            remaining entries)))]
+             (let* ([submap (selected-submap keys value)]
+                    [selected-keys (make-eq-hashtable)]
+                    [original (keyed-entries value)])
+               (for-each (lambda (entry) (hashtable-set! selected-keys (car entry) #t))
+                         (keyed-entries submap))
+               (let ([updated (updated-submap-entries (update submap))]
+                     [builder (make-list-builder)])
+                 (for-each (lambda (entry)
+                             (unless (hashtable-contains? selected-keys (car entry))
+                               (builder entry)))
+                           original)
+                 ;; Rebuild the complete membership once. Pure per-key setters
+                 ;; can copy the whole parent on every deletion and insertion.
+                 (for-each builder updated)
+                 (keyed-rebuild-entries value (builder))))]
             [else (nav-focus-error 'nav-transform "unsupported keyed value: ~s" value)])))
 
   (define submap-clear
@@ -423,12 +425,51 @@
                     clear-all-values
                     clear-all-values!))
 
+  (define retained-key
+    (lambda (value key clear)
+      (let ([child (clear key)])
+        (when (nav-missing? child) (unsupported-clear 'nav/keys value))
+        child)))
+
+  (define clear-index-keys
+    (lambda (value clear)
+      (for-each (lambda (index)
+                  (unless (eqv? index (retained-key value index clear))
+                    (nav-error 'nav/keys "sequence index must remain unchanged: ~s" index)))
+                (index-list (indexed-length value)))
+      value))
+
+  (define clear-keys
+    (lambda (value clear)
+      (if (and (not (alist? value)) (indexed-supported? value))
+          (clear-index-keys value clear)
+          (let ([entries (keyed-entries value)])
+            (cond [entries
+                   (keyed-rebuild-entries
+                    value
+                    (map-in-order (lambda (entry)
+                                    (cons (retained-key value (car entry) clear) (cdr entry)))
+                                  entries))]
+                  [else (nav-focus-error 'nav-clearval "unsupported collection: ~s" value)])))))
+
+  (define clear-keys!
+    (lambda (value clear!)
+      (cond [(and (not (alist? value)) (indexed-supported? value))
+             (clear-index-keys value clear!)]
+            [(keyed-supported? value)
+             (keyed-transform-entries!
+              value (lambda (entry)
+                      (cons (retained-key value (car entry) clear!) (cdr entry))))]
+            [else (nav-focus-error 'nav-clearval! "unsupported collection: ~s" value)])))
+
   #|proc:nav/keys
   The `nav/keys` navigator focuses map keys for alists and keyed containers, or
   sequence indexes for other indexed containers. Pure map transforms replace old keys.
   When transformed keys collide, the last entry in traversal order wins in maps with unique
   keys; alists retain duplicates. Sequence indexes are read-only: pure transforms return
   the sequence unchanged without invoking the callback, and mutation raises an error.
+  Clearing traverses later path steps while retaining each key. Mutable clearing rebuilds
+  map indexes when retained key objects change. Mutable replacement and key removal are unsupported.
   |#
   (define nav/keys
     (make-basic-nav
@@ -449,13 +490,13 @@
              [(keyed-entries value)
               => (lambda (entries)
                    (keyed-rebuild-entries
-                    value (map (lambda (entry) (cons (update (car entry)) (cdr entry)))
+                    value (map-in-order (lambda (entry) (cons (update (car entry)) (cdr entry)))
                                entries)))]
              [else (nav-focus-error 'nav-transform "unsupported collection: ~s" value)]))
      (lambda (value update!)
        (nav-error 'nav-transform! "navigator nav/keys does not support mutation for: ~s" value))
-     (lambda (value clear) (unsupported-clear 'nav-clearval value))
-     (lambda (value clear!) (unsupported-clear 'nav-clearval! value))))
+     clear-keys
+     clear-keys!))
 
   (define checked-entry
     (lambda (update entry)
@@ -467,7 +508,7 @@
   (define transform-entries
     (lambda (value update)
        (cond [(alist? value)
-              (map (lambda (entry) (checked-entry update entry)) value)]
+              (map-in-order (lambda (entry) (checked-entry update entry)) value)]
              [(indexed-supported? value)
               (let ([index 0])
                 (indexed-transform
@@ -481,7 +522,7 @@
              [(keyed-entries value)
               => (lambda (entries)
                    (keyed-rebuild-entries
-                    value (map (lambda (old)
+                    value (map-in-order (lambda (old)
                                  (let ([entry (update old)])
                                    (unless (pair? entry)
                                      (nav-error 'nav-transform "expected entry pair: ~s" entry))
@@ -508,15 +549,8 @@
                   (set-car! old (car entry))
                   (set-cdr! old (cdr entry)))) value)
              value]
-            [(keyed-entries value)
-             => (lambda (entries)
-                  (for-each
-                   (lambda (old)
-                     (let ([entry (checked-entry clear! old)])
-                       (unless (eq? (car entry) (car old))
-                         (nav-error 'nav/entries "mutable clearing must retain entry key"))
-                       (keyed-set! value (car old) (cdr entry)))) entries)
-                  value)]
+            [(keyed-supported? value)
+             (keyed-transform-entries! value (lambda (entry) (checked-entry clear! entry)))]
             [else (nav-focus-error 'nav/entries "unsupported collection: ~s" value)])))
 
   #|proc:nav/entries
@@ -749,14 +783,15 @@
 
   #|proc:nav/key/default
   The `nav/key/default` procedure returns a navigator that focuses the value for
-  `key`, or focuses `default` when `key` is missing. For alists it focuses every matching
+  `key`, or focuses `default` (which defaults to `#f`) when `key` is missing.
+  For alists it focuses every matching
   entry in order, just like `nav/key`. Clearing visits a missing key's default through
   later path steps but never inserts that key. Transforming inserts it only if the full path
   reaches the update callback. The result is a navigator.
   |#
   (define nav/key/default
     (case-lambda
-      [(key) (nav/key/default key nav-missing)]
+      [(key) (nav/key/default key #f)]
       [(key default)
        (make-basic-nav
         'nav/key/default `(nav/key/default ,key ,default)
@@ -832,17 +867,7 @@
       (make-basic-nav
        'nav/submap `(nav/submap ,@keys)
        (lambda (value emit)
-         (cond [(hashtable? value)
-                (let ([table (empty-subtable value)])
-                  (for-each
-                   (lambda (key)
-                     (let ([selected (keyed-ref/missing value key)])
-                       (if (nav-missing? selected)
-                           (nav-focus-error 'nav/submap "missing key ~s in: ~s" key value)
-                           (nav-call-user hashtable-set! table key selected))))
-                   keys)
-                  (emit table))]
-               [(alist? value)
+         (cond [(alist? value)
                 (for-each
                  (lambda (key)
                    (let ([entry (alist-selected-entry 'nav/submap value key)])
