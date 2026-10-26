@@ -181,6 +181,13 @@
                value]
               [else (keyed-set! value key (update! old))]))))
 
+  ;; A default is a virtual focus: traverse its suffix, but clearing never inserts it.
+  (define clear-default-focus
+    (lambda (selected default value clear present)
+      (if (nav-missing? selected)
+          (begin (clear default) value)
+          (present))))
+
   (define indexed-clear
     (lambda (index value clear)
       (indexed-clear-values value (list index) clear)))
@@ -547,7 +554,8 @@
 
   #|proc:nav/nth/default
   The `nav/nth/default` procedure returns a navigator that focuses zero-based
-  `index`, or `default` when the index is out of range.
+  `index`, or `default` when the index is out of range. Clearing visits the default
+  through later path steps but never inserts a missing location. The result is a navigator.
   |#
   (define nav/nth/default
     (lambda (index default)
@@ -571,9 +579,11 @@
                          (indexed-set! value index (update! selected))
                          value))))
                (lambda (value clear)
-                 (indexed-clear index value clear))
+                 (clear-default-focus (indexed-ref/missing value index) default value clear
+                                      (lambda () (indexed-clear index value clear))))
                (lambda (value clear!)
-                 (indexed-clear! index value clear!))))))
+                 (clear-default-focus (indexed-ref/missing value index) default value clear!
+                                      (lambda () (indexed-clear! index value clear!))))))))
 
   #|proc:nav/first
   The `nav/first` navigator focuses the first element of a supported sequence.
@@ -701,7 +711,8 @@
   #|proc:nav/key/default
   The `nav/key/default` procedure returns a navigator that focuses the value for
   `key`, or focuses `default` when `key` is missing. For alists it focuses every matching
-  entry in order, just like `nav/key`.
+  entry in order, just like `nav/key`. Clearing visits a missing key's default through
+  later path steps but never inserts that key. The result is a navigator.
   |#
   (define nav/key/default
     (case-lambda
@@ -718,8 +729,12 @@
           (key-transform key default #t value update))
         (lambda (value update!)
           (key-transform! key default #t value update!))
-        (lambda (value clear) (key-clear key value clear))
-        (lambda (value clear!) (key-clear! key value clear!)))]))
+        (lambda (value clear)
+          (clear-default-focus (keyed-ref/missing value key) default value clear
+                               (lambda () (key-clear key value clear))))
+        (lambda (value clear!)
+          (clear-default-focus (keyed-ref/missing value key) default value clear!
+                               (lambda () (key-clear! key value clear!)))))]))
 
   #|proc:nav/key-values
   The `nav/key-values` procedure returns a navigator that focuses the values for

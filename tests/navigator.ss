@@ -2008,3 +2008,29 @@
   (let ([source (list 0 2 3)])
     (and (eq? source (nav-transform! (nav/slice 0 3 1000000000000000000000) add1 source))
          (equal? '(1 2 3) source))))
+
+(mat navigator-review-clearing-absent-defaults
+  (let ([source (vector 1)] [seen '()])
+    (and (eq? source
+              (nav-clearval (nav/path (nav/nth/default 3 #f)
+                                     (nav/pred (lambda (value)
+                                                 (set! seen (cons value seen)) #t))) source))
+         (equal? '(#f) seen)
+         (equal? '#(1) source)))
+
+  (let ([source (vector 1)])
+    (eq? source (nav-clearval! (nav/path (nav/nth/default 3 #f) nav/none) source)))
+
+  (let ([source '((a . 1))])
+    (eq? source (nav-clearval (nav/path (nav/key/default 'missing #f) nav/none) source)))
+
+  (let ([source (ht 'a 1)] [seen '()])
+    (and (eq? source
+              (nav-clearval! (nav/path (nav/key/default 'missing #f)
+                                      (nav/pred (lambda (value)
+                                                  (set! seen (cons value seen)) #t))) source))
+         (equal? '(#f) seen)
+         (= 1 (hashtable-size source))))
+
+  ;; Errors from a suffix still propagate when it runs on a default focus.
+  (error? (nav-clearval (nav/path (nav/nth/default 3 #f) (nav/key 'x)) '#(1))))
