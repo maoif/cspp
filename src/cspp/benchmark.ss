@@ -1016,6 +1016,10 @@ The `make-benchmark` procedure creates a benchmark descriptor named by symbol
 `benchmark-options`. Options include argument tables/ranges, sample setup/teardown,
 fixture and suite context, template arguments, and runner configuration defaults.
 Unknown options and invalid hooks/configuration values are rejected at construction.
+Setup has signature `(lambda (state) value)`; teardown has signature
+`(lambda (state value) unspecified)` and runs after the body, even without setup.
+Without setup, teardown receives `#f` and the body receives no extra argument.
+A fixture supplies both hooks; combining it with non-false descriptor hooks is an error.
 `unit`, `complexity`, and `throughput` are descriptive metadata; they do not change
 measurement or reporting.
 |#
@@ -1026,15 +1030,20 @@ measurement or reporting.
                 (append '(args arg-range dense-arg-range setup teardown fixture suite template-args
                           unit complexity throughput)
                         $benchmark-config-keys))
-              (let ([args ($normalize-arguments options)])
+              (let ([args ($normalize-arguments options)]
+                    [setup ($option-ref options 'setup #f)]
+                    [teardown ($option-ref options 'teardown #f)]
+                    [fixture ($option-ref options 'fixture #f)])
+                (when (and fixture (or setup teardown))
+                  (errorf 'make-benchmark "fixture conflicts with setup or teardown hooks"))
                 ($mk-benchmark name
                                body
                                options
                                args
                                ($argument-names args)
-                               ($option-ref options 'setup #f)
-                               ($option-ref options 'teardown #f)
-                               ($option-ref options 'fixture #f)
+                               (if fixture ($benchmark-fixture-setup fixture) setup)
+                               (if fixture ($benchmark-fixture-teardown fixture) teardown)
+                               fixture
                                ($option-ref options 'suite #f)
                                ($option-ref options 'template-args '()))))))
 
@@ -1935,6 +1944,7 @@ The `define-fixture-benchmark` macro defines and registers benchmark `name`
 using fixture descriptor `fixture`. `options` has the same argument syntax as
 `define-benchmark`; `body` receives state, argument values in option order, and
 the fixture setup value.
+Descriptor `:setup` and `:teardown` hooks cannot be combined with a fixture.
 |#
   (define-syntax define-fixture-benchmark
     (syntax-rules ()
@@ -2083,18 +2093,10 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
 
   (define $setup-for-sample
     (lambda (benchmark state)
-        (let ([fixture ($benchmark-fixture-ref benchmark)])
-        (cond
-         [fixture
-          (values (($benchmark-fixture-setup fixture) state)
-                  ($benchmark-fixture-teardown fixture)
-                  #t)]
-         [($benchmark-setup benchmark)
-          (values (($benchmark-setup benchmark) state)
-                  (or ($benchmark-teardown benchmark) $void-procedure)
-                  #t)]
-         [else
-          (values #f $void-procedure #f)]))))
+      (let ([setup ($benchmark-setup benchmark)])
+        (values (if setup (setup state) #f)
+                ($benchmark-teardown benchmark)
+                (and setup #t)))))
 
   (define $measure-sample
     (lambda (benchmark state values iterations)
@@ -2114,7 +2116,6 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
          (lambda (setup-results)
            (let ([setup-value (car setup-results)]
                  [teardown (cadr setup-results)]
-                 [setup-value? (caddr setup-results)]
                  [arguments (if (caddr setup-results)
                                 (append values (list (car setup-results)))
                                 values)]
@@ -2149,7 +2150,7 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                    (set! cleanup? #f)
                    (when ($benchmark-state-timing-paused? sample-state)
                      (benchmark-resume-timing sample-state))
-                   (when setup-value?
+                   (when teardown
                      (guard (exn [else (unless failed? (raise exn))])
                        (teardown sample-state setup-value))))))))))))
 

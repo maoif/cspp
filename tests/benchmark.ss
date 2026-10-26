@@ -1737,3 +1737,78 @@
             (= calls 26)
             (equal? (map benchmark-sample-iterations samples) '(5 5))
             (equal? (map benchmark-sample-counters samples) '(((work . 5)) ((work . 5)))))))
+
+(mat benchmark-standalone-teardown
+  ;; Cleanup-only hooks receive no setup value and run after successful and failing bodies.
+  (for-all
+    (lambda (raises?)
+      (let ([events '()])
+        (let* ([benchmark
+                (make-benchmark 'cleanup-only
+                  (lambda (state)
+                    (benchmark-state-set-user-data! state 'acquired)
+                    (set! events (cons 'body events))
+                    (when raises? (error 'cleanup-only "body error")))
+                  `((setup . #f)
+                    (teardown . ,(lambda (state value)
+                                   (set! events
+                                     (cons (list 'cleanup value (benchmark-state-user-data state))
+                                           events))))))]
+               [result (car (benchmark-run benchmark
+                              (benchmark-config-with (benchmark-test-config)
+                                '((samples . 1)))))])
+          (and (equal? (reverse events) '(body (cleanup #f acquired)))
+               (if raises?
+                   (and (benchmark-result-error result)
+                        (eq? (condition-who (benchmark-result-error result)) 'cleanup-only))
+                   (not (benchmark-result-error result)))))))
+    '(#f #t))
+
+  ;; Error: a teardown error is reported when there is no primary body failure.
+  (let* ([benchmark
+          (make-benchmark 'cleanup-error (lambda (state) (void))
+            `((teardown . ,(lambda (state value) (error 'cleanup "cleanup error")))))]
+         [result (car (benchmark-run benchmark (benchmark-test-config)))])
+    (and (benchmark-result-error result)
+         (eq? (condition-who (benchmark-result-error result)) 'cleanup)))
+
+  ;; Error: a cleanup error must not replace a primary body failure.
+  (let* ([benchmark
+          (make-benchmark 'primary-error (lambda (state) (error 'body "primary"))
+            `((teardown . ,(lambda (state value) (error 'cleanup "secondary")))))]
+         [result (car (benchmark-run benchmark (benchmark-test-config)))])
+    (and (benchmark-result-error result)
+         (eq? (condition-who (benchmark-result-error result)) 'body))))
+
+(mat benchmark-fixture-hook-conflicts
+  ;; Error: descriptor hooks must not be silently ignored when a fixture supplies the lifecycle.
+  (let ([calls 0])
+    (define-benchmark-fixture lifecycle-fixture
+      (:setup (lambda (state) (set! calls (+ calls 1)) 'fixture-value)))
+    (and
+      (for-all
+        (lambda (hooks)
+          (guard (condition [else (and (who-condition? condition)
+                                      (eq? (condition-who condition) 'make-benchmark))])
+            (make-benchmark 'conflict (lambda (state value) (void))
+              (cons (cons 'fixture lifecycle-fixture) hooks))
+            #f))
+        (list `((setup . ,(lambda (state) 'local)))
+              `((teardown . ,(lambda (state value) (void))))
+              `((setup . ,(lambda (state) 'local))
+                (teardown . ,(lambda (state value) (void))))))
+      (= calls 0)))
+
+  ;; Explicit absent hooks do not conflict, and fixture values still reach the body.
+  (let ([events '()])
+    (define-benchmark-fixture lifecycle-fixture
+      (:setup (lambda (state) (set! events (cons 'setup events)) 'fixture-value)
+       :teardown (lambda (state value) (set! events (cons value events)))))
+    (let* ([benchmark
+            (make-benchmark 'fixture-only
+              (lambda (state value) (set! events (cons value events)))
+              `((fixture . ,lifecycle-fixture) (setup . #f) (teardown . #f)))]
+           [result (car (benchmark-run benchmark
+                          (benchmark-config-with (benchmark-test-config) '((samples . 1)))))])
+      (and (not (benchmark-result-error result))
+           (equal? (reverse events) '(setup fixture-value fixture-value))))))
