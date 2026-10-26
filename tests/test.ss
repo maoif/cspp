@@ -1335,3 +1335,62 @@
                                         (errored . 1) (skipped . 1) (xfail . 1) (xpass . 1)))
                  (eof-object? (read in)))))))
     '((#f #f) (1 #f) (#f 1) (1 1))))
+
+(mat test-output-expectations-do-not-reenter-condition-handlers
+  ;; Error: output mismatches remain failures even when every body condition is handled.
+  (for-all
+    (lambda (raises?)
+      (for-all
+        (lambda (xfail?)
+          (let ([calls 0])
+            (let* ([descriptor
+                    (make-test-case 'handled-output-mismatch
+                      (lambda ()
+                        (display "actual-out")
+                        (display "actual-err" (current-error-port))
+                        (when raises? (error 'body "handled")))
+                      `((capture . (stdout stderr)) (stdout . "expected-out")
+                        (condition-handler . ,(lambda (condition)
+                                                (set! calls (+ calls 1)) 'handled))
+                        (xfail-when . (,(lambda (parameters) xfail?) . "known mismatch"))))]
+                   [result (car (test-run (list descriptor)
+                                  (test-config-with (test-silent-config)
+                                    '((xfail-strict? . #t)))))]
+                   [condition (test-result-condition result)])
+              (and (= calls (if raises? 1 0))
+                   (eq? (test-result-status result) (if xfail? 'xfail 'failed))
+                   (string=? (test-result-stdout result) "actual-out")
+                   (string=? (test-result-stderr result) "actual-err")
+                   (test-failure? condition)
+                   (equal? (test-failure-expected condition) "expected-out")
+                   (equal? (test-failure-actual condition) "actual-out")))))
+        '(#f #t)))
+    '(#f #t))
+
+  ;; A handled condition with matching output is still an unexpected pass under strict xfail.
+  (let* ([descriptor
+          (make-test-case 'handled-output-match
+            (lambda () (display "expected") (error 'body "handled"))
+            `((capture . stdout) (stdout . "expected")
+              (condition-handler . ,(lambda (condition) 'handled))
+              (xfail-when . (,(lambda (parameters) #t) . "known issue"))))]
+         [result (car (test-run (list descriptor)
+                        (test-config-with (test-silent-config) '((xfail-strict? . #t)))))])
+    (and (eq? (test-result-status result) 'failed)
+         (string=? (test-result-stdout result) "expected")))
+
+  ;; Error: a failing policy callback keeps captured diagnostics without invoking itself again.
+  (let ([calls 0])
+    (let ([result
+           (car (test-run
+                  (list (make-test-case 'broken-handler
+                          (lambda () (display "diagnostic") (error 'body "original"))
+                          `((capture . stdout)
+                            (condition-handler . ,(lambda (condition)
+                                                    (set! calls (+ calls 1))
+                                                    (error 'handler "policy error"))))))
+                  (test-silent-config)))])
+      (and (= calls 1)
+           (eq? (test-result-status result) 'errored)
+           (string=? (test-result-stdout result) "diagnostic")
+           (eq? (condition-who (test-result-condition result)) 'handler)))))

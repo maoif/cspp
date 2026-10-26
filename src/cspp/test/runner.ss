@@ -279,22 +279,26 @@ association-list filters as `test-select`.
        [(eq? status 'errored) "unexpected condition"]
        [else ""])))
 
-  (define $condition-result
+  (define $status-result
+    (lambda (concrete-case status condition xfail? xfail-message stdout stderr)
+      (cond
+       [(eq? status 'passed)
+        ($case-result concrete-case (if xfail? 'xpass 'passed)
+                      (if xfail? xfail-message "") condition stdout stderr)]
+       [xfail? ($case-result concrete-case 'xfail xfail-message condition stdout stderr)]
+       [else
+        ($case-result concrete-case status ($condition-message status condition)
+                      condition stdout stderr)])))
+
+  (define $success-result
     (lambda (concrete-case metadata condition xfail? xfail-message stdout stderr)
-      (let ([status ($classify-condition metadata condition)])
-        (cond
-         [(eq? status 'passed)
-          (test-check-output-expectations metadata stdout stderr)
-          ($case-result concrete-case (if xfail? 'xpass 'passed)
-                        (if xfail? xfail-message "") condition stdout stderr)]
-         [xfail? ($case-result concrete-case 'xfail xfail-message condition stdout stderr)]
-         [else
-          ($case-result concrete-case
-                        status
-                        ($condition-message status condition)
-                        condition
-                        stdout
-                        stderr)]))))
+      ;; Output assertions are runner checks, not body conditions for the custom handler.
+      (guard (condition
+              [else ($status-result concrete-case
+                                    (if (test-failure? condition) 'failed 'errored)
+                                    condition xfail? xfail-message stdout stderr)])
+        (test-check-output-expectations metadata stdout stderr)
+        ($status-result concrete-case 'passed condition xfail? xfail-message stdout stderr))))
 
   (define $requirement-skip-message
     (lambda (metadata)
@@ -419,15 +423,16 @@ association-list filters as `test-select`.
               ($strict-xpass-result
                concrete-case config
                (guard (condition
-                       [else ($condition-result concrete-case metadata condition
-                                                xfail? xfail-message stdout stderr)])
-                 (if (eq? (car outcome) 'condition)
-                     ($condition-result concrete-case metadata (cadr outcome)
+                       [else ($case-result concrete-case 'errored "unexpected policy condition"
+                                           condition stdout stderr)])
+                 (let* ([raised? (eq? (car outcome) 'condition)]
+                        [condition (and raised? (cadr outcome))]
+                        [status (if raised? ($classify-condition metadata condition) 'passed)])
+                   (if (eq? status 'passed)
+                       ($success-result concrete-case metadata condition
                                         xfail? xfail-message stdout stderr)
-                     (begin
-                       (test-check-output-expectations metadata stdout stderr)
-                       ($case-result concrete-case (if xfail? 'xpass 'passed)
-                                     (if xfail? xfail-message "") #f stdout stderr))))))])))))
+                       ($status-result concrete-case status condition
+                                       xfail? xfail-message stdout stderr))))))])))))
 
   (define $compile-temp-path
     (lambda ()

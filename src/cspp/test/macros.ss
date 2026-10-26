@@ -319,6 +319,10 @@
   `(lambda (fixtures) unspecified)`. Cleanup runs even if setup or `:before` raises;
   then `:after` receives only the fixtures successfully acquired in declaration order.
   If setup or the body and cleanup both raise, the primary condition takes precedence.
+  A custom `:condition-handler` has signature `(lambda (condition) disposition)`;
+  `handled` passes the body, `failed` fails it, and other dispositions mark it errored.
+  Captured output expectations are checked separately after successful or handled bodies;
+  their failures do not invoke the custom handler.
   |#
   (define-syntax test-case
     (syntax-rules ()
