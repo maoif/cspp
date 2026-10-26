@@ -84,6 +84,12 @@ Examples:
   `,name` captures a value, `` `name `` compares against a bound value, and `_` ignores a value.
   List and vector patterns destructure their elements; `...` repeats a pattern zero or more times,
   collecting its captures in lists. Captures preceding a suffix are visible to its backreferences.
+  A repeated prefix prefers the shortest prefix whose remaining suffix matches. For example,
+  `(match '(1 2) [(,x ... ,y ...) (list x y)])` returns `(() (1 2))`; vector patterns use the
+  same preference. A false clause condition proceeds to the next clause without trying another
+  partition of an already matched pattern. Literal symbols use bare names; `'name` is the
+  structural list pattern `(quote name)`, and `_` and repetition-position `...` retain their
+  special meanings. Use captures and conditions to distinguish reserved pattern shapes as data.
   Records use `,(record Type :fields (field pattern) ...)` for a named subset of fields,
   or `,(record Type :values pattern ...)` for all fields in declaration order. Both native Chez
   and CSPP record types are supported. Empty `:fields` checks only the type; empty `:values`
@@ -96,8 +102,11 @@ Examples:
   `,(datatype Type Variant :values pattern ...)` with the same field rules as records.
   A zero-field variant also accepts the shorthand `,(datatype Type Singleton)`.
   Datatype patterns select the declared variant type; the old `,(Type Variant ...)` is unsupported.
-  The `record`, `datatype`, `:fields`, and `:values` tags are recognized by spelling. Other heads
-  retain custom-expander dispatch; a record named `hash` uses `,(record hash :values ...)`.
+  The `record`, `datatype`, `box`, `regex`, and `hash` heads are reserved by spelling, as are the
+  field-mode tags `:fields` and `:values` in record and datatype patterns. Other heads retain
+  custom-expander dispatch; a record named `hash` uses `,(record hash :values ...)`.
+  A custom head `name` resolves the compile-time binding `name-expander` registered by
+  `define-match-expander` from `(cspp private match)`; its expander defines its argument grammar.
   Box, hash, and regex extensions retain their existing forms. Expressions embedded in
   extensions are evaluated as expressions and do not declare pattern captures.
   Literal regex strings and quoted SREs compile lazily once per match invocation, including

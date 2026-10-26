@@ -148,10 +148,23 @@
 
 
   #|macro:define-match-expander
-  The `define-match-expander` macro registers `name` as a custom `match` extension.
+  The `define-match-expander` macro registers the compile-time binding `name` for `match`.
+  It is exported by `(cspp private match)`. Register `foo-expander` to support the head `foo`
+  in `,(foo argument ...)`; defining only `foo` does not register that head.
   `expander` receives `(process-pattern rho expr-id pattern body failure)` and returns
-  expansion syntax. For example, a `pair` expander can make `,(pair ,a ,b)` return the
-  two fields, so `(match (cons 1 2) [,(pair ,x ,y) (+ x y)])` returns `3`.
+  expansion syntax. The callback `(process-pattern rho input subpattern success failure)`
+  compiles a subpattern with its captures in scope for the success syntax. `rho` resolves
+  compile-time bindings, and `failure` identifies a zero-argument failure procedure.
+  For example:
+  ```scheme
+  (define-match-expander identity-expander
+    (lambda (process-pattern rho input pattern success failure)
+      (syntax-case pattern ()
+        [(_ subpattern)
+         (process-pattern rho input #'subpattern success failure)])))
+  (match 42 [,(identity ,x) x]) ; => 42
+  ```
+  The built-in heads `record`, `datatype`, `box`, `regex`, and `hash` cannot be overridden.
   Under repetition, only identifiers supplied in the caller's pattern can escape as captures.
   Fresh identifiers introduced by the expander remain private, including within alternatives.
   |#
