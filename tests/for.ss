@@ -2073,3 +2073,83 @@
                  (set! key 'changed)
                  (set! value 10)
                  (read-pair)))))
+
+(mat list-result-length-limit
+     (guard (condition [#t #f])
+       (equal? '(0 1)
+               (eval '(for/list ([:length 2] [x 4]) x) (environment '(cspp)))))
+
+     (guard (condition [#t #f])
+       (equal? '((0 1) (1 3) (2 5))
+               (eval '(let ([limit 3])
+                        (for/list ([:index i] [:length (+ limit 0)] [x 10]
+                                   [:guard (odd? x)])
+                          (list i x)))
+                     (environment '(cspp)))))
+
+     (guard (condition [#t #f])
+       (equal? '((0 0) (0 1) (1 0))
+               (eval '(for*/list ([:length 3] [x 3] [y 2]) (list x y))
+                     (environment '(cspp)))))
+
+     (guard (condition [#t #f])
+       (equal? '(10 11)
+               (eval '(for/list ([:length 5] [x :list '(10 11)]) x)
+                     (environment '(cspp)))))
+
+     ;; Reserved option tags must not accidentally become iterator variables.
+     (error? (eval '(for ([:length 2] [x 3]) x)))
+
+     (error? (eval '(for/list ([x 3] [:length 2]) x)))
+
+     (error? (eval '(for*/list ([x 3] [:length 2]) x))))
+
+(mat list-result-limit-evaluation
+     (guard (condition [#t #f])
+       (equal? '((1 3) 1 2)
+               (eval '(let ([length-calls 0] [body-calls 0])
+                        (let ([result
+                               (for/list ([:length (begin (set! length-calls
+                                                                (+ length-calls 1)) 2)]
+                                          [x :nums +inf.0] [:guard (odd? x)])
+                                 (set! body-calls (+ body-calls 1))
+                                 x)])
+                          (list result length-calls body-calls)))
+                     (environment '(cspp)))))
+
+     (guard (condition [#t #f])
+       (equal? '(() ())
+               (eval '(list
+                       (for/list ([:length 0]
+                                  [x :iota (error 'list-limit "source evaluated")])
+                         (error 'list-limit "body evaluated"))
+                       (for*/list ([:length 0]
+                                   [x :iota (error 'list-limit "source evaluated")])
+                         (error 'list-limit "body evaluated")))
+                     (environment '(cspp)))))
+
+     (guard (condition [#t #f])
+       (equal? '((0 1 10) 2 3)
+               (eval '(let ([sources 0] [bodies 0])
+                        (let ([result
+                               (for*/list ([:index i] [:length 3] [x 4]
+                                           [y :iota (begin (set! sources (+ sources 1)) 2)])
+                                 (set! bodies (+ bodies 1))
+                                 (+ (* 10 x) y))])
+                          (list result sources bodies)))
+                     (environment '(cspp)))))
+
+     (guard (condition [#t #f])
+       (equal? '((0 10 20) (0 1))
+               (eval '(list
+                       (for*/list ([:length 3] [x 4] [y 4] [:break (= y 1)])
+                         (+ (* 10 x) y))
+                       (for*/list ([:length 5] [x 4] [y 4] [:stop (= y 2)]) y))
+                     (environment '(cspp)))))
+
+     ;; Length expressions must produce nonnegative fixnums, even for empty sources.
+     (error? (eval '(for/list ([:length -1] [x 0]) x)))
+
+     (error? (eval '(for*/list ([:length 1.5] [x 0]) x)))
+
+     (error? (eval '(for/list ([:length (+ (most-positive-fixnum) 1)] [x 0]) x))))

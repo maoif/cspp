@@ -201,6 +201,18 @@
                 (values #t #t))]
         [_ (values #f #f)])))
 
+  #|proc:iterator-variable?
+  The `iterator-variable?` helper accepts an identifier except a reserved clause tag.
+  `variable` is proposed iterator-binding syntax. For example, `x` returns `#t`, while
+  `:length` returns `#f`, preventing an unsupported option from becoming a literal iterator.
+  |#
+  (define iterator-variable?
+    (lambda (variable)
+      (and (identifier? variable)
+           (not (or (kw-for*-config-clause? variable)
+                    (kw:init? variable) (kw:finish? variable)
+                    (kw:length? variable) (kw:fill? variable))))))
+
   (define handle-iter
     (lambda (state cl)
       (define (add-clause! cl)
@@ -213,12 +225,12 @@
          (begin (add-clause! cl)
                 (values #t #t))]
         [(v iter-ty op* ...)
-         (and (identifier? #'v)
+         (and (iterator-variable? #'v)
               (valid-iter-ty? #'iter-ty))
          (begin (add-clause! cl)
                 (values #t #t))]
         [(v lit)
-         (and (identifier? #'v) (literal? #'lit))
+         (and (iterator-variable? #'v) (literal? #'lit))
          (begin (add-clause! cl)
                 (values #t #t))]
         [_ (values #f #f)])))
@@ -273,12 +285,12 @@
          (begin (add-clause! cl)
                 (values #t #t))]
         [(v iter-ty op* ...)
-         (and (identifier? #'v)
+         (and (iterator-variable? #'v)
               (valid-iter-ty? #'iter-ty))
          (begin (add-clause! cl)
                 (values #t #t))]
         [(v lit)
-         (and (identifier? #'v) (literal? #'lit))
+         (and (iterator-variable? #'v) (literal? #'lit))
          (begin (add-clause! cl)
                 (values #t #t))]
         [_ (values #f #f)])))

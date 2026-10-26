@@ -83,6 +83,7 @@
   Binding clauses scope their variables over subsequent clauses and the body. Each binding clause
   uses its corresponding Scheme binding form with one binding. An indexed guard binds a zero-based
   index counting passes through that guard, including passes rejected by a later guard.
+  Clause tags such as `:length` and `:guard` are reserved as bare iterator-binding names.
   Iterator-local `:guard` filters its own source before parallel items are paired. Iterator-local
   `:index` binds the original source position, before filtering, and is available to the guard.
   Local guards share item and index bindings with the body. They see surrounding lexical
@@ -641,25 +642,65 @@
            #'(for/fold (cl* ...) body* ...))])))
 
 
+  #|macro:$for/list
+  The `$for/list` helper collects results using `loop`, either `for` or `for*`; `who` names the
+  public form in errors. It accepts a leading global index and optional `:length` before the
+  ordinary loop clauses. A length is a nonnegative fixnum limiting accepted body results across
+  all loop levels; zero evaluates neither sources nor the body. For example, a limit of two
+  over source `(0 1 2)` returns `(0 1)`. Without a limit it uses the original list-builder loop.
+  |#
+  (define-syntax $for/list
+    (lambda (stx)
+      (define (generate loop who limit clauses body)
+        (with-syntax ([loop loop] [who who] [(clause ...) clauses] [(body ...) body])
+          (if limit
+              #`(let ([limit #,limit])
+                  (unless (and (fixnum? limit) (fx>= limit 0))
+                    (errorf 'who "length is not a nonnegative fixnum: ~a" limit))
+                  (let ([builder (make-list-builder)] [position 0])
+                    (unless (fxzero? limit)
+                      ;; Leave all nested levels immediately after collecting the limit.
+                      (call/1cc
+                       (lambda (finish)
+                         (loop (clause ...)
+                           (builder (begin body ...))
+                           (set! position (fx1+ position))
+                           (when (fx= position limit) (finish (void)))))))
+                    (builder)))
+              #'(let ([builder (make-list-builder)])
+                  (loop (clause ...) (builder (begin body ...)))
+                  (builder)))))
+      (syntax-case stx ()
+        [(_ loop who clauses body ...)
+         (syntax-case #'clauses ()
+           [((index-tag index) (length-tag limit) clause ...)
+            (and (kw:index? #'index-tag) (kw:length? #'length-tag))
+            (generate #'loop #'who #'limit #'((index-tag index) clause ...) #'(body ...))]
+           [((length-tag limit) clause ...)
+            (kw:length? #'length-tag)
+            (generate #'loop #'who #'limit #'(clause ...) #'(body ...))]
+           [_ (generate #'loop #'who #f #'clauses #'(body ...))])])))
+
   #|doc
 (for/list (<index-clause>?
            <length-clause>?
+           <iter-clause>+
            <for-config-clause>*)
   <body>+)
   |#
   #|macro:for/list
   The `for/list` macro runs `for` and collects each body result in source order.
   It returns a newly built list. `:index`, iterator options, guards, bindings, and breaks follow
-  `for/fold`; the body result is evaluated once for every accepted tuple.
+  `for/fold`; the body result is evaluated once for every accepted tuple. An optional `:length`
+  after the global index limits the number of collected results to a nonnegative fixnum.
+  Its expression is evaluated once before the sources; zero skips the sources and body.
+  For example, `(for/list ([:length 2] [x 5]) x)` returns `(0 1)`.
   |#
   (define-syntax for/list
     (lambda (stx)
       (syntax-case stx ()
         [(_ (cl* ...) body* ...)
-         #'(let ([lb (make-list-builder)])
-             (for (cl* ...)
-               (lb (begin body* ...)))
-             (lb))])))
+         #'($for/list for for/list (cl* ...) body* ...)])))
 
 
   #|doc
@@ -797,22 +838,22 @@
 
   #|doc
 (for*/list (<index-clause>?
+              <length-clause>?
               <for*-clause>+)
   <body>+)
   |#
   #|macro:for*/list
   The `for*/list` macro runs `for*` and collects each body result in nested traversal order.
   It returns a newly built list; iterator-local guards, indexes, bindings, `:break`, and `:stop`
-  apply at the iterator level where they appear.
+  apply at the iterator level where they appear. Optional `:length` follows `for/list` and limits
+  the total results across all levels. For example,
+  `(for*/list ([:length 3] [x 2] [y 2]) (list x y))` returns `((0 0) (0 1) (1 0))`.
   |#
   (define-syntax for*/list
     (lambda (stx)
       (syntax-case stx ()
         [(_ (cl* ...) body* ...)
-         #'(let ([lb (make-list-builder)])
-             (for* (cl* ...)
-               (lb (begin body* ...)))
-             (lb))])))
+         #'($for/list for* for*/list (cl* ...) body* ...)])))
 
 
   #|doc
