@@ -4,6 +4,7 @@
           test-alist-ref test-alist-set test-remove-key test-metadata-ref
           test-natural-version-list?
           test-check-parameter-tables
+          test-color-mode? test-current-report-color
           chez-version
           chez-version<? chez-version<=? chez-version=? chez-version>=? chez-version>?)
   (import (cspp chez)
@@ -11,6 +12,24 @@
 
   (define-record-type ($test-reporter $make-test-reporter test-reporter?)
     (fields kind write))
+
+  #|proc:test-color-mode?
+  The internal `test-color-mode?` procedure returns whether `value` is a supported
+  reporting color mode: `auto`, `always`, or `never`.
+  |#
+  (define test-color-mode?
+    (lambda (value)
+      (and (memq value '(auto always never)) #t)))
+
+  #|proc:test-current-report-color
+  The internal `test-current-report-color` parameter carries the runner's color
+  override during reporting. `auto` retains each reporter's constructor policy;
+  `always` and `never` override it. The default is `auto` for direct reports.
+  |#
+  (define test-current-report-color
+    (make-parameter 'auto
+      (lambda (color)
+        (pcheck ([test-color-mode? color]) color))))
 
   #|proc:make-test-reporter
   The `make-test-reporter` procedure creates a reporter. `kind` is a symbol

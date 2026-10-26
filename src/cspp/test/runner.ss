@@ -494,9 +494,10 @@ association-list filters as `test-select`.
                                   (loop (cdr cases) (cons result out))))))])
                 (when (and (test-config-reporter config)
                            (test-config-output config))
-                  (test-report (test-config-reporter config)
-                               (test-config-output config)
-                               (test-summarize results)))
+                  (parameterize ([test-current-report-color (test-config-color config)])
+                    (test-report (test-config-reporter config)
+                                 (test-config-output config)
+                                 (test-summarize results))))
                 results))))
 
   #|proc:test-run-registry

@@ -126,21 +126,23 @@ datum summary, independent of diagnostic printer length and level limits.
   #|proc:test-progress-reporter
 The `test-progress-reporter` procedure returns a reporter that writes one
 status character per result followed by the text summary and failure details. `color` is
-`auto`, `always`, or `never`; only `always` forces ANSI styling.
+`auto`, `always`, or `never`; only `always` forces ANSI styling. The runner's
+explicit color configuration overrides this default while it reports results.
 |#
   (define test-progress-reporter
     (lambda (color)
-      (unless (memq color '(auto always never))
-        (errorf 'test-progress-reporter "invalid color mode: ~a" color))
-      (make-test-reporter
-       'progress
-       (lambda (out summary)
-         (for-each
-          (lambda (result)
-            (display ($status-text (test-result-status result) color) out))
-          (test-summary-results summary))
-         (newline out)
-         ($write-text-summary out summary)))))
+      (pcheck ([test-color-mode? color])
+              (make-test-reporter
+               'progress
+               (lambda (out summary)
+                 (let* ([override (test-current-report-color)]
+                        [color (if (eq? override 'auto) color override)])
+                   (for-each
+                    (lambda (result)
+                      (display ($status-text (test-result-status result) color) out))
+                    (test-summary-results summary))
+                   (newline out)
+                   ($write-text-summary out summary)))))))
 
   #|proc:test-report
 The `test-report` procedure writes `summary` to `output-port` using `reporter`.

@@ -51,10 +51,6 @@
     (lambda (status)
       (and (memq status '(passed failed errored skipped xfail xpass)) #t)))
 
-  (define $color-option?
-    (lambda (color)
-      (and (memq color '(auto always never)) #t)))
-
   (define $reporter-option?
     (lambda (reporter)
       (or (not reporter) (test-reporter? reporter))))
@@ -78,7 +74,7 @@
          (unless (boolean? (cdr option))
            (errorf 'test-config-with "invalid config option: ~a" option))]
         [(color)
-         (unless ($color-option? (cdr option))
+         (unless (test-color-mode? (cdr option))
            (errorf 'test-config-with "invalid config option: ~a" option))]
         [else (errorf 'test-config-with "unknown config option: ~a" (car option))])))
 
@@ -266,14 +262,15 @@ suite `descriptor`; non-suite descriptors return the empty list.
   `reporter` is a reporter object or `#f`, `output` is the output port or `#f`,
   `xfail-strict?` makes unexpected passes have status `failed` instead of `xpass`,
   `stop-on-failure?` controls whether the runner stops at the first failure, and
-  `color` is `auto`, `always`, or `never`.
+  `color` is `auto`, `always`, or `never`. An explicit `always` or `never`
+  overrides the progress reporter's color policy during this run; `auto` retains it.
   |#
   (define make-test-config
     (lambda (reporter output xfail-strict? stop-on-failure? color)
       (pcheck ([$reporter-option? reporter]
                [$output-option? output]
                [boolean? xfail-strict? stop-on-failure?]
-               [$color-option? color])
+               [test-color-mode? color])
               ($make-test-config reporter output xfail-strict? stop-on-failure? color))))
 
   #|proc:default-test-config

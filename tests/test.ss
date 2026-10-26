@@ -1448,3 +1448,44 @@
                           '((parameterize . (((x) (9))))))))
                  '(((x . 1) (y . a)) ((x . 1) (y . b))
                    ((x . 2) (y . a)) ((x . 2) (y . b)))))))
+
+(mat test-runner-color-policy
+  ;; The runner's explicit color policy overrides the reporter; auto keeps its default.
+  (for-all
+    (lambda (row)
+      (let* ([reporter (test-progress-reporter (car row))]
+             [text
+              (call-with-string-output-port
+                (lambda (out)
+                  (test-run (list (make-test-case 'colored (lambda () #t) '()))
+                    (test-config-with (default-test-config)
+                      `((reporter . ,reporter) (output . ,out) (color . ,(cadr row)))))))])
+        (eq? (test-string-contains? text (string (integer->char 27))) (caddr row))))
+    '((auto always #t) (always never #f) (never always #t)
+      (always auto #t) (never auto #f) (auto auto #f)))
+
+  ;; Direct reports preserve their constructor policy after a runner override.
+  (let* ([reporter (test-progress-reporter 'always)]
+         [summary (test-summarize (list (make-test-result 0 'direct 'passed "" #f "" "" '() #f)))])
+    (call-with-string-output-port
+      (lambda (out)
+        (test-run '() (make-test-config reporter out #f #f 'never))))
+    (test-string-contains?
+      (call-with-string-output-port (lambda (out) (test-report reporter out summary)))
+      (string (integer->char 27))))
+
+  ;; A nested run must not leak its explicit color override into a delegated outer report.
+  (let* ([progress (test-progress-reporter 'auto)]
+         [reporter
+          (make-test-reporter 'nested
+            (lambda (out summary)
+              (call-with-string-output-port
+                (lambda (inner)
+                  (test-run '() (make-test-config progress inner #f #f 'never))))
+              (test-report progress out summary)))]
+         [text
+          (call-with-string-output-port
+            (lambda (out)
+              (test-run (list (make-test-case 'outer (lambda () #t) '()))
+                        (make-test-config reporter out #f #f 'always))))])
+    (test-string-contains? text (string (integer->char 27)))))
