@@ -37,11 +37,17 @@
              (display "(" port)
              (write (car datum) port)
              (let loop ([xs (cdr datum)])
-               (unless (null? xs)
-                 (newline port)
-                 (display-indent (+ indent 2) port)
-                 (pretty-datum (car xs) port (+ indent 2))
-                 (loop (cdr xs))))
+               (cond [(null? xs) (void)]
+                     [(pair? xs)
+                      (newline port)
+                      (display-indent (+ indent 2) port)
+                      (pretty-datum (car xs) port (+ indent 2))
+                      (loop (cdr xs))]
+                     [else
+                      (newline port)
+                      (display-indent (+ indent 2) port)
+                      (display ". " port)
+                      (pretty-datum xs port (+ indent 2))]))
              (display ")" port)]
             [else (write datum port)])))
 

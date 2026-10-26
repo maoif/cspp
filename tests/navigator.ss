@@ -1626,3 +1626,13 @@
 
   ;; Mutating bytevector updates must also reject inexact byte values.
   (error? (nav-transform! nav/all (lambda (x) 1.0) (bytevector 0 0))))
+
+(mat navigator-review-dotted-diagnostics
+  (equal? '(nav/key (a . b))
+          (call-with-port (open-string-input-port
+                           (capture-written nav-display (nav/key '(a . b)))) read))
+
+  (equal? '(nav/nth/default 0 ((a . 1) (b . 2)))
+          (call-with-port
+           (open-string-input-port
+            (capture-written nav-display (nav/nth/default 0 '((a . 1) (b . 2))))) read)))
