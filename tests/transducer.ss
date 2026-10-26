@@ -719,3 +719,32 @@
        (terminal (tidentity) 12 '(1 2))
        #f))
    (list list-transduce)))
+
+(define-record-type (review-failing-finalizer-source
+                     make-review-failing-finalizer-source review-failing-finalizer-source?)
+  (fields (mutable attempts)))
+
+(iter-register-source!
+ review-failing-finalizer-source?
+ (lambda (source)
+   (make-iter
+    (lambda () iter-end) void
+    (lambda ()
+      (review-failing-finalizer-source-attempts-set!
+       source (+ 1 (review-failing-finalizer-source-attempts source)))
+      (error 'review "finalizer failed")))))
+
+(mat transducer-review-failing-finalizer
+  ;; A finalizer error on exhaustion must be propagated without an automatic retry.
+  (let* ([source (make-review-failing-finalizer-source 0)]
+         [output (sequence (tidentity) source)])
+    (and (guard (exn [else #t]) (iter-next! output) #f)
+         (= 1 (review-failing-finalizer-source-attempts source))
+         (iter-end? (iter-next! output)))))
+
+(mat transducer-review-failing-finalizer-reset
+  ;; Reset must not repeat a failing old-source finalizer in its error handler.
+  (let* ([source (make-review-failing-finalizer-source 0)]
+         [output (sequence (tidentity) source)])
+    (and (guard (exn [else #t]) (iter-reset! output) #f)
+         (= 1 (review-failing-finalizer-source-attempts source)))))

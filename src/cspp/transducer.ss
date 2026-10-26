@@ -1103,6 +1103,7 @@
                   (sequence (tcompose ($eduction-xform source) xform)
                             ($eduction-source source))
                   (let ([upstream #f]
+                        [cleanup-attempted? #f]
                         [effective #f]
                         [acc #f]
                         [done? #f]
@@ -1138,13 +1139,14 @@
                     (define finalize-upstream!
                       (lambda ()
                         (when (and upstream (not (iter-finalized? upstream)))
+                          (set! cleanup-attempted? #t)
                           (iter-finalize! upstream))))
                     (define fail!
                       (lambda (exn)
                         (set! done? #t)
                         (set! q-head '())
                         (set! q-tail '())
-                        (unless (iter? source)
+                        (unless (or (iter? source) cleanup-attempted?)
                           (finalize-upstream!))
                         (raise exn)))
                     (define reset-state!
@@ -1155,6 +1157,7 @@
                               (begin
                                 (finalize-upstream!)
                                 (set! upstream (source->iter source))))
+                          (set! cleanup-attempted? #f)
                           (set! done? #f)
                           (set! q-head '())
                           (set! q-tail '())
