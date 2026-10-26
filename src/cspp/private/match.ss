@@ -22,7 +22,7 @@
       (and (identifier? t)
            (let ([r '#{r6rs-record vc7pishgmrh09qm-a}]
                  [info (rho t)])
-             (and info (eq? r (car (rho t))) t)))))
+             (and (pair? info) (eq? r (car info)) (pair? (cdr info)) t)))))
 
   (define variant-of?
     (lambda (rho dt variant)
@@ -274,7 +274,7 @@
             ;; TODO check for duplicate numbers and names?
             ;; by number or by name
             [((n* v*) ...)
-             (and (andmap (lambda (n) (or (and (integer? n) (>= n 0))
+             (and (andmap (lambda (n) (or (and (integer? n) (exact? n) (>= n 0))
                                           (symbol? n)))
                           (syntax->datum #'(n* ...)))
                   (andmap (lambda (v)

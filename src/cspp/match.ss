@@ -192,7 +192,7 @@ Examples:
           (define (match-expander? ext)
             (let* ([n ($construct-name ext ext "-expander")]
                    [?p (rho n)])
-              (and ?p (eq? '*MATCH-EXPANDER* (car ?p)))))
+              (and (pair? ?p) (eq? '*MATCH-EXPANDER* (car ?p)))))
           (cond
            [(eq? 'record (syntax->datum ext))
             (record-expander process-pattern rho expr-id pat body fk)]
@@ -208,7 +208,8 @@ Examples:
             (hash-expander process-pattern rho expr-id pat body fk)]
            [(match-expander? ext)
             (let ([expander (cdr (rho ($construct-name ext ext "-expander")))])
-              (assert (procedure? expander))
+              (unless (procedure? expander)
+                (syntax-error ext "match: invalid custom expander procedure:"))
               (expander process-pattern rho expr-id pat body fk))]
            [else (syntax-error ext "match: invalid extension pattern: ")])))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

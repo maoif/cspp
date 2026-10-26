@@ -1658,3 +1658,34 @@
                     [(_ subpattern) (pp rho input #'subpattern body failure)]))))
             (match '(10 20) [(,(once ,x) ...) x]))
          (environment '(cspp) '(cspp private match))))))
+
+(mat invalid-match-compile-time-metadata
+     ;; Non-pair compile-time values are not record metadata.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(let-syntax ([P (make-compile-time-value 10)])
+                (match 10 [,(record P :values) #t] [else #f]))
+             (environment '(cspp)))
+       #f)
+
+     ;; Non-pair compile-time values are not custom expander metadata.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(let-syntax ([bad-expander (make-compile-time-value 10)])
+                (match 10 [,(bad ,x) x] [else #f]))
+             (environment '(cspp)))
+       #f)
+
+     ;; A tagged expander must carry a procedure, not merely the right tag.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(let-syntax ([bad-expander
+                           (make-compile-time-value (cons '*MATCH-EXPANDER* 10))])
+                (match 10 [,(bad ,x) x] [else #f]))
+             (environment '(cspp)))
+       #f))
+
+(mat strict-regex-group-index
+     ;; An inexact integer group selector must fail during expansion, without normalization.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(match "a" [,(regex "(.)" (1.0 ,x)) x]) (environment '(cspp)))
+       #f)
+
+     (equal? "a" (match "a" [,(regex "(.)" (1 ,x)) x])))
