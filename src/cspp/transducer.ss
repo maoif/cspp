@@ -1047,9 +1047,10 @@
   #|proc:transduce
   The `transduce` procedure runs transducer `xform` over transducible `source` using reducer
   record `reducer`. With three arguments, the transformed reducer supplies the initial
-  accumulator; with four arguments, `init` supplies it and initialization is skipped. The result is the reducer's completion value after source
-  exhaustion or an early `reduced` result. Iterators created for source adapters are finalized on
-  exhaustion, early termination, errors, or nonlocal exits. Caller-supplied iterators remain open.
+  accumulator; with four arguments, `init` supplies it and initialization is skipped.
+  The result is the reducer's completion value after source exhaustion or an early `reduced`
+  result. Iterators created for source adapters are finalized on exhaustion, early termination,
+  errors, or nonlocal exits. Caller-supplied iterators remain open.
   |#
   (define transduce
     (case-lambda
