@@ -181,8 +181,10 @@
                  value
                  (loop (cdr paths) (transform-path (car paths) update value)))))
          (lambda (value update!)
-           (for-each (lambda (path) (transform-path! path update! value)) compiled)
-           value)
+           (let loop ([paths compiled] [value value])
+             (if (null? paths)
+                 value
+                 (loop (cdr paths) (transform-path! (car paths) update! value)))))
          (lambda (value clear)
            (let loop ([paths compiled] [value value])
              (if (or (null? paths) (nav-missing? value))

@@ -1554,3 +1554,29 @@
      (guard (exn [else #t]) (iter-next! iterator) #f)
      (iter-end? (iter-next! iterator))
      (begin (iter-finalize! iterator) #t))))
+
+(mat navigator-review-mutating-composition
+  (let ([data (vector 1 2)])
+    (and (eq? data (nav-transform! (nav/path nav/stay (nav/nth 0)) add1 data))
+         (equal? '#(2 2) data)))
+
+  (let ([data (vector 1)])
+    (and (eq? data (nav-transform! (nav/path (nav/nth 0) nav/stay) add1 data))
+         (equal? '#(2) data)))
+
+  (let ([data (vector 1)])
+    (and (eq? data
+              (nav-transform!
+               (nav/path (nav/nth 0) (nav/multi-path nav/empty-path nav/empty-path))
+               add1 data))
+         (equal? '#(3) data)))
+
+  (let ([data (vector 1)])
+    (and (eq? data (nav-transform! (nav/multi-path nav/empty-path) values data))
+         (equal? '#(1) data)))
+
+  ;; Mutating traversal cannot replace the caller's root reference.
+  (error? (nav-transform! nav/empty-path add1 1))
+
+  ;; Transparent stay still rejects replacement of the root itself.
+  (error? (nav-transform! nav/stay add1 1)))

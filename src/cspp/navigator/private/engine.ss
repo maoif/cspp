@@ -497,7 +497,11 @@
   (define nav-transform!
     (lambda (path proc data)
       (pcheck ([procedure? proc])
-              (transform-path! path proc data))))
+              (let ([result (transform-path! path proc data)])
+                (if (eq? result data)
+                    data
+                    (nav-error 'nav-transform! "cannot replace root focus in place: ~s"
+                               data))))))
 
   #|proc:nav-transform!/i
   The `nav-transform!/i` procedure is like `nav-transform!`, but `proc`

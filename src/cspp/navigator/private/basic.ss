@@ -420,10 +420,7 @@
     (make-basic-nav 'nav/stay 'nav/stay
                     (lambda (value emit) (emit value))
                     (lambda (value update) (update value))
-                    (lambda (value update!)
-                      (nav-error 'nav-transform!
-                                 "cannot replace root focus in place: ~s"
-                                 value))
+                    (lambda (value update!) (update! value))
                     (lambda (value clear) (clear value))
                     (lambda (value clear!) (clear! value))))
 
@@ -811,7 +808,8 @@
        (lambda (value update)
          (submap-transform keys value update))
        (lambda (value update!)
-         (nav-unsupported-error 'nav-transform! nav/submap value 'transform!))
+         (nav-error 'nav-transform! "navigator nav/submap does not support mutation for: ~s"
+                    value))
        (lambda (value clear)
          (submap-clear keys value clear))
        (lambda (value clear!)
