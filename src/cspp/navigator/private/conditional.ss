@@ -25,15 +25,15 @@
            (select-path path value (lambda (child) (return #t)) #t)
            #f)))))
 
-  ;; A missing focus in a wrapped path is optional; a downstream failure is not.
+  ;; Only steps inside the wrapped traversal are optional. Its continuation belongs
+  ;; to the caller, so protect its failures and restore the caller's optional scope.
   (define optional-focus
-    (lambda (run callback default)
-      (let ([downstream-condition #f])
-        (guard (exn [(and (nav-absent-focus? exn)
-                          (not (eq? exn downstream-condition))) default])
+    (lambda (run callback)
+      (let ([outer-optional? (current-optional-focus?)])
+        (parameterize ([current-optional-focus? #t])
           (run (lambda (value)
-                 (guard (exn [else (set! downstream-condition exn) (raise exn)])
-                   (callback value))))))))
+                 (parameterize ([current-optional-focus? outer-optional?])
+                   (nav-call-user callback value))))))))
 
   #|proc:nav/pred
   The `nav/pred` procedure returns a navigator that focuses the current value
@@ -66,7 +66,8 @@
               (nav/pred (lambda (value) (not (nav-call-user predicate value)))))))
 
   #|proc:nav/maybe
-  The `nav/maybe` procedure wraps `path` so absent or unsupported focuses become no-ops.
+  The `nav/maybe` procedure wraps `path` so each absent or unsupported focus is skipped.
+  Successful sibling focuses are retained in selection, transformation, and clearing.
   Errors from user callbacks or later path steps propagate normally. The result is a navigator.
   |#
   (define nav/maybe
@@ -76,19 +77,19 @@
          'nav/maybe '(nav/maybe)
          (lambda (value emit)
            (optional-focus (lambda (callback) (select-path compiled value callback))
-                           emit (void)))
+                           emit))
          (lambda (value update)
            (optional-focus (lambda (callback) (transform-path compiled callback value))
-                           update value))
+                           update))
          (lambda (value update!)
            (optional-focus (lambda (callback) (transform-path! compiled callback value))
-                           update! value))
+                           update!))
          (lambda (value clear)
            (optional-focus (lambda (callback) (clear-path compiled callback value))
-                           clear value))
+                           clear))
          (lambda (value clear!)
            (optional-focus (lambda (callback) (clear-path! compiled callback value))
-                           clear! value))))))
+                           clear!))))))
 
   ;; Count focuses during the operation itself so stateful callbacks run only once.
   (define require-focus
@@ -195,28 +196,37 @@
                  value
                  (loop (cdr paths) (clear-path! (car paths) clear! value)))))))))
 
+  ;; Try each path using the operation itself. Once a path yields a focus its
+  ;; continuation is used immediately; predicates/getters are never replayed.
+  (define run-choice
+    (lambda (paths run callback value)
+      (let loop ([paths paths])
+        (if (null? paths)
+            value
+            (let ([selected? #f])
+              (let ([result (optional-focus
+                             (lambda (continue) (run (car paths) continue value))
+                             (lambda (child) (set! selected? #t) (callback child)))])
+                (if selected? result (loop (cdr paths)))))))))
+
   #|proc:nav/choice
   The `nav/choice` procedure returns a navigator that uses the first path in
-  `paths` that selects at least one value.
+  `paths` that yields a focus during the current operation. Each candidate is traversed
+  once. Absent focuses are skipped; successful sibling focuses of the chosen path remain.
   |#
   (define nav/choice
     (lambda paths
       (let ([compiled (map nav-compile-path paths)])
-        (define choose
-          (lambda (value)
-            (let loop ([paths compiled])
-              (cond [(null? paths) nav/none]
-                    [(path-selected? (car paths) value) (car paths)]
-                    [else (loop (cdr paths))]))))
         (make-conditional-nav
          'nav/choice '(nav/choice)
          (lambda (value emit)
-           (select-path (choose value) value emit))
+           (run-choice compiled (lambda (path emit value) (select-path path value emit))
+                       emit value))
          (lambda (value update)
-           (transform-path (choose value) update value))
+           (run-choice compiled transform-path update value))
          (lambda (value update!)
-           (transform-path! (choose value) update! value))
+           (run-choice compiled transform-path! update! value))
          (lambda (value clear)
-           (clear-path (choose value) clear value))
+           (run-choice compiled clear-path clear value))
          (lambda (value clear!)
-           (clear-path! (choose value) clear! value)))))))
+           (run-choice compiled clear-path! clear! value)))))))

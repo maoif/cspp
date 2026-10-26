@@ -579,16 +579,35 @@
                       (let ([cell (assoc x alist)])
                         (if cell (cdr cell) x)))))))
 
+  ;; An eduction owns its transducer state, but must neither initialize nor
+  ;; complete the surrounding reduction. Remember downstream termination separately
+  ;; from an inner eduction's own early termination.
+  (define emit-eduction
+    (lambda (reducer acc source)
+      (let ([stopped? #f])
+        (let ([result
+               (transduce
+                ($eduction-xform source)
+                (make-reducer
+                 'tcat
+                 (case-lambda
+                   [() acc]
+                   [(result) result]
+                   [(result value)
+                    (if stopped?
+                        (ensure-reduced result)
+                        (let ([next (reducer-step reducer result value)])
+                          (when (reduced? next) (set! stopped? #t))
+                          next))]))
+                ($eduction-source source))])
+          (if stopped? (ensure-reduced result) result)))))
+
   (define flatten-emit
-    (lambda (reducer acc x)
+    (lambda (reducer acc value)
       (cond [(source-end? acc) acc]
-            [(list? x) (run-list reducer acc x)]
-            [(vector? x) (run-vector reducer acc x)]
-            [(bytevector? x) (run-bytevector reducer acc x)]
-            [(string? x) (run-string reducer acc x)]
-            [(fxvector? x) (run-fxvector reducer acc x)]
-            [(flvector? x) (run-flvector reducer acc x)]
-            [else (reducer-step reducer acc x)])))
+            [(eduction? value) (emit-eduction reducer acc value)]
+            [(transducible? value) (run-source reducer acc value)]
+            [else (reducer-step reducer acc value)])))
 
   (define flatten-rec
     (lambda (reducer acc x)
@@ -612,8 +631,11 @@
             [else (reducer-step reducer acc x)])))
 
   #|proc:tcat
-  The `tcat` procedure concatenates each input collection into the output
-  stream.
+  The `tcat` procedure returns a transducer that concatenates each transducible input collection
+  into the output stream, including registered sources, iterators, and eductions.
+  Other inputs are emitted as scalar values. Generated iterators are finalized on completion,
+  early termination, or escape. Caller-supplied iterators remain open. Inner eductions complete
+  their own state without completing the surrounding reduction.
   |#
   (define tcat
     (lambda ()
@@ -629,8 +651,9 @@
           #f)))))
 
   #|proc:tmapcat
-  The `tmapcat` procedure maps `proc` over input values and concatenates each
-  produced collection.
+  The `tmapcat` procedure returns a transducer that applies unary `(proc value)` to each
+  input and concatenates each produced transducible collection. Scalar results are emitted
+  unchanged, following `tcat`.
   |#
   (define tmapcat
     (lambda (proc)
@@ -1096,7 +1119,7 @@
   upstream iterator, including a caller-supplied iterator.
   Initialization emissions are retained, and an initially reduced accumulator finishes without
   pulling input. A failed pass releases an owned source and stays exhausted until reset.
-  An escape during construction or reset also releases an owned source and exhausts the pass.
+  An escape during construction, reset, or advance releases an owned source and exhausts the pass.
   Each input value's entire transformed expansion is buffered before returning its first value.
   |#
   (define sequence
@@ -1186,22 +1209,28 @@
                             (finalize-upstream!)))))
                     (define next!
                       (lambda ()
-                        (guard (exn [else (fail! exn)])
-                          (let loop ()
-                            (cond [(not (queue-empty?)) (dequeue!)]
-                                  [done? iter-end]
-                                  [(reduced? acc) (finish!) (loop)]
-                                  [else
-                                   (let ([x (iter-next! upstream)])
-                                     (if (iter-end? x)
-                                         (begin
-                                           (finish!)
-                                           (loop))
-                                         (begin
-                                           (set! acc (reducer-step effective acc x))
-                                           (when (reduced? acc)
-                                             (finish!))
-                                           (loop))))])))))
+                        (let ([completed? #f])
+                          (dynamic-wind
+                            void
+                            (lambda ()
+                              (let ([result
+                                     (guard (exn [else (fail! exn)])
+                                       (let loop ()
+                                         (cond [(not (queue-empty?)) (dequeue!)]
+                                               [done? iter-end]
+                                               [(reduced? acc) (finish!) (loop)]
+                                               [else
+                                                (let ([value (iter-next! upstream)])
+                                                  (if (iter-end? value)
+                                                      (finish!)
+                                                      (begin
+                                                        (set! acc (reducer-step effective acc value))
+                                                        (when (reduced? acc) (finish!))))
+                                                  (loop))])))])
+                                (set! completed? #t)
+                                result))
+                            (lambda ()
+                              (unless completed? (abandon-pass!)))))))
                     (reset-state!)
                     (make-iter next! reset-state! finalize-upstream!))))))
 

@@ -1104,7 +1104,8 @@
    (lambda (tm key)
      (treemap-delete! tm key)
      tm)
-   treemap->list)
+   treemap->list
+   (lambda (tm) (make-treemap-like tm)))
 
   (iter-register-source!
    fxtreemap?
@@ -1139,7 +1140,8 @@
    (lambda (tm key)
      (fxtreemap-delete! tm key)
      tm)
-   fxtreemap->list)
+   fxtreemap->list
+   (lambda (tm) (make-fxtreemap-like tm)))
 
   (record-writer (type-descriptor $treemap) write-treemap)
   (record-writer (type-descriptor $fxtreemap) write-treemap)

@@ -5,10 +5,13 @@
           $navigator-select-proc $navigator-transform-proc $navigator-transform!-proc
           $navigator-clear-proc $navigator-clear!-proc
           $path-steps $recursive-nav-group-bindings $recursive-nav-group-root
-          $nav-ref-name
+          $recursive-nav-group-env
+          $nav-ref-name $nav-ref-target $nav-ref-target-set!
           nav? nav-path? nav/empty-path nav-empty-path?
           make-nav nav-name nav-coerce nav/path nav-compile-path nav/path-append
           make-nav-ref nav-ref? nav-missing nav-missing?
+          current-update-count nav-update-version nav-note-update!
+          current-optional-focus? nav-call-step
           nav-error nav-focus-error nav-focus-error? nav-absent-focus?
           nav-call-user nav-protect-callback nav-unsupported-error nav-required-error
           nav-path-steps nav-normalize-step nav-debug-name-core nav->datum-core
@@ -35,14 +38,25 @@
 
   (define-record-type ($recursive-nav-group make-$recursive-nav-group $recursive-nav-group?)
     (fields (immutable bindings)
-            (immutable root))
+            (immutable root)
+            (immutable env))
     (opaque #t)
     (sealed #t))
 
   (define-record-type ($nav-ref make-$nav-ref $nav-ref?)
-    (fields (immutable name))
+    (fields (immutable name) (mutable target))
     (opaque #t)
     (sealed #t))
+
+  ;; One counter belongs to each public update. Virtual default focuses use it to
+  ;; distinguish a visited suffix from an actual invocation of the terminal callback.
+  (define current-update-count (make-parameter #f))
+  (define nav-update-version
+    (lambda () (let ([counter (current-update-count)]) (if counter (car counter) 0))))
+  (define nav-note-update!
+    (lambda ()
+      (let ([counter (current-update-count)])
+        (when counter (set-car! counter (+ 1 (car counter)))))))
 
   (define nav-missing (list 'nav-missing))
   (define nav-missing? (lambda (x) (eq? x nav-missing)))
@@ -83,6 +97,16 @@
       (raise (condition (make-nav-focus-error)
                         (make-who-condition who)
                         (make-message-condition (apply format fmt args))))))
+
+  ;; Absence is handled at the failing step, allowing enclosing collection walks
+  ;; to retain successful siblings. User callbacks and outer suffixes stay protected.
+  (define current-optional-focus? (make-parameter #f))
+  (define nav-call-step
+    (lambda (proc value continue fallback)
+      (if (current-optional-focus?)
+          (guard (exn [(nav-absent-focus? exn) fallback])
+            (proc value continue))
+          (proc value continue))))
 
   (define-condition-type &nav-callback-error &condition
     make-nav-callback-error nav-callback-error?)
@@ -158,12 +182,13 @@
 
   #|proc:make-nav-ref
   The `make-nav-ref` procedure creates a symbolic recursive navigator reference
-  named by the symbol `name`.
+  named by the symbol `name`. It resolves within the defining environment of the active
+  recursive group; fresh public operations start with no active bindings.
   |#
   (define make-nav-ref
     (lambda (name)
       (pcheck ([symbol? name])
-              (make-$nav-ref name))))
+              (make-$nav-ref name #f))))
 
   (define nav-ref? $nav-ref?)
 

@@ -47,18 +47,20 @@
            (eq? ($navigator-kind step) 'recursive)
            (eq? ($navigator-name step) 'nav/children))))
 
-  ;; Return both the binding and its defining environment. Outer bindings must not
-  ;; resolve their own references against an inner group's shadowing definitions.
+  ;; Bound references carry a compiled body and its defining lexical environment.
+  ;; Symbolic references search captured frames, whose entries are stable references.
   (define resolve-nav-ref
     (lambda (who step)
-      (let loop ([env (current-recursive-env)])
-        (if (null? env)
-            (nav-error who "unresolved recursive reference: ~s" ($nav-ref-name step))
-            (let ([binding (assq ($nav-ref-name step)
-                                 ($recursive-nav-group-bindings (car env)))])
-              (if binding
-                  (cons (cdr binding) env)
-                  (loop (cdr env))))))))
+      (or ($nav-ref-target step)
+          (let loop ([env (current-recursive-env)])
+            (if (null? env)
+                (nav-error who "unresolved recursive reference: ~s" ($nav-ref-name step))
+                (let ([binding (assq ($nav-ref-name step) (car env))])
+                  (if binding
+                      (or ($nav-ref-target (cdr binding))
+                          (nav-error who "uninitialized recursive reference: ~s"
+                                     ($nav-ref-name step)))
+                      (loop (cdr env)))))))))
 
   ;; The engine keeps two path cursors. `steps` is the path segment currently
   ;; being executed. `tails` is a stack of suspended outer suffixes. When a step
@@ -85,14 +87,15 @@
                      (if (and terminal? (nav-children-step? step))
                          (emit-nav-children-tree value emit)
                          (parameterize ([current-selection-terminal? terminal?])
-                           (($navigator-select-proc step)
-                            value
+                           (nav-call-step
+                            ($navigator-select-proc step) value
                             (lambda (child)
                               (parameterize ([current-selection-terminal? outer-terminal?])
-                                (run-select rest tails child emit)))))))]
+                                (run-select rest tails child emit)))
+                            (void)))))]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
-                     (parameterize ([current-recursive-env (cons step (current-recursive-env))])
+                     (parameterize ([current-recursive-env ($recursive-nav-group-env step)])
                        (run-select (nav-path-steps (nav-compile-path
                                                     ($recursive-nav-group-root step)))
                                    tails
@@ -125,13 +128,13 @@
                 (run-transform (cdar tails) (cdr tails) value update)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
-                   (($navigator-transform-proc step)
+                   (nav-call-step ($navigator-transform-proc step)
                     value
                     (lambda (child)
-                      (run-transform rest tails child update)))]
+                      (run-transform rest tails child update)) value)]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
-                     (parameterize ([current-recursive-env (cons step (current-recursive-env))])
+                     (parameterize ([current-recursive-env ($recursive-nav-group-env step)])
                        (run-transform (nav-path-steps (nav-compile-path
                                                        ($recursive-nav-group-root step)))
                                       tails
@@ -160,13 +163,13 @@
                 (run-transform! (cdar tails) (cdr tails) value update!)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
-                   (($navigator-transform!-proc step)
+                   (nav-call-step ($navigator-transform!-proc step)
                     value
                     (lambda (child)
-                      (run-transform! rest tails child update!)))]
+                      (run-transform! rest tails child update!)) value)]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
-                     (parameterize ([current-recursive-env (cons step (current-recursive-env))])
+                     (parameterize ([current-recursive-env ($recursive-nav-group-env step)])
                        (run-transform! (nav-path-steps (nav-compile-path
                                                         ($recursive-nav-group-root step)))
                                        tails
@@ -191,13 +194,13 @@
                 (run-clear (cdar tails) (cdr tails) value clear)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
-                   (($navigator-clear-proc step)
+                   (nav-call-step ($navigator-clear-proc step)
                     value
                     (lambda (child)
-                      (run-clear rest tails child clear)))]
+                      (run-clear rest tails child clear)) value)]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
-                     (parameterize ([current-recursive-env (cons step (current-recursive-env))])
+                     (parameterize ([current-recursive-env ($recursive-nav-group-env step)])
                        (run-clear (nav-path-steps (nav-compile-path
                                                    ($recursive-nav-group-root step)))
                                   tails
@@ -221,13 +224,13 @@
                 (run-clear! (cdar tails) (cdr tails) value clear!)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
-                   (($navigator-clear!-proc step)
+                   (nav-call-step ($navigator-clear!-proc step)
                     value
                     (lambda (child)
-                      (run-clear! rest tails child clear!)))]
+                      (run-clear! rest tails child clear!)) value)]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
-                     (parameterize ([current-recursive-env (cons step (current-recursive-env))])
+                     (parameterize ([current-recursive-env ($recursive-nav-group-env step)])
                        (run-clear! (nav-path-steps (nav-compile-path
                                                     ($recursive-nav-group-root step)))
                                    tails
@@ -261,7 +264,8 @@
   (define nav-traverse
     (lambda (path data proc)
       (pcheck ([procedure? proc])
-              (select-path path data proc #t))))
+              (parameterize ([current-recursive-env '()] [current-optional-focus? #f])
+                (select-path path data proc #t)))))
 
   #|proc:nav-traverse/i
   The `nav-traverse/i` procedure calls `proc` with the selected-value index and
@@ -314,7 +318,7 @@
         ;; Use a one-shot continuation to stop traversal after the first focus.
         (call/1cc
          (lambda (return)
-           (select-path path data (lambda (value) (return #t)) #t)
+           (nav-traverse path data (lambda (value) (return #t)))
            #f)))))
 
   #|proc:nav-select-first
@@ -330,7 +334,7 @@
          ;; Use a one-shot continuation to return the first selected value.
          (call/1cc
           (lambda (return)
-            (select-path path data (lambda (value) (return value)) #t)
+            (nav-traverse path data (lambda (value) (return value)))
             default)))]))
 
   #|proc:nav-select-one
@@ -369,14 +373,15 @@
                                  (set! done? #t)
                                  (set! resume #f)
                                  (return iter-end)])
-                      (select-path
-                       compiled data
-                       (lambda (value)
-                         ;; Suspend each producer segment once, until the next advance.
-                         (call/1cc
-                          (lambda (continue)
-                            (set! resume continue)
-                            (return value)))) #t)
+                      (parameterize ([current-recursive-env '()] [current-optional-focus? #f])
+                        (select-path
+                         compiled data
+                         (lambda (value)
+                           ;; Suspend each producer segment once, until the next advance.
+                           (call/1cc
+                            (lambda (continue)
+                              (set! resume continue)
+                              (return value)))) #t))
                       (set! done? #t)
                       (set! resume #f)
                       (return iter-end))))))
@@ -454,7 +459,9 @@
   (define nav-transform
     (lambda (path proc data)
       (pcheck ([procedure? proc])
-              (transform-path path proc data))))
+              (parameterize ([current-update-count (list 0)]
+                             [current-recursive-env '()] [current-optional-focus? #f])
+                (transform-path path (lambda (value) (nav-note-update!) (proc value)) data)))))
 
   #|proc:nav-transform/i
   The `nav-transform/i` procedure is like `nav-transform`, but `proc` receives
@@ -478,7 +485,12 @@
   (define nav-transform!
     (lambda (path proc data)
       (pcheck ([procedure? proc])
-              (let ([result (transform-path! path proc data)])
+              (let ([result (parameterize ([current-update-count (list 0)]
+                                           [current-recursive-env '()]
+                                           [current-optional-focus? #f])
+                              (transform-path! path
+                                               (lambda (value) (nav-note-update!) (proc value))
+                                               data))])
                 (if (eq? result data)
                     data
                     (nav-error 'nav-transform! "cannot replace root focus in place: ~s"
@@ -521,7 +533,8 @@
   |#
   (define nav-clearval
     (lambda (path data)
-      (let ([result (clear-path path (lambda (value) nav-missing) data)])
+      (let ([result (parameterize ([current-recursive-env '()] [current-optional-focus? #f])
+                      (clear-path path (lambda (value) nav-missing) data))])
         (if (nav-missing? result)
             (nav-error 'nav-clearval "cannot remove root value")
             result))))
@@ -532,7 +545,8 @@
   |#
   (define nav-clearval!
     (lambda (path data)
-      (let ([result (clear-path! path (lambda (value) nav-missing) data)])
+      (let ([result (parameterize ([current-recursive-env '()] [current-optional-focus? #f])
+                      (clear-path! path (lambda (value) nav-missing) data))])
         (if (nav-missing? result)
             (nav-error 'nav-clearval! "cannot remove root value")
             result)))))

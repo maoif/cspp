@@ -6,13 +6,30 @@
           (cspp navigator private data)
           (cspp navigator private engine))
 
+  ;; Each lexical frame maps names to stable reference objects. Frames are captured
+  ;; while constructing nested groups, before recursive bodies are linked to targets.
+  (define current-recursive-construction-env (make-parameter '()))
+
   (define make-recursive-nav-group
     (lambda (bindings root)
       (let loop ([names (map car bindings)] [seen '()])
-        (cond [(null? names) (make-$recursive-nav-group bindings root)]
+        (cond [(null? names)
+               (make-$recursive-nav-group
+                (map (lambda (binding) (cons (car binding) (nav-compile-path (cdr binding))))
+                     bindings)
+                (nav-compile-path root) (current-recursive-construction-env))]
               [(memq (car names) seen)
                (nav-error 'nav/letrec "duplicate recursive navigator name: ~s" (car names))]
               [else (loop (cdr names) (cons (car names) seen))]))))
+
+  ;; Macro references are distinct objects and retain the group that defines them.
+  ;; Public symbolic references still resolve by name within an active group.
+  (define bind-recursive-reference!
+    (lambda (reference group)
+      ($nav-ref-target-set!
+       reference
+       (cons (cdr (assq ($nav-ref-name reference) ($recursive-nav-group-bindings group)))
+             ($recursive-nav-group-env group)))))
 
   (define leaf?
     (lambda (value)
@@ -178,15 +195,20 @@
 
   #|macro:nav/letrec
   The `nav/letrec` macro creates a mutually recursive navigator group from
-  bindings and returns `root`.
+  bindings and returns a navigator group rooted at `root`. Each identifier names a stable
+  lexical reference. Nested groups retain their defining bindings, and list-valued bodies
+  are compiled at construction so subsequent list mutation cannot change the group.
   |#
   (define-syntax nav/letrec
     (lambda (stx)
       (syntax-case stx ()
         [(_ ([name body] ...) root)
          (andmap identifier? #'(name ...))
-         #'(let-syntax ([name (identifier-syntax (make-nav-ref 'name))] ...)
-             (make-recursive-nav-group
-              (list (cons 'name body) ...)
-              root))]
+         #'(let ([name (make-nav-ref 'name)] ...)
+             (parameterize ([current-recursive-construction-env
+                             (cons (list (cons 'name name) ...)
+                                   (current-recursive-construction-env))])
+               (let ([group (make-recursive-nav-group (list (cons 'name body) ...) root)])
+                 (bind-recursive-reference! name group) ...
+                 group)))]
         [_ (syntax-error stx "invalid nav/letrec form:")]))))

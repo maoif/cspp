@@ -45,3 +45,14 @@
 (measure 'list-all-mutate-2000 1 (lambda () (nav-transform! nav/all add1 mutable-items)))
 (measure 'list-slice-mutate-2000 1
          (lambda () (nav-transform! (nav/slice 0 2000 2) add1 mutable-items)))
+
+;; Complete membership replacement avoids repeated copies during bulk set clearing.
+(for-each
+ (lambda (size)
+   (let ([hashed (apply hashset (iota size))]
+         [ordered (apply treeset = < (iota size))]
+         [mapping (apply treemap = < (map cons (iota size) (iota size)))])
+     (measure (list 'hashset-clear size) 1 (lambda () (nav-clearval nav/all hashed)))
+     (measure (list 'treeset-clear size) 1 (lambda () (nav-clearval nav/all ordered)))
+     (measure (list 'treemap-all size) 1 (lambda () (nav-transform nav/all add1 mapping)))))
+ '(500 1000 2000))

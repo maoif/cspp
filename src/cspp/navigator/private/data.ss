@@ -2,7 +2,7 @@
   (export byte? indexed-length indexed-ref/missing indexed-set indexed-set!
           indexed-supported? indexed-transform indexed-transform!
           indexed-clear-values indexed-clear-values! index-list
-          keyed-update-values keyed-update-values!
+          keyed-update-values keyed-update-values! keyed-rebuild-entries
           child-container? emit-children
           keyed-supported? keyed-ref/missing keyed-set keyed-set!
           keyed-delete keyed-delete! keyed-entries keyed-keys keyed-values
@@ -29,7 +29,8 @@
             (immutable set!-proc)
             (immutable delete-proc)
             (immutable delete!-proc)
-            (immutable entries-proc))
+            (immutable entries-proc)
+            (immutable empty-proc))
     (sealed #t))
 
   (define-record-type ($set-protocol make-$set-protocol $set-protocol?)
@@ -61,11 +62,12 @@
   The `nav-register-indexed!` procedure registers an indexed container type for
   built-in indexed navigators. The `predicate` procedure receives a value and
   returns true for supported containers. The `length-proc` procedure receives a
-  container and returns its length. The `ref-proc` procedure receives a
-  container and zero-based index and returns the indexed value. The `set-proc`
-  procedure receives a container, index, and new value, and returns a rebuilt
+  container and returns a non-negative integer length no larger than
+  `(most-positive-fixnum)`. Integer-valued inexact lengths are normalized to exact integers.
+  The `ref-proc` procedure receives a container and zero-based index and returns the indexed value.
+  The `set-proc` procedure receives a container, index, and new value, and returns a rebuilt
   container. The `set!-proc` procedure receives a container, index, and new
-  value, mutates the container, and returns a value.
+  value, mutates the container, and returns a value. Registration returns an unspecified value.
   |#
   (define nav-register-indexed!
     (lambda (predicate length-proc ref-proc set-proc set!-proc)
@@ -91,23 +93,33 @@
   returns a rebuilt map without that key. The `delete!-proc` procedure receives
   a map and key, mutates the map, and returns a value. The `entries-proc`
   procedure receives a map and returns an association list of `(key . value)`
-  entries in traversal order.
+  entries in traversal order. Optional `empty-proc` receives a map and returns a fresh,
+  mutable empty map with the same key policy. It enables efficient bulk rebuilding and
+  submaps; without it, rebuilding uses the pure delete and set callbacks.
+  Registration returns an unspecified value.
   |#
   (define nav-register-keyed!
-    (lambda (predicate ref-proc set-proc set!-proc delete-proc delete!-proc entries-proc)
-      (pcheck ([procedure? predicate ref-proc set-proc set!-proc
-                           delete-proc delete!-proc entries-proc])
-              (set! keyed-protocols
-                    (cons (make-$keyed-protocol
-                           (nav-protect-callback predicate)
-                           (nav-protect-callback ref-proc)
-                           (nav-protect-callback set-proc)
-                           (nav-protect-callback set!-proc)
-                           (nav-protect-callback delete-proc)
-                           (nav-protect-callback delete!-proc)
-                           (nav-protect-callback entries-proc))
-                          keyed-protocols))
-              (void))))
+    (case-lambda
+      [(predicate ref-proc set-proc set!-proc delete-proc delete!-proc entries-proc)
+       (nav-register-keyed! predicate ref-proc set-proc set!-proc delete-proc delete!-proc
+                            entries-proc #f)]
+      [(predicate ref-proc set-proc set!-proc delete-proc delete!-proc entries-proc empty-proc)
+       (pcheck ([procedure? predicate ref-proc set-proc set!-proc
+                            delete-proc delete!-proc entries-proc])
+               (unless (or (not empty-proc) (procedure? empty-proc))
+                 (nav-error 'nav-register-keyed! "expected empty-map procedure: ~s" empty-proc))
+               (set! keyed-protocols
+                     (cons (make-$keyed-protocol
+                            (nav-protect-callback predicate)
+                            (nav-protect-callback ref-proc)
+                            (nav-protect-callback set-proc)
+                            (nav-protect-callback set!-proc)
+                            (nav-protect-callback delete-proc)
+                            (nav-protect-callback delete!-proc)
+                            (nav-protect-callback entries-proc)
+                            (and empty-proc (nav-protect-callback empty-proc)))
+                           keyed-protocols))
+               (void))]))
 
   #|proc:nav-register-set!
   Register callbacks for a set-like container. `predicate` recognizes the container.
@@ -153,6 +165,16 @@
               [(($set-protocol-predicate (car protocols)) value) (car protocols)]
               [else (loop (cdr protocols))]))))
 
+  (define protocol-indexed-length
+    (lambda (protocol value)
+      (let ([length (($indexed-protocol-length-proc protocol) value)])
+        (unless (integer? length)
+          (nav-error 'nav-register-indexed! "invalid indexed length: ~s" length))
+        (let ([length (inexact->exact length)])
+          (unless (and (fixnum? length) (fx>= length 0))
+            (nav-error 'nav-register-indexed! "invalid indexed length: ~s" length))
+          length))))
+
   (define indexed-length
     (lambda (value)
       (cond [(list? value) (length value)]
@@ -163,7 +185,7 @@
             [(bytevector? value) (bytevector-length value)]
             [(find-indexed-protocol value)
              => (lambda (protocol)
-                  (($indexed-protocol-length-proc protocol) value))]
+                  (protocol-indexed-length protocol value))]
             [else #f])))
 
   (define indexed-supported?
@@ -207,7 +229,7 @@
              (if (< index (bytevector-length value)) (bytevector-u8-ref value index) nav-missing)]
             [(find-indexed-protocol value)
              => (lambda (protocol)
-                  (if (< index (($indexed-protocol-length-proc protocol) value))
+                  (if (< index (protocol-indexed-length protocol value))
                       (($indexed-protocol-ref-proc protocol) value index)
                       nav-missing))]
             [else (nav-focus-error 'nav/nth "unsupported indexed value: ~s" value)])))
@@ -365,7 +387,11 @@
                       (nav-focus-error 'nav-transform! "index ~s out of range for: ~s" index value)]
                      [(= i 0) (set-car! xs new-value)]
                      [else (loop (cdr xs) (- i 1))]))]
-            [(vector? value) (vector-set! value index new-value)]
+            [(vector? value)
+             (unless (eq? (vector-ref value index) new-value)
+               (unless (mutable-vector? value)
+                 (nav-error 'nav-transform! "vector is immutable: ~s" value))
+               (vector-set! value index new-value))]
             [(fxvector? value)
              (if (fixnum-value? new-value)
                  (fxvector-set! value index new-value)
@@ -380,13 +406,19 @@
                             new-value))]
             [(string? value)
              (if (char? new-value)
-                 (string-set! value index new-value)
+                 (unless (char=? (string-ref value index) new-value)
+                   (unless (mutable-string? value)
+                     (nav-error 'nav-transform! "string is immutable: ~s" value))
+                   (string-set! value index new-value))
                  (nav-error 'nav-transform!
                             "string element is not a char: ~s"
                             new-value))]
             [(bytevector? value)
              (if (byte? new-value)
-                 (bytevector-u8-set! value index new-value)
+                 (unless (fx= (bytevector-u8-ref value index) new-value)
+                   (unless (mutable-bytevector? value)
+                     (nav-error 'nav-transform! "bytevector is immutable: ~s" value))
+                   (bytevector-u8-set! value index new-value))
                  (nav-error 'nav-transform!
                             "bytevector element is not a byte: ~s"
                             new-value))]
@@ -444,10 +476,15 @@
                   (($keyed-protocol-set-proc protocol) value key new-value))]
             [else (nav-focus-error 'nav-transform "unsupported keyed value: ~s" value)])))
 
+  (define keyed-absent-token (list 'keyed-absent))
+
   (define keyed-set!
     (lambda (value key new-value)
       (cond [(hashtable? value)
-             (nav-call-user hashtable-set! value key new-value)
+             (unless (eq? (nav-call-user hashtable-ref value key keyed-absent-token) new-value)
+               (unless (hashtable-mutable? value)
+                 (nav-error 'nav-transform! "hashtable is immutable: ~s" value))
+               (nav-call-user hashtable-set! value key new-value))
              value]
             [(alist? value)
              (let loop ([xs value])
@@ -504,27 +541,63 @@
                   (($keyed-protocol-entries-proc protocol) value))]
             [else #f])))
 
-  ;; Native maps have a bulk copy operation; registered maps keep their pure setters.
-  ;; These helpers also rebuild child values returned by a clear continuation.
+  ;; Rebuilding belongs to the container protocol, so submaps and entry updates
+  ;; preserve key equivalence without depending on the concrete map implementation.
+  (define keyed-rebuild-entries
+    (lambda (value entries)
+      (cond [(hashtable? value)
+             (let* ([equivalent? (hashtable-equivalence-function value)]
+                    [result (cond [(eq? equivalent? eq?) (make-eq-hashtable)]
+                                  [(eq? equivalent? eqv?) (make-eqv-hashtable)]
+                                  [else (make-hashtable (hashtable-hash-function value)
+                                                        equivalent?)])])
+               (for-each (lambda (entry) (keyed-set! result (car entry) (cdr entry))) entries)
+               result)]
+            [(alist? value) entries]
+            [(find-keyed-protocol value)
+             => (lambda (protocol)
+                  (let ([empty-proc ($keyed-protocol-empty-proc protocol)])
+                    (if empty-proc
+                        (let ([result (empty-proc value)])
+                          (for-each (lambda (entry)
+                                      (($keyed-protocol-set!-proc protocol)
+                                       result (car entry) (cdr entry))) entries)
+                          result)
+                        (let ([empty (fold-left
+                                      (lambda (result entry)
+                                        (keyed-delete result (car entry)))
+                                      value (keyed-entries value))])
+                          (fold-left (lambda (result entry)
+                                       (keyed-set result (car entry) (cdr entry)))
+                                     empty entries)))))]
+            [else (nav-focus-error 'nav-transform "unsupported keyed value: ~s" value)])))
+
+  ;; Native maps copy once. Registered maps can opt into one fresh mutable builder;
+  ;; the original pure-setter protocol remains the fallback for existing adapters.
   (define keyed-update-values
     (lambda (value update)
-      (let ([entries (keyed-entries value)])
-        (if (hashtable? value)
-            (let ([result (nav-call-user hashtable-copy value #t)])
-              (for-each
-               (lambda (entry)
-                 (let ([child (update (cdr entry))])
-                   (if (nav-missing? child)
-                       (keyed-delete! result (car entry))
-                       (keyed-set! result (car entry) child))))
-               entries)
-              result)
-            (fold-left (lambda (result entry)
-                         (let ([child (update (cdr entry))])
-                           (if (nav-missing? child)
-                               (keyed-delete result (car entry))
-                               (keyed-set result (car entry) child))))
-                       value entries)))))
+      (let* ([entries (keyed-entries value)]
+             [protocol (and (not (or (hashtable? value) (alist? value)))
+                            (find-keyed-protocol value))]
+             [empty-proc (and protocol ($keyed-protocol-empty-proc protocol))])
+        (cond [(or (hashtable? value) empty-proc)
+               (let ([result (if empty-proc (empty-proc value)
+                                 (nav-call-user hashtable-copy value #t))])
+                 (for-each
+                  (lambda (entry)
+                    (let ([child (update (cdr entry))])
+                      (if (nav-missing? child)
+                          (unless empty-proc (keyed-delete! result (car entry)))
+                          (keyed-set! result (car entry) child))))
+                  entries)
+                 result)]
+              [else
+               (fold-left (lambda (result entry)
+                            (let ([child (update (cdr entry))])
+                              (if (nav-missing? child)
+                                  (keyed-delete result (car entry))
+                                  (keyed-set result (car entry) child))))
+                          value entries)]))))
 
   (define keyed-update-values!
     (lambda (value update!)

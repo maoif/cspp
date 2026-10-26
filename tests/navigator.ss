@@ -242,8 +242,8 @@
 (nav-register-set!
  setbox?
  setbox-items
- (lambda (box items) (errorf 'setbox "replace callback must not clear members"))
- (lambda (box items) (errorf 'setbox "replace! callback must not clear members"))
+ (lambda (box items) (make-setbox items))
+ (lambda (box items) (setbox-items-set! box items) box)
  (lambda (box member)
    (make-setbox (remp (lambda (item) (equal? item member)) (setbox-items box))))
  (lambda (box member)
@@ -2034,3 +2034,259 @@
 
   ;; Errors from a suffix still propagate when it runs on a default focus.
   (error? (nav-clearval (nav/path (nav/nth/default 3 #f) (nav/key 'x)) '#(1))))
+
+(mat navigator-review-immutable-mutation
+  ;; Mutable updates must reject immutable vectors before changing shared storage.
+  (let ([value (immutable-vector 1)])
+    (and (guard (exn [else #t]) (nav-transform! (nav/nth 0) add1 value) #f)
+         (= 1 (vector-ref value 0))))
+
+  ;; A missing optional suffix must not create a default location.
+  (equal? '() (nav-transform (nav/path (nav/key/default 'x 0) nav/none) add1 '())))
+
+(mat navigator-review-choice-single-traversal
+  (equal? '(1 2)
+          (nav-select (nav/path (nav/choice nav/children nav/stay) (nav/pred number?))
+                      '#(1 2)))
+
+  (call-with-port (open-string-input-port "1 2")
+    (lambda (port)
+      (and (equal? '(1) (nav-select (nav/choice (nav/getter 'read get-datum)) port))
+           (= 2 (get-datum port)))))
+
+  (let ([calls 0])
+    (and (equal? '(2)
+                 (nav-select (nav/choice (nav/pred (lambda (value)
+                                                     (set! calls (+ calls 1))
+                                                     (= calls 1)))) 2))
+         (= calls 1)))
+
+  (equal? '#(2 3)
+          (nav-transform (nav/path (nav/choice nav/children nav/stay) (nav/pred number?))
+                         add1 '#(1 2))))
+
+(mat navigator-review-optional-siblings
+  (let ([path (nav/maybe (nav/path nav/all (nav/key 'x)))])
+    (and (equal? '(1 3) (nav-select path '#(((x . 1)) ((y . 2)) ((x . 3)))))
+         (equal? '#(((x . 2)) ((y . 2)) ((x . 4)))
+                 (nav-transform path add1 '#(((x . 1)) ((y . 2)) ((x . 3)))))
+         (equal? '#(() ((y . 2)) ())
+                 (nav-clearval path '#(((x . 1)) ((y . 2)) ((x . 3))))))))
+
+(mat navigator-review-default-no-focus
+  (andmap
+   (lambda (suffix)
+     (and (equal? '#(1) (nav-transform (nav/path (nav/nth/default 3 0) suffix) add1 '#(1)))
+          (equal? '() (nav-transform (nav/path (nav/key/default 'x 0) suffix) add1 '()))
+          (let ([data (ht)])
+            (and (eq? data (nav-transform! (nav/path (nav/key/default 'x 0) suffix) add1 data))
+                 (= 0 (hashtable-size data))))
+          (let ([data (vector 1)])
+            (eq? data (nav-transform! (nav/path (nav/nth/default 3 0) suffix) add1 data)))))
+   (list nav/none (nav/pred odd?))))
+
+(mat navigator-review-entries-clear-suffix
+  (equal? '#(((y . 2)))
+          (nav-clearval (nav/path nav/entries nav/cdr (nav/key 'x)) '#(((x . 1) (y . 2)))))
+
+  (equal? '#(1) (nav-clearval (nav/path nav/entries nav/none) '#(1)))
+
+  (let ([data (vector (ht 'x 1 'y 2))])
+    (and (eq? data (nav-clearval! (nav/path nav/entries nav/cdr (nav/key 'x)) data))
+         (not (hashtable-contains? (vector-ref data 0) 'x))))
+
+  ;; Removing an entry itself is still unsupported.
+  (error? (nav-clearval nav/entries '#(1))))
+
+(mat navigator-review-recursive-binding-identity
+  (equal? '(1)
+          (nav-select
+           (nav/letrec ([outer (nav/key 'a)])
+             (let ([saved outer])
+               (nav/letrec ([outer (nav/key 'b)]) saved)))
+           '((a . 1) (b . 2))))
+
+  (let ([saved #f])
+    (nav/letrec ([outer (nav/key 'a)])
+      (begin (set! saved (nav/letrec ([inner outer]) inner)) nav/stay))
+    (equal? '(1) (nav-select saved '((a . 1)))))
+
+  ;; A fresh public operation cannot use a symbolic reference from the caller's group.
+  (let ([failed? #f])
+    (nav-select (nav/letrec ([outer nav/stay])
+                  (nav/pred (lambda (value)
+                              (set! failed?
+                                    (guard (exn [else #t])
+                                      (nav-select (make-nav-ref 'outer) value) #f))
+                              #t))) 1)
+    failed?))
+
+(define-record-type (review-length-box make-review-length-box review-length-box?)
+  (fields length))
+(nav-register-indexed! review-length-box? review-length-box-length
+                      (lambda (box index) index)
+                      (lambda (box index value) box)
+                      (lambda (box index value) (void)))
+
+(mat navigator-review-indexed-length-contract
+  (equal? '(0 1 2) (nav-select nav/all (make-review-length-box 3.0)))
+
+  (let ([seen '()] [data (make-review-length-box 3.0)])
+    (and (eq? data (nav-transform nav/all
+                                 (lambda (value) (set! seen (cons value seen)) value) data))
+         (equal? '(2 1 0) seen)))
+
+  ;; Invalid protocol lengths must fail before indexed iteration can diverge.
+  (error? (nav-select nav/all (make-review-length-box -1))))
+
+(mat navigator-review-submap-key-policy
+  (let ([data (make-treemap string-ci=? string-ci<?)])
+    (treemap-set! data (string-copy "alpha") 1)
+    (and (equal? '(1) (nav-select (nav/path (nav/submap (string-copy "ALPHA"))
+                                          (nav/key (string-copy "alpha"))) data))
+         (= 2 (treemap-ref
+               (nav-transform (nav/path (nav/submap (string-copy "ALPHA"))
+                                        (nav/key (string-copy "alpha"))) add1 data)
+               (string-copy "alpha"))))))
+
+(mat navigator-review-set-reindex
+  (let* ([member (ht 'x 1 'y 2)]
+         [data (make-hashset hashtable-size eq?)])
+    (hashset-add! data member)
+    (and (eq? data (nav-clearval! (nav/path nav/all (nav/key 'x)) data))
+         (hashset-contains? data member)
+         (= 1 (hashtable-size member))))
+
+  (equal? '() (hashset->list (nav-clearval nav/all (hashset 1 2 3))))
+
+  (equal? '() (treeset->list (nav-clearval nav/all (treeset = < 1 2 3)))))
+
+(mat navigator-review-readonly-ancestors
+  (let* ([child (ht 'x 1)] [root (immutable-vector child)])
+    (and (eq? root (nav-transform! (nav/path (nav/nth 0) (nav/key 'x)) add1 root))
+         (= 2 (ht-ref child 'x))))
+
+  (let ([root (immutable-vector 1)])
+    (eq? root (nav-transform! (nav/path nav/all nav/none) add1 root)))
+
+  ;; Immutable character/byte storage must reject actual replacements.
+  (let ([text (string->immutable-string (string-copy "a"))])
+    (and (guard (exn [else #t]) (nav-transform! nav/all char-upcase text) #f)
+         (string=? text "a")))
+
+  ;; Immutable bytevectors must reject writes in release builds too.
+  (let ([bytes (bytevector->immutable-bytevector (bytevector 1))])
+    (and (guard (exn [else #t]) (nav-transform! nav/all add1 bytes) #f)
+         (= 1 (bytevector-u8-ref bytes 0)))))
+
+(define-record-type (review-dual-box make-review-dual-box review-dual-box?) (fields value))
+(nav-register-indexed! review-dual-box? (lambda (box) 1)
+                      (lambda (box index) (review-dual-box-value box))
+                      (lambda (box index value) (make-review-dual-box value))
+                      (lambda (box index value) (void)))
+(nav-register-keyed! review-dual-box?
+                    (lambda (box key default)
+                      (if (eq? key 'a) (review-dual-box-value box) default))
+                    (lambda (box key value) (make-review-dual-box value))
+                    (lambda (box key value) (void))
+                    (lambda (box key) box) (lambda (box key) (void))
+                    (lambda (box) (list (cons 'a (review-dual-box-value box)))))
+
+(mat navigator-review-dual-protocol-entries
+  (let ([seen '()])
+    (let ([result (nav-transform nav/entries
+                                 (lambda (entry) (set! seen (cons entry seen))
+                                   (cons (car entry) (+ 1 (cdr entry))))
+                                 (make-review-dual-box 7))])
+      (and (equal? '((0 . 7)) seen) (= 8 (review-dual-box-value result)))))
+
+  (equal? '((0 . 7)) (nav-select nav/entries (make-review-dual-box 7))))
+
+(mat navigator-review-recursive-snapshot
+  (let* ([body (list (nav/key 'a))] [path (nav/rec visit body)])
+    (set-car! body (nav/key 'b))
+    (equal? '(1) (nav-select path '((a . 1) (b . 2)))))
+
+  (equal? (nav->datum (nav/rec visit (list (nav/pred number?))))
+          (nav->datum (nav/rec visit (list (nav/pred number?))))))
+
+(mat navigator-review-specialized-submap
+  (let* ([source (fxtreemap fx= fx< '(1 . 10) '(2 . 20))]
+         [result (nav-select-one (nav/submap 1) source)])
+    (and (fxtreemap? result) (= 1 (fxtreemap-size result))
+         (= 10 (fxtreemap-ref result 1)) (= 2 (fxtreemap-size source)))))
+
+(mat navigator-review-indexed-length-rounded-boundary
+  ;; Rounding the fixnum maximum to inexact can produce the first invalid fixnum.
+  (error? (nav-select-first nav/all
+                           (make-review-length-box
+                            (exact->inexact (+ 1 (most-positive-fixnum)))))))
+
+(mat navigator-review-public-operation-scopes
+  (andmap
+   (lambda (select)
+     (let ([isolated? #f])
+       (nav-select
+        (nav/letrec ([outer nav/stay])
+          (nav/pred (lambda (value)
+                      (set! isolated?
+                            (guard (exn [else #t])
+                              (select (make-nav-ref 'outer) value) #f))
+                      #t))) 1)
+       isolated?))
+   (list nav-select nav-selected? nav-select-first)))
+
+(mat navigator-review-optional-multiple-keys
+  (let ([path (nav/maybe (nav/key-values 'x 'missing 'y))])
+    (and (equal? '(1 3) (nav-select path '((x . 1) (y . 3))))
+         (equal? '((x . 2) (y . 4)) (nav-transform path add1 '((x . 1) (y . 3))))
+         (null? (nav-clearval path '((x . 1) (y . 3))))))
+
+  (let ([path (nav/maybe (nav/submap 'x 'missing 'y))])
+    (and (equal? '((x . 1) (y . 3)) (nav-select path '((x . 1) (y . 3))))
+         (equal? '((x . 2) (y . 4))
+                 (nav-transform path (lambda (entry) (cons (car entry) (+ 1 (cdr entry))))
+                                '((x . 1) (y . 3))))
+         (null? (nav-clearval path '((x . 1) (y . 3)))))))
+
+(mat navigator-review-symbolic-lexical-environments
+  (equal? '(1)
+          (nav-select (nav/letrec ([outer (nav/key 'a)])
+                        (nav/letrec ([inner (make-nav-ref 'outer)]) inner))
+                      '((a . 1))))
+
+  (let ([saved #f])
+    (nav/letrec ([outer (nav/key 'a)])
+      (begin (set! saved (nav/letrec ([inner (make-nav-ref 'outer)]) inner)) nav/stay))
+    (equal? '(1) (nav-select saved '((a . 1))))))
+
+(mat navigator-review-readonly-map-ancestor
+  (let* ([child (ht 'x 1)] [root (hashtable-copy (ht 'child child) #f)])
+    (and (eq? root (nav-transform! (nav/path (nav/key 'child) (nav/key 'x)) add1 root))
+         (= 2 (ht-ref child 'x))))
+
+  (let* ([child (ht 'x 1 'y 2)] [root (hashtable-copy (ht 'child child) #f)])
+    (and (eq? root (nav-clearval! (nav/path nav/entries nav/cdr (nav/key 'x)) root))
+         (not (hashtable-contains? child 'x)))))
+
+(mat navigator-review-treeset-member-reindex
+  (let* ([one (ht 'a 1)] [two (ht 'a 1 'x 2)] [three (ht 'a 1 'b 2 'x 3)]
+         [data (make-treeset (lambda (left right) (= (hashtable-size left) (hashtable-size right)))
+                             (lambda (left right) (< (hashtable-size left) (hashtable-size right))))])
+    (for-each (lambda (member) (treeset-add! data member)) (list one two three))
+    (and (eq? data (nav-clearval! (nav/path nav/all (nav/maybe (nav/key 'x))) data))
+         (= 2 (treeset-size data))
+         (equal? '(1 2) (map hashtable-size (treeset->list data))))))
+
+(mat navigator-review-entries-removal-boundary
+  ;; Clearing an entire alist entry is unsupported; the removal marker is itself a pair.
+  (error? (nav-clearval nav/entries '((a . 1))))
+
+  ;; A hashtable entry cannot be replaced by the internal removal marker either.
+  (error? (nav-clearval nav/entries (ht 'a 1)))
+
+  ;; Mutable entry clearing must reject removal before corrupting the original pair.
+  (error? (nav-clearval! nav/entries (list (cons 'a 1))))
+
+  ;; Direct removal from a hashtable through entries remains unsupported in mutation.
+  (error? (nav-clearval! nav/entries (ht 'a 1))))

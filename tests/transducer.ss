@@ -902,3 +902,84 @@
 
   (= (+ 4 (most-positive-fixnum))
      (transduce (tidentity) (rfcount) (+ 2 (most-positive-fixnum)) '(a b))))
+
+(mat transducer-review-sequence-advance-escape
+  (andmap
+   (lambda (stage)
+     (let ([source (make-review-source '(1 2) 0)] [interrupt void])
+       (let* ([xform (make-transducer
+                      'escape
+                      (lambda (reducer)
+                        (let ([delegate (completion reducer)])
+                          (make-reducer
+                           'escape
+                           (case-lambda
+                             [() (delegate)]
+                             [(acc) (when (eq? stage 'complete) (interrupt)) (delegate acc)]
+                             [(acc value)
+                              (when (eq? stage 'step) (interrupt))
+                              (delegate acc value)])))))]
+              [output (sequence xform source)])
+         (and (eq? 'escaped
+                   ;; A nonlocal exit from a step or completion must close the owned source.
+                   (call/1cc
+                    (lambda (escape)
+                      (set! interrupt (lambda () (escape 'escaped)))
+                      (let loop ()
+                        (unless (iter-end? (iter-next! output)) (loop)))
+                      'finished)))
+              (= 1 (review-source-finalizations source))
+              (iter-end? (iter-next! output))))))
+   '(step complete)))
+
+(mat transducer-review-cat-source-protocol
+  (equal? '(1 2 3 4)
+          (into 'list (tcat) (list (array 1 2) (eduction (tmap add1) '(2 3)))))
+
+  (equal? '(1 2) (into 'list (tmapcat (lambda (value) (array value))) '(1 2))))
+
+(define-record-type (review-escaping-source make-review-escaping-source review-escaping-source?)
+  (fields interrupt (mutable finalizations)))
+(iter-register-source!
+ review-escaping-source?
+ (lambda (source)
+   (make-iter
+    (lambda () ((review-escaping-source-interrupt source))) void
+    (lambda () (review-escaping-source-finalizations-set!
+                source (+ 1 (review-escaping-source-finalizations source)))))))
+
+(mat transducer-review-sequence-producer-escape
+  (let ([interrupt void])
+    (let* ([source (make-review-escaping-source (lambda () (interrupt)) 0)]
+           [output (sequence (tidentity) source)])
+      (and (eq? 'escaped
+                ;; An owned producer may escape before supplying any value.
+                (call/1cc (lambda (escape)
+                           (set! interrupt (lambda () (escape 'escaped)))
+                           (iter-next! output))))
+           (= 1 (review-escaping-source-finalizations source))
+           (iter-end? (iter-next! output))
+           (begin (iter-finalize! output)
+                  (= 1 (review-escaping-source-finalizations source)))))))
+
+(mat transducer-review-cat-lifecycle
+  (let ([source (make-review-source '(1 2 3) 0)])
+    (and (equal? '(1) (into 'list (tcompose (tcat) (ttake 1)) (list source '(4 5))))
+         (= 1 (review-source-finalizations source))))
+
+  (let ([source (list->iter '(1 2 3))])
+    (let ([result (into 'list (tcompose (tcat) (ttake 1)) (list source))])
+      (and (equal? '(1) result) (not (iter-finalized? source))
+           (= 2 (iter-next! source)) (begin (iter-finalize! source) #t))))
+
+  (let ([source (list->iter '(1 2 3))])
+    (let ([result (into 'list (tcompose (tcat) (ttake 1))
+                        (list (eduction (tmap add1) source)))])
+      (and (equal? '(2) result) (not (iter-finalized? source))
+           (= 2 (iter-next! source)) (begin (iter-finalize! source) #t))))
+
+  (equal? '(1 4 5) (into 'list (tcat) (list (eduction (ttake 1) '(1 2 3)) '(4 5))))
+
+  (equal? '(#(1 2) #(3 4))
+          (into 'list (tcompose (tcat) (tpartition-all 2))
+                (list (eduction (tidentity) '(1 2 3)) '(4)))))
