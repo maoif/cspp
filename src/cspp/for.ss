@@ -103,7 +103,8 @@
   byte offsets. Typed bytevector traversal ignores an incomplete final chunk; `:rev` preserves
   the complete chunks anchored at the original start, then traverses them in reverse order.
   Numeric ranges, hashtables, and iterators count source items starting from zero.
-  Lists support the sequence traversal options; sliced or reversed list traversal uses O(n) space.
+  Lists support the sequence traversal options. Forward list slices use constant auxiliary space;
+  backward traversal snapshots the source in a vector using O(n) space. Bounds checks scan the list.
   Sequence `:from` and `:to` require fixnum source positions within the selected source.
   Ascending slices use `0 <= from <= to <= length`; descending slices use
   `-1 <= to <= from < length`. Sequence `:step` requires an exact positive integer.
@@ -200,7 +201,11 @@
                                                    (cons (list-ref x* 0) res)
                                                    res))
                                              '() iter-frags)]
-                    [loop-vars (let ([res (map (lambda (x*) (list-ref x* 1)) iter-frags)])
+                    [loop-vars (let ([res (apply append
+                                                (map (lambda (fragment)
+                                                       (cons (list-ref fragment 1)
+                                                             (list-ref fragment 10)))
+                                                     iter-frags))])
                                  ;; order matters
                                  (when frag-index (set! res (cons index-def res)))
                                  (when frag-init  (set! res (cons init-def  res)))
@@ -215,7 +220,11 @@
                           '())
                       (map (lambda (fragment) (or (list-ref fragment 9) (list-ref fragment 2)))
                            iter-frags))]
-                    [updates (let ([res (map (lambda (x*) (list-ref x* 3)) iter-frags)])
+                    [updates (let ([res (apply append
+                                              (map (lambda (fragment)
+                                                     (cons (list-ref fragment 3)
+                                                           (list-ref fragment 11)))
+                                                   iter-frags))])
                                (when frag-index
                                  (set! res (cons (syntax-case frag-index ()
                                                    [(_ v) #'(fx1+ state-index)])
@@ -226,7 +235,11 @@
                     ;; Rejected configuration guards advance sources, not the body count or fold.
                     [skip-updates (append (if frag-init (list #'state-acc) '())
                                           (if frag-index (list #'state-index) '())
-                                          (map (lambda (fragment) (list-ref fragment 3)) iter-frags))]
+                                          (apply append
+                                                 (map (lambda (fragment)
+                                                        (cons (list-ref fragment 3)
+                                                              (list-ref fragment 11)))
+                                                      iter-frags)))]
                     [bind-loop-state
                      (lambda (body)
                              #`(let (#,@(if (and frag-init
@@ -251,7 +264,8 @@
                                   (bind-loop-state body)
                                   #`(for-loop #,@(if frag-init (list #'state-acc) '())
                                               #,@(if frag-index (list #'state-index) '())
-                                              #,(list-ref (car iter-frags) 3)))))
+                                              #,(list-ref (car iter-frags) 3)
+                                              #,@(list-ref (car iter-frags) 11)))))
                          (cons bind-loop-state
                                (map (lambda (x*) (list-ref x* 4)) iter-frags)))]
                     [call/finish-proc (if frag-finish
@@ -483,13 +497,13 @@
                ;; (printf "index-var: ~a~n" index-var)
                ;; (println "for* -------------------------")
                #`(let ([t-finish #,(cadr call/finish-proc)])
-                   #,(let lp-for-loop ([i/c* iters/configs] [last-forloop #f] [last-update #f] [shadowed '()])
-                     (let ([call-lastforloop #`(#,last-forloop #,@init/index-vars #,last-update)])
+                   #,(let lp-for-loop ([i/c* iters/configs] [last-forloop #f] [last-update '()] [shadowed '()])
+                     (let ([call-lastforloop #`(#,last-forloop #,@init/index-vars #,@last-update)])
                        (if (null? i/c*)
                            (let ([call-loop (lambda (init?)
                                               (if frag-index
-                                                  #`(#,last-forloop #,@init? (fx1+ #,index-var) #,last-update)
-                                                  #`(#,last-forloop #,@init?                    #,last-update)))])
+                                                  #`(#,last-forloop #,@init? (fx1+ #,index-var) #,@last-update)
+                                                  #`(#,last-forloop #,@init?                    #,@last-update)))])
                              (if frag-init
                                  #`(let ([t-acc (begin body* ...)])
                                      #,(call-loop (list #'t-acc)))
@@ -515,7 +529,7 @@
                                             #,e)))]
                                     [loop-var          (list-ref iter-cl 1)]
                                     [termination-check (list-ref iter-cl 2)]
-                                    [update            (list-ref iter-cl 3)]
+                                    [update (cons (list-ref iter-cl 3) (list-ref iter-cl 11))]
                                     [gen-getter        (list-ref iter-cl 4)]
                                     [direct-filter     (list-ref iter-cl 8)]
                                     [loop-var
@@ -526,7 +540,7 @@
                                                      (let* ([vars (if frag-index (list index-def)     '())]
                                                             [vars (if frag-init  (cons init-def vars) vars)])
                                                        vars))])
-                                       `(,@vars ,loop-var))])
+                                       `(,@vars ,loop-var ,@(list-ref iter-cl 10)))])
                                ;; if current level terminates, call forloop of last level
                                (gen-preloop
                                 #`(let forloop (#,@loop-var)
@@ -559,7 +573,7 @@
                                                    (if direct-filter
                                                        (direct-filter
                                                         (bind-loop-state body)
-                                                        #`(forloop #,@init/index-vars #,update))
+                                                        #`(forloop #,@init/index-vars #,@update))
                                                        (bind-loop-state
                                                         (if gen-getter (gen-getter body) body))))])
                                            (gen-bindings
@@ -584,7 +598,7 @@
                                                                        #`(let ([break-result e2])
                                                                            (#,last-forloop break-result
                                                                             #,@(if frag-index (list index-var) '())
-                                                                            #,last-update))
+                                                                            #,@last-update))
                                                                        #`(begin e2 #,call-lastforloop))
                                                                    #'e2)
                                                              #,(lp-configs (cdr configs) shadowed))]
@@ -600,12 +614,12 @@
                                                                (let ([v #,counter])
                                                                  (set! #,counter (fx1+ #,counter))
                                                                  #,(lp-configs (cdr configs) (cons #'v shadowed)))
-                                                               (forloop #,@init/index-vars #,update)))]
+                                                               (forloop #,@init/index-vars #,@update)))]
                                                       [(:guard e)
                                                        (kw:guard? #':guard)
                                                        #`(if e
                                                              #,(lp-configs (cdr configs) shadowed)
-                                                             (forloop #,@init/index-vars #,update))]
+                                                             (forloop #,@init/index-vars #,@update))]
                                                       [(:let v e)
                                                        (memq (datum :let) '(:let :let* :letrec :letrec*))
                                                        #`(#,(case (datum :let)

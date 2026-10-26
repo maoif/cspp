@@ -432,6 +432,7 @@
   - raw-termination: exhaustion check before filtering, or #f for an unfiltered source
   - direct-filter: optional (body retry) generator that binds and filters without seeking
   - visit: optional (body exhausted) generator that seeks in private item binding scopes
+  - extra-bindings / extra-updates: additional resumable induction variables and their updates
   |#
   (define (process-iter-clause/direct cl direct-filter?)
     (define (process-multi-var-iter-clause v* ty op*)
@@ -458,6 +459,84 @@
                              [#,(cadr v*) (vector-ref t-vs t-i)])
                          #,e))))]
           [else (syntax-error ty "bad iter type:")])))
+    #|proc:process-list-iter-clause
+    The `process-list-iter-clause` helper compiles sliced list traversal for `variable` and
+    source/options syntax `arguments`. It returns the iterator fragment described above.
+    Forward traversal follows list links with constant auxiliary space; backward traversal
+    snapshots the source in a vector. For example, source `(a b c)` with `:from 1` yields
+    `b` and `c` with source positions `1` and `2`, without copying the source.
+    |#
+    (define (process-list-iter-clause variable arguments)
+      (let* ([options (check-ops *vector-ops* (cdr arguments))]
+             [from-option (assoc ':from options)]
+             [to-option (assoc ':to options)]
+             [step-option (assoc ':step options)]
+             [reverse-option (assoc ':rev options)])
+        (with-syntax ([(source size from to original-from step position forward? tail snapshot)
+                       (generate-temporaries
+                        '(source size from to original-from step position forward? tail snapshot))])
+          (list
+           (lambda (body)
+             #`(let ([source #,(car arguments)])
+                 (unless (list? source) (errorf ':list "not a list: ~a" source))
+                 (let* ([from #,(if from-option (cadr from-option) #'0)]
+                        [to #,(if to-option (cadr to-option) #'#f)]
+                        ;; A backward snapshot supplies its own length, avoiding another scan.
+                        [snapshot
+                         (and (fixnum? from)
+                              #,(if to-option
+                                    #`(and (fixnum? to)
+                                           (#,(if reverse-option #'fx< #'fx>) from to))
+                                    (if reverse-option #'#t #'#f))
+                              (list->vector source))]
+                        [size (if snapshot (vector-length snapshot) (length source))]
+                        [to #,(if to-option #'to #'size)]
+                        [original-from
+                         (begin
+                           (unless (and (fixnum? from) (fixnum? to)
+                                        (if (fx<= from to)
+                                            (fx<= 0 from to size)
+                                            (fx<= -1 to from (fx1- size))))
+                             (errorf ':list "invalid source bounds: ~a to ~a, length ~a"
+                                     from to size))
+                           from)]
+                        [from #,(if reverse-option
+                                    #'(if (fx<= from to) (fx1- to) (fx1+ to))
+                                    #'from)]
+                        [to #,(if reverse-option
+                                  #'(if (fx<= original-from to)
+                                        (fx1- original-from) (fx1+ original-from))
+                                  #'to)]
+                        [forward? (fx<= from to)]
+                        [step #,(if step-option
+                                    #`(let ([stride #,(cadr step-option)])
+                                        (unless (and (positive-natural? stride) (exact? stride))
+                                          (errorf ':list
+                                                  "step has to be an exact positive integer: ~a"
+                                                  stride))
+                                        (let ([stride (min stride (abs (fx- to from)))])
+                                          (if forward? stride (fx- stride))))
+                                    #'(if forward? 1 -1))]
+                        [tail (if (fx< from to) (list-tail source from) '())])
+                   #,body)))
+           #'[position from]
+           #'(if forward? (fx>= position to) (fx<= position to))
+           (if step-option
+               #'(if forward?
+                     (if (fx>= step (fx- to position)) to (fx+ position step))
+                     (if (fx<= step (fx- to position)) to (fx+ position step)))
+               #'(if forward? (fx1+ position) (fx1- position)))
+           (lambda (body)
+             #`(let ([#,variable (if forward? (car tail) (vector-ref snapshot position))])
+                 #,body))
+           #'position
+           #f
+           #'([tail tail])
+           (list (if step-option
+                     #'(if (and forward? (fx< step (fx- to position)))
+                           (list-tail tail step)
+                           tail)
+                     #'(if forward? (cdr tail) tail)))))))
     (define (process-single-var-iter-clause v ty op*)
       (define (numeric-next step)
         #`(let ([next (+ #,v #,step)])
@@ -1115,9 +1194,12 @@
       (let* ([source-index (and (> (length fragment) 5) (list-ref fragment 5))]
              [raw-termination (or (and (> (length fragment) 6) (list-ref fragment 6))
                                   (and predicate (list-ref fragment 2)))]
+             [extra-bindings (if (> (length fragment) 7) (list-ref fragment 7) '())]
+             [extra-updates (if (> (length fragment) 8) (list-ref fragment 8) '())]
              [exposed (if index (append variables (list index)) variables)])
         (define (finish fragment)
-          (append (list-head fragment 5) (list source-index exposed raw-termination #f #f)))
+          (append (list-head fragment 5)
+                  (list source-index exposed raw-termination #f #f extra-bindings extra-updates)))
         (cond
          [(not (or predicate index)) (finish fragment)]
          [(and predicate direct-filter?)
@@ -1128,7 +1210,8 @@
             (append (list-head indexed 8)
                     (list (lambda (body retry)
                             (getter #`(if #,predicate #,body #,retry)))
-                          #f)))]
+                          #f)
+                    (list-tail indexed 10)))]
          [(not predicate)
           ;; Index-only sources need neither filtering nor accepted-item caches.
           (with-syntax ([(position) (generate-temporaries '(position))])
@@ -1161,6 +1244,8 @@
              [state (syntax-case binding () [(state initial) #'state])]
              [termination (list-ref fragment 2)]
              [advance (list-ref fragment 3)]
+             [extra-bindings (list-ref fragment 10)]
+             [extra-updates (list-ref fragment 11)]
              [bind-public
               (lambda (body)
                 ;; The index may shadow the item, as in the direct-source getter.
@@ -1179,26 +1264,23 @@
                 (or (list-ref fragment 7) termination)
                 #f
                 (lambda (body exhausted)
-                  #`(let seek ([#,state #,state])
+                  #`(let seek ([#,state #,state]
+                               #,@(map (lambda (binding)
+                                         (syntax-case binding () [(name initial) #'[name name]]))
+                                       extra-bindings))
                       (if #,termination
                           #,exhausted
                           #,(getter #`(if #,(bind-public predicate)
                                           #,body
-                                          (seek #,advance))))))))))
+                                          (seek #,advance #,@extra-updates))))))
+                extra-bindings extra-updates))))
     (define (single-fragment variable type arguments)
       (cond
        [(memq type '(:iota :fxiota :nums :fixnums))
         (numeric-fragment variable (memq type '(:iota :fxiota))
                           (lambda (state) (process-single-var-iter-clause state type arguments)))]
        [(and (eq? type ':list) (> (length arguments) 1))
-        ;; Sliced/reversed list traversal uses a preallocated vector to preserve
-        ;; original source positions. Plain list traversal keeps its direct cdr loop.
-        (process-single-var-iter-clause
-         variable ':vector
-         (cons #`(let ([source #,(car arguments)])
-                   (unless (list? source) (errorf ':list "not a list: ~a" source))
-                   (list->vector source))
-               (cdr arguments)))]
+        (process-list-iter-clause variable arguments)]
        [else (process-single-var-iter-clause variable type arguments)]))
     (syntax-case cl ()
       [(v lit)

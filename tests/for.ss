@@ -2317,3 +2317,143 @@
 
      ;; Zero fixnum steps remain invalid for an empty range.
      (error? (for/list ([x :fixnums 2 2 0]) x)))
+
+(mat forward-list-slice-storage
+     ;; A forward slice must not allocate storage proportional to the entire source.
+     (let* ([source (iota 100000)]
+            [before (statistics)]
+            [result (for/list ([:length 1] [x :list source :from 0]) x)]
+            [bytes (sstats-bytes (sstats-difference (statistics) before))])
+       (and (equal? '(0) result) (< bytes 200000)))
+
+     ;; Empty forward slices also avoid copying the source.
+     (let* ([source (iota 100000)]
+            [before (statistics)]
+            [result (for/list ([x :list source :from 0 :to 0]) x)]
+            [bytes (sstats-bytes (sstats-difference (statistics) before))])
+       (and (null? result) (< bytes 200000))))
+
+(mat list-slice-traversal
+     (equal? '((1 1) (3 3) (5 5))
+             (for/list ([x :list '(0 1 2 3 4 5 6) :from 1 :to 6 :step 2 :index i])
+               (list x i)))
+
+     (equal? '((5 5) (3 3) (1 1))
+             (for/list ([x :list '(0 1 2 3 4 5 6) :from 5 :to 0 :step 2 :index i])
+               (list x i)))
+
+     (equal? '((1 1) (3 3) (5 5))
+             (for/list ([x :list '(0 1 2 3 4 5 6) :from 5 :to 0 :rev :step 2 :index i])
+               (list x i)))
+
+     (equal? '((1 a) (3 b) (5 c))
+             (for/list ([x :list '(0 1 2 3 4 5 6) :from 1 :to 6 :guard (odd? x)]
+                        [y :list '(a b c)])
+               (list x y)))
+
+     (equal? '((0) (1 2) (2 3 4))
+             (for/list ([outer :fxiota 3])
+               (for/list ([x :list '(0 1 2 3 4 5 6) :from outer :to (+ (* outer 2) 1)])
+                 x)))
+
+     (equal? '(2) (for/list ([x :list '(0 1 2 3) :from 2
+                               :step (+ 1 (most-positive-fixnum))]) x))
+
+     (null? (for/list ([x :list '() :rev]) x))
+
+     (let ([events '()])
+       (let ([result
+              (for/list ([x :list (begin (set! events '(source)) '(0 1 2 3))
+                             :from (begin (set! events (append events '(from))) 1)
+                             :to (begin (set! events (append events '(to))) 4)
+                             :step (begin (set! events (append events '(step))) 2)]) x)])
+         (and (equal? '(1 3) result) (equal? '(source from to step) events))))
+
+     ;; List slices retain strict source types.
+     (error? (for/list ([x :list '#(0 1 2) :from 0]) x))
+
+     ;; Forward list bounds require fixnums.
+     (error? (for/list ([x :list '(0 1 2) :from 1.0]) x))
+
+     ;; Even an empty slice must lie inside the source.
+     (error? (for/list ([x :list '(0 1 2) :from 4 :to 4]) x)))
+
+(mat list-slice-continuation-state
+     (let ()
+       (define (check traverse expected)
+         (let ([resume #f] [resumed? #f])
+           (let ([result
+                  (traverse
+                   (lambda (value)
+                     (when (and (not resumed?) (not resume))
+                       ;; Re-enter a completed immutable fold to verify restored source state.
+                       (call/cc (lambda (continuation) (set! resume continuation))))
+                     value))])
+             (if resumed?
+                 (equal? expected result)
+                 (begin (set! resumed? #t) (resume 'continue))))))
+       (and
+        (check (lambda (visit)
+                 (for/fold ([:init result '()] [:finish (reverse result)]
+                             [x :list (list 'a 'b 'c) :from 0])
+                   (cons (visit x) result)))
+               '(a b c))
+        (check (lambda (visit)
+                 (for/fold ([:init result '()] [:finish (reverse result)]
+                             [x :list (list 'a 'b 'c 'd 'e) :step 2])
+                   (cons (visit x) result)))
+               '(a c e))
+        (check (lambda (visit)
+                 (for/fold ([:init result '()] [:finish (reverse result)]
+                             [x :list (list 'a 'b 'c 'd) :from 0 :index i :guard (odd? i)])
+                   (cons (visit x) result)))
+               '(b d))
+        (check (lambda (visit)
+                 (for/fold ([:init result '()] [:finish (reverse result)]
+                             [x :list (list 'a 'b 'c 'd) :from 0 :index i :guard (odd? i)]
+                             [other :fxiota 2])
+                   (cons (visit x) result)))
+               '(b d))
+        (check (lambda (visit)
+                 (for*/fold ([:init result '()] [:finish (reverse result)]
+                              [outer :fxiota 2] [x :list (list 'a 'b) :from 0])
+                   (cons (visit (list outer x)) result)))
+               '((0 a) (0 b) (1 a) (1 b))))))
+
+(mat parallel-list-slice-continuation-state
+     (let ([resume #f] [resumed? #f])
+       (let ([result
+              (for/fold
+                ([:init result '()] [:finish (reverse result)]
+                 [x :fxiota 2 :guard
+                    (begin
+                      (when (and (not resumed?) (not resume))
+                        ;; Capture before a companion getter has bound its list item.
+                        (call/cc (lambda (continuation) (set! resume continuation))))
+                      #t)]
+                 [y :list (list 'a 'b) :from 0])
+                (cons (list x y) result))])
+         (if resumed?
+             (equal? '((0 a) (1 b)) result)
+             (begin (set! resumed? #t) (resume 'continue))))))
+
+(mat list-slice-extra-state-transitions
+     (equal? '((1 b) (3 d))
+             (for/list ([x :list '(0 1 2 3 4) :from 0 :guard (odd? x)]
+                        [y :list '(a b c d e) :from 1 :step 2])
+               (list x y)))
+
+     (equal? '((a 0) (b 0))
+             (for*/list ([x :list '(a b) :from 0] [y 3] [:break (= y 1)])
+               (list x y)))
+
+     (= 3 (for*/fold ([:init sum 0] [:finish sum]
+                       [x :list '(1 2) :from 0] [y 3] [:break (= y 1)])
+            (+ sum x)))
+
+     (= 23 (for*/fold ([:init sum 0] [:finish sum]
+                        [x :list '(1 2) :from 0] [y 3] [:break (= y 1) (+ sum 10)])
+             (+ sum x)))
+
+     (equal? '(1 3)
+             (for/list ([x :list '(0 1 2 3 4) :from 0] [:guard (odd? x)]) x)))
