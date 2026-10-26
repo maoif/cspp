@@ -1045,10 +1045,8 @@
                           [i 10])
                i))
 
-     (equal? (viota 10)
-             (for/vector ([:fill 42]
-                          [i 10])
-               i))
+     ;; A fill value requires an explicit length.
+     (error? (eval '(for/vector ([:fill 42] [i 10]) i)))
 
      (equal? '#(0 1 2 3 4 5 6 7 8 9 42 42 42 42 42)
              (for/vector ([:length 15]
@@ -1063,11 +1061,8 @@
                           [i 10])
                (+ i j)))
 
-     (equal? '#(0 2 4 6 8 10 12 14 16 18)
-             (for/vector ([:index j]
-                          [:fill 42]
-                          [i 10])
-               (+ i j)))
+     ;; A leading global index does not make a fill-only form valid.
+     (error? (eval '(for/vector ([:index j] [:fill 42] [i 10]) (+ i j))))
 
      (equal? '#(0 2 4 6 8 10 12 14 16 18 42 42 42 42 42)
              (for/vector ([:index j]
@@ -2104,6 +2099,12 @@
 
      (error? (eval '(for*/list ([x 3] [:length 2]) x))))
 
+(mat collection-option-order
+     ;; Global indexes precede length options, consistently with vector comprehensions.
+     (error? (eval '(for/list ([:length 2] [:index i] [x 4]) (list i x))))
+
+     (error? (eval '(for*/list ([:length 2] [:index i] [x 4]) (list i x)))))
+
 (mat list-result-limit-evaluation
      (guard (condition [#t #f])
        (equal? '((1 3) 1 2)
@@ -2153,3 +2154,48 @@
      (error? (eval '(for*/list ([:length 1.5] [x 0]) x)))
 
      (error? (eval '(for/list ([:length (+ (most-positive-fixnum) 1)] [x 0]) x))))
+
+(mat vector-fill-requires-length
+     ;; Reject fill-only forms during expansion, before their expressions run.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(for/vector ([:fill (error 'fill-only "evaluated")]
+                           [x 2]) x)
+             (environment '(cspp)))
+       #f)
+
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(for*/vector ([:fill (error 'fill-only "evaluated")]
+                            [x 2] [y 2]) (list x y))
+             (environment '(cspp)))
+       #f)
+
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(for*/vector ([:index i] [:fill #f] [x 2]) i)
+             (environment '(cspp)))
+       #f)
+
+     (let ([calls 0])
+       (let ([result (for/vector ([:length 3]
+                                 [:fill (begin (set! calls (+ calls 1)) 'unused)] [x 2]) x)])
+         (and (equal? '#(0 1 unused) result) (= calls 1))))
+
+     (let ([calls 0])
+       (let ([result (for*/vector ([:length 3]
+                                  [:fill (begin (set! calls (+ calls 1)) 'unused)]
+                                  [x 1] [y 2]) y)])
+         (and (equal? '#(0 1 unused) result) (= calls 1))))
+
+     ;; A zero-length vector evaluates fill once while skipping the sources and body.
+     (let ([calls 0])
+       (let ([result (for/vector ([:length 0]
+                                 [:fill (begin (set! calls (+ calls 1)) 'unused)]
+                                 [x :iota (error 'fill-length "source evaluated")])
+                       (error 'fill-length "body evaluated"))])
+         (and (equal? '#() result) (= calls 1))))
+
+     (let ([calls 0])
+       (let ([result (for*/vector ([:length 0]
+                                  [:fill (begin (set! calls (+ calls 1)) 'unused)]
+                                  [x :iota (error 'fill-length "source evaluated")])
+                       (error 'fill-length "body evaluated"))])
+         (and (equal? '#() result) (= calls 1)))))

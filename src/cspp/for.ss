@@ -676,6 +676,9 @@
            [((index-tag index) (length-tag limit) clause ...)
             (and (kw:index? #'index-tag) (kw:length? #'length-tag))
             (generate #'loop #'who #'limit #'((index-tag index) clause ...) #'(body ...))]
+           [((length-tag limit) (index-tag . arguments) clause ...)
+            (and (kw:length? #'length-tag) (kw:index? #'index-tag))
+            (syntax-error #'(index-tag . arguments) "global :index must precede :length:")]
            [((length-tag limit) clause ...)
             (kw:length? #'length-tag)
             (generate #'loop #'who #'limit #'(clause ...) #'(body ...))]
@@ -705,19 +708,21 @@
 
   #|doc
 (for/vector (<index-clause>?
-             <length-clause>?
-             <fill-clause>?
+             <vector-size-clauses>?
              <iter-clause>+
              <for-config-clause>*)
   <body>+)
 
 <length-clause> := [:length <expr>] ; <expr> must evaluate to a non-negative fixnum
 <fill-clause>   := [:fill   <expr>]
+<vector-size-clauses> := <length-clause> <fill-clause>?
   |#
   #|macro:for/vector
   The `for/vector` macro runs `for` and collects body results in a vector.
   With `:length`, it preallocates that many slots and stops when full; `:fill` supplies the
   initial value. Without `:length`, it grows a list builder and converts the results to a vector.
+  `:fill` requires `:length`; a fill-only form is a syntax violation. The fill expression is
+  evaluated once, even when the length is zero.
   |#
   (define-syntax for/vector
     (lambda (stx)
@@ -766,7 +771,8 @@
                                   ;; TODO what if there's no iter clauses?
                                   ,@(hashtable-ref fragments 'iter '(#f))
                                   ,@(hashtable-ref fragments 'config  '())))])
-           ;; (println "len: ~a~ncl* ~a" frag-len cl*)
+           (when (and frag-fill (not frag-len))
+             (syntax-error frag-fill "for/vector: :fill requires :length:"))
            (if frag-len
                #`(let ([len #,(syntax-case frag-len () [(_ l) #'l])])
                    (unless (and (fixnum? len) (nonnegative? len))
@@ -858,8 +864,7 @@
 
   #|doc
 (for*/vector (<index-clause>?
-              <length-clause>?
-              <fill-clause>?
+              <vector-size-clauses>?
               <for*-clause>+)
   <body>+)
   |#
@@ -867,6 +872,8 @@
   The `for*/vector` macro runs `for*` and collects body results in a vector.
   With `:length`, it preallocates the vector and stops when full; `:fill` supplies its initial
   value. Without `:length`, it uses a list builder and converts the nested results to a vector.
+  As with `for/vector`, `:fill` requires `:length` and its expression is evaluated once,
+  including when the length is zero.
   |#
   (define-syntax for*/vector
     (lambda (stx)
@@ -917,7 +924,8 @@
                 [cl* (filter id `(,(hashtable-ref fragments 'index #f)
                                   ,@(apply append
                                            (hashtable-ref fragments 'iter/config '(#f)))))])
-           ;; (println "len: ~a~ncl* ~a" frag-len cl*)
+           (when (and frag-fill (not frag-len))
+             (syntax-error frag-fill "for*/vector: :fill requires :length:"))
            (if frag-len
                #`(let ([len #,(syntax-case frag-len () [(_ l) #'l])])
                    (unless (and (fixnum? len) (nonnegative? len))
