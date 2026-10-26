@@ -58,7 +58,7 @@
                 (loop rest (cons (cons (car items) args) options)))]
              [else (values (reverse options) items)]))))
       (define parse-option
-        (lambda (key rest parameter-ids)
+        (lambda (key rest parameter-ids inherited-parameter-ids)
           (let ([datum (syntax->datum key)])
             (case datum
               [(:tags)
@@ -87,14 +87,16 @@
                  (syntax-error key ":skip-when expects expression and reason"))
                #`(cons 'skip-when
                        (cons (lambda (params)
-                               #,(build-bindings parameter-ids (list (car rest))))
+                               #,(build-callback parameter-ids inherited-parameter-ids
+                                                  (list (car rest))))
                              #,(cadr rest)))]
               [(:only-when)
                (unless (= (length rest) 2)
                  (syntax-error key ":only-when expects expression and reason"))
                #`(cons 'skip-when
                        (cons (lambda (params)
-                               (not #,(build-bindings parameter-ids (list (car rest)))))
+                               (not #,(build-callback parameter-ids inherited-parameter-ids
+                                                       (list (car rest)))))
                              #,(cadr rest)))]
               [(:xfail)
                (unless (= (length rest) 1)
@@ -105,7 +107,8 @@
                  (syntax-error key ":xfail-when expects expression and reason"))
                #`(cons 'xfail-when
                        (cons (lambda (params)
-                               #,(build-bindings parameter-ids (list (car rest))))
+                               #,(build-callback parameter-ids inherited-parameter-ids
+                                                  (list (car rest))))
                              #,(cadr rest)))]
               [(:xfail-strict :stdout :stderr :output :raises)
                (unless (= (length rest) 1)
@@ -142,7 +145,7 @@
                #`(cons '#,(datum->syntax key (keyword->option-name datum)) #,(car rest))]
               [else (syntax-error key "unknown test option")]))))
       (define build-metadata
-        (lambda (options parameter-ids)
+        (lambda (options parameter-ids inherited-parameter-ids)
           (let loop ([options options] [entries '()] [parameterize-tables '()])
             (cond
              [(null? options)
@@ -162,11 +165,13 @@
                                                          #'(row ...)))))
                              parameterize-tables))]
                 [_ (loop (cdr options)
-                         (cons (parse-option (caar options) (cdar options) parameter-ids) entries)
+                         (cons (parse-option (caar options) (cdar options)
+                                             parameter-ids inherited-parameter-ids) entries)
                          parameterize-tables)])]
              [else
               (loop (cdr options)
-                    (cons (parse-option (caar options) (cdar options) parameter-ids) entries)
+                    (cons (parse-option (caar options) (cdar options)
+                                        parameter-ids inherited-parameter-ids) entries)
                     parameterize-tables)]))))
       (define parameter-names
         (lambda (options)
@@ -205,71 +210,72 @@
                  (loop (cdr options) (append (reverse #'(name ...)) out))]
                 [_ (loop (cdr options) out)])]
              [else (loop (cdr options) out)]))))
-      (define unique-identifiers
-        (lambda (ids)
-          (let loop ([ids ids] [out '()])
-            (cond
-             [(null? ids) (reverse out)]
-             [(ormap (lambda (id) (bound-identifier=? id (car ids))) out)
-              (loop (cdr ids) out)]
-             [else (loop (cdr ids) (cons (car ids) out))]))))
       (define build-bindings
         (lambda (ids body)
-          (let loop ([ids (unique-identifiers ids)] [body body])
+          (let loop ([ids ids] [body body])
             (if (null? ids)
                 #`(begin #,@body)
                 (let ([id (car ids)])
                   #`(let ([binding (assq '#,(datum->syntax id (syntax->datum id)) params)])
                       (let ([#,id (if binding (cdr binding) #f)])
                         #,(loop (cdr ids) body))))))))
+      (define build-callback
+        (lambda (local-ids inherited-ids body)
+          ;; Rebind suite aliases to fresh lexical variables at each deferred code boundary.
+          ;; The expander resolves references hygienically; no body traversal is needed.
+          (let ([values (generate-temporaries inherited-ids)])
+            #`(let (#,@(map (lambda (id value)
+                             #`[#,value
+                                (let ([binding
+                                       (assq '#,(datum->syntax id (syntax->datum id)) params)])
+                                  (if binding (cdr binding) #f))])
+                           inherited-ids values))
+                (fluid-let-syntax
+                  (#,@(map (lambda (id value)
+                             #`[#,id
+                                (identifier-syntax
+                                  [reference #,value]
+                                  [(set! reference new-value) (set! #,value new-value)])])
+                           inherited-ids values))
+                  #,(build-bindings local-ids body))))))
+      (define lexical-bindings
+        (lambda (ids)
+          ;; Establish suite declaration scopes before expanding children. Values exist only
+          ;; inside callbacks, where build-callback replaces these placeholder transformers.
+          (map (lambda (id)
+                 #`[#,id
+                    (lambda (reference)
+                      (syntax-error reference "test input is unavailable outside its callback"))])
+               ids)))
       (lambda (lookup)
         (syntax-case stx ()
           [(_ kind name item ...)
            (let-values ([(options body) (split-items #'(item ...))])
              (check-parameter-tables options)
              (let* ([inherited (lookup #'$test-binding-context)]
-                    [inherit-names
-                     (lambda (symbols)
-                       (let loop ([symbols symbols] [seen '()] [out '()])
-                         (cond
-                          [(null? symbols) (reverse out)]
-                          [(memq (car symbols) seen) (loop (cdr symbols) seen out)]
-                          [else
-                           (let ([symbol (car symbols)] [references '()])
-                             ;; Wrapper-generated names may have a different lexical context
-                             ;; from their body or option expressions. Bind the actual references.
-                             (let visit ([form #'(item ...)])
-                               (if (identifier? form)
-                                   (when (eq? (syntax->datum form) symbol)
-                                     (set! references (cons form references)))
-                                   (syntax-case form ()
-                                     [(head . tail) (begin (visit #'head) (visit #'tail))]
-                                     [#(element ...) (for-each visit #'(element ...))]
-                                     [_ (void)])))
-                             (loop (cdr symbols) (cons symbol seen)
-                                   (append (if (null? references)
-                                               (list (datum->syntax #'name symbol))
-                                               references)
-                                           out)))])))]
                     [local-fixtures?
                      (exists (lambda (option) (eq? (syntax->datum (car option)) ':fixture))
                              options)]
+                    [local-fixture-ids (if local-fixtures? (fixture-names options) '())]
                     [fixture-ids
                      (if local-fixtures?
-                         (fixture-names options)
-                         (inherit-names (car inherited)))]
-                    ;; Inherited IDs include every reference, not just each declared name.
-                    [fixture-symbols
-                     (if local-fixtures? (map syntax->datum fixture-ids) (car inherited))]
+                         local-fixture-ids
+                         (car inherited))]
+                    [local-parameters?
+                     (exists (lambda (option) (eq? (syntax->datum (car option)) ':parameterize))
+                             options)]
+                    [local-parameter-ids (if local-parameters? (parameter-names options) '())]
                     [parameter-ids
-                     (if (exists (lambda (option) (eq? (syntax->datum (car option)) ':parameterize))
-                                 options)
-                         (parameter-names options)
-                         (inherit-names (cadr inherited)))]
-                    [metadata (build-metadata options parameter-ids)])
+                     (if local-parameters?
+                         local-parameter-ids
+                         (cadr inherited))]
+                    [inherited-fixture-ids (if local-fixtures? '() fixture-ids)]
+                    [inherited-parameter-ids (if local-parameters? '() parameter-ids)]
+                    [metadata (build-metadata options local-parameter-ids
+                                              inherited-parameter-ids)])
                (guard (condition
                        [else (syntax-error stx (condition-message condition))])
-                 (test-check-fixture-names 'test-case fixture-symbols
+                 (test-check-fixture-names 'test-case (map syntax->datum fixture-ids)
                                            (map syntax->datum parameter-ids)))
                (case (syntax->datum #'kind)
                  [(case)
@@ -277,8 +283,9 @@
                            (make-test-case
                             'name
                             (lambda (params)
-                              #,(build-bindings
-                                 (append parameter-ids fixture-ids)
+                              #,(build-callback
+                                 (append local-parameter-ids local-fixture-ids)
+                                 (append inherited-parameter-ids inherited-fixture-ids)
                                  body))
                             #,metadata)])
                       (test-register! (current-test-registry) descriptor)
@@ -287,14 +294,17 @@
                   #`(let ([descriptor
                            (make-test-suite
                             'name
-                            (fluid-let-syntax
-                              ([$test-binding-context
-                                (make-compile-time-value
-                                 '#,(datum->syntax #'name
-                                      (list fixture-symbols
-                                            (map syntax->datum parameter-ids))))])
-                              (parameterize ([current-test-registry (make-test-registry)])
-                                (list #,@body)))
+                            (let-syntax
+                              (#,@(lexical-bindings local-parameter-ids)
+                               #,@(lexical-bindings local-fixture-ids))
+                              (fluid-let-syntax
+                                ([$test-binding-context
+                                  (make-compile-time-value
+                                   (list
+                                     (list #,@(map (lambda (id) #`(syntax #,id)) fixture-ids))
+                                     (list #,@(map (lambda (id) #`(syntax #,id)) parameter-ids))))])
+                                (parameterize ([current-test-registry (make-test-registry)])
+                                  (list #,@body))))
                             #,metadata)])
                       (test-register! (current-test-registry) descriptor)
                       descriptor)]
@@ -325,6 +335,8 @@
   `handled` passes the body, `failed` fails it, and other dispositions mark it errored.
   Captured output expectations are checked separately after successful or handled bodies;
   their failures do not invoke the custom handler.
+  Parameters and fixtures are lexical variables around the case body. Parameters are also
+  bound around skip and expected-failure conditions; fixtures are unavailable to those rules.
   Fixture names must be unique and cannot overlap effective parameter names,
   including names inherited from a suite.
   At most one `:fixture` clause is allowed; put all fixture bindings in that clause.
@@ -338,7 +350,8 @@
   The `test-suite` macro defines and registers a suite descriptor named `name`.
   Config clauses are inherited by child descriptors. Nested definition macros
   register only as children of this suite, so each child runs once. Child bodies
-  bind inherited fixture and parameter names; conditional rules bind parameters.
+  lexically inherit fixture and parameter names; conditional rules lexically inherit parameters.
+  Ordinary Scheme shadowing applies inside child forms.
   A child's explicit fixture list or parameter tables replace the corresponding suite list.
   |#
   (define-syntax test-suite

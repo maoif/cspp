@@ -984,14 +984,114 @@
       '(parameterize ([current-test-registry (make-test-registry)])
          (define-syntax wrapped-case
            (syntax-rules ()
-             [(_ expression)
-              (test-case generated :skip-when (= number 1) "skip first" expression)]))
+             [(_ skip? expression)
+              (test-case generated :skip-when skip? "skip first" expression)]))
          (test-suite shared :parameterize ([number] [1] [2])
-           (wrapped-case (test-= number 2)))
+           (wrapped-case (= number 1) (test-= number 2)))
          (equal? (map test-result-status
                       (test-run-registry (current-test-registry)
                         (test-config-with (default-test-config) '((output . #f)))))
                  '(skipped passed)))
+      (environment '(cspp)))))
+
+(mat test-lexical-binding-boundaries
+  ;; Suite inputs bind policy expressions and bodies; skipped cases do not acquire fixtures.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (let ([acquired 0])
+      (test-suite shared
+        :fixture ([resource (begin (set! acquired (+ acquired 1)) 42)])
+        :parameterize ([number] [1] [2])
+        (test-suite nested
+          (test-case child :skip-when (= number 1) "skip first"
+            (test-= resource 42)
+            (test-= number 2))))
+      (and (equal? (map test-result-status
+                       (test-run-registry (current-test-registry) (test-silent-config)))
+                   '(skipped passed))
+           (= acquired 1))))
+
+  ;; A wrapper's private variable must retain its lexical binding in policies and bodies.
+  (guard (condition [else #f])
+    (eval
+      '(parameterize ([current-test-registry (make-test-registry)])
+         (define-syntax wrapped-case
+           (syntax-rules ()
+             [(_ expression)
+              (let ([number 99])
+                (test-case generated :skip-when (= number 1) "private number is 99"
+                  (test-= number 99)
+                  expression))]))
+         (test-suite shared :parameterize ([number] [1] [2])
+           (wrapped-case (test-true (memv number '(1 2)))))
+         (equal? (map test-result-status
+                      (test-run-registry (current-test-registry)
+                        (test-config-with (default-test-config) '((output . #f)))))
+                 '(passed passed)))
+      (environment '(cspp))))
+
+  ;; Ordinary inner lexical bindings shadow inherited fixture and parameter names.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (test-suite shared :fixture ([resource 42]) :parameterize ([number] [1] [2])
+      (let ([resource 99] [number 100])
+        (test-case child :only-when (= number 100) "inner number"
+          (test-= resource 99)
+          (test-= number 100))))
+    (equal? (map test-result-status
+                 (test-run-registry (current-test-registry) (test-silent-config)))
+            '(passed passed)))
+
+  ;; Inherited inputs are mutable lexical variables, freshly bound for each callback and case.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (test-suite shared :fixture ([resource 42]) :parameterize ([number] [1] [2])
+      (test-case child
+        :only-when (begin (set! number (+ number 10)) (> number 10)) "mutated rule"
+        (define read-number (lambda () number))
+        (test-true (memv (read-number) '(1 2)))
+        (set! number (+ number 100))
+        (set! resource (+ resource 1))
+        (test-true (memv (read-number) '(101 102)))
+        (test-= resource 43))
+      (test-case sibling (test-= resource 42) (test-true (memv number '(1 2)))))
+    (let ([results (test-run-registry (current-test-registry) (test-silent-config))])
+      (and (equal? (map test-result-status results) '(passed passed passed passed))
+           (equal? (map test-result-parameters results)
+                   '(((number . 1)) ((number . 2)) ((number . 1)) ((number . 2)))))))
+
+  ;; Expected-failure predicates receive parameters, while bodies also receive fixtures.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (test-suite shared :fixture ([resource 42]) :parameterize ([number] [1] [2])
+      (test-case child :xfail-when (= number 1) "known first row"
+        (test-= resource 42)
+        (test-= number 2)))
+    (equal? (map test-result-status
+                 (test-run-registry (current-test-registry) (test-silent-config)))
+            '(xfail passed)))
+
+  ;; Error: fixtures have no values in pre-acquisition rules or descriptor construction code.
+  (for-all
+    (lambda (form)
+      (guard (condition [else (syntax-violation? condition)])
+        (eval form (environment '(cspp)))
+        #f))
+    '((test-suite shared :fixture ([resource 42])
+        (test-case child :skip-when (= resource 42) "unavailable fixture" #t))
+      (test-suite shared :parameterize ([number] [1])
+        (test-case child :stdout (number->string number) #t))))
+
+  ;; Quoted cyclic data must not be traversed while inheriting fixture or parameter bindings.
+  (guard (condition [else #f])
+    (eval
+      '(parameterize ([current-test-registry (make-test-registry)])
+         (test-suite shared :fixture ([resource 42]) :parameterize ([number] [1])
+           (test-case child
+             (let ([cycle '#0=(payload . #0#)])
+               (test-eq cycle (cdr cycle))
+               (test-= resource 42)
+               (test-= number 1))))
+         (equal? (map test-result-status
+                      (test-run-registry (current-test-registry)
+                        (test-config-with (default-test-config) '((output . #f)))))
+                 '(passed)))
       (environment '(cspp)))))
 
 (mat test-runtime-body-arities
