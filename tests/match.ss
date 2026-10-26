@@ -1802,3 +1802,25 @@
        #f)
 
      (equal? "a" (match "abc" [,(regex "(.)" (1 ,x)) x])))
+
+(mat matching-let-definition-context
+     (= 3 (mlet ([,x 1]) (define y 2) (+ x y)))
+
+     (= 3 (mlet* ([,x 1]) (define y 2) (+ x y)))
+
+     (= 2 (mlet () (define y 2) y))
+
+     (= 2 (mlet* () (define y 2) y))
+
+     (equal? '(1 2 3)
+             (let ([events '()])
+               (mlet* ([,x (begin (set! events '(1)) 10)]
+                        [,y (begin (set! events (append events '(2))) (+ x 20))])
+                 (define total (+ x y))
+                 (set! events (append events '(3)))
+                 (and (= total 40) events))))
+
+     (equal? '(1 2)
+             (call-with-values
+               (lambda () (mlet ([,x 1]) (define y 2) (values x y)))
+               list)))

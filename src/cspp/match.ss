@@ -631,6 +631,7 @@ Examples:
 
   #|macro:mlet
   The `mlet` macro evaluates right-hand sides in parallel and binds them with match patterns.
+  Its body permits local definitions, evaluates expressions in order, and returns the final values.
   For example, `(mlet ([(,x ,y) '(10 20)]) (+ x y))` returns `30`.
   |#
   (define-syntax mlet
@@ -639,7 +640,7 @@ Examples:
         [(k () e0 e* ...) #'(let () e0 e* ...)]
         [(k ([pat* rhs*] ...) e0 e* ...)
          #'(($mlambda+ mlet
-                       [(pat* ...) e0 e* ...])
+                       [(pat* ...) (let () e0 e* ...)])
             rhs* ...)]
         [_ (syntax-error stx "bad form:")])))
 
@@ -647,6 +648,7 @@ Examples:
   The `mlet*` macro evaluates pattern bindings from left to right, making earlier captures
   available to later right-hand sides. For example, `(mlet* ([,x 10] [,y (+ x 20)]) y)` returns
   `30`.
+  Its body permits local definitions, evaluates expressions in order, and returns the final values.
   |#
   (define-syntax mlet*
     (lambda (stx)
@@ -655,7 +657,7 @@ Examples:
         [(k ([pat* rhs*] ...) e0 e* ...)
          (let loop ([pat* #'(pat* ...)] [rhs* #'(rhs* ...)])
            (if (null? pat*)
-               #'(begin e0 e* ...)
+               #'(let () e0 e* ...)
                #`(match #,(car rhs*)
                    [#,(car pat*) #,(loop (cdr pat*) (cdr rhs*))]
                    ;; TODO when k is not quoted, the error is "bad form" below,
