@@ -1601,3 +1601,28 @@
                          (lambda (value update) (update value))
                          (lambda (value update!) (update! value)))])
     (equal? '(root) (nav-select custom 'root))))
+
+(mat navigator-review-inexact-integer-indexes
+  (equal? '(b) (nav-select (nav/nth 1.0) '#(a b c)))
+
+  (equal? '#(a B c) (nav-setval (nav/nth 1.0) 'B '#(a b c)))
+
+  (equal? '(a B c) (nav-setval (nav/nth 1.0) 'B '(a b c)))
+
+  (equal? '#(a x x z) (nav-setval (nav/nth/default 3.0 'x) 'z '#(a)))
+
+  (equal? '(a x x z) (nav-setval (nav/nth/default 3.0 'x) 'z '(a)))
+
+  (equal? '(b d) (nav-select (nav/slice 1.0 5.0 2.0) '#(a b c d e)))
+
+  (equal? '#(a B c D e)
+          (nav-transform (nav/slice 1.0 5.0 2.0)
+                         (lambda (x) (if (eq? x 'b) 'B 'D)) '#(a b c d e)))
+
+  (equal? '(b) (nav-select (nav/path 1.0) '(a b c)))
+
+  ;; Inexact integers are not valid bytevector replacement values.
+  (error? (nav-transform nav/all (lambda (x) 1.0) (bytevector 0 0)))
+
+  ;; Mutating bytevector updates must also reject inexact byte values.
+  (error? (nav-transform! nav/all (lambda (x) 1.0) (bytevector 0 0))))

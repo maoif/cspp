@@ -44,7 +44,7 @@
 
   (define byte?
     (lambda (x)
-      (and (integer? x) (<= 0 x) (<= x 255))))
+      (and (fixnum? x) (fx<= 0 x) (fx<= x 255))))
 
   (define fixnum-value?
     (lambda (x)

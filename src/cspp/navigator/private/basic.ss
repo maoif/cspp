@@ -542,6 +542,7 @@
   (define nav/nth
     (lambda (index)
       (pcheck ([integer? index])
+              (set! index (inexact->exact index))
               (when (< index 0)
                 (nav-error 'nav/nth "index must be non-negative: ~s" index))
               (make-basic-nav
@@ -575,6 +576,7 @@
   (define nav/nth/default
     (lambda (index default)
       (pcheck ([integer? index])
+              (set! index (inexact->exact index))
               (when (< index 0)
                 (nav-error 'nav/nth/default "index must be non-negative: ~s" index))
               (make-basic-nav
@@ -645,6 +647,9 @@
       [(start stop) (nav/slice start stop 1)]
       [(start stop step)
        (pcheck ([integer? start stop step])
+               (set! start (inexact->exact start))
+               (set! stop (inexact->exact stop))
+               (set! step (inexact->exact step))
                (when (or (< start 0) (< stop start) (<= step 0))
                  (nav-error 'nav/slice "invalid slice: ~s ~s ~s" start stop step))
                (make-basic-nav
