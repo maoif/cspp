@@ -748,3 +748,10 @@
          [output (sequence (tidentity) source)])
     (and (guard (exn [else #t]) (iter-reset! output) #f)
          (= 1 (review-failing-finalizer-source-attempts source)))))
+
+(mat transducer-review-wide-count-seeds
+  (= (+ 1 (most-positive-fixnum))
+     (transduce (tidentity) (rfcount) (most-positive-fixnum) '(item)))
+
+  (= (+ 4 (most-positive-fixnum))
+     (transduce (tidentity) (rfcount) (+ 2 (most-positive-fixnum)) '(a b))))

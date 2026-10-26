@@ -1425,7 +1425,7 @@
        (case-lambda
          [() 0]
          [(acc) acc]
-         [(acc x) (fx+ acc 1)]))))
+         [(acc x) (+ acc 1)]))))
 
   #|proc:rfsum
   The `rfsum` procedure returns a reducer that sums transformed numeric values
