@@ -2,7 +2,8 @@
 (library (cspp test macros)
   (export test-suite test-case test-expand test-compile test)
   (import (cspp chez)
-          (cspp test descriptor))
+          (cspp test descriptor)
+          (for (cspp test private common) expand))
 
   (define-syntax $test-binding-context
     (make-compile-time-value '(() ())))
@@ -178,29 +179,16 @@
                  (loop (cdr options) (append (reverse #'(name ...)) out))]
                 [_ (loop (cdr options) out)])]
              [else (loop (cdr options) out)]))))
-      (define check-duplicate-parameter-names
+      (define check-parameter-tables
         (lambda (options)
-          (let loop-options ([options options] [seen '()])
-            (cond
-             [(null? options) #t]
-             [(eq? (syntax->datum (caar options)) ':parameterize)
-              (syntax-case (cadar options) ()
-                [([name ...] row ...)
-                 (begin
-                   (for-each
-                    (lambda (row)
-                      (let ([values (syntax->datum row)])
-                        (unless (and (list? values) (= (length values) (length #'(name ...))))
-                          (syntax-error row "parameter row length must match name list"))))
-                    #'(row ...))
-                 (let loop-names ([names #'(name ...)] [seen seen])
-                   (cond
-                    [(null? names) (loop-options (cdr options) seen)]
-                    [(ormap (lambda (id) (free-identifier=? id (car names))) seen)
-                     (syntax-error (car names) "duplicate parameter name")]
-                    [else (loop-names (cdr names) (cons (car names) seen))])))]
-                [_ (loop-options (cdr options) seen)])]
-             [else (loop-options (cdr options) seen)]))))
+          (let ([tables
+                 (map (lambda (option) (syntax->datum (cadr option)))
+                      (filter (lambda (option)
+                                (eq? (syntax->datum (car option)) ':parameterize))
+                              options))])
+            (guard (condition
+                    [else (syntax-error stx (condition-message condition))])
+              (test-check-parameter-tables 'test-case tables)))))
       (define fixture-names
         (lambda (options)
           (let loop ([options options] [out '()])
@@ -233,7 +221,7 @@
         (syntax-case stx ()
           [(_ kind name item ...)
            (let-values ([(options body) (split-items #'(item ...))])
-             (check-duplicate-parameter-names options)
+             (check-parameter-tables options)
              (let* ([inherited (lookup #'$test-binding-context)]
                     [inherit-names
                      (lambda (symbols)

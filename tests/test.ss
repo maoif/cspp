@@ -1394,3 +1394,57 @@
            (eq? (test-result-status result) 'errored)
            (string=? (test-result-stdout result) "diagnostic")
            (eq? (condition-who (test-result-condition result)) 'handler)))))
+
+(mat test-procedural-parameter-name-validation
+  ;; Error: procedural tables reject duplicate names just as the definition macros do.
+  (for-all
+    (lambda (tables)
+      (test-error-message-contains?
+        (lambda ()
+          (test-expand-parameters
+            (make-test-case 'duplicate (lambda (parameters) #t)
+              (list (cons 'parameterize tables)))))
+        "duplicate parameter name"))
+    '((((x x) (1 2)))
+      (((x) (1)) ((x) (2)))
+      (((x)) ((x) (2)))
+      (((x) (1)) ((y x) (2 3)))))
+
+  ;; Error: malformed names and rows must be rejected before Cartesian expansion.
+  (for-all
+    (lambda (tables)
+      (test-error-message-contains?
+        (lambda ()
+          (test-expand-parameters
+            (make-test-case 'malformed (lambda (parameters) #t)
+              (list (cons 'parameterize tables)))))
+        "parameter"))
+    '(not-tables (() ) ((x (1))) (((42) (1))) (((x . y) (1 2)))
+      (((x) (1 . 2))) (((x)) ((y) (1 2)))))
+
+  ;; Error: inherited tables use the same validation for every child and execution phase.
+  (for-all
+    (lambda (child)
+      (test-error-message-contains?
+        (lambda ()
+          (test-expand-parameters
+            (make-test-suite 'parent (list child)
+              '((parameterize . (((x) (1)) ((x) (2))))))))
+        "duplicate parameter name"))
+    (list (make-test-case 'runtime (lambda () #t) '())
+          (make-test-expand 'expand '(+ 1 2) '())
+          (make-test-compile 'compile '((define x 1)) '())))
+
+  ;; Distinct tables preserve row order, and explicit child tables replace inherited tables.
+  (let* ([tables '(((x) (1) (2)) ((y) (a) (b)))]
+         [descriptor (make-test-case 'product (lambda () #t)
+                       (list (cons 'parameterize tables)))])
+    (and (equal? (map test-concrete-case-parameters (test-expand-parameters descriptor))
+                 '(((x . 1) (y . a)) ((x . 1) (y . b))
+                   ((x . 2) (y . a)) ((x . 2) (y . b))))
+         (equal? (map test-concrete-case-parameters
+                      (test-expand-parameters
+                        (make-test-suite 'parent (list descriptor)
+                          '((parameterize . (((x) (9))))))))
+                 '(((x . 1) (y . a)) ((x . 1) (y . b))
+                   ((x . 2) (y . a)) ((x . 2) (y . b)))))))

@@ -18,24 +18,11 @@
             (loop (test-alist-set metadata (caar child) (cdar child))
                   (cdr child))))))
 
-  (define $parameter-row
-    (lambda (names row)
-      (let loop ([names names] [row row] [out '()])
-        (cond
-         [(null? names)
-          (unless (null? row)
-            (errorf 'test-expand-parameters "parameter row is longer than names: ~a" row))
-          (reverse out)]
-         [(null? row)
-          (errorf 'test-expand-parameters "parameter row is shorter than names: ~a" row)]
-         [else
-          (loop (cdr names) (cdr row) (cons (cons (car names) (car row)) out))]))))
-
   (define $expand-parameter-table
     (lambda (table)
       (let ([names (car table)]
             [rows (cdr table)])
-        (map (lambda (row) ($parameter-row names row)) rows))))
+        (map (lambda (row) (map cons names row)) rows))))
 
   (define $append-map
     (lambda (proc items)
@@ -46,6 +33,7 @@
 
   (define $parameter-product
     (lambda (tables)
+      (test-check-parameter-tables 'test-expand-parameters tables)
       (let loop ([tables tables] [cases '(() )])
         (if (null? tables)
             cases
@@ -159,6 +147,8 @@ inherit suite metadata, with child metadata overriding duplicate parent keys.
 For case, expansion, and compile descriptors, `parameterize` metadata supplies
 parameter tables. Each table has the form `((name ...) row ...)`, and multiple
 tables are combined as a Cartesian product in table order.
+Names must be symbols unique across all tables; malformed tables and rows are rejected
+before expansion, including tables that would otherwise produce no cases.
 |#
   (define test-expand-parameters
     (lambda (descriptor)

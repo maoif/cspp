@@ -3,6 +3,7 @@
   (export test-reporter? make-test-reporter test-reporter-write
           test-alist-ref test-alist-set test-remove-key test-metadata-ref
           test-natural-version-list?
+          test-check-parameter-tables
           chez-version
           chez-version<? chez-version<=? chez-version=? chez-version>=? chez-version>?)
   (import (cspp chez)
@@ -100,6 +101,39 @@ supplied, it is returned for a missing key; otherwise a missing key is an error.
       [(metadata key default)
        (pcheck ([list? metadata] [symbol? key])
                (test-alist-ref metadata key default))]))
+
+  #|proc:test-check-parameter-tables
+  The internal `test-check-parameter-tables` procedure validates `tables`, a list of
+  parameter tables of the form `((name ...) row ...)`. Names must be symbols unique
+  across all tables, and every row must be a proper list of the corresponding width.
+  Invalid tables raise an error attributed to symbol `who`; valid tables return
+  unspecified values. Macros and the runner share this validation.
+  |#
+  (define test-check-parameter-tables
+    (lambda (who tables)
+      (pcheck ([symbol? who])
+              (unless (list? tables)
+                (errorf who "parameter tables must be a proper list: ~s" tables))
+              (let loop-tables ([tables tables] [seen '()])
+                (unless (null? tables)
+                  (let ([table (car tables)])
+                    (unless (and (list? table) (pair? table) (list? (car table)))
+                      (errorf who "invalid parameter table: ~s" table))
+                    (let loop-names ([names (car table)] [seen seen])
+                      (cond
+                       [(null? names)
+                        (let ([width (length (car table))])
+                          (for-each
+                            (lambda (row)
+                              (unless (and (list? row) (= (length row) width))
+                                (errorf who "parameter row length must match name list: ~s" row)))
+                            (cdr table)))
+                        (loop-tables (cdr tables) seen)]
+                       [(not (symbol? (car names)))
+                        (errorf who "parameter name must be a symbol: ~s" (car names))]
+                       [(memq (car names) seen)
+                        (errorf who "duplicate parameter name: ~s" (car names))]
+                       [else (loop-names (cdr names) (cons (car names) seen))]))))))))
 
   #|proc:test-natural-version-list?
 The `test-natural-version-list?` procedure returns whether `value` is a list of
