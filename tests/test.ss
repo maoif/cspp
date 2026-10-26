@@ -1541,3 +1541,26 @@
     (equal? (map test-result-status
                  (test-run-registry (current-test-registry) (test-silent-config)))
             '(passed passed))))
+
+(mat test-reject-repeated-fixture-clauses
+  ;; Error: repeated fixture clauses must reject rather than bind discarded setup names to #f.
+  (for-all
+    (lambda (form)
+      (guard (condition [else (syntax-violation? condition)])
+        (eval form (environment '(cspp)))
+        #f))
+    '((test-case repeated :fixture ([a 1]) :fixture ([b 2]) (test-true a))
+      (test-suite repeated :fixture ([a 1]) :fixture ([b 2]) (test-case child #t))
+      (test-case repeated :fixture () :fixture ([b 2]) #t)))
+
+  ;; Error: rejecting repetition happens before fixture expressions or registration can run.
+  (let ([registry (make-test-registry)])
+    (parameterize ([current-test-registry registry])
+      (and (guard (condition [else (syntax-violation? condition)])
+             (eval '(test-case repeated
+                      :fixture ([a (error 'fixture "must not acquire")])
+                      :fixture ([b 2])
+                      #t)
+                   (environment '(cspp)))
+             #f)
+           (null? (test-registry-descriptors registry))))))

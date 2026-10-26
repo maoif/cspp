@@ -191,6 +191,11 @@
               (test-check-parameter-tables 'test-case tables)))))
       (define fixture-names
         (lambda (options)
+          (when (> (length
+                     (filter (lambda (option) (eq? (syntax->datum (car option)) ':fixture))
+                             options))
+                   1)
+            (syntax-error stx "only one :fixture clause is allowed per descriptor"))
           (let loop ([options options] [out '()])
             (cond
              [(null? options) (reverse out)]
@@ -322,6 +327,7 @@
   their failures do not invoke the custom handler.
   Fixture names must be unique and cannot overlap effective parameter names,
   including names inherited from a suite.
+  At most one `:fixture` clause is allowed; put all fixture bindings in that clause.
   |#
   (define-syntax test-case
     (syntax-rules ()
