@@ -1636,3 +1636,36 @@
           (call-with-port
            (open-string-input-port
             (capture-written nav-display (nav/nth/default 0 '((a . 1) (b . 2))))) read)))
+
+(define-record-type (review-counted-indexed make-review-counted-indexed review-counted-indexed?)
+  (fields items (mutable length-calls)))
+
+(nav-register-indexed!
+ review-counted-indexed?
+ (lambda (box)
+   (review-counted-indexed-length-calls-set!
+    box (+ 1 (review-counted-indexed-length-calls box)))
+   ;; Guard against unbounded work after the container's known end.
+   (when (> (review-counted-indexed-length-calls box) 10)
+     (error 'review "slice continued beyond the known container length"))
+   (vector-length (review-counted-indexed-items box)))
+ (lambda (box index) (vector-ref (review-counted-indexed-items box) index))
+ (lambda (box index value)
+   (let ([copy (vector-copy (review-counted-indexed-items box))])
+     (vector-set! copy index value)
+     (make-review-counted-indexed copy 0)))
+ (lambda (box index value)
+   (vector-set! (review-counted-indexed-items box) index value)))
+
+(mat navigator-review-bounded-slice-selection
+  (let ([box (make-review-counted-indexed '#(1 2 3) 0)])
+    (equal? '(1 2 3) (nav-select (nav/slice 0 1000000) box)))
+
+  (let ([box (make-review-counted-indexed '#(1 2 3) 0)])
+    (null? (nav-select (nav/slice 10 (+ 1 (most-positive-fixnum))) box)))
+
+  (equal? '(1 3) (nav-select (nav/slice 0 1000 2) '(1 2 3)))
+
+  (equal? '(0 1 2) (nav-select nav/all '(0 1 2)))
+
+  (equal? '((0 . 4) (1 . 5) (2 . 6)) (nav-select nav/entries '(4 5 6))))

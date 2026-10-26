@@ -27,3 +27,8 @@
 (measure 'vector-all-3000 10 (lambda () (nav-transform nav/all add1 vec)))
 (define items (iota 1000))
 (measure 'list-all-1000 5 (lambda () (nav-transform nav/all add1 items)))
+(define selection-items (iota 3000))
+(measure 'list-select-all-3000 5 (lambda () (nav-select nav/all selection-items)))
+(measure 'list-select-entries-3000 5 (lambda () (nav-select nav/entries selection-items)))
+(measure 'slice-select-short-1000000 5
+         (lambda () (nav-select (nav/slice 0 1000000) '#(1 2 3))))

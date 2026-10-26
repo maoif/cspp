@@ -73,7 +73,8 @@
 
   (define emit-indexed-values
     (lambda (value emit)
-      (cond [(indexed-supported? value)
+      (cond [(list? value) (for-each emit value)]
+            [(indexed-supported? value)
              (let ([len (indexed-length value)])
                (let loop ([i 0])
                  (when (< i len)
@@ -501,6 +502,11 @@
      'nav/entries 'nav/entries
      (lambda (value emit)
        (cond [(alist? value) (for-each emit value)]
+             [(list? value)
+              (let loop ([items value] [index 0])
+                (unless (null? items)
+                  (emit (cons index (car items)))
+                  (loop (cdr items) (fx+ index 1))))]
              [(indexed-supported? value)
               (let ([len (indexed-length value)])
                 (let loop ([i 0])
@@ -655,12 +661,23 @@
                (make-basic-nav
                 'nav/slice `(nav/slice ,start ,stop ,step)
                 (lambda (value emit)
-                  (let loop ([i start])
-                    (when (< i stop)
-                      (let ([selected (indexed-ref/missing value i)])
-                        (unless (nav-missing? selected)
-                          (emit selected)))
-                      (loop (+ i step)))))
+                  (let ([len (indexed-length value)])
+                    (unless len
+                      (nav-focus-error 'nav/slice "unsupported collection: ~s" value))
+                    (let ([limit (min stop len)])
+                      (if (list? value)
+                          (when (< start limit)
+                            (let loop ([items value] [index 0] [next start])
+                              (when (< index limit)
+                                (if (= index next)
+                                    (begin
+                                      (emit (car items))
+                                      (loop (cdr items) (fx+ index 1) (+ next step)))
+                                    (loop (cdr items) (fx+ index 1) next)))))
+                          (let loop ([i start])
+                            (when (< i limit)
+                              (emit (indexed-ref/missing value i))
+                              (loop (+ i step))))))))
                 (lambda (value update)
                   (let ([len (indexed-length value)])
                     (unless len
