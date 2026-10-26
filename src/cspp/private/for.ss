@@ -521,7 +521,7 @@
                           #`(let ([t-start #,(car op*)] [t-stop #,(cadr op*)] [t-step #,(caddr op*)])
                               (unless (and (real? t-start) (real? t-stop) (real? t-step)
                                            (or (and (<= t-start t-stop) (> t-step 0))
-                                               (and (> t-start t-stop)  (< t-step 0))))
+                                               (and (>= t-start t-stop) (< t-step 0))))
                                 (errorf ':nums "invalid range from ~a to ~a, step ~a" t-start t-stop t-step))
                               #,e))
                         #`[#,v t-start]
@@ -557,7 +557,7 @@
                           #`(let ([t-start #,(car op*)] [t-stop #,(cadr op*)] [t-step #,(caddr op*)])
                               (unless (and (fixnum? t-start) (fixnum? t-stop) (fixnum? t-step)
                                            (or (and (fx<= t-start t-stop) (fx> t-step 0))
-                                               (and (fx> t-start t-stop)  (fx< t-step 0))))
+                                               (and (fx>= t-start t-stop) (fx< t-step 0))))
                                 (errorf ':fxnums "invalid range from ~a to ~a, step ~a" t-start t-stop t-step))
                               #,e))
                         #`[#,v t-start]

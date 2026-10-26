@@ -2298,3 +2298,22 @@
 
      (equal? '()
              (for/list ([x :bytevector #vu8(0 1) :type u24 :rev]) x)))
+
+(mat empty-descending-numeric-ranges
+     (null? (for/list ([x :nums 2 2 -1]) x))
+
+     (null? (for/list ([x :fixnums 2 2 -1]) x))
+
+     (null? (for*/list ([x 2] [y :nums x x -1]) y))
+
+     (null? (for*/list ([x 2] [y :fixnums x x -1]) y))
+
+     (let ([calls 0])
+       (and (null? (for/list ([x :nums 2 2 (begin (set! calls (+ calls 1)) -1)]) x))
+            (= calls 1)))
+
+     ;; Zero steps remain invalid for an empty numeric range.
+     (error? (for/list ([x :nums 2 2 0]) x))
+
+     ;; Zero fixnum steps remain invalid for an empty range.
+     (error? (for/list ([x :fixnums 2 2 0]) x)))

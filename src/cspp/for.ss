@@ -114,6 +114,7 @@
   All `for` variants support these sources; nested variants set up each source per outer item.
   `:nums` and `:fixnums` accept a stop value, a start and stop, or a start, stop, and step.
   The default start is zero and the default step is one; the stop is exclusive.
+  Equal endpoints produce an empty range with either a positive or negative nonzero step.
   `:nums` uses real numbers; `:fixnums` requires fixnums and avoids overflow on its final step.
   `:from`, `:to`, `:step`, and `:rev` apply to lists, strings, and vector-like sources.
   Bytevectors default to `:type u8` and little endianness; `:big` and `:little` are exclusive.
