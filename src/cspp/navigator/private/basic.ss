@@ -292,7 +292,7 @@
     (lambda (value entries)
       (cond [(hashtable? value)
              (let ([result (empty-subtable value)])
-               (for-each (lambda (entry) (hashtable-set! result (car entry) (cdr entry)))
+               (for-each (lambda (entry) (nav-call-user hashtable-set! result (car entry) (cdr entry)))
                          entries)
                result)]
             [(alist? value) entries]
@@ -313,7 +313,7 @@
                   (let ([selected (keyed-ref/missing value key)])
                     (if (nav-missing? selected)
                         (nav-focus-error 'nav-transform "missing key ~s in: ~s" key value)
-                        (hashtable-set! subtable key selected))))
+                        (nav-call-user hashtable-set! subtable key selected))))
                 keys)
                (let ([updated (update subtable)])
                  (let loop ([keys keys] [value value])
@@ -321,7 +321,7 @@
                        value
                        (let ([selected (if (nav-missing? updated)
                                            nav-missing
-                                           (hashtable-ref updated (car keys) nav-missing))])
+                                           (nav-call-user hashtable-ref updated (car keys) nav-missing))])
                          (loop (cdr keys)
                                (if (nav-missing? selected)
                                    (keyed-delete value (car keys))
@@ -806,7 +806,7 @@
                      (let ([selected (keyed-ref/missing value key)])
                        (if (nav-missing? selected)
                            (nav-focus-error 'nav/submap "missing key ~s in: ~s" key value)
-                           (hashtable-set! table key selected))))
+                           (nav-call-user hashtable-set! table key selected))))
                    keys)
                   (emit table))]
                [(alist? value)

@@ -337,7 +337,7 @@
 
   (define keyed-ref/missing
     (lambda (value key)
-      (cond [(hashtable? value) (hashtable-ref value key nav-missing)]
+      (cond [(hashtable? value) (nav-call-user hashtable-ref value key nav-missing)]
             [(alist? value) (alist-ref/missing value key)]
             [(find-keyed-protocol value)
              => (lambda (protocol)
@@ -347,8 +347,8 @@
   (define keyed-set
     (lambda (value key new-value)
       (cond [(hashtable? value)
-             (let ([copy (hashtable-copy value #t)])
-               (hashtable-set! copy key new-value)
+             (let ([copy (nav-call-user hashtable-copy value #t)])
+               (nav-call-user hashtable-set! copy key new-value)
                copy)]
             [(alist? value)
              (let loop ([xs value])
@@ -363,7 +363,7 @@
   (define keyed-set!
     (lambda (value key new-value)
       (cond [(hashtable? value)
-             (hashtable-set! value key new-value)
+             (nav-call-user hashtable-set! value key new-value)
              value]
             [(alist? value)
              (let loop ([xs value])
@@ -389,8 +389,8 @@
   (define keyed-delete
     (lambda (value key)
       (cond [(hashtable? value)
-             (let ([copy (hashtable-copy value #t)])
-               (hashtable-delete! copy key)
+             (let ([copy (nav-call-user hashtable-copy value #t)])
+               (nav-call-user hashtable-delete! copy key)
                copy)]
             [(alist? value) (alist-remove-key key value)]
             [(find-keyed-protocol value)
@@ -401,7 +401,7 @@
   (define keyed-delete!
     (lambda (value key)
       (cond [(hashtable? value)
-             (hashtable-delete! value key)
+             (nav-call-user hashtable-delete! value key)
              value]
             [(alist? value)
              (nav-error 'nav-clearval! "association list key cannot be removed in place: ~s" key)]

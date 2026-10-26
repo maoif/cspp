@@ -1707,3 +1707,51 @@
           (nav-select (nav/letrec ([visit nav/children]) visit) '#(a #(b))))
 
   (null? (nav-select (nav/path (nav/rec visit nav/children) nav/none) '#(a #(b)))))
+
+(mat navigator-review-hashtable-callback-errors
+  ;; Hash callback navigation errors are application failures, not optional absence.
+  (let ([broken? #f])
+    (let ([table (make-hashtable
+                  (lambda (key)
+                    (if broken? (nav-select-one (nav/key 'missing) '()) 0)) equal?)])
+      (hashtable-set! table 'a 1)
+      (set! broken? #t)
+      (guard (exn [else #t])
+        (nav-select (nav/maybe (nav/key 'a)) table)
+        #f)))
+
+  ;; Equivalence callback navigation errors must also survive optional selection.
+  (let ([broken? #f])
+    (let ([table (make-hashtable
+                  (lambda (key) 0)
+                  (lambda (left right)
+                    (if broken? (nav-select-one (nav/key 'missing) '())
+                        (string=? left right))))])
+      (hashtable-set! table (string-copy "a") 1)
+      (set! broken? #t)
+      (guard (exn [else #t])
+        (nav-select (nav/maybe (nav/key (string-copy "a"))) table)
+        #f)))
+
+  ;; Setter hash errors must not turn a failed transformation into a silent no-op.
+  (let ([broken? #f])
+    (let ([table (make-hashtable
+                  (lambda (key)
+                    (if broken? (nav-select-one (nav/key 'missing) '()) 0)) equal?)])
+      (hashtable-set! table 'a 1)
+      (guard (exn [else #t])
+        (nav-transform (nav/maybe (nav/key 'a))
+                       (lambda (x) (set! broken? #t) (add1 x)) table)
+        #f)))
+
+  ;; A hash failure during keyed removal is not optional absence either.
+  (let ([broken? #f])
+    (let ([table (make-hashtable
+                  (lambda (key)
+                    (if broken? (nav-select-one (nav/key 'missing) '()) 0)) equal?)])
+      (hashtable-set! table 'a 1)
+      (guard (exn [else #t])
+        (nav-clearval
+         (nav/maybe (nav/path (nav/key 'a)
+                             (nav/pred (lambda (x) (set! broken? #t) #t)))) table)
+        #f))))
