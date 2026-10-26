@@ -112,6 +112,7 @@
                        mode)]))))
 
   (define source-end? reduced?)
+  (define default-init (gensym))
 
   (define reducer-init
     (lambda (reducer)
@@ -250,7 +251,11 @@
       (pcheck ([transducer? xform] [reducer? reducer])
               (let ([effective (apply-transducer xform reducer)])
                 (finish-transduce effective
-                                  (runner effective init source))))))
+                                  (runner effective
+                                          (if (eq? init default-init)
+                                              (reducer-init effective)
+                                              init)
+                                          source))))))
 
   (define finish-transduce
     (lambda (reducer acc)
@@ -265,12 +270,16 @@
                     [else
                      (let ([effective (apply-transducer xform reducer)])
                        (finish-transduce effective
-                                         (run-source effective init source)))]))))
+                                         (run-source effective
+                                                     (if (eq? init default-init)
+                                                         (reducer-init effective)
+                                                         init)
+                                                     source)))]))))
 
   (define transduce-default
     (lambda (xform reducer source)
       (pcheck ([transducer? xform] [reducer? reducer])
-              (transduce-explicit xform reducer (reducer-init reducer) source))))
+              (transduce-explicit xform reducer default-init source))))
 
   (define list->bytevector
     (lambda (ls)
@@ -373,7 +382,8 @@
 
   #|proc:make-transducer
   The `make-transducer` procedure returns a transducer record named `name`.
-  `proc` must accept a reducer and return a reducer.
+  `proc` must accept a reducer and return a reducer. Unseeded terminals initialize that
+  transformed reducer; explicit seeds bypass its initializer.
   |#
   (define make-transducer
     (lambda (name proc)
@@ -1036,8 +1046,8 @@
 
   #|proc:transduce
   The `transduce` procedure runs transducer `xform` over transducible `source` using reducer
-  record `reducer`. With three arguments, the reducer supplies the initial accumulator; with four
-  arguments, `init` supplies it. The result is the reducer's completion value after source
+  record `reducer`. With three arguments, the transformed reducer supplies the initial
+  accumulator; with four arguments, `init` supplies it and initialization is skipped. The result is the reducer's completion value after source
   exhaustion or an early `reduced` result. Iterators created for source adapters are finalized on
   exhaustion, early termination, errors, or nonlocal exits. Caller-supplied iterators remain open.
   |#
@@ -1074,7 +1084,6 @@
                          (begin
                            (set! seen? #t)
                            x))]))
-                 #f
                  source)))))
 
   #|proc:sequence
@@ -1203,7 +1212,7 @@
     (case-lambda
       [(xform reducer source)
        (pcheck ([list? source])
-               (transduce-run 'list-transduce xform reducer (reducer-init reducer) source run-list))]
+               (transduce-run 'list-transduce xform reducer default-init source run-list))]
       [(xform reducer init source)
        (pcheck ([list? source])
                (transduce-run 'list-transduce xform reducer init source run-list))]))
@@ -1216,7 +1225,7 @@
     (case-lambda
       [(xform reducer source)
        (pcheck ([vector? source])
-               (transduce-run 'vector-transduce xform reducer (reducer-init reducer) source run-vector))]
+               (transduce-run 'vector-transduce xform reducer default-init source run-vector))]
       [(xform reducer init source)
        (pcheck ([vector? source])
                (transduce-run 'vector-transduce xform reducer init source run-vector))]))
@@ -1229,7 +1238,7 @@
     (case-lambda
       [(xform reducer source)
        (pcheck ([bytevector? source])
-               (transduce-run 'bytevector-transduce xform reducer (reducer-init reducer) source run-bytevector))]
+               (transduce-run 'bytevector-transduce xform reducer default-init source run-bytevector))]
       [(xform reducer init source)
        (pcheck ([bytevector? source])
                (transduce-run 'bytevector-transduce xform reducer init source run-bytevector))]))
@@ -1242,7 +1251,7 @@
     (case-lambda
       [(xform reducer source)
        (pcheck ([string? source])
-               (transduce-run 'string-transduce xform reducer (reducer-init reducer) source run-string))]
+               (transduce-run 'string-transduce xform reducer default-init source run-string))]
       [(xform reducer init source)
        (pcheck ([string? source])
                (transduce-run 'string-transduce xform reducer init source run-string))]))
@@ -1255,7 +1264,7 @@
     (case-lambda
       [(xform reducer source)
        (pcheck ([iter? source])
-               (transduce-run 'iter-transduce xform reducer (reducer-init reducer) source run-iter))]
+               (transduce-run 'iter-transduce xform reducer default-init source run-iter))]
       [(xform reducer init source)
        (pcheck ([iter? source])
                (transduce-run 'iter-transduce xform reducer init source run-iter))]))
@@ -1268,7 +1277,7 @@
     (case-lambda
       [(xform reducer source)
        (pcheck ([fxvector? source])
-               (transduce-run 'fxvector-transduce xform reducer (reducer-init reducer) source run-fxvector))]
+               (transduce-run 'fxvector-transduce xform reducer default-init source run-fxvector))]
       [(xform reducer init source)
        (pcheck ([fxvector? source])
                (transduce-run 'fxvector-transduce xform reducer init source run-fxvector))]))
@@ -1281,7 +1290,7 @@
     (case-lambda
       [(xform reducer source)
        (pcheck ([flvector? source])
-               (transduce-run 'flvector-transduce xform reducer (reducer-init reducer) source run-flvector))]
+               (transduce-run 'flvector-transduce xform reducer default-init source run-flvector))]
       [(xform reducer init source)
        (pcheck ([flvector? source])
                (transduce-run 'flvector-transduce xform reducer init source run-flvector))]))
@@ -1294,7 +1303,7 @@
     (case-lambda
       [(xform reducer source)
        (pcheck ([hashtable? source])
-               (transduce-run 'hashtable-transduce xform reducer (reducer-init reducer) source run-hashtable))]
+               (transduce-run 'hashtable-transduce xform reducer default-init source run-hashtable))]
       [(xform reducer init source)
        (pcheck ([hashtable? source])
                (transduce-run 'hashtable-transduce xform reducer init source run-hashtable))]))
@@ -1307,7 +1316,7 @@
     (case-lambda
       [(xform reducer source)
        (pcheck ([transducer-input-textual-port? source])
-               (transduce-run 'port-lines-transduce xform reducer (reducer-init reducer) source run-port-lines))]
+               (transduce-run 'port-lines-transduce xform reducer default-init source run-port-lines))]
       [(xform reducer init source)
        (pcheck ([transducer-input-textual-port? source])
                (transduce-run 'port-lines-transduce xform reducer init source run-port-lines))]))
@@ -1320,7 +1329,7 @@
     (case-lambda
       [(xform reducer source)
        (pcheck ([transducer-input-binary-port? source])
-               (transduce-run 'port-bytes-transduce xform reducer (reducer-init reducer) source run-port-bytes))]
+               (transduce-run 'port-bytes-transduce xform reducer default-init source run-port-bytes))]
       [(xform reducer init source)
        (pcheck ([transducer-input-binary-port? source])
                (transduce-run 'port-bytes-transduce xform reducer init source run-port-bytes))]))

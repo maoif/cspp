@@ -649,3 +649,73 @@
          (iter-end? (iter-next! output))
          (begin (iter-finalize! output) #t)
          (iter-finalized? source))))
+
+(define review-initial-emission
+  (lambda (value)
+    (make-transducer
+     'review-initial-emission
+     (lambda (reducer)
+       (let ([proc (completion reducer)])
+         (make-reducer
+          'review-initial-emission
+          (case-lambda
+            [() (proc (proc) value)]
+            [(acc) (proc acc)]
+            [(acc x) (proc acc x)])))))))
+
+(mat transducer-review-terminal-initialization
+  (= 13 (transduce (review-initial-emission 10) (rfsum) '(1 2)))
+
+  (= 13 (list-transduce (review-initial-emission 10) (rfsum) '(1 2)))
+
+  (= 13 (vector-transduce (review-initial-emission 10) (rfsum) '#(1 2)))
+
+  (= 13 (bytevector-transduce (review-initial-emission 10) (rfsum) #vu8(1 2)))
+
+  (= 13 (fxvector-transduce (review-initial-emission 10) (rfsum) (fxvector 1 2)))
+
+  (= 13.0 (flvector-transduce (review-initial-emission 10) (rfsum) (flvector 1.0 2.0)))
+
+  (= 205 (string-transduce (tcompose (tmap char->integer) (review-initial-emission 10))
+                           (rfsum) "ab"))
+
+  (let ([table (make-eq-hashtable)])
+    (hashtable-set! table 'a 1)
+    (hashtable-set! table 'b 2)
+    (= 13 (hashtable-transduce (review-initial-emission 10) (rfsum) table)))
+
+  (let ([source (list->iter '(1 2))])
+    (let ([result (iter-transduce (review-initial-emission 10) (rfsum) source)])
+      (iter-finalize! source)
+      (= 13 result)))
+
+  (= 13 (call-with-port (open-string-input-port "1\n2")
+                       (lambda (port)
+                         (port-lines-transduce
+                          (tcompose (tmap string->number) (review-initial-emission 10))
+                          (rfsum) port))))
+
+  (= 13 (call-with-port (open-bytevector-input-port #vu8(1 2))
+                       (lambda (port)
+                         (port-bytes-transduce (review-initial-emission 10) (rfsum) port))))
+
+  (= 13 (transduce1 (review-initial-emission 10) (rfsum) '(1 2)))
+
+  (= 15 (transduce (review-initial-emission 10) (rfsum)
+                   (eduction (tmap add1) '(1 2))))
+
+  (= 3 (transduce (review-initial-emission 10) (rfsum) 0 '(1 2)))
+
+  (= 3 (list-transduce (review-initial-emission 10) (rfsum) 0 '(1 2)))
+
+  (equal? '(10) (into 'list (review-initial-emission 10) '()))
+
+  ;; Invalid reducers must be rejected at the driver boundary before record access.
+  (andmap
+   (lambda (terminal)
+     (guard (exn [(and (who-condition? exn)
+                       (memq (condition-who exn) '(pcheck transduce))) #t]
+                 [else #f])
+       (terminal (tidentity) 12 '(1 2))
+       #f))
+   (list list-transduce)))
