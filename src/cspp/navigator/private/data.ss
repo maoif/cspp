@@ -1,6 +1,8 @@
 (library (cspp navigator private data)
   (export byte? indexed-length indexed-ref/missing indexed-set indexed-set!
-          indexed-supported? indexed-transform
+          indexed-supported? indexed-transform indexed-transform!
+          indexed-clear-values indexed-clear-values! index-list
+          keyed-update-values keyed-update-values!
           child-container? emit-children
           keyed-supported? keyed-ref/missing keyed-set keyed-set!
           keyed-delete keyed-delete! keyed-entries keyed-keys keyed-values
@@ -209,6 +211,66 @@
                       (($indexed-protocol-ref-proc protocol) value index)
                       nav-missing))]
             [else (nav-focus-error 'nav/nth "unsupported indexed value: ~s" value)])))
+
+  (define index-list
+    (lambda (len)
+      (let loop ([i 0] [indexes '()])
+        (if (fx= i len)
+            (reverse indexes)
+            (loop (fx+ i 1) (cons i indexes))))))
+
+  ;; Index lists are increasing. Walk a list spine once instead of seeking each index.
+  (define indexed-transform!
+    (lambda (value indexes update!)
+      (if (list? value)
+          (let loop ([items value] [indexes indexes] [index 0])
+            (cond [(null? indexes) value]
+                  [(null? items)
+                   (nav-focus-error 'nav-transform! "index ~s out of range for: ~s"
+                                    (car indexes) value)]
+                  [(= index (car indexes))
+                   (set-car! items (update! (car items)))
+                   (loop (cdr items) (cdr indexes) (fx+ index 1))]
+                  [else (loop (cdr items) indexes (fx+ index 1))]))
+          (begin
+            (for-each
+             (lambda (index)
+               (let ([old (indexed-ref/missing value index)])
+                 (when (nav-missing? old)
+                   (nav-focus-error 'nav-transform! "index ~s out of range for: ~s" index value))
+                 (indexed-set! value index (update! old))))
+             indexes)
+            value))))
+
+  (define require-retained-child
+    (lambda (who value child)
+      (when (nav-missing? child)
+        (nav-error who "cannot remove indexed child from: ~s" value))
+      child))
+
+  (define indexed-clear-values
+    (lambda (value indexes clear)
+      (if (list? value)
+          (let loop ([items value] [indexes indexes] [index 0])
+            (cond [(null? indexes) items]
+                  [(null? items)
+                   (nav-focus-error 'nav-clearval "index ~s out of range for: ~s"
+                                    (car indexes) value)]
+                  [(= index (car indexes))
+                   (let ([child (clear (car items))])
+                     (if (nav-missing? child)
+                         (loop (cdr items) (cdr indexes) (fx+ index 1))
+                         (cons child (loop (cdr items) (cdr indexes) (fx+ index 1)))))]
+                  [else (cons (car items) (loop (cdr items) indexes (fx+ index 1)))]))
+          (indexed-transform value indexes
+                             (lambda (old)
+                               (require-retained-child 'nav-clearval value (clear old)))))))
+
+  (define indexed-clear-values!
+    (lambda (value indexes clear!)
+      (indexed-transform! value indexes
+                          (lambda (old)
+                            (require-retained-child 'nav-clearval! value (clear! old))))))
 
   ;; Built-in containers need one copy per pure update. Registered protocols retain
   ;; their pure setter contract because a generic container has no cloning operation.
@@ -441,6 +503,39 @@
              => (lambda (protocol)
                   (($keyed-protocol-entries-proc protocol) value))]
             [else #f])))
+
+  ;; Native maps have a bulk copy operation; registered maps keep their pure setters.
+  ;; These helpers also rebuild child values returned by a clear continuation.
+  (define keyed-update-values
+    (lambda (value update)
+      (let ([entries (keyed-entries value)])
+        (if (hashtable? value)
+            (let ([result (nav-call-user hashtable-copy value #t)])
+              (for-each
+               (lambda (entry)
+                 (let ([child (update (cdr entry))])
+                   (if (nav-missing? child)
+                       (keyed-delete! result (car entry))
+                       (keyed-set! result (car entry) child))))
+               entries)
+              result)
+            (fold-left (lambda (result entry)
+                         (let ([child (update (cdr entry))])
+                           (if (nav-missing? child)
+                               (keyed-delete result (car entry))
+                               (keyed-set result (car entry) child))))
+                       value entries)))))
+
+  (define keyed-update-values!
+    (lambda (value update!)
+      (for-each
+       (lambda (entry)
+         (let ([child (update! (cdr entry))])
+           (if (nav-missing? child)
+               (keyed-delete! value (car entry))
+               (keyed-set! value (car entry) child))))
+       (keyed-entries value))
+      value))
 
   (define keyed-keys
     (lambda (value)

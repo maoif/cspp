@@ -27,24 +27,6 @@
     (lambda (who value)
       (nav-error who "focused value cannot be removed from: ~s" value)))
 
-  (define index-list
-    (lambda (len)
-      (let loop ([i 0] [acc '()])
-        (if (= i len)
-            (reverse acc)
-            (loop (+ i 1) (cons i acc))))))
-
-  (define indexed-transform!
-    (lambda (value indexes update!)
-      (for-each
-       (lambda (index)
-         (let ([old (indexed-ref/missing value index)])
-           (if (nav-missing? old)
-               (nav-focus-error 'nav-transform! "index ~s out of range for: ~s" index value)
-               (indexed-set! value index (update! old)))))
-       indexes)
-      value))
-
   (define indexed-transform/default
     (lambda (value index default update)
       (let ([selected (indexed-ref/missing value index)])
@@ -90,72 +72,55 @@
     (lambda (value update)
       (cond [(indexed-supported? value)
              (indexed-transform value (index-list (indexed-length value)) update)]
-            [(keyed-entries value)
-             => (lambda (entries)
-                  (let loop ([entries entries] [value value])
-                    (if (null? entries)
-                        value
-                        (loop (cdr entries)
-                              (keyed-set value (caar entries)
-                                         (update (cdar entries)))))))]
+            [(keyed-supported? value) (keyed-update-values value update)]
             [(set-values value)
-             => (lambda (values)
-                  (set-replace value (map update values)))]
+             => (lambda (values) (set-replace value (map update values)))]
             [else (nav-focus-error 'nav-transform "unsupported collection: ~s" value)])))
 
   (define transform-all-values!
     (lambda (value update!)
       (cond [(indexed-supported? value)
              (indexed-transform! value (index-list (indexed-length value)) update!)]
-            [(keyed-entries value)
-             => (lambda (entries)
-                  (for-each
-                   (lambda (entry)
-                     (keyed-set! value (car entry) (update! (cdr entry))))
-                   entries)
-                  value)]
+            [(keyed-supported? value) (keyed-update-values! value update!)]
             [(set-values value)
-             => (lambda (values)
-                  (set-replace! value (map update! values)))]
+             => (lambda (values) (set-replace! value (map update! values)))]
             [else (nav-focus-error 'nav-transform! "unsupported collection: ~s" value)])))
 
   (define clear-all-values
     (lambda (value clear)
-      (let ([values (set-values value)])
-        (if values
-            (let loop ([remaining values]
-                       [members '()]
-                       [result value]
-                       [changed? #f])
-              (if (null? remaining)
-                  (if changed?
-                      (set-replace result (reverse members))
-                      result)
-                  (let* ([old (car remaining)] [member (clear old)])
-                    (if (nav-missing? member)
-                        (loop (cdr remaining) members
-                              (set-delete result old) changed?)
-                        (loop (cdr remaining) (cons member members) result
-                              (or changed? (not (equal? old member))))))))
-            (unsupported-clear 'nav-clearval value)))))
+      (cond [(indexed-supported? value)
+             (indexed-clear-values value (index-list (indexed-length value)) clear)]
+            [(keyed-supported? value) (keyed-update-values value clear)]
+            [(set-values value)
+             => (lambda (values)
+                  (let loop ([remaining values] [members '()] [result value] [changed? #f])
+                    (if (null? remaining)
+                        (if changed? (set-replace result (reverse members)) result)
+                        (let* ([old (car remaining)] [member (clear old)])
+                          (if (nav-missing? member)
+                              (loop (cdr remaining) members (set-delete result old) changed?)
+                              (loop (cdr remaining) (cons member members) result
+                                    (or changed? (not (equal? old member)))))))))]
+            [else (unsupported-clear 'nav-clearval value)])))
 
   (define clear-all-values!
     (lambda (value clear!)
-      (let ([values (set-values value)])
-        (if values
-            (let loop ([remaining values] [members '()] [changed? #f])
-              (if (null? remaining)
-                  (if changed?
-                      (set-replace! value (reverse members))
-                      value)
-                  (let* ([old (car remaining)] [member (clear! old)])
-                    (if (nav-missing? member)
-                        (begin
-                          (set-delete! value old)
-                          (loop (cdr remaining) members changed?))
-                        (loop (cdr remaining) (cons member members)
-                              (or changed? (not (equal? old member))))))))
-            (unsupported-clear 'nav-clearval! value)))))
+      (cond [(indexed-supported? value)
+             (indexed-clear-values! value (index-list (indexed-length value)) clear!)]
+            [(keyed-supported? value) (keyed-update-values! value clear!)]
+            [(set-values value)
+             => (lambda (values)
+                  (let loop ([remaining values] [members '()] [changed? #f])
+                    (if (null? remaining)
+                        (if changed? (set-replace! value (reverse members)) value)
+                        (let* ([old (car remaining)] [member (clear! old)])
+                          (if (nav-missing? member)
+                              (begin
+                                (set-delete! value old)
+                                (loop (cdr remaining) members changed?))
+                              (loop (cdr remaining) (cons member members)
+                                    (or changed? (not (equal? old member)))))))))]
+            [else (unsupported-clear 'nav-clearval! value)])))
 
   (define emit-alist-key-values
     (lambda (alist key emit)
@@ -216,36 +181,30 @@
                value]
               [else (keyed-set! value key (update! old))]))))
 
-  (define list-remove-index
-    (lambda (value index)
-      (let loop ([xs value] [i index])
-        (cond [(null? xs)
-               (nav-focus-error 'nav-clearval "index ~s out of range for: ~s" index value)]
-              [(= i 0) (cdr xs)]
-              [else (cons (car xs) (loop (cdr xs) (- i 1)))]))))
-
   (define indexed-clear
     (lambda (index value clear)
-      (let ([old (indexed-ref/missing value index)])
-        (if (nav-missing? old)
-            (nav-focus-error 'nav-clearval "index ~s out of range for: ~s" index value)
-            (let ([new-value (clear old)])
-              (if (nav-missing? new-value)
-                  (if (list? value)
-                      (list-remove-index value index)
-                      (unsupported-clear 'nav-clearval value))
-                  (indexed-set value index new-value)))))))
+      (indexed-clear-values value (list index) clear)))
 
   (define indexed-clear!
     (lambda (index value clear!)
-      (let ([old (indexed-ref/missing value index)])
-        (if (nav-missing? old)
-            (nav-focus-error 'nav-clearval! "index ~s out of range for: ~s" index value)
-            (let ([new-value (clear! old)])
-              (if (nav-missing? new-value)
-                  (unsupported-clear 'nav-clearval! value)
-                  (indexed-set! value index new-value))
-              value)))))
+      (indexed-clear-values! value (list index) clear!)))
+
+  (define clear-pair-field
+    (lambda (who value ref replace clear)
+      (unless (pair? value)
+        (nav-focus-error who "not a pair: ~s" value))
+      (let ([child (clear (ref value))])
+        (when (nav-missing? child)
+          (unsupported-clear who value))
+        (replace value child))))
+
+  (define slice-indexes
+    (lambda (start stop step length)
+      (let ([limit (min stop length)])
+        (let loop ([index start] [indexes '()])
+          (if (< index limit)
+              (loop (+ index step) (cons index indexes))
+              (reverse indexes))))))
 
   (define key-clear
     (lambda (key value clear)
@@ -445,7 +404,9 @@
                     (lambda (value clear!) value)))
 
   #|proc:nav/all
-  The `nav/all` navigator focuses every value in a supported collection.
+  The `nav/all` navigator focuses every value in a supported collection. Pure clearing
+  removes selected list elements or map entries; fixed-size and mutable list elements
+  must remain present, but may be rebuilt by later path steps.
   |#
   (define nav/all
     (make-basic-nav 'nav/all 'nav/all
@@ -470,7 +431,8 @@
   The `nav/keys` navigator focuses map keys for alists and keyed containers, or
   sequence indexes for other indexed containers. Pure map transforms replace old keys.
   When transformed keys collide, the last entry in traversal order wins in maps with unique
-  keys; alists retain duplicates. Sequence indexes are read-only.
+  keys; alists retain duplicates. Sequence indexes are read-only: pure transforms return
+  the sequence unchanged without invoking the callback, and mutation raises an error.
   |#
   (define nav/keys
     (make-basic-nav
@@ -609,9 +571,9 @@
                          (indexed-set! value index (update! selected))
                          value))))
                (lambda (value clear)
-                 (unsupported-clear 'nav-clearval value))
+                 (indexed-clear index value clear))
                (lambda (value clear!)
-                 (unsupported-clear 'nav-clearval! value))))))
+                 (indexed-clear! index value clear!))))))
 
   #|proc:nav/first
   The `nav/first` navigator focuses the first element of a supported sequence.
@@ -648,9 +610,15 @@
                value)
              (nav-focus-error 'nav-transform! "unsupported or empty sequence: ~s" value))))
      (lambda (value clear)
-       (unsupported-clear 'nav-clearval value))
+       (let ([len (indexed-length value)])
+         (if (and len (> len 0))
+             (indexed-clear (- len 1) value clear)
+             (nav-focus-error 'nav-clearval "unsupported or empty sequence: ~s" value))))
      (lambda (value clear!)
-       (unsupported-clear 'nav-clearval! value))))
+       (let ([len (indexed-length value)])
+         (if (and len (> len 0))
+             (indexed-clear! (- len 1) value clear!)
+             (nav-focus-error 'nav-clearval! "unsupported or empty sequence: ~s" value))))))
 
   #|proc:nav/slice
   The `nav/slice` procedure returns a navigator that focuses indexes in
@@ -690,27 +658,22 @@
                   (let ([len (indexed-length value)])
                     (unless len
                       (nav-focus-error 'nav-transform "unsupported collection: ~s" value))
-                    (let ([limit (min stop len)])
-                      (let loop ([i start] [indexes '()])
-                        (if (< i limit)
-                            (loop (+ i step) (cons i indexes))
-                            (indexed-transform value (reverse indexes) update))))))
+                    (indexed-transform value (slice-indexes start stop step len) update)))
                 (lambda (value update!)
                   (let ([len (indexed-length value)])
                     (unless len
                       (nav-focus-error 'nav-transform! "unsupported collection: ~s" value))
-                    (let ([limit (min stop len)])
-                      (let loop ([i start])
-                        (when (< i limit)
-                          (let ([selected (indexed-ref/missing value i)])
-                            (unless (nav-missing? selected)
-                              (indexed-set! value i (update! selected))))
-                          (loop (+ i step)))))
-                    value))
+                    (indexed-transform! value (slice-indexes start stop step len) update!)))
                 (lambda (value clear)
-                  (unsupported-clear 'nav-clearval value))
+                  (let ([len (indexed-length value)])
+                    (unless len
+                      (nav-focus-error 'nav-clearval "unsupported collection: ~s" value))
+                    (indexed-clear-values value (slice-indexes start stop step len) clear)))
                 (lambda (value clear!)
-                  (unsupported-clear 'nav-clearval! value))))]))
+                  (let ([len (indexed-length value)])
+                    (unless len
+                      (nav-focus-error 'nav-clearval! "unsupported collection: ~s" value))
+                    (indexed-clear-values! value (slice-indexes start stop step len) clear!)))))]))
 
   #|proc:nav/key
   The `nav/key` procedure returns a navigator that focuses the value associated
@@ -760,7 +723,9 @@
 
   #|proc:nav/key-values
   The `nav/key-values` procedure returns a navigator that focuses the values for
-  each key in `keys`, preserving key order.
+  each key in `keys`, preserving key order. Updates and clears apply paths sequentially
+  to the result of preceding keys; repeated keys may revisit changed values or be absent
+  after an earlier removal. The result is a navigator.
   |#
   (define nav/key-values
     (lambda keys
@@ -867,8 +832,12 @@
              (set-car! value (update! (car value)))
              value)
            (nav-focus-error 'nav-transform! "not a pair: ~s" value)))
-     (lambda (value clear) (unsupported-clear 'nav-clearval value))
-     (lambda (value clear!) (unsupported-clear 'nav-clearval! value))))
+     (lambda (value clear)
+       (clear-pair-field 'nav-clearval value car
+                         (lambda (parent child) (cons child (cdr parent))) clear))
+     (lambda (value clear!)
+       (clear-pair-field 'nav-clearval! value car
+                         (lambda (parent child) (set-car! parent child) parent) clear!))))
 
   #|proc:nav/cdr
   The `nav/cdr` navigator focuses the `cdr` field of a pair.
@@ -890,8 +859,12 @@
              (set-cdr! value (update! (cdr value)))
              value)
            (nav-focus-error 'nav-transform! "not a pair: ~s" value)))
-     (lambda (value clear) (unsupported-clear 'nav-clearval value))
-     (lambda (value clear!) (unsupported-clear 'nav-clearval! value))))
+     (lambda (value clear)
+       (clear-pair-field 'nav-clearval value cdr
+                         (lambda (parent child) (cons (car parent) child)) clear))
+     (lambda (value clear!)
+       (clear-pair-field 'nav-clearval! value cdr
+                         (lambda (parent child) (set-cdr! parent child) parent) clear!))))
 
   (install-nav-key-proc! nav/key)
   (install-nav-nth-proc! nav/nth))

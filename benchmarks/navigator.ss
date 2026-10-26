@@ -35,3 +35,13 @@
 (define submap-keys (iota 500))
 (measure 'submap-update-500-of-1000 5
          (lambda () (nav-transform (apply nav/submap submap-keys) values table)))
+(define bulk-table (make-eqv-hashtable))
+(do ([index 0 (fx+ index 1)]) ((fx= index 2000))
+  (hashtable-set! bulk-table index index))
+(measure 'table-all-2000 1 (lambda () (nav-transform nav/all add1 bulk-table)))
+(define bulk-vector (make-vector 2000 1))
+(measure 'vector-children-2000 1 (lambda () (nav-transform nav/children add1 bulk-vector)))
+(define mutable-items (iota 2000))
+(measure 'list-all-mutate-2000 1 (lambda () (nav-transform! nav/all add1 mutable-items)))
+(measure 'list-slice-mutate-2000 1
+         (lambda () (nav-transform! (nav/slice 0 2000 2) add1 mutable-items)))

@@ -1918,3 +1918,93 @@
 
   ;; The actual clearing pass must reject an empty required path.
   (error? (nav-clearval (nav/must nav/none) '(1))))
+
+(mat navigator-review-clear-suffix-continuations
+  (andmap
+   (lambda (step)
+     (equal? '#(((y . 2)))
+             (nav-clearval (nav/path step (nav/key 'x)) '#(((x . 1) (y . 2))))))
+   (list nav/all nav/values nav/last (nav/nth/default 0 #f) (nav/slice 0 1)))
+
+  (andmap
+   (lambda (step)
+     (equal? '#(1) (nav-clearval (nav/path step nav/none) '#(1))))
+   (list nav/all nav/values nav/last (nav/nth/default 0 #f) (nav/slice 0 1)))
+
+  (equal? '(((y . 2)) . tail)
+          (nav-clearval (nav/path nav/car (nav/key 'x)) '(((x . 1) (y . 2)) . tail)))
+
+  (equal? '(head (y . 2))
+          (nav-clearval (nav/path nav/cdr (nav/key 'x)) '(head (x . 1) (y . 2))))
+
+  (equal? '(1 3) (nav-clearval (nav/path nav/all (nav/pred even?)) '(1 2 3 4)))
+
+  (equal? '(0 2 4) (nav-clearval (nav/slice 1 5 2) '(0 1 2 3 4)))
+
+  (equal? '(1 2) (nav-clearval nav/last '(1 2 3)))
+
+  (let* ([source (ht 'a '((x . 1) (y . 2)))]
+         [result (nav-clearval (nav/path nav/values (nav/key 'x)) source)])
+    (and (equal? '((y . 2)) (ht-ref result 'a))
+         (equal? '((x . 1) (y . 2)) (ht-ref source 'a))))
+
+  (andmap
+   (lambda (step)
+     (let* ([child (ht 'x 1 'y 2)] [source (vector child)])
+       (and (eq? source (nav-clearval! (nav/path step (nav/key 'x)) source))
+            (not (hashtable-contains? child 'x))
+            (= 2 (ht-ref child 'y)))))
+   (list nav/all nav/values nav/last (nav/nth/default 0 #f) (nav/slice 0 1)))
+
+  (let* ([child (ht 'x 1 'y 2)] [source (cons child 'tail)])
+    (and (eq? source (nav-clearval! (nav/path nav/car (nav/key 'x)) source))
+         (not (hashtable-contains? child 'x))
+         (eq? child (car source))))
+
+  (let* ([child (ht 'x 1 'y 2)] [source (cons 'head child)])
+    (and (eq? source (nav-clearval! (nav/path nav/cdr (nav/key 'x)) source))
+         (not (hashtable-contains? child 'x))
+         (eq? child (cdr source))))
+
+  (equal? '() (nav-clearval nav/all '()))
+
+  ;; A fixed-size sequence still cannot lose a directly selected element.
+  (error? (nav-clearval nav/all '#(1 2)))
+
+  ;; Mutable list traversal cannot replace the caller's list spine.
+  (error? (nav-clearval! nav/all (list 1 2)))
+
+  ;; A pair field cannot be removed, although its nested values can be cleared.
+  (error? (nav-clearval nav/car '(1 . 2))))
+
+(mat navigator-review-shared-bulk-updates
+  (let* ([source (make-ixbox '#(1 2 3))]
+         [result (nav-transform nav/children add1 source)])
+    (and (equal? '#(2 3 4) (ixbox-items result))
+         (equal? '#(1 2 3) (ixbox-items source))))
+
+  (let* ([source (make-kvbox '((a . 1) (b . 2)))]
+         [result (nav-transform nav/children add1 source)])
+    (and (equal? '((a . 2) (b . 3)) (kvbox-entries result))
+         (equal? '((a . 1) (b . 2)) (kvbox-entries source))))
+
+  (let* ([source (make-hashtable string-hash string=?)]
+         [key (string-copy "a")])
+    (hashtable-set! source key 1)
+    (let ([result (nav-transform nav/all add1 source)])
+      (and (= 2 (hashtable-ref result (string-copy "a") 0))
+           (= 1 (hashtable-ref source key 0))
+           (eq? string=? (hashtable-equivalence-function result)))))
+
+  (let ([source (list 0 1 2 3 4)] [visited '()])
+    (and (eq? source (nav-transform! (nav/slice 1 5 2)
+                                    (lambda (value) (set! visited (cons value visited))
+                                      (+ value 10)) source))
+         (equal? '(0 11 2 13 4) source)
+         (equal? '(3 1) visited)))
+
+  (equal? '(1 2 3) (nav-transform (nav/slice 0 3 1000000000000000000000) add1 '(0 2 3)))
+
+  (let ([source (list 0 2 3)])
+    (and (eq? source (nav-transform! (nav/slice 0 3 1000000000000000000000) add1 source))
+         (equal? '(1 2 3) source))))

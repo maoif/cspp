@@ -34,13 +34,6 @@
         (unless emitted?
           (emit value)))))
 
-  (define remove-missing-values
-    (lambda (items)
-      (let loop ([items items])
-        (cond [(null? items) '()]
-              [(nav-missing? (car items)) (loop (cdr items))]
-              [else (cons (car items) (loop (cdr items)))]))))
-
   (define make-tree-nav
     (lambda (name metadata select-proc transform-proc transform!-proc clear-proc clear!-proc)
       (make-$navigator
@@ -80,113 +73,24 @@
      (lambda (value emit)
        (emit-children value emit))
      (lambda (value update)
-       (cond [(and (pair? value) (list? value))
-              (remove-missing-values (map update value))]
-             [(indexed-supported? value)
-              (let ([len (indexed-length value)])
-                (let loop ([i 0] [value value])
-                  (if (= i len)
-                      value
-                      (let* ([old (indexed-ref/missing value i)]
-                             [new-value (update old)])
-                        (loop (+ i 1)
-                              (if (nav-missing? new-value)
-                                  value
-                                  (indexed-set value i new-value)))))))]
-             [(keyed-entries value)
-              => (lambda (entries)
-                   (let loop ([entries entries] [value value])
-                     (if (null? entries)
-                         value
-                         (let ([new-value (update (cdar entries))])
-                           (loop (cdr entries)
-                                 (if (nav-missing? new-value)
-                                     (keyed-delete value (caar entries))
-                                     (keyed-set value (caar entries) new-value)))))))]
+       (cond [(indexed-supported? value)
+              (indexed-transform value (index-list (indexed-length value)) update)]
+             [(keyed-supported? value) (keyed-update-values value update)]
              [else value]))
      (lambda (value update!)
-       (cond [(and (pair? value) (list? value))
-              (let loop ([xs value])
-                (unless (null? xs)
-                  (let ([new-value (update! (car xs))])
-                    (unless (nav-missing? new-value)
-                      (set-car! xs new-value)))
-                  (loop (cdr xs))))
-              value]
-             [(indexed-supported? value)
-              (let ([len (indexed-length value)])
-                (let loop ([i 0])
-                  (when (< i len)
-                    (let ([new-value (update! (indexed-ref/missing value i))])
-                      (unless (nav-missing? new-value)
-                        (indexed-set! value i new-value)))
-                    (loop (+ i 1)))))
-              value]
-             [(keyed-entries value)
-              => (lambda (entries)
-                   (for-each
-                    (lambda (entry)
-                      (let ([new-value (update! (cdr entry))])
-                        (if (nav-missing? new-value)
-                            (keyed-delete! value (car entry))
-                            (keyed-set! value (car entry) new-value))))
-                    entries)
-                   value)]
+       (cond [(indexed-supported? value)
+              (indexed-transform! value (index-list (indexed-length value)) update!)]
+             [(keyed-supported? value) (keyed-update-values! value update!)]
              [else value]))
      (lambda (value clear)
-       (cond [(and (pair? value) (list? value))
-              (remove-missing-values
-               (map clear value))]
-             [(indexed-supported? value)
-              (let ([len (indexed-length value)])
-                (let loop ([i 0] [result value])
-                  (if (fx= i len)
-                      result
-                      (let ([child (clear (indexed-ref/missing value i))])
-                        (when (nav-missing? child)
-                          (nav-error 'nav-clearval "cannot remove indexed child from: ~s" value))
-                        (loop (fx+ i 1) (indexed-set result i child))))))]
-             [(keyed-entries value)
-              => (lambda (entries)
-                   (let loop ([entries entries] [value value])
-                     (if (null? entries)
-                         value
-                         (let ([child (clear (cdar entries))])
-                           (loop (cdr entries)
-                                 (if (nav-missing? child)
-                                     (keyed-delete value (caar entries))
-                                     (keyed-set value (caar entries) child)))))))]
+       (cond [(indexed-supported? value)
+              (indexed-clear-values value (index-list (indexed-length value)) clear)]
+             [(keyed-supported? value) (keyed-update-values value clear)]
              [else value]))
      (lambda (value clear!)
-       (cond [(and (pair? value) (list? value))
-              (let loop ([items value])
-                (unless (null? items)
-                  (let ([child (clear! (car items))])
-                    (when (nav-missing? child)
-                      (nav-error 'nav-clearval! "cannot remove list child in place: ~s" value))
-                    (set-car! items child))
-                  (loop (cdr items))))
-              value]
-             [(indexed-supported? value)
-              (let ([len (indexed-length value)])
-                (let loop ([i 0])
-                  (when (< i len)
-                    (let ([child (clear! (indexed-ref/missing value i))])
-                      (when (nav-missing? child)
-                        (nav-error 'nav-clearval! "cannot remove indexed child from: ~s" value))
-                      (indexed-set! value i child))
-                    (loop (+ i 1)))))
-              value]
-             [(keyed-entries value)
-              => (lambda (entries)
-                   (for-each
-                    (lambda (entry)
-                      (let ([child (clear! (cdr entry))])
-                        (if (nav-missing? child)
-                            (keyed-delete! value (car entry))
-                            (keyed-set! value (car entry) child))))
-                    entries)
-                   value)]
+       (cond [(indexed-supported? value)
+              (indexed-clear-values! value (index-list (indexed-length value)) clear!)]
+             [(keyed-supported? value) (keyed-update-values! value clear!)]
              [else value]))))
 
   #|proc:nav/leaves
@@ -225,8 +129,9 @@
               (tree-unsupported-clear! 'nav/walker)))))
 
   #|proc:nav/before
-  The `nav/before` procedure returns a navigator that focuses the current value
-  before values selected by `path`.
+  The `nav/before` procedure returns a navigator that focuses immediate leaf children
+  of the current value before values selected by `path`. If no immediate child is a leaf,
+  it focuses the current value itself first.
   |#
   (define nav/before
     (lambda (path)
@@ -242,8 +147,9 @@
          (tree-unsupported-clear! 'nav/before)))))
 
   #|proc:nav/after
-  The `nav/after` procedure returns a navigator that focuses values selected by
-  `path` before focusing the current value.
+  The `nav/after` procedure returns a navigator that focuses values selected by `path`
+  before focusing immediate leaf children of the current value. If no immediate child is
+  a leaf, it focuses the current value itself last.
   |#
   (define nav/after
     (lambda (path)
