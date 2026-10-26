@@ -34,7 +34,7 @@
            [x (if (and (pair? x) (= 2 (length x)) (eq? 'quote (car x)))
                   (cadr x)
                   x)])
-      (or (natural? x)
+      (or (and (natural? x) (exact? x))
           (string? x)
           (vector? x))))
 
@@ -473,8 +473,8 @@
            (with-syntax ([(t-stop) (generate-temporaries '(t-stop))])
              (list (lambda (e)
                      #`(let ([t-stop #,(car op*)])
-                         (unless (natural? t-stop)
-                           (errorf ':iota "not a natural number: ~a" t-stop))
+                         (unless (and (natural? t-stop) (exact? t-stop))
+                           (errorf ':iota "not an exact natural number: ~a" t-stop))
                          #,e))
                    #`[#,v 0]
                    #`(= #,v t-stop)
@@ -617,7 +617,15 @@
                                                   (cadr op-to)
                                                   #'t-len)]
                                     ;; handle :rev
-                                    [tt-from t-from]
+                                    [tt-from
+                                     (begin
+                                       (unless (and (fixnum? t-from) (fixnum? t-to)
+                                                    (if (fx<= t-from t-to)
+                                                        (fx<= 0 t-from t-to t-len)
+                                                        (fx<= -1 t-to t-from (fx1- t-len))))
+                                         (errorf ':vector "invalid source bounds: ~a to ~a, length ~a"
+                                                 t-from t-to t-len))
+                                       t-from)]
                                     [t-from #,(if op-rev
                                                   #'(if (<= t-from t-to)
                                                         (sub1 t-to)
@@ -631,9 +639,9 @@
                                     [t-step #,(if op-step
                                                   (let ([s (cadr op-step)])
                                                     #`(let ([s #,s])
-                                                        (unless (positive-natural? s)
-                                                          (errorf ':vector "step has to be a positive natural number: ~a" s))
-                                                        (let ([stride (min (inexact->exact s) (abs (fx- t-to t-from)))])
+                                                        (unless (and (exact? s) (positive-natural? s))
+                                                          (errorf ':vector "step has to be an exact positive integer: ~a" s))
+                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
                                                           (if (fx<= t-from t-to)
                                                               stride
                                                               (fx- stride)))))
@@ -680,7 +688,15 @@
                                                   (cadr op-to)
                                                   #'t-len)]
                                     ;; handle :rev
-                                    [tt-from t-from]
+                                    [tt-from
+                                     (begin
+                                       (unless (and (fixnum? t-from) (fixnum? t-to)
+                                                    (if (fx<= t-from t-to)
+                                                        (fx<= 0 t-from t-to t-len)
+                                                        (fx<= -1 t-to t-from (fx1- t-len))))
+                                         (errorf ':string "invalid source bounds: ~a to ~a, length ~a"
+                                                 t-from t-to t-len))
+                                       t-from)]
                                     [t-from #,(if op-rev
                                                   #'(if (<= t-from t-to)
                                                         (sub1 t-to)
@@ -694,9 +710,9 @@
                                     [t-step #,(if op-step
                                                   (let ([s (cadr op-step)])
                                                     #`(let ([s #,s])
-                                                        (unless (positive-natural? s)
-                                                          (errorf ':string "step has to be a positive natural number: ~a" s))
-                                                        (let ([stride (min (inexact->exact s) (abs (fx- t-to t-from)))])
+                                                        (unless (and (exact? s) (positive-natural? s))
+                                                          (errorf ':string "step has to be an exact positive integer: ~a" s))
+                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
                                                           (if (fx<= t-from t-to)
                                                               stride
                                                               (fx- stride)))))
@@ -743,7 +759,15 @@
                                                   (cadr op-to)
                                                   #'t-len)]
                                     ;; handle :rev
-                                    [tt-from t-from]
+                                    [tt-from
+                                     (begin
+                                       (unless (and (fixnum? t-from) (fixnum? t-to)
+                                                    (if (fx<= t-from t-to)
+                                                        (fx<= 0 t-from t-to t-len)
+                                                        (fx<= -1 t-to t-from (fx1- t-len))))
+                                         (errorf ':fxvector "invalid source bounds: ~a to ~a, length ~a"
+                                                 t-from t-to t-len))
+                                       t-from)]
                                     [t-from #,(if op-rev
                                                   #'(if (<= t-from t-to)
                                                         (sub1 t-to)
@@ -757,9 +781,9 @@
                                     [t-step #,(if op-step
                                                   (let ([s (cadr op-step)])
                                                     #`(let ([s #,s])
-                                                        (unless (positive-natural? s)
-                                                          (errorf ':fxvector "step has to be a positive natural number: ~a" s))
-                                                        (let ([stride (min (inexact->exact s) (abs (fx- t-to t-from)))])
+                                                        (unless (and (exact? s) (positive-natural? s))
+                                                          (errorf ':fxvector "step has to be an exact positive integer: ~a" s))
+                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
                                                           (if (fx<= t-from t-to)
                                                               stride
                                                               (fx- stride)))))
@@ -806,7 +830,15 @@
                                                   (cadr op-to)
                                                   #'t-len)]
                                     ;; handle :rev
-                                    [tt-from t-from]
+                                    [tt-from
+                                     (begin
+                                       (unless (and (fixnum? t-from) (fixnum? t-to)
+                                                    (if (fx<= t-from t-to)
+                                                        (fx<= 0 t-from t-to t-len)
+                                                        (fx<= -1 t-to t-from (fx1- t-len))))
+                                         (errorf ':flvector "invalid source bounds: ~a to ~a, length ~a"
+                                                 t-from t-to t-len))
+                                       t-from)]
                                     [t-from #,(if op-rev
                                                   #'(if (<= t-from t-to)
                                                         (sub1 t-to)
@@ -820,9 +852,9 @@
                                     [t-step #,(if op-step
                                                   (let ([s (cadr op-step)])
                                                     #`(let ([s #,s])
-                                                        (unless (positive-natural? s)
-                                                          (errorf ':flvector "step has to be a positive natural number: ~a" s))
-                                                        (let ([stride (min (inexact->exact s) (abs (fx- t-to t-from)))])
+                                                        (unless (and (exact? s) (positive-natural? s))
+                                                          (errorf ':flvector "step has to be an exact positive integer: ~a" s))
+                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
                                                           (if (fx<= t-from t-to)
                                                               stride
                                                               (fx- stride)))))
@@ -907,7 +939,15 @@
                                                     (cadr op-to)
                                                     #'t-len)]
                                       ;; handle :rev
-                                      [tt-from t-from]
+                                      [tt-from
+                                     (begin
+                                       (unless (and (fixnum? t-from) (fixnum? t-to)
+                                                    (if (fx<= t-from t-to)
+                                                        (fx<= 0 t-from t-to t-len)
+                                                        (fx<= -1 t-to t-from (fx1- t-len))))
+                                         (errorf ':bytevector "invalid source bounds: ~a to ~a, length ~a"
+                                                 t-from t-to t-len))
+                                       t-from)]
                                       [t-from #,(if op-rev
                                                     #'(if (<= t-from t-to)
                                                           (sub1 t-to)
@@ -922,12 +962,12 @@
                                       [t-step #,(if op-step
                                                     (let ([s (cadr op-step)])
                                                       #`(let ([s #,s])
-                                                          (unless (positive-natural? s)
-                                                            (errorf ':bytevector "step has to be a positive natural number: ~a" s))
+                                                          (unless (and (exact? s) (positive-natural? s))
+                                                            (errorf ':bytevector "step has to be an exact positive integer: ~a" s))
                                                           (let* ([distance (abs (fx- t-to t-from))]
                                                                  [stride (if (> s (fxquotient distance #,size))
                                                                              distance
-                                                                             (fx* (inexact->exact s) #,size))])
+                                                                             (fx* s #,size))])
                                                             (if (fx<= t-from t-to)
                                                                 stride
                                                                 (fx- stride)))))

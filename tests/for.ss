@@ -1921,25 +1921,25 @@
 
      (equal? '(0) (for/list ([x :nums 0 -1 -inf.0]) x)))
 
-(mat inexact-sequence-strides
-     (equal? '(0 2) (for/list ([x :vector '#(0 1 2 3) :step 2.0]) x))
+(mat rejected-inexact-sequence-strides
+     ;; Integer-only iterator options reject inexact values rather than convert them.
+     (error? (for/list ([x :vector '#(0 1 2 3) :step 2.0]) x))
 
-     (equal? '(#\d #\b) (for/list ([x :string "abcd" :rev :step 2.0]) x))
+     (error? (for/list ([x :string "abcd" :rev :step 2.0]) x))
 
-     (equal? '(0 2) (for/list ([x :fxvector (fxvector 0 1 2 3) :step 2.0]) x))
+     (error? (for/list ([x :fxvector (fxvector 0 1 2 3) :step 2.0]) x))
 
-     (equal? '(3.0 1.0)
-             (for*/list ([x :flvector (flvector 0.0 1.0 2.0 3.0) :rev :step 2.0]) x))
+     (error? (for*/list ([x :flvector (flvector 0.0 1.0 2.0 3.0) :rev :step 2.0]) x))
 
-     (equal? '(0 2) (for/list ([x :list '(0 1 2 3) :step 2.0]) x))
+     (error? (for/list ([x :list '(0 1 2 3) :step 2.0]) x))
 
-     (equal? '(1 1029)
-             (for/list ([x :bytevector #vu8(0 1 2 3 4 5) :type u16 :big :step 2.0]) x))
+     (error? (for/list ([x :bytevector #vu8(0 1 2 3 4 5) :type u16 :big :step 2.0]) x))
 
      (let ([calls 0])
-       (and (equal? '(0 2) (for/list ([x :vector '#(0 1 2 3)
-                                       :step (begin (set! calls (+ calls 1)) 2.0)]) x))
-            (= calls 1)))
+       (guard (condition [(error? condition) (= calls 1)] [else #f])
+         (for/list ([x :vector '#(0 1 2 3)
+                      :step (begin (set! calls (+ calls 1)) 2.0)]) x)
+         #f))
 
      ;; Non-integer, zero, negative, NaN, and infinite strides remain invalid.
      (error? (for/list ([x :vector '#(0 1) :step 1.5]) x))
@@ -2236,3 +2236,37 @@
                 [:break #t (begin (set! calls (+ calls 1)) (values 1 2))])
            (error 'break-values "body evaluated"))
          (= calls 3))))
+
+(mat strict-sequence-integer-options
+     ;; Strides must be exact positive integers, with no inexact-to-exact normalization.
+     (error? (for/list ([x :vector '#(0 1 2) :step 2.0]) x))
+
+     (error? (for/list ([x :string "abc" :step 2.0]) x))
+
+     (error? (for/list ([x :fxvector (fxvector 0 1 2) :step 2.0]) x))
+
+     (error? (for/list ([x :flvector (flvector 0.0 1.0 2.0) :step 2.0]) x))
+
+     (error? (for/list ([x :list '(0 1 2) :step 2.0]) x))
+
+     (error? (for/list ([x :bytevector #vu8(0 1 2) :step 2.0]) x))
+
+     ;; Source positions must be fixnums, even for an empty slice.
+     (error? (for/list ([x :vector '#(0 1 2) :from 1.0 :to 1.0]) x))
+
+     (error? (for/list ([x :string "abc" :to 2.0]) x))
+
+     (error? (for/list ([x :bytevector #vu8(0 1 2) :from 1.0]) x))
+
+     ;; Empty slices still validate positions against the source bounds.
+     (error? (for/list ([x :vector '#(0 1) :from 10 :to 10]) x))
+
+     (error? (for/list ([x :bytevector #vu8(0 1) :from 10 :to 11 :type u16]) x))
+
+     ;; Iota counts must be exact nonnegative integers.
+     (error? (for/list ([x :iota 2.0]) x))
+
+     (equal? '(1) (for/list ([x :vector '#(0 1 2) :from 1
+                              :step (+ (most-positive-fixnum) 1)]) x))
+
+     (equal? '(2 1 0) (for/list ([x :vector '#(0 1 2) :from 2 :to -1]) x)))
