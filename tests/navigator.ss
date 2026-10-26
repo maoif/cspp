@@ -1875,3 +1875,46 @@
 
   (equal? '(#(1) 1)
           (nav-select nav/children (make-kvbox '((a . #(1)))))))
+
+(mat navigator-review-required-operation-single-pass
+  (let ([calls 0])
+    (let ([result (nav-transform
+                   (nav/must (nav/pred (lambda (value)
+                                         (set! calls (fx1+ calls))
+                                         (fx= calls 1)))) add1 7)])
+      (and (= 8 result) (fx= calls 1))))
+
+  (let ([calls 0] [source (vector 7)])
+    (and (eq? source
+              (nav-transform!
+               (nav/path (nav/nth 0)
+                         (nav/must (nav/pred (lambda (value)
+                                              (set! calls (fx1+ calls))
+                                              (fx= calls 1))))) add1 source))
+         (equal? '#(8) source)
+         (fx= calls 1)))
+
+  (let ([calls 0])
+    (let ([result (nav-clearval
+                   (nav/path (nav/key 'a)
+                             (nav/must (nav/pred (lambda (value)
+                                                  (set! calls (fx1+ calls))
+                                                  (fx= calls 1)))))
+                   '((a . 1) (b . 2)))])
+      (and (equal? '((b . 2)) result) (fx= calls 1))))
+
+  (let ([calls 0] [source (ht 'a 1 'b 2)])
+    (and (eq? source
+              (nav-clearval!
+               (nav/path (nav/key 'a)
+                         (nav/must (nav/pred (lambda (value)
+                                              (set! calls (fx1+ calls))
+                                              (fx= calls 1))))) source))
+         (not (hashtable-contains? source 'a))
+         (fx= calls 1)))
+
+  ;; The actual transformation must reject a required path with no focuses.
+  (error? (nav-transform (nav/must nav/none) add1 7))
+
+  ;; The actual clearing pass must reject an empty required path.
+  (error? (nav-clearval (nav/must nav/none) '(1))))

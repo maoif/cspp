@@ -90,8 +90,21 @@
            (optional-focus (lambda (callback) (clear-path! compiled callback value))
                            clear! value))))))
 
+  ;; Count focuses during the operation itself so stateful callbacks run only once.
+  (define require-focus
+    (lambda (run callback)
+      (let ([selected? #f])
+        (let ([result (run (lambda (value)
+                             (set! selected? #t)
+                             (callback value)))])
+          (unless selected?
+            (nav-error 'nav/must "required path selected no values"))
+          result))))
+
   #|proc:nav/must
   The `nav/must` procedure wraps `path` so selecting no values signals an error.
+  Each operation checks its own traversal without a separate selection pass.
+  The result is a navigator.
   |#
   (define nav/must
     (lambda (path)
@@ -99,29 +112,15 @@
         (make-conditional-nav
          'nav/must '(nav/must)
          (lambda (value emit)
-           (let ([count 0])
-             (select-path compiled value
-                          (lambda (child)
-                            (set! count (+ count 1))
-                            (emit child)))
-             (when (= count 0)
-               (nav-error 'nav/must "required path selected no values"))))
+           (require-focus (lambda (callback) (select-path compiled value callback)) emit))
          (lambda (value update)
-           (if (path-selected? compiled value)
-               (transform-path compiled update value)
-               (nav-error 'nav/must "required path selected no values")))
+           (require-focus (lambda (callback) (transform-path compiled callback value)) update))
          (lambda (value update!)
-           (if (path-selected? compiled value)
-               (transform-path! compiled update! value)
-               (nav-error 'nav/must "required path selected no values")))
+           (require-focus (lambda (callback) (transform-path! compiled callback value)) update!))
          (lambda (value clear)
-           (if (path-selected? compiled value)
-               (clear-path compiled clear value)
-               (nav-error 'nav/must "required path selected no values")))
+           (require-focus (lambda (callback) (clear-path compiled callback value)) clear))
          (lambda (value clear!)
-           (if (path-selected? compiled value)
-               (clear-path! compiled clear! value)
-               (nav-error 'nav/must "required path selected no values")))))))
+           (require-focus (lambda (callback) (clear-path! compiled callback value)) clear!))))))
 
   #|proc:nav/if
   The `nav/if` procedure chooses `then-path` when `test-path` selects at least
