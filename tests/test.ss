@@ -1564,3 +1564,25 @@
                    (environment '(cspp)))
              #f)
            (null? (test-registry-descriptors registry))))))
+
+(mat test-compile-preserves-generated-identifiers
+  ;; Generated formals with identical pretty names must remain distinct compiler identifiers.
+  (for-all
+    (lambda (mode)
+      (let* ([left (gensym "temp")] [right (gensym "temp")]
+             [valid (list (list 'define 'generated
+                            (list 'lambda (list left right) left)))]
+             [invalid (list (list 'define 'duplicate
+                              (list 'lambda (list left left) left)))]
+             [results
+              (parameterize ([print-gensym mode])
+                (test-run
+                  (list (make-test-compile 'valid-generated valid '())
+                        ;; Error: repeated use of the same generated formal remains invalid.
+                        (make-test-compile 'invalid-generated invalid '())
+                        (make-test-compile 'expected-invalid-generated invalid
+                          `((raises . ,syntax-violation?))))
+                  (test-silent-config)))])
+        (and (equal? (map test-result-status results) '(passed errored passed))
+             (syntax-violation? (test-result-condition (cadr results))))))
+    '(#t #f pretty)))

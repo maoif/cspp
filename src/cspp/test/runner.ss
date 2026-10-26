@@ -455,8 +455,9 @@ association-list filters as `test-select`.
           (lambda ()
             (call-with-output-file path
               (lambda (out)
-                ;; Compiler input must retain complete source regardless of diagnostic limits.
-                (parameterize ([print-graph #t] [print-level #f] [print-length #f])
+                ;; Compiler input must retain full source and generated identifier identity.
+                (parameterize ([print-graph #t] [print-level #f] [print-length #f]
+                               [print-gensym #t])
                   (for-each (lambda (form) (write form out) (newline out))
                             (test-descriptor-body descriptor))))
               'replace)
