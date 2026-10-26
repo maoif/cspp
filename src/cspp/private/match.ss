@@ -291,7 +291,8 @@
                                body
                                #`(if (irregex-match-valid-index? m '#,(car n*))
                                      (let ([#,(car v*) (irregex-match-substring m '#,(car n*))])
-                                       #,(loop (cdr n*) (cdr v*)))
+                                       #,(pp rho (car v*) #`(unquote #,(car v*))
+                                             (loop (cdr n*) (cdr v*)) fk))
                                      (errorf 'match "invalid index number or name for regex: ~a" '#,(car n*)))))
                        (#,fk))))]
             [_ (syntax-error pat "match: invalid regex pattern:")])))

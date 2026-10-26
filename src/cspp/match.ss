@@ -129,6 +129,60 @@ Examples:
                 (boolean? p)
                 (string? p)
                 (char? p)))))
+      ;; A collector is active only while compiling a repeated element pattern.
+      (define capture-collector #f)
+      #|proc:collect-pattern-captures
+      The `collect-pattern-captures` helper records the captures introduced by one compiler step.
+      It ignores extension arguments until their expander compiles them as patterns. For example,
+      `,x` records `x`, while `(box ,x)` records nothing until its subpattern is compiled.
+      |#
+      (define collect-pattern-captures
+        (lambda (pattern)
+          (when capture-collector
+            (syntax-case pattern (unquote unquote-splicing quasisyntax)
+              [,variable (identifier? #'variable) (capture-collector #'variable)]
+              [,@variable (identifier? #'variable) (capture-collector #'variable)]
+              [,@[,names ...]
+               (andmap identifier? #'(names ...))
+               (for-each capture-collector #'(names ...))]
+              [,@[procedure -> ,names ...]
+               (and (andmap identifier? #'(names ...))
+                    (identifier? #'procedure) (eq? (datum ->) '->))
+               (for-each capture-collector #'(names ...))]
+              [(#`name subpattern)
+               (identifier? #'name)
+               (capture-collector #'name)]
+              [_ (void)]))))
+      #|proc:compile-repeated-pattern
+      The `compile-repeated-pattern` helper compiles `pattern` once, collecting
+      its unique captures, including fresh expander captures. `rho` is the compiler environment
+      and `failure` is the failure identifier. It calls `generate` with the captures and a
+      two-argument procedure that inserts an input identifier and success expression into it.
+      For example, `,x` supplies `(x)` and a procedure producing `(let ([x input]) success)`.
+      |#
+      (define compile-repeated-pattern
+        (lambda (rho pattern failure generate)
+          (let ([captures '()]
+                [input (car (generate-temporaries '(input)))]
+                [success (car (generate-temporaries '(success)))])
+            (define (add! variable)
+              (unless (exists (lambda (capture) (bound-identifier=? variable capture)) captures)
+                (set! captures (cons variable captures))))
+            (define (insert expression value body)
+              (syntax-case expression ()
+                [name
+                 (identifier? #'name)
+                 (cond [(bound-identifier=? #'name success) body]
+                       [(bound-identifier=? #'name input) value]
+                       [else expression])]
+                [(head . tail) #`(#,(insert #'head value body) . #,(insert #'tail value body))]
+                [#(items ...) #`#(#,@(map (lambda (item) (insert item value body)) #'(items ...)))]
+                [_ expression]))
+            (let ([compiled (fluid-let ([capture-collector add!])
+                              (process-pattern rho input pattern success failure))])
+              ;; Nested repetitions export their collected bindings to the surrounding pattern.
+              (when capture-collector (for-each capture-collector captures))
+              (generate captures (lambda (value body) (insert compiled value body)))))))
       #|proc:handle-extension
       The `handle-extension` helper dispatches an extension pattern to its expander.
       For example, `(hash ("key" ,x))` selects the hash expander and returns its matcher syntax.
@@ -233,39 +287,6 @@ Examples:
                               (mentions-variable? suffix (car variables)))
                           (loop (cdr variables) (cdr accumulators) (cons entry early) late)
                           (loop (cdr variables) (cdr accumulators) early (cons entry late))))))))
-          #|proc:with-pattern-vars
-          The `with-pattern-vars` helper walks a pattern and passes its unique capture identifiers
-          to `generate`. For example, `'(,x (,(box ,y)))` passes `(y x)` in source-order-insensitive
-          syntax order, with duplicates removed.
-          |#
-          (define with-pattern-vars
-            (lambda (pattern generate)
-              (define captures '())
-              (define (add! variable)
-                (unless (exists (lambda (capture) (bound-identifier=? variable capture)) captures)
-                  (set! captures (cons variable captures))))
-              (define (walk pattern)
-                (syntax-case pattern (unquote unquote-splicing quasisyntax)
-                  [,variable (identifier? #'variable) (add! #'variable)]
-                  [,@variable (identifier? #'variable) (add! #'variable)]
-                  [,@[,names ...]
-                   (andmap identifier? #'(names ...))
-                   (for-each add! #'(names ...))]
-                  [,@[procedure -> ,names ...]
-                   (and (andmap identifier? #'(names ...))
-                        (identifier? #'procedure) (eq? (datum ->) '->))
-                   (for-each add! #'(names ...))]
-                  [(#`name subpattern)
-                   (identifier? #'name)
-                   (begin (add! #'name) (walk #'subpattern))]
-                  [,(extension arguments ...)
-                   (identifier? #'extension)
-                   (for-each walk (extension-subpatterns rho #'(extension arguments ...)))]
-                  [(head . tail) (begin (walk #'head) (walk #'tail))]
-                  [#(items ...) (for-each walk #'(items ...))]
-                  [_ (void)]))
-              (walk pattern)
-              (generate captures)))
           #|proc:process-vector-pats
           The `process-vector-pats` helper compiles fixed and repeated vector elements.
           For example, `#(,x ...)` against `#(1 2)` binds `x` to `(1 2)` and checks the vector
@@ -280,8 +301,8 @@ Examples:
                        (#,fk))]
                 [(pat dots)
                  (eq? (datum dots) '...)
-                 (with-pattern-vars #'pat
-                   (lambda (variables)
+                 (compile-repeated-pattern rho #'pat fk
+                   (lambda (variables compile-item)
                      (with-syntax ([(patvars ...) variables])
                        (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
                                      [(i viter vitem) (generate-temporaries '(i viter vitem))])
@@ -292,13 +313,12 @@ Examples:
                                                                #'(bindings ...))
                                                           body)
                                  (let ([vitem (vector-ref #,vecid i)])
-                                   #,(process-pattern rho #'vitem #'pat
-                                                      #'(viter (fx1+ i) (cons patvars bindings) ...)
-                                                      fk))))))))]
+                                   #,(compile-item #'vitem
+                                                   #'(viter (fx1+ i) (cons patvars bindings) ...)))))))))]
                 [(pat0 dots . pat1)
                  (eq? (datum dots) '...)
-                 (with-pattern-vars #'pat0
-                   (lambda (variables)
+                 (compile-repeated-pattern rho #'pat0 fk
+                   (lambda (variables compile-item)
                      (with-syntax ([(patvars ...) variables])
                        (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
                                      [(i viter vitem new-fk) (generate-temporaries '(i viter vitem new-fk))])
@@ -307,9 +327,8 @@ Examples:
                                     (lambda ()
                                       (if (fx< i #,vlen)
                                           (let ([vitem (vector-ref #,vecid i)])
-                                            #,(process-pattern rho #'vitem #'pat0
-                                                               #'(viter (fx1+ i) (cons patvars bindings) ...)
-                                                               fk))
+                                            #,(compile-item #'vitem
+                                                            #'(viter (fx1+ i) (cons patvars bindings) ...)))
                                           (#,fk)))])
                                #,(bind-suffix-captures
                                   variables #'(bindings ...) #'pat1 body
@@ -325,6 +344,7 @@ Examples:
                                               fk))
                          (#,fk)))])))
           ;;(printf "process-pattern ~s ~s ~s ~s~n" expr-id pat body fk)
+          (collect-pattern-captures pat)
           (with-syntax ([expr-id expr-id])
             (syntax-case pat (unquote quasiquote unquote-splicing quasisyntax)
               [,var
@@ -372,8 +392,8 @@ Examples:
                (eq? (datum dots) '...)
                #`(if (or (null? expr-id) (pair? expr-id))
                      ;; Collect captures from pattern positions, excluding extension expressions.
-                     #,(with-pattern-vars #'pat
-                         (lambda (variables)
+                     #,(compile-repeated-pattern rho #'pat fk
+                         (lambda (variables compile-item)
                            (with-syntax ([(patvars ...) variables]
                                          [(lbs ...) (generate-temporaries variables)]
                                          [(iter first rest) (generate-temporaries '(iter first rest))])
@@ -386,17 +406,16 @@ Examples:
                                                               body)]
                                     [(pair? ls)
                                      (let ([first (car ls)] [rest (cdr ls)])
-                                       #,(process-pattern rho #'first #'pat
-                                                          #'(begin (lbs patvars) ...
-                                                                   (iter rest))
-                                                          fk))]
+                                       #,(compile-item #'first
+                                                       #'(begin (lbs patvars) ...
+                                                                (iter rest))))]
                                     [else (#,fk)]))))))
                      (#,fk))]
               ;; ... in the middle, prefer `pat1`
               [(pat0 dots . pat1)
                (eq? (datum dots) '...)
-               (with-pattern-vars #'pat0
-                 (lambda (variables)
+               (compile-repeated-pattern rho #'pat0 fk
+                 (lambda (variables compile-item)
                    (with-syntax ([(patvars ...) variables]
                                  [(bindings ...) (generate-temporaries variables)]
                                  [(iter ls first rest new-fk)
@@ -407,9 +426,8 @@ Examples:
                                   ;; Give up one item to match against the repeated pattern.
                                   (if (pair? ls)
                                       (let ([first (car ls)] [rest (cdr ls)])
-                                        #,(process-pattern rho #'first #'pat0
-                                                           #'(iter rest (cons patvars bindings) ...)
-                                                           fk))
+                                        #,(compile-item #'first
+                                                        #'(iter rest (cons patvars bindings) ...)))
                                       (#,fk)))])
                            ;; Prefer the suffix, extending the repeated prefix on failure.
                            #,(bind-suffix-captures

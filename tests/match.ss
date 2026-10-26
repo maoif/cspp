@@ -1609,3 +1609,52 @@
                    [,(datatype Tree OtherLeaf :values ,x) x])
                 (environment '(cspp) '(match-tests public-adt-types)))
           #f))))
+
+(mat repeated-custom-expander-fresh-captures
+     (guard (condition [#t #f])
+       (equal?
+        '((10 20) (10 20) (10 20) (10 20) ((10 20) (30)) (10 20))
+        (eval
+         '(let ()
+            (define-match-expander fresh-tail-expander
+              (lambda (pp rho input pattern body failure)
+                (syntax-case pattern ()
+                  [(_ subpattern)
+                   (with-syntax ([(hidden) (generate-temporaries '(hidden))])
+                     (pp rho input #`(,hidden . subpattern) body failure))])))
+            (define-match-expander fresh-alias-expander
+              (lambda (pp rho input pattern body failure)
+                (syntax-case pattern ()
+                  [(_ subpattern)
+                   (with-syntax ([(hidden) (generate-temporaries '(hidden))])
+                     (pp rho input #`(#`hidden subpattern) body failure))])))
+            (list
+             (match '((ignored . 10) (ignored . 20))
+               [(,(fresh-tail ,x) ...) x])
+             (match '#((ignored . 10) (ignored . 20))
+               [#(,(fresh-tail ,x) ...) x])
+             (match '((ignored . 10) (ignored . 20) stop)
+               [(,(fresh-tail ,x) ... stop) x])
+             (match '#((ignored . 10) (ignored . 20) stop)
+               [#(,(fresh-tail ,x) ... stop) x])
+             (match '(((ignored . 10) (ignored . 20)) ((ignored . 30)))
+               [((,(fresh-tail ,x) ...) ...) x])
+             (match '(10 20) [(,(fresh-alias ,x) ...) x])))
+         (environment '(cspp) '(cspp private match))))))
+
+(mat custom-expander-compiled-once
+     (guard (condition [#t #f])
+       (equal?
+        '(10 20)
+        (eval
+         '(let ()
+            (define-match-expander once-expander
+              (let ([calls 0])
+                (lambda (pp rho input pattern body failure)
+                  (set! calls (+ calls 1))
+                  (unless (= calls 1)
+                    (syntax-error pattern "custom expander invoked more than once"))
+                  (syntax-case pattern ()
+                    [(_ subpattern) (pp rho input #'subpattern body failure)]))))
+            (match '(10 20) [(,(once ,x) ...) x]))
+         (environment '(cspp) '(cspp private match))))))
