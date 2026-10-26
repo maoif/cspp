@@ -992,8 +992,20 @@ The `benchmark-state-counter-add!` procedure adds numeric `value` to counter
               (let ([entry ($counter-entry state name)])
                 (set-cdr! entry (+ value (cdr entry)))))))
 
+  (define $check-option-keys
+    (lambda (who options allowed repeatable)
+      (let loop ([options options] [seen '()])
+        (unless (null? options)
+          (let ([option (car options)])
+            (unless (and (pair? option) (memq (car option) allowed))
+              (errorf who "unknown or unused option: ~s" option))
+            (when (and (memq (car option) seen) (not (memq (car option) repeatable)))
+              (errorf who "duplicate option: ~s" (car option)))
+            (loop (cdr options) (cons (car option) seen)))))))
+
   (define $check-benchmark-options
     (lambda (who options allowed)
+      ($check-option-keys who options allowed '(args arg-range dense-arg-range))
       (for-each
         (lambda (option)
           (unless (and (pair? option) (memq (car option) allowed))
@@ -1027,6 +1039,7 @@ The `make-benchmark` procedure creates a benchmark descriptor named by symbol
 `benchmark-options`. Options include argument tables/ranges, sample setup/teardown,
 fixture and suite context, template arguments, and runner configuration defaults.
 Unknown options and invalid hooks/configuration values are rejected at construction.
+Singleton options cannot repeat; argument tables and ranges may repeat with distinct names.
 Setup has signature `(lambda (state) value)`; teardown has signature
 `(lambda (state value) unspecified)` and runs after the body, even without setup.
 Without setup, teardown receives `#f` and the body receives no extra argument.
@@ -1602,10 +1615,12 @@ cost-center measurement is enabled in runner `config`.
   fields changed by option alist `options`. Each changed field becomes an explicit
   run override. Explicit run settings take precedence over descriptor options;
   descriptor options take precedence over untouched default settings.
+  Each key may occur once within an update; successive updates may override earlier values.
   |#
   (define benchmark-config-with
     (lambda (config options)
       (pcheck ([benchmark-config? config] [list? options])
+              ($check-option-keys 'benchmark-config-with options $benchmark-config-keys '())
               (let loop ([options options]
                          [fields ($benchmark-config-options config)]
                          [explicit ($benchmark-config-explicit-options config)])
@@ -1763,6 +1778,7 @@ cost-center measurement is enabled in runner `config`.
   `name` is an argument name and each value row supplies one concrete benchmark
   case. Repeated `:args` tables are expanded as a Cartesian product, and argument
   names must not be duplicated in one table or across argument options.
+  Singleton clauses must not repeat, and range clauses require exactly four elements.
   `:arg-range [name start end factor]` requires finite bounds, a positive start,
   and a factor greater than one. `:dense-arg-range [name start end step]` requires
   finite bounds and a positive step; its start may be zero. Both ranges include
@@ -1799,9 +1815,9 @@ cost-center measurement is enabled in runner `config`.
       (define parse-old-row
         (lambda (row)
           (syntax-case row ()
-            [(name value rest ...)
+            [(name start end step)
              (identifier? #'name)
-             #'(name value rest ...)]
+             #'(name start end step)]
             [_ (syntax-error row "invalid benchmark argument row")])))
       (define parse-args-spec
         (lambda (key rest seen-names)
@@ -1889,6 +1905,13 @@ cost-center measurement is enabled in runner `config`.
               [else (syntax-error key "unknown benchmark option")]))))
       (define parse-options
         (lambda (clauses)
+          (let loop ([clauses clauses] [seen '()])
+            (unless (null? clauses)
+              (let ([key (syntax->datum (caar clauses))])
+                (when (and (memq key seen)
+                           (not (memq key '(:args :arg-range :dense-arg-range))))
+                  (syntax-error (caar clauses) "duplicate benchmark option"))
+                (loop (cdr clauses) (cons key seen)))))
           (let loop ([clauses clauses] [seen-names '()] [out '()])
             (if (null? clauses)
                 (reverse out)
@@ -1978,15 +2001,19 @@ Descriptor `:setup` and `:teardown` hooks cannot be combined with a fixture.
   data in the state to release partially acquired resources. Only these two hook
   options are accepted; measurement defaults belong to child benchmark descriptors.
   Each supplied hook must be a procedure.
+  Every member expression must evaluate to a benchmark descriptor.
   |#
   (define-syntax define-benchmark-suite
     (syntax-rules ()
       [(_ name options benchmark ...)
        (define name
-         (let ([opts (benchmark-options options)])
+         (let ([opts (benchmark-options options)]
+               [children (list benchmark ...)])
            ($check-benchmark-options 'define-benchmark-suite opts '(suite-setup suite-teardown))
+           (unless (andmap benchmark? children)
+             (errorf 'define-benchmark-suite "suite members must be benchmark descriptors"))
            ($mk-benchmark-suite 'name
-                                (list benchmark ...)
+                                children
                                 ($option-ref opts 'suite-setup $false-procedure)
                                 ($option-ref opts 'suite-teardown $void-procedure))))]))
 
@@ -2382,7 +2409,8 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                 [(benchmark-registry? source)
                  ($run-benchmarks ($benchmark-registry-benchmarks source) config)]
                 [(benchmark? source) ($run-benchmarks (list source) config)]
-                [(list? source) ($run-benchmarks source config)]
+                [(and (list? source) (andmap benchmark? source))
+                 ($run-benchmarks source config)]
                 [else (errorf 'benchmark-run "invalid benchmark source: ~s" source)]))]))
 
   #|proc:benchmark-summarize
@@ -2613,11 +2641,14 @@ flush CPU caches or enforce hardware memory ordering.
 
   #|proc:benchmark-report
 The `benchmark-report` procedure writes existing benchmark `results` through
-`reporter` to output port `out`.
+`reporter` to output port `out`. Every result must be a benchmark result record;
+invalid collections are rejected before any reporter callback runs.
 |#
   (define benchmark-report
     (lambda (results reporter out)
       (pcheck ([list? results] [benchmark-reporter? reporter] [output-port? out])
+              (unless (andmap benchmark-result? results)
+                (errorf 'benchmark-report "expected a list of benchmark results"))
               (($benchmark-reporter-start reporter) results out)
               (for-each (lambda (result)
                           (($benchmark-reporter-result reporter) result out))

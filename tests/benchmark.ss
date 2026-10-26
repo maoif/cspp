@@ -2004,3 +2004,57 @@
                     (benchmark-config-with (benchmark-test-config)
                       `((reporter . ,(benchmark-csv-reporter)) (output . ,out)))))
            (benchmark-string-contains? (get-output-string out) "name,args,template_args")))))
+
+(mat benchmark-rejects-duplicate-singleton-options
+  ;; Error: singleton options cannot silently discard one of two conflicting values.
+  (for-all
+    (lambda (options)
+      (guard (raised [else #t])
+        (make-benchmark 'duplicate (lambda (state) (void)) options)
+        #f))
+    '(((samples . 1) (samples . 2))
+      ((setup . #f) (setup . #f))
+      ((unit . ns) (unit . ms))))
+
+  ;; Error: config copies reject duplicate options within the same update.
+  (guard (raised [else #t])
+    (benchmark-config-with (benchmark-test-config) '((samples . 1) (samples . 2)))
+    #f)
+
+  ;; Error: malformed range rows and duplicate singleton clauses reject during expansion.
+  (for-all
+    (lambda (form)
+      (guard (raised [else (syntax-violation? raised)])
+        (expand form (environment '(cspp)))
+        #f))
+    '((benchmark-options (:samples 1 :samples 2))
+      (benchmark-options (:setup #f :setup #f))
+      (benchmark-options (:arg-range [n 1 8]))
+      (benchmark-options (:dense-arg-range [n 1 8 1 ignored])))))
+
+(mat benchmark-rejects-invalid-collections-before-side-effects
+  ;; Error: malformed descriptor lists must reject before the first body executes.
+  (let ([called? #f])
+    (guard (raised [else (not called?)])
+      (benchmark-run
+        (list (make-benchmark 'first (lambda (state) (set! called? #t)) '()) #f)
+        (benchmark-test-config))
+      #f))
+
+  ;; Error: malformed result lists must reject before reporter callbacks run.
+  (let ([called? #f])
+    (call-with-port (open-output-string)
+      (lambda (out)
+        (guard (raised [else (not called?)])
+          (benchmark-report '(#f)
+            (make-benchmark-reporter
+              (lambda (results out) (set! called? #t))
+              (lambda (result out) (void))
+              (lambda (results out) (void))) out)
+          #f))))
+
+  ;; Error: suite members must be descriptors, even if the suite is never run.
+  (guard (raised [else #t])
+    (eval '(let () (define-benchmark-suite invalid () #f) invalid)
+          (environment '(cspp)))
+    #f))
