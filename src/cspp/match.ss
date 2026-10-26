@@ -19,20 +19,6 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
           (cspp private match)
           (cspp io))
 
-  #|proc:finite-spine?
-  The `finite-spine?` helper returns whether following the cdrs of `value` terminates.
-  It accepts proper and improper finite lists and non-pairs, using constant space to detect
-  cycles. For example, `(1 2 . 3)` produces `#t`; a pair whose cdr points to itself produces
-  `#f`. Repeated dotted patterns use it before searching successive suffix positions.
-  |#
-  (define finite-spine?
-    (lambda (value)
-      (let loop ([slow value] [fast value])
-        (or (not (pair? fast))
-            (not (pair? (cdr fast)))
-            (let ([slow (cdr slow)] [fast (cddr fast)])
-              (and (not (eq? slow fast)) (loop slow fast)))))))
-
   #|doc
 (match <expr>
   [<pattern> <body> ...]
@@ -97,7 +83,6 @@ Examples:
   `,name` captures a value, `` `name `` compares against a bound value, and `_` ignores a value.
   List and vector patterns destructure their elements; `...` repeats a pattern zero or more times,
   collecting its captures in lists. Captures preceding a suffix are visible to its backreferences.
-  List repetition rejects cyclic cdr spines; dotted repetition still accepts finite improper lists.
   Records use `,(record Type :fields (field pattern) ...)` for a named subset of fields,
   or `,(record Type :values pattern ...)` for all fields in declaration order. Both native Chez
   and CSPP record types are supported. Empty `:fields` checks only the type; empty `:values`
@@ -427,7 +412,7 @@ Examples:
               ;; ... in the end
               [(pat dots)
                (eq? (datum dots) '...)
-               #`(if (list? expr-id)
+               #`(if (or (null? expr-id) (pair? expr-id))
                      ;; Collect captures from pattern positions, excluding extension expressions.
                      #,(compile-repeated-pattern rho #'pat fk
                          (lambda (variables compile-item)
@@ -451,8 +436,7 @@ Examples:
               ;; ... in the middle, prefer `pat1`
               [(pat0 dots . pat1)
                (eq? (datum dots) '...)
-               #`(if (finite-spine? expr-id)
-                     #,(compile-repeated-pattern rho #'pat0 fk
+               (compile-repeated-pattern rho #'pat0 fk
                  (lambda (variables compile-item)
                    (with-syntax ([(patvars ...) variables]
                                  [(bindings ...) (generate-temporaries variables)]
@@ -471,8 +455,7 @@ Examples:
                            #,(bind-suffix-captures
                               variables #'(bindings ...) #'pat1 body
                               (lambda (success)
-                                (process-pattern rho #'ls #'pat1 success #'new-fk))))))))
-                     (#,fk))]
+                                (process-pattern rho #'ls #'pat1 success #'new-fk))))))))]
               ;; encapsulates (pat ...), (pat . pat), (pat ... . pat)
               [(pat0 . pat1)
                (with-syntax ([(first rest) (generate-temporaries '(first rest))])

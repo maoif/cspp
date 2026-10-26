@@ -1713,27 +1713,3 @@
                (match '() [(,(branch ,x) ...) x])
                (match '(10 (ignored . 20)) [(,(branch ,x) ...) hidden]))))
          (environment '(cspp) '(cspp private match))))))
-
-(mat cyclic-list-repetition
-     ;; A cyclic spine cannot satisfy finite list repetition; bound execution to catch hangs.
-     (let ([input (list 1)])
-       (set-cdr! input input)
-       (eq? 'rejected
-            ((make-engine
-              (lambda () (match input [(,x ...) 'matched] [else 'rejected])))
-             100000 (lambda (ticks result) result) (lambda (engine) 'timed-out))))
-
-     (let ([input (list 1 2 3)])
-       (set-cdr! (cddr input) (cdr input))
-       (eq? 'rejected
-            ((make-engine
-              (lambda () (match input [(,x ... stop) 'matched] [else 'rejected])))
-             100000 (lambda (ticks result) result) (lambda (engine) 'timed-out))))
-
-     ;; Finite improper spines remain valid for dotted repeated patterns.
-     (equal? '((1 2) 3)
-             (match '(1 2 . 3) [(,x ... . 3) (list x 3)]))
-
-     (equal? '(() 42) (match 42 [(,x ... . ,tail) (list x tail)]))
-
-     (match '(1 . 2) [(,x ...) #f] [else #t]))
