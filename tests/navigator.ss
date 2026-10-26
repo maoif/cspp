@@ -1669,3 +1669,41 @@
   (equal? '(0 1 2) (nav-select nav/all '(0 1 2)))
 
   (equal? '((0 . 4) (1 . 5) (2 . 6)) (nav-select nav/entries '(4 5 6))))
+
+(define review-lexical-path
+  (lambda ()
+    (nav/letrec ([leaf (nav/key 'a)]
+                 [outer leaf])
+      (nav/letrec ([leaf (nav/key 'b)]
+                   [inner outer])
+        inner))))
+
+(mat navigator-review-enclosing-recursive-bindings
+  (equal? '(1)
+          (nav-select (nav/letrec ([outer (nav/key 'a)])
+                        (nav/letrec ([inner outer]) inner)) '((a . 1))))
+
+  (equal? '(1) (nav-select (review-lexical-path) '((a . 1) (b . 2))))
+
+  (equal? '((a . 11) (b . 2))
+          (nav-transform (review-lexical-path) (lambda (x) (+ 10 x)) '((a . 1) (b . 2))))
+
+  (let ([data (ht 'a 1 'b 2)])
+    (and (eq? data (nav-transform! (review-lexical-path) (lambda (x) (+ 10 x)) data))
+         (= 11 (ht-ref data 'a))
+         (= 2 (ht-ref data 'b))))
+
+  (equal? '((b . 2)) (nav-clearval (review-lexical-path) '((a . 1) (b . 2))))
+
+  (let ([data (ht 'a 1 'b 2)])
+    (and (eq? data (nav-clearval! (review-lexical-path) data))
+         (not (hashtable-contains? data 'a))
+         (= 2 (ht-ref data 'b)))))
+
+(mat navigator-review-terminal-recursive-children
+  (equal? '(#(b) b) (nav-select (nav/rec visit nav/children) '#(a #(b))))
+
+  (equal? '(#(b) b)
+          (nav-select (nav/letrec ([visit nav/children]) visit) '#(a #(b))))
+
+  (null? (nav-select (nav/path (nav/rec visit nav/children) nav/none) '#(a #(b)))))
