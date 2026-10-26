@@ -16,7 +16,7 @@
 
   (define collection?
     (lambda (value)
-      (or (pair? value)
+      (or (and (pair? value) (list? value))
           (vector? value)
           (fxvector? value)
           (flvector? value)
@@ -24,7 +24,7 @@
 
   (define emit-immediate-children
     (lambda (value emit)
-      (cond [(pair? value)
+      (cond [(list? value)
              (for-each emit value)]
             [(vector? value)
              (let ([len (vector-length value)])
@@ -78,6 +78,7 @@
   (define nav-children-step?
     (lambda (step)
       (and ($navigator? step)
+           (eq? ($navigator-kind step) 'recursive)
            (eq? ($navigator-name step) 'nav/children))))
 
   (define resolve-nav-ref

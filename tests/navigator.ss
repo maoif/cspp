@@ -1580,3 +1580,24 @@
 
   ;; Transparent stay still rejects replacement of the root itself.
   (error? (nav-transform! nav/stay add1 1)))
+
+(mat navigator-review-children-boundaries
+  ;; Fixed-size indexed children cannot disappear during mutation.
+  (error? (nav-clearval! (nav/path nav/children nav/stay) (vector 1 2)))
+
+  ;; List children cannot be removed in place through a returned root reference.
+  (error? (nav-clearval! (nav/path nav/children nav/stay) (list 1 2)))
+
+  (let ([data (vector (ht 'x 1 'y 2))])
+    (and (eq? data (nav-clearval! (nav/path nav/children (nav/key 'x)) data))
+         (not (hashtable-contains? (vector-ref data 0) 'x))
+         (= 2 (ht-ref (vector-ref data 0) 'y))))
+
+  (equal? '(#(2 3) 2 3)
+          (nav-select nav/children (vector (cons 'a 1) (vector 2 3))))
+
+  (let ([custom (make-nav 'nav/children
+                         (lambda (value emit) (emit value))
+                         (lambda (value update) (update value))
+                         (lambda (value update!) (update! value)))])
+    (equal? '(root) (nav-select custom 'root))))
