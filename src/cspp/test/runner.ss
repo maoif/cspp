@@ -458,13 +458,14 @@ association-list filters as `test-select`.
               (lambda (out)
                 ;; Compiler input must retain full source and generated identifier identity.
                 (parameterize ([print-graph #t] [print-level #f] [print-length #f]
-                               [print-gensym #t])
+                               [print-gensym #t] [case-sensitive #t])
                   (for-each (lambda (form) (write form out) (newline out))
                             (test-descriptor-body descriptor))))
               'replace)
             ($run-with-expected-condition metadata
               (lambda ()
-                (parameterize ([compile-file-message #f] [generate-wpo-files #f])
+                (parameterize ([compile-file-message #f] [generate-wpo-files #f]
+                               [generate-covin-files #f] [case-sensitive #t])
                   (compile-file path)))))
           (lambda ()
             (when (file-exists? path) (delete-file path))

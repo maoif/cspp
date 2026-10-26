@@ -1720,3 +1720,34 @@
                               (list (cons 'raises i/o-error?))))
                       (test-silent-config))))])
         (eq? (test-result-status result) 'errored))))
+
+(mat test-compile-isolates-reader-case
+  ;; Error: ambient folding must not merge distinct source identifiers.
+  (let ([results
+         (parameterize ([case-sensitive #f])
+           (test-run
+             (list (make-test-compile 'distinct-case '((define f (lambda (A a) A))) '())
+                   (make-test-compile 'no-false-expectation '((define f (lambda (A a) A)))
+                     (list (cons 'raises syntax-violation?))))
+             (test-silent-config)))])
+    (equal? (map test-result-status results) '(passed failed))))
+
+(mat test-compile-leaves-no-coverage-input
+  (let* ([temporary-coverage?
+          (lambda (name)
+            (and (test-string-contains? name "test-compile-")
+                 (test-string-contains? name ".covin")))]
+         [before (filter temporary-coverage? (directory-list "."))])
+    (dynamic-wind
+      (lambda () (void))
+      (lambda ()
+        (let ([result
+               (parameterize ([generate-covin-files #t] [compile-profile 'source])
+                 (car (test-run
+                        (list (make-test-compile 'no-coverage '((define x 1) (+ x 2)) '()))
+                        (test-silent-config))))])
+          (and (eq? (test-result-status result) 'passed)
+               (equal? before (filter temporary-coverage? (directory-list "."))))))
+      (lambda ()
+        (for-each (lambda (name) (unless (member name before) (delete-file name)))
+                  (filter temporary-coverage? (directory-list ".")))))))
