@@ -31,8 +31,9 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
             | _                                ; ignore
             | ,@<identifier>                   ; splice one matched value
             | ,@[]                              ; splice for effect
-            | ,@[<identifier> ...]              ; splice multiple values
-            | ,@[<procedure> -> <identifier> ...]
+            | ,@[,<identifier> ...]             ; catamorphism with multiple values
+            | ,@[<procedure> -> ,<identifier> ...]
+            | (#`<identifier> <pattern>)        ; capture the whole matched value too
             | (<pattern> ...)
             | (<pattern> ... . <pattern>)       ; dotted list
             | (<pattern> ... <pattern> ...)     ; repeated prefix
@@ -48,6 +49,7 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
             | ,(<match-expander> <argument> ...)
 
 <group> := (<number-or-name> ,<identifier>)
+<number-or-name> := <exact-nonnegative-integer> | <symbol>
 
 <literal> := <number> | <boolean> | <string> | <character> | <symbol>
 

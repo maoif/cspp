@@ -1771,6 +1771,8 @@
      ;; Invalid constants in unvisited clauses remain unevaluated.
      (= 42 (match 42 [,x x] [,(regex "(") #f]))
 
+     (eq? 'empty (match '() [(,(regex "(") ...) 'empty]))
+
      ;; Regex expressions remain ordinary expressions, evaluated for every visited element.
      (let ([calls 0])
        (and (equal? '("a" "b")

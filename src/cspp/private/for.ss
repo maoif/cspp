@@ -421,7 +421,7 @@
 
   #|
   For each iter clause, the following syntax/procedures are returned:
-  - gen-preloop-proc (gen or not gen?): generate procs that outputs code that binds various variables needed in the loop,
+  - gen-preloop-proc: generate code binding variables needed before the loop,
       plus type checking of inputs
   - loop-var: induction variables that correspond to each loop variable
   - terminate: termination checks for the loop variable
@@ -501,8 +501,8 @@
              (case nops
                [1 (list (lambda (e)
                           #`(let ([t-stop #,(car op*)])
-                              (unless (and (number? t-stop) (nonnegative? t-stop))
-                                (errorf ':nums "not a nonnegative number: ~a" t-stop))
+                              (unless (and (real? t-stop) (nonnegative? t-stop))
+                                (errorf ':nums "not a nonnegative real number: ~a" t-stop))
                               #,e))
                         #`[#,v 0]
                         #`(>= #,v t-stop)
@@ -510,7 +510,7 @@
                         #f)]
                [2 (list (lambda (e)
                           #`(let ([t-start #,(car op*)] [t-stop #,(cadr op*)])
-                              (unless (and (number? t-start) (number? t-stop) (<= t-start t-stop))
+                              (unless (and (real? t-start) (real? t-stop) (<= t-start t-stop))
                                 (errorf ':nums "invalid range from ~a to ~a" t-start t-stop))
                               #,e))
                         #`[#,v t-start]
@@ -519,7 +519,7 @@
                         #f)]
                [3 (list (lambda (e)
                           #`(let ([t-start #,(car op*)] [t-stop #,(cadr op*)] [t-step #,(caddr op*)])
-                              (unless (and (number? t-start) (number? t-stop)
+                              (unless (and (real? t-start) (real? t-stop) (real? t-step)
                                            (or (and (<= t-start t-stop) (> t-step 0))
                                                (and (> t-start t-stop)  (< t-step 0))))
                                 (errorf ':nums "invalid range from ~a to ~a, step ~a" t-start t-stop t-step))
@@ -639,7 +639,7 @@
                                     [t-step #,(if op-step
                                                   (let ([s (cadr op-step)])
                                                     #`(let ([s #,s])
-                                                        (unless (and (exact? s) (positive-natural? s))
+                                                        (unless (and (positive-natural? s) (exact? s))
                                                           (errorf ':vector "step has to be an exact positive integer: ~a" s))
                                                         (let ([stride (min s (abs (fx- t-to t-from)))])
                                                           (if (fx<= t-from t-to)
@@ -710,7 +710,7 @@
                                     [t-step #,(if op-step
                                                   (let ([s (cadr op-step)])
                                                     #`(let ([s #,s])
-                                                        (unless (and (exact? s) (positive-natural? s))
+                                                        (unless (and (positive-natural? s) (exact? s))
                                                           (errorf ':string "step has to be an exact positive integer: ~a" s))
                                                         (let ([stride (min s (abs (fx- t-to t-from)))])
                                                           (if (fx<= t-from t-to)
@@ -781,7 +781,7 @@
                                     [t-step #,(if op-step
                                                   (let ([s (cadr op-step)])
                                                     #`(let ([s #,s])
-                                                        (unless (and (exact? s) (positive-natural? s))
+                                                        (unless (and (positive-natural? s) (exact? s))
                                                           (errorf ':fxvector "step has to be an exact positive integer: ~a" s))
                                                         (let ([stride (min s (abs (fx- t-to t-from)))])
                                                           (if (fx<= t-from t-to)
@@ -852,7 +852,7 @@
                                     [t-step #,(if op-step
                                                   (let ([s (cadr op-step)])
                                                     #`(let ([s #,s])
-                                                        (unless (and (exact? s) (positive-natural? s))
+                                                        (unless (and (positive-natural? s) (exact? s))
                                                           (errorf ':flvector "step has to be an exact positive integer: ~a" s))
                                                         (let ([stride (min s (abs (fx- t-to t-from)))])
                                                           (if (fx<= t-from t-to)
@@ -940,14 +940,14 @@
                                                     #'t-len)]
                                       ;; handle :rev
                                       [tt-from
-                                     (begin
-                                       (unless (and (fixnum? t-from) (fixnum? t-to)
-                                                    (if (fx<= t-from t-to)
-                                                        (fx<= 0 t-from t-to t-len)
-                                                        (fx<= -1 t-to t-from (fx1- t-len))))
-                                         (errorf ':bytevector "invalid source bounds: ~a to ~a, length ~a"
-                                                 t-from t-to t-len))
-                                       t-from)]
+                                       (begin
+                                         (unless (and (fixnum? t-from) (fixnum? t-to)
+                                                      (if (fx<= t-from t-to)
+                                                          (fx<= 0 t-from t-to t-len)
+                                                          (fx<= -1 t-to t-from (fx1- t-len))))
+                                           (errorf ':bytevector "invalid source bounds: ~a to ~a, length ~a"
+                                                   t-from t-to t-len))
+                                         t-from)]
                                       [t-from #,(if op-rev
                                                     #`(if (fx<= t-from t-to)
                                                           (fx- t-to 1
@@ -964,7 +964,7 @@
                                       [t-step #,(if op-step
                                                     (let ([s (cadr op-step)])
                                                       #`(let ([s #,s])
-                                                          (unless (and (exact? s) (positive-natural? s))
+                                                          (unless (and (positive-natural? s) (exact? s))
                                                             (errorf ':bytevector "step has to be an exact positive integer: ~a" s))
                                                           (let* ([distance (abs (fx- t-to t-from))]
                                                                  [stride (if (> s (fxquotient distance #,size))

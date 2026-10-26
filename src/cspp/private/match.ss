@@ -152,6 +152,8 @@
   `expander` receives `(process-pattern rho expr-id pattern body failure)` and returns
   expansion syntax. For example, a `pair` expander can make `,(pair ,a ,b)` return the
   two fields, so `(match (cons 1 2) [,(pair ,x ,y) (+ x y)])` returns `3`.
+  Under repetition, only identifiers supplied in the caller's pattern can escape as captures.
+  Fresh identifiers introduced by the expander remain private, including within alternatives.
   |#
   (define-syntax define-match-expander
     (lambda (stx)

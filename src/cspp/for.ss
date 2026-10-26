@@ -29,7 +29,11 @@
 
 <iter-type> := :iota <expr>
             |  :fxiota <expr>
+            |  :nums <expr>
+            |  :nums <expr> <expr>
             |  :nums <expr> <expr> <expr>
+            |  :fixnums <expr>
+            |  :fixnums <expr> <expr>
             |  :fixnums <expr> <expr> <expr>
             |  :string <expr>
             |  :list <expr>
@@ -48,8 +52,15 @@
          |  :guard <expr>
          |  :index <var>
          |  :rev
+         |  :type <bytevector-type> ; bytevectors only
+         |  :big                    ; bytevectors only
+         |  :little                 ; bytevectors only
 
-<literal> := <integer>  ; iter from 0 to <integer> - 1
+<bytevector-type> := single | double
+                   | u8 | s8 | u16 | s16 | u24 | s24 | u32 | s32
+                   | u40 | s40 | u48 | s48 | u56 | s56 | u64 | s64
+
+<literal> := <exact-nonnegative-integer> ; iter from 0 to the exclusive bound
           |  <string>   ; iter chars in the string from left to right
           |  <vector>   ; iter items in the vector from left to right
 
@@ -101,6 +112,12 @@
   `[var :fxiota bound]` requires a nonnegative fixnum bound and uses fixnum arithmetic.
   Both forms evaluate `bound` once per source setup and accept only `:guard` and `:index` options.
   All `for` variants support these sources; nested variants set up each source per outer item.
+  `:nums` and `:fixnums` accept a stop value, a start and stop, or a start, stop, and step.
+  The default start is zero and the default step is one; the stop is exclusive.
+  `:nums` uses real numbers; `:fixnums` requires fixnums and avoids overflow on its final step.
+  `:from`, `:to`, `:step`, and `:rev` apply to lists, strings, and vector-like sources.
+  Bytevectors default to `:type u8` and little endianness; `:big` and `:little` are exclusive.
+  Their positions are byte offsets and their stride is measured in values of the selected type.
   A `:nums` range raises an error if its next value is unchanged or unordered, including NaN.
   Known exhausted parallel sources stop before a companion `:iter` advances. With only
   unknown-length iterators, discovering exhaustion can consume one unpaired companion value.
