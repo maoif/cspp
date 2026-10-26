@@ -2436,18 +2436,23 @@ historical summary-only records are preserved without synthesizing samples.
 
   #|proc:benchmark-absolute-difference
 The `benchmark-absolute-difference` procedure returns `current - baseline` for
-numeric measurements `baseline` and `current`.
+numeric measurements `baseline` and `current`. Finite real inputs are subtracted
+exactly, preserving their represented values without intermediate overflow or underflow.
 |#
   (define benchmark-absolute-difference
     (lambda (baseline current)
       (pcheck ([number? baseline current])
-              (- current baseline))))
+              (if (and (real? baseline) (finite? baseline)
+                       (real? current) (finite? current))
+                  (- (inexact->exact current) (inexact->exact baseline))
+                  (- current baseline)))))
 
   #|proc:benchmark-percent-difference
 The `benchmark-percent-difference` procedure returns the percent change from
 real measurement `baseline` to real measurement `current`. Complex inputs are rejected. When
 `baseline` is zero, equal values return zero and non-equal values return
 positive or negative infinity according to the sign of `current`. NaN inputs propagate NaN.
+Finite inputs use exact arithmetic on their represented values to avoid intermediate overflow.
 |#
   (define benchmark-percent-difference
     (lambda (baseline current)
@@ -2459,12 +2464,16 @@ positive or negative infinity according to the sign of `current`. NaN inputs pro
                  [(nan? current) +nan.0]
                  [(positive? current) +inf.0]
                  [else -inf.0])]
+               [(and (finite? baseline) (finite? current))
+                (* 100 (/ (benchmark-absolute-difference baseline current)
+                          (inexact->exact baseline)))]
                [else (* 100 (/ (- current baseline) baseline))]))))
 
   #|proc:benchmark-compare-results
   The `benchmark-compare-results` procedure compares current benchmark `current`
   results with `baseline` results. `options` is an alist supporting `metric`,
   `threshold-percent`, `threshold-absolute`, and `noise-threshold-percent`.
+  Each key may appear once; unknown keys and non-symbol metrics are rejected.
   Thresholds must be finite nonnegative real numbers; invalid thresholds raise an
   error naming the option, including when the result lists are empty or do not match.
   The returned list excludes results with captured errors or without a finite real
@@ -2478,6 +2487,22 @@ positive or negative infinity according to the sign of `current`. NaN inputs pro
        (benchmark-compare-results baseline current '())]
       [(baseline current options)
        (pcheck ([list? baseline current options])
+               (unless (and (andmap benchmark-result? baseline)
+                            (andmap benchmark-result? current))
+                 (errorf 'benchmark-compare-results "expected lists of benchmark results"))
+               (let loop ([options options] [seen '()])
+                 (unless (null? options)
+                   (let ([option (car options)])
+                     (unless (and (pair? option)
+                                  (memq (car option)
+                                    '(metric threshold-percent threshold-absolute
+                                      noise-threshold-percent)))
+                       (errorf 'benchmark-compare-results "unknown or malformed option: ~s" option))
+                     (when (memq (car option) seen)
+                       (errorf 'benchmark-compare-results "duplicate option: ~s" (car option)))
+                     (when (and (eq? (car option) 'metric) (not (symbol? (cdr option))))
+                       (errorf 'benchmark-compare-results "metric must be a symbol: ~s" (cdr option)))
+                     (loop (cdr options) (cons (car option) seen)))))
                (let ([metric ($option-ref options 'metric 'real-ns)]
                      [threshold-percent ($option-ref options 'threshold-percent 5)]
                      [threshold-absolute ($option-ref options 'threshold-absolute 0)]

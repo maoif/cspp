@@ -1941,3 +1941,34 @@
       (and (= (vector-length members) 2)
            (not (string=? (json5-member-name (vector-ref members 0))
                           (json5-member-name (vector-ref members 1))))))))
+
+(mat benchmark-comparison-rejects-malformed-options
+  ;; Error: unknown keys, duplicate keys, malformed entries, and non-symbol metrics must reject.
+  (for-all
+    (lambda (options)
+      (guard (raised [else #t])
+        (benchmark-compare-results '() '() options)
+        #f))
+    '(((threshold-precent . 10))
+      ((metric . 1))
+      ((threshold-percent . 5) (threshold-percent . 10))
+      (invalid)
+      ((metric . real-ns) . improper))))
+
+(mat benchmark-comparison-preserves-extreme-finite-changes
+  ;; Error: intermediate flonum overflow or underflow must not change threshold decisions.
+  (and (= (benchmark-percent-difference 1e308 -1e308) -200)
+       (= (benchmark-percent-difference (expt 10 400) 0.0) -100)
+       (= (benchmark-percent-difference (/ 1 (expt 10 400)) 0.0) -100)
+       (let* ([baseline
+               (benchmark-results-from-data
+                 `(((name . huge) (summary . ((real-ns . ((mean . ,(expt 10 400)))))))))]
+              [current
+               (benchmark-results-from-data
+                 '(((name . huge) (summary . ((real-ns . ((mean . 0.0))))))))]
+              [percent (car (benchmark-compare-results baseline current
+                              '((threshold-percent . 150))))]
+              [absolute (car (benchmark-compare-results baseline current
+                               `((threshold-absolute . ,(expt 10 500)))))] )
+         (and (not (benchmark-comparison-improvement? percent))
+              (not (benchmark-comparison-improvement? absolute))))))
