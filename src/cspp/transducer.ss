@@ -1096,6 +1096,8 @@
   upstream iterator, including a caller-supplied iterator.
   Initialization emissions are retained, and an initially reduced accumulator finishes without
   pulling input. A failed pass releases an owned source and stays exhausted until reset.
+  An escape during construction or reset also releases an owned source and exhausts the pass.
+  Each input value's entire transformed expansion is buffered before returning its first value.
   |#
   (define sequence
     (lambda (xform source)
@@ -1142,28 +1144,39 @@
                         (when (and upstream (not (iter-finalized? upstream)))
                           (set! cleanup-attempted? #t)
                           (iter-finalize! upstream))))
-                    (define fail!
-                      (lambda (exn)
+                    (define abandon-pass!
+                      (lambda ()
                         (set! done? #t)
                         (set! q-head '())
                         (set! q-tail '())
                         (unless (or (iter? source) cleanup-attempted?)
-                          (finalize-upstream!))
+                          (finalize-upstream!))))
+                    (define fail!
+                      (lambda (exn)
+                        (abandon-pass!)
                         (raise exn)))
                     (define reset-state!
                       (lambda ()
-                        (guard (exn [else (fail! exn)])
-                          (if (and upstream (iter? source))
-                              (iter-reset! upstream)
-                              (begin
-                                (finalize-upstream!)
-                                (set! upstream (source->iter source))))
-                          (set! cleanup-attempted? #f)
-                          (set! done? #f)
-                          (set! q-head '())
-                          (set! q-tail '())
-                          (set! effective (apply-transducer xform emit-reducer))
-                          (set! acc (reducer-init effective)))))
+                        (let ([completed? #f])
+                          (dynamic-wind
+                            void
+                            (lambda ()
+                              (guard (exn [else (fail! exn)])
+                                (if (and upstream (iter? source))
+                                    (iter-reset! upstream)
+                                    (begin
+                                      (finalize-upstream!)
+                                      (set! upstream (source->iter source))))
+                                (set! cleanup-attempted? #f)
+                                (set! done? #f)
+                                (set! q-head '())
+                                (set! q-tail '())
+                                (set! effective (apply-transducer xform emit-reducer))
+                                (set! acc (reducer-init effective))
+                                (set! completed? #t)))
+                            (lambda ()
+                              (unless completed?
+                                (abandon-pass!)))))))
                     (define finish!
                       (lambda ()
                         (unless done?
@@ -1517,6 +1530,7 @@
   #|proc:rfany
   The `rfany` procedure returns a reducer that applies unary predicate `(pred x)`. Reduction
   returns its first true result and terminates early, or `#f` if no value matches.
+  A true incoming accumulator is retained without calling `pred` again.
   |#
   (define rfany
     (lambda (pred)
@@ -1527,12 +1541,15 @@
                  [() #f]
                  [(acc) acc]
                  [(acc x)
-                  (let ([res (pred x)])
-                    (if res (reduced res) #f))])))))
+                  (if acc
+                      (reduced acc)
+                      (let ([res (pred x)])
+                        (if res (reduced res) #f)))])))))
 
   #|proc:rfevery
   The `rfevery` procedure returns a reducer that applies unary predicate `(pred x)`. Reduction
   returns `#f` at the first false result and terminates early, or `#t` otherwise.
+  A false incoming accumulator is retained without calling `pred` again.
   |#
   (define rfevery
     (lambda (pred)
@@ -1543,7 +1560,7 @@
                  [() #t]
                  [(acc) acc]
                  [(acc x)
-                  (if (pred x)
+                  (if (and acc (pred x))
                       #t
                       (reduced #f))])))))
 
