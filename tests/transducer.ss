@@ -577,3 +577,75 @@
          (not (iter-finalized? source))
          (= 2 (iter-next! source))
          (begin (iter-finalize! source) #t))))
+
+(mat transducer-review-sequence-initialization
+  (let ([pulled 0] [completed 0])
+    (let* ([xform
+            (make-transducer
+             'initially-reduced
+             (lambda (reducer)
+               (let ([proc (completion reducer)])
+                 (make-reducer
+                  'initially-reduced
+                  (case-lambda
+                    [() (reduced (proc))]
+                    [(acc) (set! completed (+ completed 1)) (proc acc)]
+                    [(acc x) (proc acc x)])))))]
+           [source (make-iter (lambda () (set! pulled (+ pulled 1)) 1) void)]
+           [output (sequence xform source)])
+      (and (iter-end? (iter-next! output))
+           (= 0 pulled)
+           (= 1 completed)
+           (not (iter-finalized? source))
+           (begin (iter-reset! output) #t)
+           (iter-end? (iter-next! output))
+           (= 0 pulled)
+           (= 2 completed)
+           (begin (iter-finalize! output) #t))))
+
+  (let ([xform
+         (make-transducer
+          'initial-emission
+          (lambda (reducer)
+            (let ([proc (completion reducer)])
+              (make-reducer
+               'initial-emission
+               (case-lambda
+                 [() (proc (proc) 'start)]
+                 [(acc) (proc acc)]
+                 [(acc x) (proc acc x)])))))])
+    (let ([output (sequence xform '(1 2))])
+      (and (equal? '(start 1 2) (transducer-drain output))
+           (begin (iter-reset! output) #t)
+           (equal? '(start 1 2) (transducer-drain output))
+           (begin (iter-finalize! output) #t)))))
+
+(mat transducer-review-sequence-errors
+  ;; A failing sequence step closes its generated source and exhausts that pass.
+  (let* ([source (make-review-source '(1 2) 0)]
+         [output (sequence (tmap (lambda (x) (error 'review "sequence failed"))) source)])
+    (and (guard (exn [else #t]) (iter-next! output) #f)
+         (= 1 (review-source-finalizations source))
+         (iter-end? (iter-next! output))
+         (begin (iter-reset! output) #t)
+         (guard (exn [else #t]) (iter-next! output) #f)
+         (= 2 (review-source-finalizations source))
+         (begin (iter-finalize! output) #t)
+         (= 2 (review-source-finalizations source))))
+
+  ;; Construction failure after opening an adapter must release its source iterator.
+  (let ([source (make-review-source '(1 2) 0)])
+    (and (guard (exn [else #t])
+           (sequence (make-transducer 'broken (lambda (reducer) (error 'review "bad xform")))
+                     source)
+           #f)
+         (= 1 (review-source-finalizations source))))
+
+  ;; Failing traversal does not close a caller-supplied iterator until explicit finalization.
+  (let* ([source (list->iter '(1 2))]
+         [output (sequence (tmap (lambda (x) (error 'review "sequence failed"))) source)])
+    (and (guard (exn [else #t]) (iter-next! output) #f)
+         (not (iter-finalized? source))
+         (iter-end? (iter-next! output))
+         (begin (iter-finalize! output) #t)
+         (iter-finalized? source))))

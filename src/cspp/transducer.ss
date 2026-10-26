@@ -1084,6 +1084,8 @@
   exhaustion. Resetting the result resets an iterator source and the transducer state;
   other sources receive a new traversal. Explicitly finalizing the result finalizes its
   upstream iterator, including a caller-supplied iterator.
+  Initialization emissions are retained, and an initially reduced accumulator finishes without
+  pulling input. A failed pass releases an owned source and stays exhausted until reset.
   |#
   (define sequence
     (lambda (xform source)
@@ -1128,18 +1130,27 @@
                       (lambda ()
                         (when (and upstream (not (iter-finalized? upstream)))
                           (iter-finalize! upstream))))
+                    (define fail!
+                      (lambda (exn)
+                        (set! done? #t)
+                        (set! q-head '())
+                        (set! q-tail '())
+                        (unless (iter? source)
+                          (finalize-upstream!))
+                        (raise exn)))
                     (define reset-state!
                       (lambda ()
-                        (if (and upstream (iter? source))
-                            (iter-reset! upstream)
-                            (begin
-                              (finalize-upstream!)
-                              (set! upstream (source->iter source))))
-                        (set! effective (apply-transducer xform emit-reducer))
-                        (set! acc (reducer-init effective))
-                        (set! done? #f)
-                        (set! q-head '())
-                        (set! q-tail '())))
+                        (guard (exn [else (fail! exn)])
+                          (if (and upstream (iter? source))
+                              (iter-reset! upstream)
+                              (begin
+                                (finalize-upstream!)
+                                (set! upstream (source->iter source))))
+                          (set! done? #f)
+                          (set! q-head '())
+                          (set! q-tail '())
+                          (set! effective (apply-transducer xform emit-reducer))
+                          (set! acc (reducer-init effective)))))
                     (define finish!
                       (lambda ()
                         (unless done?
@@ -1149,20 +1160,22 @@
                             (finalize-upstream!)))))
                     (define next!
                       (lambda ()
-                        (let loop ()
-                          (cond [(not (queue-empty?)) (dequeue!)]
-                                [done? iter-end]
-                                [else
-                                 (let ([x (iter-next! upstream)])
-                                   (if (iter-end? x)
-                                       (begin
-                                         (finish!)
-                                         (loop))
-                                       (begin
-                                         (set! acc (reducer-step effective acc x))
-                                         (when (reduced? acc)
-                                           (finish!))
-                                         (loop))))]))))
+                        (guard (exn [else (fail! exn)])
+                          (let loop ()
+                            (cond [(not (queue-empty?)) (dequeue!)]
+                                  [done? iter-end]
+                                  [(reduced? acc) (finish!) (loop)]
+                                  [else
+                                   (let ([x (iter-next! upstream)])
+                                     (if (iter-end? x)
+                                         (begin
+                                           (finish!)
+                                           (loop))
+                                         (begin
+                                           (set! acc (reducer-step effective acc x))
+                                           (when (reduced? acc)
+                                             (finish!))
+                                           (loop))))])))))
                     (reset-state!)
                     (make-iter next! reset-state! finalize-upstream!))))))
 
