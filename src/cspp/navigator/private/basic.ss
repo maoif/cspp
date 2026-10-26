@@ -375,21 +375,26 @@
   (define submap-clear
     (lambda (keys value clear)
       (if (alist? value)
-          (let loop ([keys keys] [value value])
-            (if (null? keys)
-                value
-                (loop
-                 (cdr keys)
-                 (let first-match ([entries value])
-                   (cond [(null? entries)
-                          (nav-focus-error 'nav-clearval "missing key ~s in: ~s"
-                                           (car keys) value)]
-                         [(eq? (caar entries) (car keys))
-                          (let ([entry (clear (car entries))])
-                            (if (nav-missing? entry)
-                                (cdr entries)
-                                (cons entry (cdr entries))))]
-                         [else (cons (car entries) (first-match (cdr entries)))])))))
+          (let ([replacements
+                 (fold-left
+                  (lambda (replacements key)
+                    (let find ([entries value])
+                      (cond [(null? entries)
+                             (nav-focus-error 'nav-clearval "missing key ~s in: ~s"
+                                              key value)]
+                            [(eq? (caar entries) key)
+                             (cons (cons entries (clear (car entries))) replacements)]
+                            [else (find (cdr entries))])))
+                  '() keys)])
+            ;; Resolve repeated keys against the original locations before removing entries.
+            (let loop ([entries value])
+              (if (null? entries)
+                  '()
+                  (let ([replacement (assq entries replacements)])
+                    (if (and replacement (nav-missing? (cdr replacement)))
+                        (loop (cdr entries))
+                        (cons (if replacement (cdr replacement) (car entries))
+                              (loop (cdr entries))))))))
           (submap-transform keys value clear))))
 
   (define submap-clear!

@@ -1795,3 +1795,49 @@
 
   ;; Replacing a submap requires another keyed map, rather than an arbitrary scalar.
   (error? (nav-transform (nav/submap 'a) (lambda (selected) 42) (ht 'a 1))))
+
+(mat navigator-review-submap-repeated-clear-keys
+  (let* ([source '((a . 1) (a . 2) (b . 3))]
+         [result (nav-clearval (nav/submap 'a 'a) source)])
+    (and (equal? '((a . 2) (b . 3)) result)
+         (equal? '((a . 1) (a . 2) (b . 3)) source)))
+
+  (equal? '((b . 3))
+          (nav-clearval (nav/submap 'a 'a) '((a . 1) (b . 3))))
+
+  (let ([seen '()])
+    (let ([result
+           (nav-clearval
+            (nav/path (nav/submap 'b 'a 'b 'c)
+                      (nav/pred (lambda (entry)
+                                  (set! seen (cons entry seen))
+                                  #t)))
+            '((a . 1) (b . 2) (b . 3) (c . 4) (d . 5)))])
+      (and (equal? '((b . 3) (d . 5)) result)
+           (equal? '((c . 4) (b . 2) (a . 1) (b . 2)) seen))))
+
+  (let ([calls 0])
+    (let ([result
+           (nav-clearval
+            (nav/path (nav/submap 'a 'a)
+                      (nav/pred (lambda (entry)
+                                  (set! calls (fx1+ calls))
+                                  (fx= calls 1))))
+            '((a . 1) (a . 2) (b . 3)))])
+      (and (fx= calls 2)
+           (equal? '((a . 1) (a . 2) (b . 3)) result))))
+
+  (let ([calls 0])
+    (let ([result
+           (nav-clearval
+            (nav/path (nav/submap 'a 'a)
+                      (nav/pred (lambda (entry)
+                                  (set! calls (fx1+ calls))
+                                  (fx= calls 2))))
+            '((a . 1) (a . 2) (b . 3)))])
+      (and (fx= calls 2)
+           (equal? '((a . 2) (b . 3)) result))))
+
+  (equal? '((a . 1) (a . 2) (b . 3))
+          (nav-clearval (nav/path (nav/submap 'a 'a) nav/none)
+                        '((a . 1) (a . 2) (b . 3)))))
