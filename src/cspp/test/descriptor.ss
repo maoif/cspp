@@ -298,6 +298,7 @@ The `test-config-with` procedure returns a copy of `config` with fields changed
 according to option association list `options`. Each option is a pair whose car
 is one of `reporter`, `output`, `xfail-strict?`, `stop-on-failure?`, or `color`;
 each cdr must have the same type accepted by `make-test-config` for that field.
+Each key may occur once per update; successive updates may override earlier values.
 |#
   (define test-config-with
     (lambda (config options)
@@ -307,6 +308,10 @@ each cdr must have the same type accepted by `make-test-config` for that field.
                     config
                     (let ([option (car options)])
                       ($check-config-option option)
+                      (when (exists (lambda (later)
+                                      (and (pair? later) (eq? (car option) (car later))))
+                                    (cdr options))
+                        (errorf 'test-config-with "duplicate config option: ~s" (car option)))
                       (case (car option)
                         [(reporter)
                          (loop (cdr options)

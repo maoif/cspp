@@ -1822,3 +1822,19 @@
           (make-test-case 'bad (lambda () #t) '()) parameters '())
         #f))
     '((invalid) ((42 . value)) ((name . 1) (name . 2)))))
+
+(mat test-selector-and-config-strict-inputs
+  ;; Error: tag selectors use the same symbolic domain as descriptor tags.
+  (for-all
+    (lambda (selector)
+      (guard (raised [else #t])
+        (test-select (make-test-registry) selector)
+        #f))
+    '(((include-tags . (42))) ((include-tags . ("fast")))
+      ((include-tags . (fast . slow)))))
+
+  ;; Error: duplicate config keys must not discard an earlier value in one update.
+  (guard (raised [else #t])
+    (test-config-with (test-silent-config)
+      '((xfail-strict? . #t) (xfail-strict? . #f)))
+    #f))

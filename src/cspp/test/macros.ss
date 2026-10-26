@@ -362,6 +362,7 @@
   Fixture names must be unique and cannot overlap effective parameter names,
   including names inherited from a suite.
   At most one `:fixture` clause is allowed; put all fixture bindings in that clause.
+  Fixture initializers are zero-argument thunks evaluated outside parameter bindings.
   |#
   (define-syntax test-case
     (syntax-rules ()
@@ -377,6 +378,8 @@
   lexically inherit fixture and parameter names; conditional rules lexically inherit parameters.
   Ordinary Scheme shadowing applies inside child forms.
   A child's explicit fixture list or parameter tables replace the corresponding suite list.
+  Inherited conditional callbacks keep their parent declaration bindings; a child replacing
+  parameter tables must preserve names those callbacks require or override the conditions too.
   |#
   (define-syntax test-suite
     (syntax-rules ()

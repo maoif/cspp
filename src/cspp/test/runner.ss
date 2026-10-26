@@ -122,7 +122,8 @@
                    (and (pair? selector)
                         (case (car selector)
                           [(name-prefix) (string? (cdr selector))]
-                          [(include-tags) (list? (cdr selector))]
+                          [(include-tags)
+                           (and (list? (cdr selector)) (andmap symbol? (cdr selector)))]
                           [else #f])
                         (loop (cdr selectors)))))))))
 
