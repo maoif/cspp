@@ -46,6 +46,11 @@
                             rows))
                      cases)))))))
 
+  (define $check-fixture-bindings
+    (lambda (metadata parameter-names)
+      (test-check-fixture-names 'test-run
+        (map car (test-metadata-ref metadata 'fixtures '())) parameter-names)))
+
   (define $expand-descriptor
     (lambda (descriptor inherited-metadata id)
       (let ([metadata ($metadata-merge inherited-metadata
@@ -63,6 +68,9 @@
                           (append (reverse child-cases) out)))))
             (let ([parameter-cases
                    ($parameter-product (test-metadata-ref metadata 'parameterize '()))])
+              ($check-fixture-bindings metadata
+                (apply append
+                  (map car (test-metadata-ref metadata 'parameterize '()))))
               (let loop ([parameter-cases parameter-cases]
                          [id id]
                          [out '()])
@@ -389,6 +397,7 @@ association-list filters as `test-select`.
         (guard (condition
                 [else ($case-result concrete-case 'errored "unexpected policy condition"
                                     condition "" "")])
+          ($check-fixture-bindings metadata (map car parameters))
           (cond
            [($requirement-result concrete-case metadata)]
            [($rule-active? metadata 'skip-when parameters)

@@ -173,6 +173,8 @@ registry.
   The runner calls `body` as `(lambda () unspecified)` or as
   `(lambda (parameters) unspecified)`, where `parameters` is an association list
   containing fixture values followed by the concrete case parameters.
+  Fixture names must be unique and must not overlap parameter names; the runner
+  rejects conflicting effective bindings before acquiring fixtures.
   |#
   (define make-test-case
     (lambda (name body metadata)

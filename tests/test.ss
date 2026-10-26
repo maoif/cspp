@@ -1489,3 +1489,55 @@
               (test-run (list (make-test-case 'outer (lambda () #t) '()))
                         (make-test-config reporter out #f #f 'always))))])
     (test-string-contains? text (string (integer->char 27)))))
+
+(mat test-fixture-binding-name-validation
+  ;; Multiple references to one inherited fixture are one binding, including nested suites.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (test-suite parent :fixture ([x 1])
+      (test-suite nested
+        (test-case child (test-= x 1) (test-= x 1))))
+    (equal? (map test-result-status
+                 (test-run-registry (current-test-registry) (test-silent-config)))
+            '(passed)))
+
+  ;; Error: fixtures cannot hide parameters or repeat names, including inherited bindings.
+  (for-all
+    (lambda (form)
+      (guard (condition [else (syntax-violation? condition)])
+        (eval form (environment '(cspp)))
+        #f))
+    '((test-case overlap :fixture ([x 9]) :parameterize ([x] [1] [2]) #t)
+      (test-case duplicate :fixture ([x 1] [x 2]) #t)
+      (test-suite parent :fixture ([x 9])
+        (test-case child :parameterize ([x] [1] [2]) #t))
+      (test-suite parent :parameterize ([x] [1] [2])
+        (test-case child :fixture ([x 9]) #t))))
+
+  ;; Error: low-level descriptors reject conflicts before any fixture is acquired.
+  (let ([acquired? #f])
+    (let ([metadata
+           `((fixtures . ((x . ,(lambda () (set! acquired? #t) 9))))
+             (parameterize . (((x) (1) (2)))))])
+      (and (test-error-message-contains?
+             (lambda ()
+               (test-expand-parameters (make-test-case 'overlap (lambda () #t) metadata)))
+             "fixture")
+           (not acquired?))))
+
+  ;; Error: caller-created concrete cases must validate before acquisition as well.
+  (let ([acquired? #f])
+    (let* ([descriptor (make-test-case 'overlap (lambda () #t) '())]
+           [concrete
+            (make-test-concrete-case 0 'overlap descriptor '((x . 1))
+              `((fixtures . ((x . ,(lambda () (set! acquired? #t) 9))))))]
+           [result (car (test-run (list concrete) (test-silent-config)))])
+      (and (not acquired?) (eq? (test-result-status result) 'errored))))
+
+  ;; Child overrides can remove a conflict; distinct fixture and parameter names still bind.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (test-suite parent :fixture ([x 9])
+      (test-case child :fixture ([resource 42]) :parameterize ([x] [1] [2])
+        (test-= resource 42) (test-true (memv x '(1 2)))))
+    (equal? (map test-result-status
+                 (test-run-registry (current-test-registry) (test-silent-config)))
+            '(passed passed))))

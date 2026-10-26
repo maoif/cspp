@@ -3,7 +3,7 @@
   (export test-reporter? make-test-reporter test-reporter-write
           test-alist-ref test-alist-set test-remove-key test-metadata-ref
           test-natural-version-list?
-          test-check-parameter-tables
+          test-check-parameter-tables test-check-fixture-names
           test-color-mode? test-current-report-color
           chez-version
           chez-version<? chez-version<=? chez-version=? chez-version>=? chez-version>?)
@@ -153,6 +153,26 @@ supplied, it is returned for a missing key; otherwise a missing key is an error.
                        [(memq (car names) seen)
                         (errorf who "duplicate parameter name: ~s" (car names))]
                        [else (loop-names (cdr names) (cons (car names) seen))]))))))))
+
+  #|proc:test-check-fixture-names
+  The internal `test-check-fixture-names` procedure checks that `fixture-names`
+  are symbols unique within their list and disjoint from `parameter-names`.
+  Both arguments are lists of names. Errors are attributed to symbol `who`;
+  valid names return unspecified values. Macro expansion and execution share this check.
+  |#
+  (define test-check-fixture-names
+    (lambda (who fixture-names parameter-names)
+      (pcheck ([symbol? who] [list? fixture-names parameter-names])
+              (let loop ([names fixture-names] [seen '()])
+                (unless (null? names)
+                  (let ([name (car names)])
+                    (unless (symbol? name)
+                      (errorf who "fixture name must be a symbol: ~s" name))
+                    (when (memq name seen)
+                      (errorf who "duplicate fixture name: ~s" name))
+                    (when (memq name parameter-names)
+                      (errorf who "fixture name conflicts with parameter: ~s" name))
+                    (loop (cdr names) (cons name seen))))))))
 
   #|proc:test-natural-version-list?
 The `test-natural-version-list?` procedure returns whether `value` is a list of

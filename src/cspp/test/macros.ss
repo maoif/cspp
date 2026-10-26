@@ -246,17 +246,26 @@
                                                (list (datum->syntax #'name symbol))
                                                references)
                                            out)))])))]
+                    [local-fixtures?
+                     (exists (lambda (option) (eq? (syntax->datum (car option)) ':fixture))
+                             options)]
                     [fixture-ids
-                     (if (exists (lambda (option) (eq? (syntax->datum (car option)) ':fixture))
-                                 options)
+                     (if local-fixtures?
                          (fixture-names options)
                          (inherit-names (car inherited)))]
+                    ;; Inherited IDs include every reference, not just each declared name.
+                    [fixture-symbols
+                     (if local-fixtures? (map syntax->datum fixture-ids) (car inherited))]
                     [parameter-ids
                      (if (exists (lambda (option) (eq? (syntax->datum (car option)) ':parameterize))
                                  options)
                          (parameter-names options)
                          (inherit-names (cadr inherited)))]
                     [metadata (build-metadata options parameter-ids)])
+               (guard (condition
+                       [else (syntax-error stx (condition-message condition))])
+                 (test-check-fixture-names 'test-case fixture-symbols
+                                           (map syntax->datum parameter-ids)))
                (case (syntax->datum #'kind)
                  [(case)
                   #`(let ([descriptor
@@ -277,7 +286,7 @@
                               ([$test-binding-context
                                 (make-compile-time-value
                                  '#,(datum->syntax #'name
-                                      (list (map syntax->datum fixture-ids)
+                                      (list fixture-symbols
                                             (map syntax->datum parameter-ids))))])
                               (parameterize ([current-test-registry (make-test-registry)])
                                 (list #,@body)))
@@ -311,6 +320,8 @@
   `handled` passes the body, `failed` fails it, and other dispositions mark it errored.
   Captured output expectations are checked separately after successful or handled bodies;
   their failures do not invoke the custom handler.
+  Fixture names must be unique and cannot overlap effective parameter names,
+  including names inherited from a suite.
   |#
   (define-syntax test-case
     (syntax-rules ()
