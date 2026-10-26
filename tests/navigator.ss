@@ -1755,3 +1755,43 @@
          (nav/maybe (nav/path (nav/key 'a)
                              (nav/pred (lambda (x) (set! broken? #t) #t)))) table)
         #f))))
+
+(mat navigator-review-submap-replacement-membership
+  (let* ([source (ht 'a 1 'b 2)]
+         [result (nav-transform (nav/path (nav/submap 'a) nav/keys)
+                                (lambda (key) 'z) source)])
+    (and (= 2 (hashtable-size result))
+         (not (hashtable-contains? result 'a))
+         (= 1 (ht-ref result 'z))
+         (= 2 (ht-ref result 'b))
+         (= 1 (ht-ref source 'a))))
+
+  (let* ([source (ht 'a 1 'b 2)]
+         [result (nav-transform (nav/submap 'a)
+                                (lambda (selected)
+                                  (hashtable-set! selected 'b 20)
+                                  (hashtable-set! selected 'z 30)
+                                  selected) source)])
+    (and (= 3 (hashtable-size result))
+         (= 1 (ht-ref result 'a))
+         (= 20 (ht-ref result 'b))
+         (= 30 (ht-ref result 'z))
+         (= 2 (ht-ref source 'b))))
+
+  (let* ([source (ht 'a 1 'b 2)]
+         [result (nav-transform (nav/path (nav/submap 'a) nav/keys)
+                                (lambda (key) 'b) source)])
+    (and (= 1 (hashtable-size result))
+         (= 1 (ht-ref result 'b))
+         (= 2 (ht-ref source 'b))))
+
+  (let* ([source (make-kvbox '((a . 1) (b . 2)))]
+         [result (nav-transform (nav/submap 'a)
+                                (lambda (selected) '((z . 10) (b . 20))) source)])
+    (and (= 10 (kvbox-ref result 'z #f))
+         (= 20 (kvbox-ref result 'b #f))
+         (not (kvbox-ref result 'a #f))
+         (equal? '((a . 1) (b . 2)) (kvbox-entries source))))
+
+  ;; Replacing a submap requires another keyed map, rather than an arbitrary scalar.
+  (error? (nav-transform (nav/submap 'a) (lambda (selected) 42) (ht 'a 1))))

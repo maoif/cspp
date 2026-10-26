@@ -32,3 +32,6 @@
 (measure 'list-select-entries-3000 5 (lambda () (nav-select nav/entries selection-items)))
 (measure 'slice-select-short-1000000 5
          (lambda () (nav-select (nav/slice 0 1000000) '#(1 2 3))))
+(define submap-keys (iota 500))
+(measure 'submap-update-500-of-1000 5
+         (lambda () (nav-transform (apply nav/submap submap-keys) values table)))

@@ -304,6 +304,15 @@
                             (keyed-set result (car entry) (cdr entry)))
                           empty entries))])))
 
+  (define updated-submap-entries
+    (lambda (updated)
+      (if (nav-missing? updated)
+          '()
+          (let ([entries (keyed-entries updated)])
+            (unless (and entries (alist? entries))
+              (nav-error 'nav-transform "expected replacement submap: ~s" updated))
+            entries))))
+
   (define submap-transform
     (lambda (keys value update)
       (cond [(hashtable? value)
@@ -315,17 +324,14 @@
                         (nav-focus-error 'nav-transform "missing key ~s in: ~s" key value)
                         (nav-call-user hashtable-set! subtable key selected))))
                 keys)
-               (let ([updated (update subtable)])
-                 (let loop ([keys keys] [value value])
-                   (if (null? keys)
-                       value
-                       (let ([selected (if (nav-missing? updated)
-                                           nav-missing
-                                           (nav-call-user hashtable-ref updated (car keys) nav-missing))])
-                         (loop (cdr keys)
-                               (if (nav-missing? selected)
-                                   (keyed-delete value (car keys))
-                                   (keyed-set value (car keys) selected))))))))]
+               (let ([entries (updated-submap-entries (update subtable))]
+                     [result (nav-call-user hashtable-copy value #t)])
+                 (for-each (lambda (key) (nav-call-user hashtable-delete! result key)) keys)
+                 (for-each
+                  (lambda (entry)
+                    (nav-call-user hashtable-set! result (car entry) (cdr entry)))
+                  entries)
+                 result))]
             [(alist? value)
              (let ([replacements
                     (fold-left
@@ -358,15 +364,12 @@
                                                 (loop (cdr keys)
                                                       (cons (cons (car keys) selected)
                                                             entries)))))))])
-               (let loop ([keys keys] [value value])
-                 (if (null? keys)
-                     value
-                     (let ([entry (and (not (nav-missing? updated))
-                                       (assq (car keys) updated))])
-                       (loop (cdr keys)
-                             (if entry
-                                 (keyed-set value (car keys) (cdr entry))
-                                 (keyed-delete value (car keys))))))))]
+               (let ([entries (updated-submap-entries updated)]
+                     [remaining (fold-left (lambda (result key) (keyed-delete result key))
+                                           value keys)])
+                 (fold-left (lambda (result entry)
+                              (keyed-set result (car entry) (cdr entry)))
+                            remaining entries)))]
             [else (nav-focus-error 'nav-transform "unsupported keyed value: ~s" value)])))
 
   (define submap-clear
@@ -792,7 +795,9 @@
   association-list entries or hashtable entries named by `keys`. For alists, each key
   selects its first matching entry; a pure transform replaces only that entry and may rename
   its key. Other keyed containers focus one submap containing
-  the requested keys. The result is a navigator.
+  the requested keys. Pure transforms remove the selected membership and merge every entry
+  of the replacement submap, including new keys. Replacement entries win collisions with
+  unselected parent keys. The result is a navigator.
   |#
   (define nav/submap
     (lambda keys
