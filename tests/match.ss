@@ -1789,3 +1789,16 @@
      (let ([matcher (mlambda [(,(regex "." (0 ,x)) ...) x])])
        (and (equal? '("a") (matcher '("a")))
             (equal? '("b") (matcher '("b"))))))
+
+(mat strict-regex-capture-tags
+     ;; A quoted identifier is not a regex capture declaration.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(match "abc" [,(regex "(.)" (1 'x)) x]) (environment '(cspp)))
+       #f)
+
+     ;; An arbitrary two-element list is not a regex capture declaration.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(match "abc" [,(regex "(.)" (1 (foo x))) x]) (environment '(cspp)))
+       #f)
+
+     (equal? "a" (match "abc" [,(regex "(.)" (1 ,x)) x])))

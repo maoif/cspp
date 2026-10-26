@@ -281,7 +281,7 @@
                                           (symbol? n)))
                           (syntax->datum #'(n* ...)))
                   (andmap (lambda (v)
-                            (syntax-case v ()
+                            (syntax-case v (unquote)
                               [,v (identifier? #'v) #t]
                               [_ (syntax-error pat "only one pattern variable is allowed in regex pattern: ")]))
                           #'(v* ...)))
@@ -289,7 +289,8 @@
                #`(let ([m (and (string? #,expr-id) (irregex-search #,regex #,expr-id))])
                    (if m
                        #,(let loop ([n* #'(n* ...)]
-                                    [v* (map (lambda (v) (syntax-case v () [,var #'var])) #'(v* ...))])
+                                    [v* (map (lambda (v) (syntax-case v (unquote) [,var #'var]))
+                                             #'(v* ...))])
                            (if (null? n*)
                                body
                                #`(if (irregex-match-valid-index? m '#,(car n*))
