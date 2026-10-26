@@ -369,39 +369,53 @@
 
   #|proc:nav-traverse->iter
   The `nav-traverse->iter` procedure returns an iterator over the values
-  selected by `path` from `data`.
+  selected by `path` from `data`. Traversal errors are raised by the advance that
+  encounters them. After an error the iterator is exhausted until reset.
   |#
   (define nav-traverse->iter
     (lambda (path data)
       (let ([compiled (nav-compile-path path)]
-            [resume #f] [return #f] [done? #f])
+            [resume #f] [return #f] [done? #f] [failure '()])
         (define reset!
           (lambda ()
             (set! return #f)
             (set! done? #f)
+            (set! failure '())
             (set! resume
                   (lambda ()
-                    (select-path
-                     compiled data
-                     (lambda (value)
-                       ;; Suspend each producer segment once, until the next advance.
-                       (call/1cc
-                        (lambda (continue)
-                          (set! resume continue)
-                          (return value)))))
-                    (set! done? #t)
-                    (set! resume #f)
-                    (return iter-end)))))
+                    (guard (exn [else
+                                 (set! failure (list exn))
+                                 (set! done? #t)
+                                 (set! resume #f)
+                                 (return iter-end)])
+                      (select-path
+                       compiled data
+                       (lambda (value)
+                         ;; Suspend each producer segment once, until the next advance.
+                         (call/1cc
+                          (lambda (continue)
+                            (set! resume continue)
+                            (return value)))))
+                      (set! done? #t)
+                      (set! resume #f)
+                      (return iter-end))))))
         (reset!)
         (make-iter
          (lambda ()
            (if done?
                iter-end
-               ;; Each advance supplies its own one-shot consumer continuation.
-               (call/1cc
-                (lambda (consumer)
-                  (set! return consumer)
-                  (resume)))))
+               (let ([value
+                      ;; Each advance supplies its own one-shot consumer continuation.
+                      (call/1cc
+                       (lambda (consumer)
+                         (set! return consumer)
+                         (resume)))])
+                 ;; Raise outside the suspended producer so the current caller handles it.
+                 (if (null? failure)
+                     value
+                     (let ([exn (car failure)])
+                       (set! failure '())
+                       (raise exn))))))
          reset!
          (lambda ()
            (set! done? #t)

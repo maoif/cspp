@@ -1530,3 +1530,27 @@
 
   ;; An alist submap transformation must return an entry pair.
   (error? (nav-transform (nav/submap 'a) (lambda (entry) 42) '((a . 1)))))
+
+(mat navigator-review-iterator-error-context
+  (let ([iterator (nav-traverse->iter (nav/path nav/all nav/car)
+                                     (list (cons 'a 1) 7))]
+        [first-visits 0])
+    (and
+     (equal?
+      '(a second-error)
+      ;; Bound reentry if a later failure returns to the first caller's handler.
+      (call/1cc
+       (lambda (stop)
+         (let ([first (guard (exn [else 'first-error]) (iter-next! iterator))])
+           (set! first-visits (+ first-visits 1))
+           (when (> first-visits 2) (stop 'reentered-first-caller))
+           (let ([second (guard (exn [else 'second-error]) (iter-next! iterator))])
+             (list first second))))))
+     (= first-visits 1)
+     (iter-end? (iter-next! iterator))
+     (begin (iter-reset! iterator) #t)
+     (eq? 'a (iter-next! iterator))
+     ;; Reset recreates traversal; its invalid second focus must still raise.
+     (guard (exn [else #t]) (iter-next! iterator) #f)
+     (iter-end? (iter-next! iterator))
+     (begin (iter-finalize! iterator) #t))))
