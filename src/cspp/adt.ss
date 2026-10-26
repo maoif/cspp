@@ -325,6 +325,10 @@
                    ...
                    (define singletons (mksingletons))
                    ...
+                   (define-property mkvariants $datatype-variant-key #'mnames)
+                   ...
+                   (define-property singletons $datatype-variant-key #'snames)
+                   ...
                    (begin setter-wrappers ...)))))]
         [(_ dt variant0 variants ...)
          (check-datatype-name #'dt)
@@ -515,6 +519,7 @@
                    (nongenerative uid)
                    (fields flds ...)
                    (protocol proto))
+                 (define-property mkdt $record-type-key #'dtname)
                  (begin setter-wrappers ...))))]
         [(k dt (fld fld* ...))
          (identifier? #'dt)

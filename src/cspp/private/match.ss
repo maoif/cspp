@@ -44,7 +44,8 @@
         [(_ type mode patterns ...)
          (and (identifier? #'type) (memq (datum mode) '(:fields :values)))
          (let* ([type (or (valid-record-type? rho #'type)
-                          (valid-record-type? rho ($construct-name #'type "$record-" #'type)))]
+                          (let ([type-id (rho #'type #'$record-type-key)])
+                            (and type-id (valid-record-type? rho type-id))))]
                 [named? (eq? (datum mode) ':fields)]
                 [patterns #'(patterns ...)])
            (unless type (syntax-error pattern "match: invalid record type:"))
@@ -65,7 +66,8 @@
   #|proc:datatype-record-pattern
   The `datatype-record-pattern` helper validates a datatype's variant and returns an equivalent
   explicit record pattern. `rho` resolves declared types and `pattern` is datatype extension
-  syntax. For example, `(datatype Tree Leaf :values ,x)` becomes
+  syntax. Variant metadata preserves the defining-context type identifier across imports and
+  renaming. For example, `(datatype Tree Leaf :values ,x)` becomes
   `(record $datatype-Tree-Leaf :values ,x)`. Singleton shorthand becomes an empty `:values` form.
   |#
   (define datatype-record-pattern
@@ -73,8 +75,8 @@
       (syntax-case pattern ()
         [(_ type variant rest ...)
          (and (identifier? #'type) (identifier? #'variant))
-         (let ([selected ($construct-name #'type "$datatype-" #'type "-" #'variant)])
-           (unless (variant-of? rho #'type selected)
+         (let ([selected (rho #'variant #'$datatype-variant-key)])
+           (unless (and selected (variant-of? rho #'type selected))
              (syntax-error pattern "match: invalid datatype/variant:"))
            (syntax-case #'(rest ...) ()
              [()

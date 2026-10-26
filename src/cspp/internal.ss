@@ -1,7 +1,19 @@
 (library (cspp internal)
-  (export todo $construct-name flag->mask)
+  (export todo $construct-name flag->mask $record-type-key $datatype-variant-key)
   (import (chezscheme))
 
+
+  #|doc:$record-type-key
+  Private binding used by `record` and `match` to associate a public constructor with the
+  defining-context identifier of its record type. It has no runtime purpose.
+  |#
+  (define $record-type-key #f)
+
+  #|doc:$datatype-variant-key
+  Private binding used by `datatype` and `match` to associate a constructor or singleton with
+  the defining-context identifier of its variant type. It has no runtime purpose.
+  |#
+  (define $datatype-variant-key #f)
 
   ;; todo imple as a macro? and use `who`
   (define todo
