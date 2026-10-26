@@ -21,9 +21,8 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
 
   #|doc
 (match <expr>
-  [<pattern> <body> ...]
-  ...
-  [else <body> ...])
+  <clause> ...
+  [else <result>])
 
 <pattern> := <literal>
             | ,<identifier>                    ; capture
@@ -53,8 +52,8 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
 
 <literal> := <number> | <boolean> | <string> | <character> | <symbol>
 
-<clause> := [<pattern> <body> ...]
-          | [<pattern> (guard <expression> ...) <body> ...]
+<clause> := [<pattern> <result>]
+          | [<pattern> <condition> <result>]
 
 The `...` pattern repeats zero or more list or vector elements and collects captures as lists.
 `match` evaluates `<expr>` once, tries clauses from left to right, and returns the selected body.
@@ -112,11 +111,15 @@ Examples:
   To match such a list as data, capture its head and use a guard, for example:
   ```scheme
   (match '(unquote (hash ("key" 42)))
-    [(,head (hash ("key" ,value))) (guard (eq? head 'unquote)) value]) ; => 42
+    [(,head (hash ("key" ,value))) (eq? head 'unquote) value]) ; => 42
   ```
-  A clause may have `(guard predicate ...)` before its body. Failed clauses try the next clause;
-  a final `else` provides a fallback, and an unmatched input without a fallback raises an error.
-  The selected body supplies the result values.
+  A clause has exactly one result expression, optionally preceded by one condition expression.
+  After the pattern matches, a false condition tries the next clause; any non-false value selects
+  the result. Conditions can refer to captures and are not evaluated for failed patterns.
+  The final `else` clause has exactly one result expression. Use `begin` or `let` to group actions
+  or local definitions within a result, and `and` to combine conditions. The old `(guard ...)`
+  marker is unsupported; Chez exception-handling `guard` remains an ordinary expression.
+  An unmatched input without a fallback raises an error. The selected result supplies its values.
   |#
   (define-syntax match
     (lambda (stx)
@@ -543,23 +546,23 @@ Examples:
                (identifier? #'sym)
                #`(if (eq? 'sym expr-id) #,body (#,fk))]))))
       #|proc:process-clause
-      The `process-clause` helper compiles one clause and its optional guard.
-      For example, `[ ,x (guard (positive? x)) x ]` emits a capture, predicate check, and
+      The `process-clause` helper compiles one clause and its optional condition.
+      For example, `[ ,x (positive? x) x ]` emits a capture, predicate check, and
       failure call when the guard is false.
       |#
       (define process-clause
         (lambda (rho expr-id cl fk)
           ;;(printf "process-clause ~s ~s ~s~n" expr-id cl fk)
-          (syntax-case cl (guard)
-            [(pat (guard guard-e* ...) e0 e* ...)
+          (syntax-case cl (else)
+            [(else . rest)
+             (syntax-error cl "match: else must be final with exactly one result expression:")]
+            [(pat condition result)
              (process-pattern rho expr-id #'pat
-                              #`(if (and guard-e* ...)
-                                    (begin e0 e* ...)
-                                    ;; call fail continuation
-                                    (#,fk))
+                              #`(if condition result (#,fk))
                               fk)]
-            [(pat e0 e* ...)
-             (process-clause rho expr-id #'[pat (guard #t) e0 e* ...] fk)])))
+            [(pat result)
+             (process-pattern rho expr-id #'pat #'result fk)]
+            [_ (syntax-error cl "match: expected [pattern result] or [pattern condition result]:")])))
       #|proc:generate-skeleton
       The `generate-skeleton` helper chains clauses from left to right with zero-argument
       failure continuations. For example, two clauses produce the first matcher followed by
@@ -575,11 +578,11 @@ Examples:
                   #`(let ([fk (lambda () #,(loop (cdr cl*)))])
                       #,(process-clause rho expr-id (car cl*) #'fk)))))))
       (syntax-case stx (else)
-        [(k e cl* ... [else e0 e* ...])
+        [(k e cl* ... [else result])
          ;; `match-loop` recursively applies the same clauses for `,@` patterns.
          ;; `rho`: compile-time environment
          (lambda (rho)
-           (let ([matcher (generate-skeleton rho #'v #'(cl* ...) #'(begin e0 e* ...))])
+           (let ([matcher (generate-skeleton rho #'v #'(cl* ...) #'result)])
              #`(let (#,@(reverse regex-cache-bindings))
                  (let match-loop ([v e]) #,matcher))))]
         [(k e cl0 cl* ...)
@@ -595,9 +598,9 @@ Examples:
   (define-syntax mlambda
     (lambda (stx)
       (syntax-case stx (else)
-        [(k cl* ... [else e0 e* ...])
+        [(k cl* ... [else result])
          #'(lambda (arg)
-             (match arg cl* ... [else e0 e* ...]))]
+             (match arg cl* ... [else result]))]
         [(k cl cl* ...)
          #'(lambda (arg)
              (match arg cl cl* ...
@@ -612,9 +615,9 @@ Examples:
   (define-syntax $mlambda+
     (lambda (stx)
       (syntax-case stx (else)
-        [(k who cl* ... [else e0 e* ...])
+        [(k who cl* ... [else result])
          #'(lambda arg
-             (match arg cl* ... [else e0 e* ...]))]
+             (match arg cl* ... [else result]))]
         [(k who cl cl* ...)
          #'(lambda arg
              (match arg cl cl* ...

@@ -194,19 +194,19 @@
      (equal? 'small
              (match (Person "Jack" 23 'male)
                [,(record Person :values ,name ,age _)
-                (guard (< age 24))
+                (< age 24)
                 'small]
                [,(record Person :values ,name ,age _)
-                (guard (< age 50))
+                (< age 50)
                 'big]
                [else 'old]))
      (equal? 'old
              (match (Person "Jack" 51 'male)
                [,(record Person :values ,name ,age _)
-                (guard (< age 24))
+                (< age 24)
                 'small]
                [,(record Person :values ,name ,age _)
-                (guard (< age 50))
+                (< age 50)
                 'big]
                [else 'old]))
 
@@ -218,10 +218,10 @@
                [,(record Person :values ,a ,b ,c) a]))
      (error? (match '(1 2 3)
                [,(record Person :values ,name ,age _)
-                (guard (< age 24))
+                (< age 24)
                 'small]
                [,(record Person :values ,name ,age _)
-                (guard (< age 50))
+                (< age 50)
                 'big]))
 
      ;; nested patterns

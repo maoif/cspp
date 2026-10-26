@@ -142,9 +142,9 @@
        (time (match (lb)
                [((((,a) ,b ,c) (,d (,e) ,f) (,g (,h) ,i) . ((,j) (,k) (,l)))
                  ...)
-                (equal? a d)
-                (equal? g j)
-                (equal? h k)]
+                (and (equal? a d)
+                     (equal? g j)
+                     (equal? h k))]
                [else #f])))
 
      (match '(json (object
@@ -456,8 +456,8 @@
 
      (match `(1 . 2)
        [[#`p (,x . ,y)]
-        (displayln p)
-        (equal? p (cons x y))])
+        (begin (displayln p)
+               (equal? p (cons x y)))])
 
      ;; ellipsis
 
@@ -1015,7 +1015,7 @@
      (equal? '(1 2)
              (match '(1 2 #&2)
                [(,x ... ,(box `x)) 'wrong]
-               [(,x ... ,(box ,y)) (guard (= y (length x))) x]
+               [(,x ... ,(box ,y)) (= y (length x)) x]
                [else #f]))
 
      (equal? '(1 2)
@@ -1023,7 +1023,7 @@
 
      ;; Selected captures retain ordinary mutable variable semantics.
      (equal? '(changed)
-             (match '(1 2 stop) [(,x ... stop) (set! x '(changed)) x] [else #f])))
+             (match '(1 2 stop) [(,x ... stop) (begin (set! x '(changed)) x)] [else #f])))
 
 (mat extension-suffix-materialization
      ;; Built-in suffixes without prefix references must allocate linearly, not reverse per retry.
@@ -1085,7 +1085,8 @@
                    [(,(record LiteralCapture :fields (unquote marker)) ...) marker]))
             (eq? 'changed
                  (match (list (make-LiteralCapture 'marker))
-                   [(,(record LiteralCapture :fields (unquote marker)) ...) (set! marker 'changed) marker]))
+                   [(,(record LiteralCapture :fields (unquote marker)) ...)
+                    (begin (set! marker 'changed) marker)]))
             (eq? marker 'changed)))
 
      ;; Literal field patterns keep outer bindings visible to later backreferences.
@@ -1103,7 +1104,7 @@
                       [((,(record ValueCapture :values ,x) `x) ...) x] [else #f]))
             (equal? '(changed)
                     (match (list (make-ValueCapture 10))
-                      [(,(record ValueCapture :values ,x) ...) (set! x '(changed)) x]))
+                      [(,(record ValueCapture :values ,x) ...) (begin (set! x '(changed)) x)]))
             (= x 99)))
 
      (let ()
@@ -1137,8 +1138,8 @@
                (match (make-LocationRecord 10 "a")
                  [,(record LocationRecord :fields (a ,x)
                                    (b ,(regex (begin (set! saved (lambda () x)) "a"))))
-                  (set! x 20)
-                  (list x (saved))]
+                  (begin (set! x 20)
+                         (list x (saved)))]
                  [else #f]))))
 
 (mat macro-introduced-suffix-reference
@@ -1243,9 +1244,9 @@
                   (lambda ()
                     (define-record-type P (fields value))
                     (list (match (make-P 10) [,(record P :values ,x) x])
-                          (match (make-P 10) [,(record P :values ,map) (set! map 20) map])
+                          (match (make-P 10) [,(record P :values ,map) (begin (set! map 20) map)])
                           (match (list (make-P 10))
-                            [(,(record P :values ,if) ...) (set! if '(30)) if])
+                            [(,(record P :values ,if) ...) (begin (set! if '(30)) if)])
                           (match (vector (make-P 10)) [#(,(record P :values ,P) ...) P])))))
              (copy-environment (environment '(cspp)) #t))
        (equal? '(10 20 (30) (10))
@@ -1260,7 +1261,8 @@
          (and (eq? map (match (list (make-SyntaxField 'map))
                         [(,(record SyntaxField :fields (unquote map)) ...) map]))
               (= 20 (match (list (make-SyntaxField 'name))
-                      [(,(record SyntaxField :fields (unquote name)) ...) (set! name 20) name]))
+                      [(,(record SyntaxField :fields (unquote name)) ...)
+                       (begin (set! name 20) name)]))
               (= outer 20))))
 
      ;; Short and substantial bodies must accept the same record capture bindings.
@@ -1428,12 +1430,12 @@
 
      ;; A list whose reader form resembles a hash extension is data, matched with a guard.
      (= 42 (match '(unquote (hash ("key" 42)))
-             [(,head (hash ("key" ,value))) (guard (eq? head 'unquote)) value]
+             [(,head (hash ("key" ,value))) (eq? head 'unquote) value]
              [else #f]))
 
      ;; The guard must reject the same list with a different head symbol.
      (match '(other (hash ("key" 42)))
-       [(,head (hash ("key" ,value))) (guard (eq? head 'unquote)) #f]
+       [(,head (hash ("key" ,value))) (eq? head 'unquote) #f]
        [else #t]))
 
 (mat explicit-record-errors
@@ -1736,8 +1738,7 @@
        (let ([result
               (match '(1 2 3 "stop")
                 [(,x ... ,(regex (begin (set! saved (cons (lambda () x) saved)) "^stop$")))
-                 (set! x '(changed))
-                 x])])
+                 (begin (set! x '(changed)) x)])])
          (equal? '((changed) ((changed) (1 2) (1) ()))
                  (list result (map (lambda (read) (read)) saved)))))
 
@@ -1745,7 +1746,7 @@
      (let ([read #f])
        (and (not (match '(1 "stop")
                    [(,x ... ,(regex (begin (set! read (lambda () x)) "^stop$")))
-                    (set! x #f) x]))
+                    (begin (set! x #f) x)]))
             (not (read))))
 
      ;; A dependency in the regex expression still observes the current candidate prefix.
@@ -1824,3 +1825,69 @@
              (call-with-values
                (lambda () (mlet ([,x 1]) (define y 2) (values x y)))
                list)))
+
+(mat boolean-clause-guards
+     (eq? 'positive (match 3 [,x (positive? x) 'positive] [else 'negative]))
+
+     (eq? 'negative (match -3 [,x (positive? x) 'positive] [else 'negative]))
+
+     ;; A single result expression returning false still selects the clause.
+     (not (match 3 [,x #f] [else 'unexpected]))
+
+     ;; Failed structural patterns do not evaluate their conditions.
+     (eq? 'fallback
+          (match 3 [(a ,x) (error 'guard "unexpected condition") x] [else 'fallback]))
+
+     (equal? '(condition fallback)
+             (let ([events '()])
+               (match 3
+                 [,x (begin (set! events '(condition)) #f)
+                     (error 'guard "unexpected result")]
+                 [else (set! events (append events '(fallback)))])
+               events))
+
+     ;; Exception-handling guard is now an ordinary condition expression.
+     (= 4 (match 3
+            [,x (guard (condition [else #t]) (error 'guard "caught")) (+ x 1)]))
+
+     (= 42 (match 3
+             [,x (guard (condition [else 42]) (error 'guard "caught"))]))
+
+     (equal? '(3 4)
+             (call-with-values
+               (lambda () (match 3 [,x #t (values x (+ x 1))]))
+               list))
+
+     (equal? '(changed)
+             (match '(1 2 stop)
+               [(,x ... stop) (pair? x) (begin (set! x '(changed)) x)]))
+
+     (= 4 ((mlambda [,x (positive? x) (+ x 1)] [else 0]) 3))
+
+     (= 0 ((mlambda [,x (positive? x) (+ x 1)] [else 0]) -3))
+
+     (= 3 ((mlambda+ [(,x ,y) (< x y) (+ x y)] [else 0]) 1 2))
+
+     (= 0 ((mlambda+ [(,x ,y) (< x y) (+ x y)] [else 0]) 2 1)))
+
+(mat match-clause-expression-count
+     ;; An ordinary clause requires a result expression.
+     (error? (eval '(match 1 [,x]) (environment '(cspp))))
+
+     ;; More than one condition and one result must be grouped explicitly.
+     (error? (eval '(match 1 [,x #t x x]) (environment '(cspp))))
+
+     ;; Else requires exactly one result expression.
+     (error? (eval '(match 1 [else 1 2]) (environment '(cspp))))
+
+     ;; Else cannot omit its result expression.
+     (error? (eval '(match 1 [else]) (environment '(cspp))))
+
+     ;; Else must be the final clause.
+     (error? (eval '(match 1 [else 1] [,x x]) (environment '(cspp))))
+
+     ;; Matching procedure clauses enforce the same expression count.
+     (error? (eval '(mlambda [,x #t x x]) (environment '(cspp))))
+
+     ;; Variadic matching procedure fallbacks also have a single result expression.
+     (error? (eval '(mlambda+ [else 1 2]) (environment '(cspp)))))
