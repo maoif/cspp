@@ -1841,3 +1841,37 @@
   (equal? '((a . 1) (a . 2) (b . 3))
           (nav-clearval (nav/path (nav/submap 'a 'a) nav/none)
                         '((a . 1) (a . 2) (b . 3)))))
+
+(mat navigator-review-wrapper-selection-context
+  (andmap
+   (lambda (wrap)
+     (equal? '(1)
+             (nav-select (nav/path (wrap nav/children) (nav/pred number?)) '#(1 #(2)))))
+   (list nav/maybe nav/must
+         (lambda (path) (nav/choice path))
+         (lambda (path) (nav/multi-path path))
+         (lambda (path) (nav/if nav/stay path nav/none))))
+
+  (equal? '(#(2) 2)
+          (nav-select (nav/path (nav/maybe nav/stay) nav/children) '#(1 #(2))))
+
+  (equal? '(1)
+          (iter->list (nav-traverse->iter
+                       (nav/path (nav/maybe nav/children) (nav/pred number?)) '#(1 #(2)))))
+
+  (let ([inner '()])
+    (and (equal? '(1)
+                 (nav-select
+                  (nav/path (nav/maybe (nav/pred
+                                       (lambda (value)
+                                         (set! inner (nav-select nav/children '#(#(3))))
+                                         #t)))
+                            nav/children (nav/pred number?))
+                  '#(1 #(2))))
+         (equal? '(#(3) 3) inner)))
+
+  (equal? '(#(1) 1)
+          (nav-select nav/children (make-ixbox '#(#(1)))))
+
+  (equal? '(#(1) 1)
+          (nav-select nav/children (make-kvbox '((a . #(1)))))))

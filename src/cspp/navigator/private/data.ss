@@ -1,6 +1,7 @@
 (library (cspp navigator private data)
   (export byte? indexed-length indexed-ref/missing indexed-set indexed-set!
           indexed-supported? indexed-transform
+          child-container? emit-children
           keyed-supported? keyed-ref/missing keyed-set keyed-set!
           keyed-delete keyed-delete! keyed-entries keyed-keys keyed-values
           set-supported? set-values set-replace set-replace!
@@ -166,6 +167,27 @@
   (define indexed-supported?
     (lambda (value)
       (and (indexed-length value) #t)))
+
+  ;; Recursive traversal and terminal selection share the same container dispatch.
+  (define child-container?
+    (lambda (value)
+      (cond [(list? value) (pair? value)]
+            [(pair? value) #f]
+            [else (or (indexed-supported? value) (keyed-supported? value))])))
+
+  (define emit-children
+    (lambda (value emit)
+      (cond [(list? value) (for-each emit value)]
+            [(pair? value) (void)]
+            [(indexed-supported? value)
+             (let ([len (indexed-length value)])
+               (let loop ([i 0])
+                 (when (< i len)
+                   (emit (indexed-ref/missing value i))
+                   (loop (fx+ i 1)))))]
+            [(keyed-values value)
+             => (lambda (values) (for-each emit values))]
+            [else (void)])))
 
   (define indexed-ref/missing
     (lambda (value index)

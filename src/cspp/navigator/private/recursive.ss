@@ -14,21 +14,6 @@
                (nav-error 'nav/letrec "duplicate recursive navigator name: ~s" (car names))]
               [else (loop (cdr names) (cons (car names) seen))]))))
 
-  (define emit-children
-    (lambda (value emit)
-      (cond [(and (pair? value) (not (alist? value)))
-             (when (list? value)
-               (for-each emit value))]
-            [(indexed-supported? value)
-             (let ([len (indexed-length value)])
-               (let loop ([i 0])
-                 (when (< i len)
-                   (emit (indexed-ref/missing value i))
-                   (loop (+ i 1)))))]
-            [(keyed-values value)
-             => (lambda (values) (for-each emit values))]
-            [else (void)])))
-
   (define leaf?
     (lambda (value)
       (or (and (pair? value) (not (list? value)))
@@ -86,7 +71,8 @@
   #|proc:nav/children
   The `nav/children` navigator focuses immediate children of supported nested
   values when composed with later path steps. As a final selection step, it
-  focuses collection descendants in tree order.
+  focuses collection descendants in tree order. Both modes support registered indexed
+  and keyed containers as well as built-in containers.
   |#
   (define nav/children
     (make-tree-nav

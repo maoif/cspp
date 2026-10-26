@@ -10,69 +10,35 @@
           (cspp list)
           (cspp transducer)
           (cspp utils)
-          (cspp navigator private core))
+          (cspp navigator private core)
+          (cspp navigator private data))
 
   (define current-recursive-env (make-parameter '()))
 
-  (define collection?
-    (lambda (value)
-      (or (and (pair? value) (list? value))
-          (vector? value)
-          (fxvector? value)
-          (flvector? value)
-          (hashtable? value))))
-
-  (define emit-immediate-children
-    (lambda (value emit)
-      (cond [(list? value)
-             (for-each emit value)]
-            [(vector? value)
-             (let ([len (vector-length value)])
-               (let loop ([i 0])
-                 (when (< i len)
-                   (emit (vector-ref value i))
-                   (loop (+ i 1)))))]
-            [(fxvector? value)
-             (let ([len (fxvector-length value)])
-               (let loop ([i 0])
-                 (when (< i len)
-                   (emit (fxvector-ref value i))
-                   (loop (+ i 1)))))]
-            [(flvector? value)
-             (let ([len (flvector-length value)])
-               (let loop ([i 0])
-                 (when (< i len)
-                   (emit (flvector-ref value i))
-                   (loop (+ i 1)))))]
-            [(hashtable? value)
-             (let ([vals (hashtable-values value)])
-               (let ([len (vector-length vals)])
-                 (let loop ([i 0])
-                   (when (< i len)
-                     (emit (vector-ref vals i))
-                     (loop (+ i 1))))))]
-            [else (void)])))
+  ;; Wrapped paths inherit whether their result has an outer selection suffix.
+  ;; Public selection entry points start a fresh context, including reentrant calls.
+  (define current-selection-terminal? (make-parameter #t))
 
   (define emit-descendant-children
     (lambda (value emit)
-      (emit-immediate-children
+      (emit-children
        value
        (lambda (child)
          (emit child)
-         (when (collection? child)
+         (when (child-container? child)
            (emit-descendant-children child emit))))))
 
   (define emit-nav-children-tree
     (lambda (value emit)
-      (emit-immediate-children
+      (emit-children
        value
        (lambda (child)
-         (when (collection? child)
+         (when (child-container? child)
            (emit child))))
-      (emit-immediate-children
+      (emit-children
        value
        (lambda (child)
-         (when (collection? child)
+         (when (child-container? child)
            (emit-descendant-children child emit))))))
 
   (define nav-children-step?
@@ -113,14 +79,17 @@
                 (run-select (cdar tails) (cdr tails) value emit)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
-                   (if (and (null? rest)
-                            (for-all (lambda (tail) (null? (cdr tail))) tails)
-                            (nav-children-step? step))
-                       (emit-nav-children-tree value emit)
-                       (($navigator-select-proc step)
-                        value
-                        (lambda (child)
-                          (run-select rest tails child emit))))]
+                   (let* ([outer-terminal? (current-selection-terminal?)]
+                          [terminal? (and outer-terminal? (null? rest)
+                                          (for-all (lambda (tail) (null? (cdr tail))) tails))])
+                     (if (and terminal? (nav-children-step? step))
+                         (emit-nav-children-tree value emit)
+                         (parameterize ([current-selection-terminal? terminal?])
+                           (($navigator-select-proc step)
+                            value
+                            (lambda (child)
+                              (parameterize ([current-selection-terminal? outer-terminal?])
+                                (run-select rest tails child emit)))))))]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
                      (parameterize ([current-recursive-env (cons step (current-recursive-env))])
@@ -140,8 +109,12 @@
                   [else (nav-error 'nav-select "unsupported path step: ~s" step)])))))
 
   (define select-path
-    (lambda (path data emit)
-      (run-select (nav-path-steps (nav-compile-path path)) '() data emit)))
+    (case-lambda
+      [(path data emit)
+       (run-select (nav-path-steps (nav-compile-path path)) '() data emit)]
+      [(path data emit terminal?)
+       (parameterize ([current-selection-terminal? terminal?])
+         (select-path path data emit))]))
 
   (define run-transform
     (lambda (steps tails value update)
@@ -288,7 +261,7 @@
   (define nav-traverse
     (lambda (path data proc)
       (pcheck ([procedure? proc])
-              (select-path path data proc))))
+              (select-path path data proc #t))))
 
   #|proc:nav-traverse/i
   The `nav-traverse/i` procedure calls `proc` with the selected-value index and
@@ -341,7 +314,7 @@
         ;; Use a one-shot continuation to stop traversal after the first focus.
         (call/1cc
          (lambda (return)
-           (select-path path data (lambda (value) (return #t)))
+           (select-path path data (lambda (value) (return #t)) #t)
            #f)))))
 
   #|proc:nav-select-first
@@ -357,7 +330,7 @@
          ;; Use a one-shot continuation to return the first selected value.
          (call/1cc
           (lambda (return)
-            (select-path path data (lambda (value) (return value)))
+            (select-path path data (lambda (value) (return value)) #t)
             default)))]))
 
   #|proc:nav-select-one
@@ -403,7 +376,7 @@
                          (call/1cc
                           (lambda (continue)
                             (set! resume continue)
-                            (return value)))))
+                            (return value)))) #t)
                       (set! done? #t)
                       (set! resume #f)
                       (return iter-end))))))
@@ -446,7 +419,7 @@
                   (vector-set! new-items i (vector-ref items i))
                   (loop (+ i 1))))
               (set! items new-items))))
-        (select-path path data
+        (nav-traverse path data
                      (lambda (value)
                        (when (= count (vector-length items))
                          (grow!))
