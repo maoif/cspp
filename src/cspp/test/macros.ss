@@ -52,11 +52,28 @@
             (cond
              [(null? items) (values (reverse options) '())]
              [(keyword? (car items))
+              (unless (eq? (syntax->datum (car items)) ':parameterize)
+                (let ([key (case (syntax->datum (car items))
+                             [(:skip :skip-when :only-when) ':skip-when]
+                             [(:xfail :xfail-when) ':xfail-when]
+                             [else (syntax->datum (car items))])])
+                  (when (exists
+                          (lambda (option)
+                            (eq? key
+                              (case (syntax->datum (car option))
+                                [(:skip :skip-when :only-when) ':skip-when]
+                                [(:xfail :xfail-when) ':xfail-when]
+                                [else (syntax->datum (car option))])))
+                          options)
+                    (syntax-error (car items) "duplicate test option"))))
               (let* ([arity (option-arity (car items))]
                      [args (take (cdr items) arity (car items))]
                      [rest (drop (cdr items) arity (car items))])
                 (loop rest (cons (cons (car items) args) options)))]
-             [else (values (reverse options) items)]))))
+             [else
+              (when (exists keyword? items)
+                (syntax-error stx "test options must precede body expressions"))
+              (values (reverse options) items)]))))
       (define parse-option
         (lambda (key rest parameter-ids inherited-parameter-ids)
           (let ([datum (syntax->datum key)])
@@ -66,6 +83,7 @@
                  (syntax-error key ":tags expects one tag list"))
                (syntax-case (car rest) ()
                  [(tag ...)
+                  (andmap identifier? #'(tag ...))
                   #'(cons 'tags '(tag ...))]
                  [_ (syntax-error (car rest) "invalid :tags list")])]
               [(:parameterize)
@@ -251,6 +269,10 @@
         (syntax-case stx ()
           [(_ kind name item ...)
            (let-values ([(options body) (split-items #'(item ...))])
+             (unless (and (identifier? #'name) (not (keyword? #'name)))
+               (syntax-error #'name "test name must be an identifier"))
+             (when (and (memq (syntax->datum #'kind) '(case compile)) (null? body))
+               (syntax-error stx "test requires at least one body expression"))
              (check-parameter-tables options)
              (let* ([inherited (lookup #'$test-binding-context)]
                     [local-fixtures?
@@ -348,8 +370,10 @@
 
   #|macro:test-suite
   The `test-suite` macro defines and registers a suite descriptor named `name`.
-  Config clauses are inherited by child descriptors. Nested definition macros
-  register only as children of this suite, so each child runs once. Child bodies
+  Config clauses are inherited by child descriptors. Each immediate body expression
+  must return one descriptor, which becomes one child; registration inside a grouping
+  expression does not add extra children. Nested definitions are isolated from the
+  surrounding registry, so each collected child runs once. Child bodies
   lexically inherit fixture and parameter names; conditional rules lexically inherit parameters.
   Ordinary Scheme shadowing applies inside child forms.
   A child's explicit fixture list or parameter tables replace the corresponding suite list.

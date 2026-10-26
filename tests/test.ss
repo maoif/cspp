@@ -896,13 +896,11 @@
           #f)))
     '(bogus (stdout bogus) (stderr . stdout) 42))
 
-  ;; Invalid capture metadata must produce an error without running the case body.
+  ;; Error: invalid capture metadata must reject at construction without running the body.
   (let ([called? #f])
-    (let ([result (car (test-run
-                        (list (make-test-case 'bad-capture
-                                (lambda () (set! called? #t)) '((capture . bogus))))
-                        (test-silent-config)))])
-      (and (not called?) (eq? (test-result-status result) 'errored)))))
+    (guard (raised [else (not called?)])
+      (make-test-case 'bad-capture (lambda () (set! called? #t)) '((capture . bogus)))
+      #f)))
 
 (mat test-capture-selected-streams
   (andmap
@@ -1751,3 +1749,76 @@
       (lambda ()
         (for-each (lambda (name) (unless (member name before) (delete-file name)))
                   (filter temporary-coverage? (directory-list ".")))))))
+
+(mat test-suite-immediate-expression-results
+  (let ([registry (make-test-registry)])
+    (parameterize ([current-test-registry registry])
+      (let ([suite
+             (test-suite immediate
+               (begin
+                 (test-case discarded (test-true #f))
+                 (test-case returned (test-true #t)))
+               (make-test-case 'procedural (lambda () #t) '()))])
+        (and (equal? (map test-descriptor-name (test-descriptor-children suite))
+                     '(returned procedural))
+             (equal? (map test-descriptor-name (test-registry-descriptors registry))
+                     '(immediate))
+             (equal? (map test-result-status (test-run (list suite) (test-silent-config)))
+                     '(passed passed))))))
+
+  ;; Error: each immediate expression must return a descriptor, not a list or arbitrary value.
+  (for-all
+    (lambda (form)
+      (guard (raised [else #t]) (eval form (environment '(cspp))) #f))
+    '((test-suite invalid #t)
+      (test-suite invalid (list (make-test-case 'child (lambda () #t) '()))))))
+
+(mat test-strict-macro-inputs
+  ;; Error: reject malformed names, misplaced options, and repeated singleton options at expansion.
+  (for-all
+    (lambda (form)
+      (guard (raised [else (syntax-violation? raised)])
+        (expand form (environment '(cspp)))
+        #f))
+    '((test-case (invalid name) #t)
+      (test-suite 42)
+      (test-case repeated :warnings 'allow :warnings 'error #t)
+      (test-case repeated :skip "first" :only-when #t "second" #t)
+      (test-case misplaced #t :warnings 'error)
+      (test-case missing-body :tags (fast))
+      (test-compile missing-body)
+      (test-case invalid-tags :tags (42) #t))))
+
+(mat test-strict-metadata-inputs
+  ;; Error: malformed metadata and invalid field types must fail before registration or execution.
+  (for-all
+    (lambda (metadata)
+      (guard (raised [else #t])
+        (make-test-case 'invalid-metadata (lambda () #t) metadata)
+        #f))
+    '((invalid)
+      ((1 . 2))
+      ((warnings . typo))
+      ((warnings . allow) (warnings . error))
+      ((unknown-option . #t))
+      ((tags . ("not-a-symbol")))
+      ((xfail-strict . yes))
+      ((requires-chez-version . (999)))
+      ((requires-chez-version . (1 -1 0)))
+      ((requires-file . 42))
+      ((skip-when . (#t . "reason")))
+      ((xfail-when . ((lambda (parameters) #t) . 42)))
+      ((raises . 42))
+      ((before . 42))
+      ((fixtures . ((resource . 42))))
+      ((stdout . 42)))))
+
+(mat test-concrete-case-strict-parameters
+  ;; Error: concrete parameters must have unique symbolic keys in a proper association list.
+  (for-all
+    (lambda (parameters)
+      (guard (raised [else #t])
+        (make-test-concrete-case 0 'bad
+          (make-test-case 'bad (lambda () #t) '()) parameters '())
+        #f))
+    '((invalid) ((42 . value)) ((name . 1) (name . 2)))))

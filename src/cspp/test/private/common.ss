@@ -3,7 +3,7 @@
   (export test-reporter? make-test-reporter test-reporter-write
           test-alist-ref test-alist-set test-remove-key test-metadata-ref
           test-natural-version-list?
-          test-check-parameter-tables test-check-fixture-names
+          test-check-parameter-tables test-check-fixture-names test-check-metadata
           test-color-mode? test-current-report-color
           chez-version
           chez-version<? chez-version<=? chez-version=? chez-version>=? chez-version>?)
@@ -173,6 +173,72 @@ supplied, it is returned for a missing key; otherwise a missing key is an error.
                     (when (memq name parameter-names)
                       (errorf who "fixture name conflicts with parameter: ~s" name))
                     (loop (cdr names) (cons name seen))))))))
+
+  (define $callback-accepts?
+    (lambda (value arity)
+      (and (procedure? value) (logbit? arity (procedure-arity-mask value)))))
+
+  (define $predicate-data?
+    (lambda (value)
+      (or (symbol? value)
+          (and (list? value) (>= (length value) 3)
+               (eq? (car value) 'lambda) (list? (cadr value))
+               (= (length (cadr value)) 1) (symbol? (caadr value))))))
+
+  #|proc:test-check-metadata
+  The internal `test-check-metadata` procedure validates descriptor `metadata`, a
+  symbol-keyed association list with unique, supported keys. Invalid fields raise
+  an error attributed to symbol `who`; valid input returns unspecified values.
+  Callbacks must accept the arguments used by the runner. Predicate data may be a
+  procedure name or a one-argument lambda, resolved in Chez at run time.
+  |#
+  (define test-check-metadata
+    (lambda (who metadata)
+      (pcheck ([symbol? who] [list? metadata])
+              (let loop ([entries metadata] [seen '()])
+                (unless (null? entries)
+                  (let ([entry (car entries)])
+                    (unless (and (pair? entry) (symbol? (car entry)))
+                      (errorf who "metadata entry must have a symbolic key: ~s" entry))
+                    (when (memq (car entry) seen)
+                      (errorf who "duplicate metadata key: ~s" (car entry)))
+                    (let ([value (cdr entry)])
+                      (unless
+                        (case (car entry)
+                          [(tags) (and (list? value) (andmap symbol? value))]
+                          [(warnings) (memq value '(allow error))]
+                          [(xfail-strict) (boolean? value)]
+                          [(capture)
+                           (or (not value) (memq value '(stdout stderr combined))
+                               (and (list? value)
+                                    (andmap (lambda (stream) (memq stream '(stdout stderr)))
+                                            value)))]
+                          [(stdout stderr output requires-file)
+                           (or (not value) (string? value))]
+                          [(requires-chez-version)
+                           (or (not value)
+                               (and (test-natural-version-list? value) (= (length value) 3)))]
+                          [(before after condition-handler)
+                           (or (not value) ($callback-accepts? value 1))]
+                          [(raises)
+                           (or (not value) ($callback-accepts? value 1) ($predicate-data? value))]
+                          [(skip-when xfail-when)
+                           (or (not value)
+                               (and (pair? value) (string? (cdr value))
+                                    (or ($callback-accepts? (car value) 1)
+                                        ($predicate-data? (car value)))))]
+                          [(fixtures)
+                           (and (list? value)
+                                (andmap (lambda (fixture)
+                                          (and (pair? fixture) (symbol? (car fixture))
+                                               ($callback-accepts? (cdr fixture) 0)))
+                                        value))]
+                          ;; Parameter domains are checked before Cartesian expansion.
+                          [(parameterize) (list? value)]
+                          [(source) #t]
+                          [else (errorf who "unknown metadata key: ~s" (car entry))])
+                        (errorf who "invalid metadata field ~s: ~s" (car entry) value)))
+                    (loop (cdr entries) (cons (car entry) seen))))))))
 
   #|proc:test-natural-version-list?
 The `test-natural-version-list?` procedure returns whether `value` is a list of

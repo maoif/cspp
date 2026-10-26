@@ -173,6 +173,9 @@ registry.
   The runner calls `body` as `(lambda () unspecified)` or as
   `(lambda (parameters) unspecified)`, where `parameters` is an association list
   containing fixture values followed by the concrete case parameters.
+  Metadata keys must be supported, unique symbols with correctly typed values;
+  warning policy is `allow` or `error`, tags are symbols, and version requirements
+  contain three natural numbers. Invalid body arity or metadata is rejected at construction.
   Fixture names must be unique and must not overlap parameter names; the runner
   rejects conflicting effective bindings before acquiring fixtures.
   |#
@@ -182,6 +185,7 @@ registry.
               (unless (or (logbit? 0 (procedure-arity-mask body))
                           (logbit? 1 (procedure-arity-mask body)))
                 (errorf 'make-test-case "body must accept zero or one argument: ~s" body))
+              (test-check-metadata 'make-test-case metadata)
               ($make-test-descriptor 'case name 'runtime metadata '() body))))
 
   #|proc:make-test-suite
@@ -192,6 +196,7 @@ suite, and `metadata` is an association list of descriptor metadata.
   (define make-test-suite
     (lambda (name children metadata)
       (pcheck ([symbol? name] [$all-descriptors? children] [list? metadata])
+              (test-check-metadata 'make-test-suite metadata)
               ($make-test-descriptor 'suite name 'suite metadata children #f))))
 
   #|proc:make-test-expand
@@ -203,6 +208,7 @@ immutable `(cspp)` environment; include custom macro definitions in `form`.
   (define make-test-expand
     (lambda (name form metadata)
       (pcheck ([symbol? name] [list? metadata])
+              (test-check-metadata 'make-test-expand metadata)
               ($make-test-descriptor 'expand name 'expand metadata '() form))))
 
   #|proc:make-test-compile
@@ -213,6 +219,7 @@ immutable `(cspp)` environment; include custom macro definitions in `form`.
   (define make-test-compile
     (lambda (name forms metadata)
       (pcheck ([symbol? name] [list? forms metadata])
+              (test-check-metadata 'make-test-compile metadata)
               ($make-test-descriptor 'compile name 'compile metadata '() forms))))
 
   #|proc:test-descriptor-name
@@ -443,6 +450,14 @@ case parameters, and `metadata` is an association list of case metadata.
     (lambda (id name descriptor parameters metadata)
       (pcheck ([natural? id] [symbol? name] [test-descriptor? descriptor]
                [list? parameters metadata])
+              (test-check-metadata 'make-test-concrete-case metadata)
+              (unless (let loop ([entries parameters] [seen '()])
+                        (or (null? entries)
+                            (and (pair? (car entries)) (symbol? (caar entries))
+                                 (not (memq (caar entries) seen))
+                                 (loop (cdr entries) (cons (caar entries) seen)))))
+                (errorf 'make-test-concrete-case "parameters must have unique symbolic keys: ~s"
+                        parameters))
               ($make-test-concrete-case id name descriptor parameters metadata))))
 
   #|proc:test-concrete-case-id
