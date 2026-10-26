@@ -291,10 +291,38 @@ Examples:
                   body
                   #`(let ([#,(car variables) #,(car expressions)])
                       #,(bind-pattern-captures (cdr variables) (cdr expressions) body)))))
+          #|proc:bind-lazy-pattern-captures
+          The `bind-lazy-pattern-captures` helper binds each `(identifier expression)` in
+          `entries` around `body`, evaluating the expression only on its first reference.
+          Reads and assignments share a private location, including references from closures.
+          For example, `(x (reverse prefix))` reverses `prefix` once if `x` is read, and never
+          reverses it if `x` is unused or assigned first. Assigning `#f` remains a valid value.
+          |#
+          (define bind-lazy-pattern-captures
+            (lambda (entries body)
+              (if (null? entries)
+                  body
+                  (with-syntax ([variable (caar entries)]
+                                [expression (cadar entries)]
+                                [(value ready?) (generate-temporaries '(value ready?))])
+                    #`(let ([value #f] [ready? #f])
+                        (let-syntax
+                            ([variable
+                              (identifier-syntax
+                               (reference
+                                (if ready?
+                                    value
+                                    (begin (set! value expression)
+                                           (set! ready? #t)
+                                           value)))
+                               ((set! reference rhs)
+                                (begin (set! value rhs) (set! ready? #t))))])
+                          #,(bind-lazy-pattern-captures (cdr entries) body)))))))
           #|proc:bind-suffix-captures
-          The `bind-suffix-captures` helper reverses accumulated ellipsis captures and binds
-          them around a suffix continuation. For example, accumulated `(2 1)` becomes `(1 2)`
-          before the suffix body runs.
+          The `bind-suffix-captures` helper binds accumulated ellipsis captures around a suffix
+          continuation. A capture needed by the suffix is materialized on first reference;
+          independent captures are bound after the suffix matches. For example, accumulated
+          `(2 1)` becomes `(1 2)` when used, avoiding copies for failed independent suffixes.
           |#
           (define bind-suffix-captures
             (lambda (variables accumulators suffix success generate)
@@ -303,7 +331,8 @@ Examples:
                 (define (bind entries body)
                   (bind-pattern-captures (map car entries) (map cadr entries) body))
                 (if (null? variables)
-                    (bind (reverse early) (generate (bind (reverse late) success)))
+                    (bind-lazy-pattern-captures
+                     (reverse early) (generate (bind (reverse late) success)))
                     (let ([entry (list (car variables) #`(reverse #,(car accumulators)))])
                       (if (or (not (transparent-suffix? suffix))
                               (mentions-variable? suffix (car variables)))

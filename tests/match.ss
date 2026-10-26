@@ -1,4 +1,4 @@
-(import (cspp) (cspp private match))
+(import (cspp) (cspp private match) (only (cspp irregex) irregex))
 
 (define-match-expander tagged-expander
   (lambda (pp rho expr-id pat body fk)
@@ -1713,3 +1713,42 @@
                (match '() [(,(branch ,x) ...) x])
                (match '(10 (ignored . 20)) [(,(branch ,x) ...) hidden]))))
          (environment '(cspp) '(cspp private match))))))
+
+(mat independent-regex-suffix-allocation
+     ;; A regex expression with no prefix dependency must not copy every candidate prefix.
+     (let* ([compiled (irregex "^stop$")]
+            [input (append (iota 4000) '("stop"))]
+            [before (statistics)]
+            [result (match input [(,x ... ,(regex compiled)) (length x)])]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= result 4000) (< allocated 1000000)))
+
+     (let* ([compiled (irregex "^stop$")]
+            [input (list->vector (append (iota 4000) '("stop")))]
+            [before (statistics)]
+            [result (match input [#(,x ... ,(regex compiled)) (length x)])]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= result 4000) (< allocated 1000000))))
+
+(mat delayed-suffix-capture-locations
+     ;; Closures made by failed suffix attempts retain their own prefix and mutable location.
+     (let ([saved '()])
+       (let ([result
+              (match '(1 2 3 "stop")
+                [(,x ... ,(regex (begin (set! saved (cons (lambda () x) saved)) "^stop$")))
+                 (set! x '(changed))
+                 x])])
+         (equal? '((changed) ((changed) (1 2) (1) ()))
+                 (list result (map (lambda (read) (read)) saved)))))
+
+     ;; Assigning #f must not be confused with an unmaterialized capture.
+     (let ([read #f])
+       (and (not (match '(1 "stop")
+                   [(,x ... ,(regex (begin (set! read (lambda () x)) "^stop$")))
+                    (set! x #f) x]))
+            (not (read))))
+
+     ;; A dependency in the regex expression still observes the current candidate prefix.
+     (equal? '(1 2)
+             (match '(1 2 "stop")
+               [(,x ... ,(regex (if (= (length x) 2) "^stop$" "never"))) x])))
