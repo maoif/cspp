@@ -530,3 +530,50 @@
            (= 3 (iter-next! output))
            (iter-end? (iter-next! output))
            (not (iter-finalized? source))))))
+
+(define-record-type (review-source make-review-source review-source?)
+  (fields items (mutable finalizations)))
+
+(iter-register-source!
+ review-source?
+ (lambda (source)
+   (let ([iterator (list->iter (review-source-items source))])
+     (make-iter
+      (lambda () (iter-next! iterator))
+      (lambda () (iter-reset! iterator))
+      (lambda ()
+        (review-source-finalizations-set! source (+ 1 (review-source-finalizations source)))
+        (iter-finalize! iterator))))))
+
+(mat transducer-review-generated-source-ownership
+  (andmap
+   (lambda (mode)
+     (parameterize ([current-transducer-source-mode mode])
+       (let ([source (make-review-source '(1 2 3) 0)])
+         (and (= 6 (transduce (tidentity) (rfsum) source))
+              (= 1 (review-source-finalizations source))))))
+   '(direct iter))
+
+  (let ([source (make-review-source '(1 2 3) 0)])
+    (and (equal? '(1) (into 'list (ttake 1) source))
+         (= 1 (review-source-finalizations source))))
+
+  ;; A callback failure must release the iterator created for a registered source.
+  (let ([source (make-review-source '(1 2 3) 0)])
+    (and (guard (exn [else #t])
+           (transduce (tmap (lambda (x) (error 'review "callback failed"))) (rfsum) source)
+           #f)
+         (= 1 (review-source-finalizations source))))
+
+  (let ([source (make-review-source '(1 2 3) 0)])
+    (and (eq? 'escaped
+              (call/1cc
+               (lambda (stop)
+                 (transduce (ttap (lambda (x) (stop 'escaped))) (rfsum) source))))
+         (= 1 (review-source-finalizations source))))
+
+  (let ([source (list->iter '(1 2 3))])
+    (and (= 1 (transduce (ttake 1) (rfsum) source))
+         (not (iter-finalized? source))
+         (= 2 (iter-next! source))
+         (begin (iter-finalize! source) #t))))

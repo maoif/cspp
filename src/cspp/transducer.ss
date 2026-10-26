@@ -200,6 +200,16 @@
                   acc
                   (loop (reducer-step reducer acc x))))))))
 
+  ;; Generated source iterators belong to this traversal; caller-supplied iterators do not.
+  (define run-owned-iter
+    (lambda (reducer acc iterator)
+      (dynamic-wind
+        void
+        (lambda () (run-iter reducer acc iterator))
+        (lambda ()
+          (unless (iter-finalized? iterator)
+            (iter-finalize! iterator))))))
+
   (define run-port-lines
     (lambda (reducer acc port)
       (let loop ([acc acc])
@@ -224,7 +234,7 @@
     (lambda (reducer acc source)
       (if (and (eq? (current-transducer-source-mode) 'iter)
                (not (iter? source)))
-          (run-iter reducer acc (source->iter source))
+          (run-owned-iter reducer acc (source->iter source))
           (cond [(list? source) (run-list reducer acc source)]
                 [(vector? source) (run-vector reducer acc source)]
                 [(bytevector? source) (run-bytevector reducer acc source)]
@@ -233,7 +243,7 @@
                 [(flvector? source) (run-flvector reducer acc source)]
                 [(hashtable? source) (run-hashtable reducer acc source)]
                 [(iter? source) (run-iter reducer acc source)]
-                [else (run-iter reducer acc (iter-source->iter source))]))))
+                [else (run-owned-iter reducer acc (iter-source->iter source))]))))
 
   (define transduce-run
     (lambda (who xform reducer init source runner)
@@ -1028,7 +1038,8 @@
   The `transduce` procedure runs transducer `xform` over transducible `source` using reducer
   record `reducer`. With three arguments, the reducer supplies the initial accumulator; with four
   arguments, `init` supplies it. The result is the reducer's completion value after source
-  exhaustion or an early `reduced` result.
+  exhaustion or an early `reduced` result. Iterators created for source adapters are finalized on
+  exhaustion, early termination, errors, or nonlocal exits. Caller-supplied iterators remain open.
   |#
   (define transduce
     (case-lambda
