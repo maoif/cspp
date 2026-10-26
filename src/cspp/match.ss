@@ -131,6 +131,21 @@ Examples:
                 (char? p)))))
       ;; A collector is active only while compiling a repeated element pattern.
       (define capture-collector #f)
+      #|proc:pattern-identifier?
+      The `pattern-identifier?` helper checks whether `variable` occurs in the original syntax
+      of `pattern`, comparing identifiers hygienically. For example, `x` occurs in `(tag ,x)`,
+      while a fresh identifier introduced by an expander does not. Only captures supplied by
+      the caller escape a custom expansion; private captures may belong to individual branches.
+      |#
+      (define pattern-identifier?
+        (lambda (variable pattern)
+          (syntax-case pattern ()
+            [name (identifier? #'name) (bound-identifier=? variable #'name)]
+            [(head . tail) (or (pattern-identifier? variable #'head)
+                               (pattern-identifier? variable #'tail))]
+            [#(items ...) (exists (lambda (item) (pattern-identifier? variable item))
+                                 #'(items ...))]
+            [_ #f])))
       #|proc:collect-pattern-captures
       The `collect-pattern-captures` helper records the captures introduced by one compiler step.
       It ignores extension arguments until their expander compiles them as patterns. For example,
@@ -155,7 +170,7 @@ Examples:
               [_ (void)]))))
       #|proc:compile-repeated-pattern
       The `compile-repeated-pattern` helper compiles `pattern` once, collecting
-      its unique captures, including fresh expander captures. `rho` is the compiler environment
+      its unique caller-visible captures. `rho` is the compiler environment
       and `failure` is the failure identifier. It calls `generate` with the captures and a
       two-argument procedure that inserts an input identifier and success expression into it.
       For example, `,x` supplies `(x)` and a procedure producing `(let ([x input]) success)`.
@@ -210,7 +225,13 @@ Examples:
             (let ([expander (cdr (rho ($construct-name ext ext "-expander")))])
               (unless (procedure? expander)
                 (syntax-error ext "match: invalid custom expander procedure:"))
-              (expander process-pattern rho expr-id pat body fk))]
+              (let ([collect capture-collector])
+                (fluid-let ([capture-collector
+                             (and collect
+                                  (lambda (variable)
+                                    (when (pattern-identifier? variable pat)
+                                      (collect variable))))])
+                  (expander process-pattern rho expr-id pat body fk))))]
            [else (syntax-error ext "match: invalid extension pattern: ")])))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;   main logic

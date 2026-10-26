@@ -1689,3 +1689,27 @@
        #f)
 
      (equal? "a" (match "a" [,(regex "(.)" (1 ,x)) x])))
+
+(mat custom-expander-branch-private-captures
+     (guard (condition [#t #f])
+       (equal?
+        '((10 20) (10 20) (10 20) ((10) (20)) () 99)
+        (eval
+         '(let ()
+            (define-match-expander branch-expander
+              (lambda (pp rho input pattern body failure)
+                (syntax-case pattern ()
+                  [(_ subpattern)
+                   (with-syntax ([(hidden) (generate-temporaries '(hidden))])
+                     #`(if (pair? #,input)
+                           #,(pp rho input #`(,hidden . subpattern) body failure)
+                           #,(pp rho input #'subpattern body failure)))])))
+            (let ([hidden 99])
+              (list
+               (match '(10 (ignored . 20)) [(,(branch ,x) ...) x])
+               (match '#(10 (ignored . 20)) [#(,(branch ,x) ...) x])
+               (match '(10 (ignored . 20) stop) [(,(branch ,x) ... stop) x])
+               (match '((10) ((ignored . 20))) [((,(branch ,x) ...) ...) x])
+               (match '() [(,(branch ,x) ...) x])
+               (match '(10 (ignored . 20)) [(,(branch ,x) ...) hidden]))))
+         (environment '(cspp) '(cspp private match))))))
