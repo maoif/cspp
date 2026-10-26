@@ -326,21 +326,26 @@
                                    (keyed-delete value (car keys))
                                    (keyed-set value (car keys) selected))))))))]
             [(alist? value)
-             (let ([updated
-                    (map update
-                         (map (lambda (key)
-                                (let ([entry (assq key value)])
-                                  (if entry
-                                      entry
-                                      (nav-focus-error 'nav-transform "missing key ~s in: ~s"
-                                                 key value))))
-                              keys))])
-               (let loop ([xs value])
-                 (cond [(null? xs) '()]
-                       [(assq (caar xs) updated)
-                        => (lambda (entry)
-                             (cons entry (loop (cdr xs))))]
-                       [else (cons (car xs) (loop (cdr xs)))])))]
+             (let ([replacements
+                    (fold-left
+                     (lambda (replacements key)
+                       (let find ([entries value])
+                         (cond [(null? entries)
+                                (nav-focus-error 'nav-transform "missing key ~s in: ~s"
+                                                 key value)]
+                               [(eq? (caar entries) key)
+                                (let ([entry (update (car entries))])
+                                  (unless (pair? entry)
+                                    (nav-error 'nav-transform "expected entry pair: ~s" entry))
+                                  (cons (cons entries entry) replacements))]
+                               [else (find (cdr entries))])))
+                     '() keys)])
+               (let loop ([entries value])
+                 (if (null? entries)
+                     '()
+                     (let ([replacement (assq entries replacements)])
+                       (cons (if replacement (cdr replacement) (car entries))
+                             (loop (cdr entries)))))))]
             [(keyed-supported? value)
              (let ([updated (update (let loop ([keys keys] [entries '()])
                                       (if (null? keys)
@@ -766,7 +771,8 @@
   #|proc:nav/submap
   The `nav/submap` procedure returns a navigator that focuses the subset of
   association-list entries or hashtable entries named by `keys`. For alists, each key
-  selects its first matching entry. Other keyed containers focus one submap containing
+  selects its first matching entry; a pure transform replaces only that entry and may rename
+  its key. Other keyed containers focus one submap containing
   the requested keys. The result is a navigator.
   |#
   (define nav/submap

@@ -1506,3 +1506,27 @@
 
   ;; Duplicate alist keys do not make direct entry removal possible in place.
   (error? (nav-clearval! (nav/submap 'a) (list (cons 'a 1) (cons 'a 2)))))
+
+(mat navigator-review-submap-transform-locations
+  (equal? '((a . 11) (a . 2) (b . 3))
+          (nav-transform (nav/submap 'a)
+                         (lambda (entry) (cons (car entry) (+ 10 (cdr entry))))
+                         '((a . 1) (a . 2) (b . 3))))
+
+  (equal? '((z . 11) (a . 2) (b . 3))
+          (nav-transform (nav/submap 'a)
+                         (lambda (entry) (cons 'z (+ 10 (cdr entry))))
+                         '((a . 1) (a . 2) (b . 3))))
+
+  (let ([seen '()])
+    (let ([result (nav-transform/i
+                   (nav/submap 'b 'a)
+                   (lambda (index entry)
+                     (set! seen (cons (cons index entry) seen))
+                     (cons (if (eq? (car entry) 'a) 'b 'a) (+ 10 (cdr entry))))
+                   '((a . 1) (a . 2) (b . 3)))])
+      (and (equal? '((0 b . 3) (1 a . 1)) (reverse seen))
+           (equal? '((b . 11) (a . 2) (a . 13)) result))))
+
+  ;; An alist submap transformation must return an entry pair.
+  (error? (nav-transform (nav/submap 'a) (lambda (entry) 42) '((a . 1)))))
