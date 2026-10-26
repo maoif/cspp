@@ -335,10 +335,14 @@
             (write-char (string-ref text i) out)
             (loop (+ i 1))])))))
 
+  (define $write-readable-datum
+    (lambda (value out)
+      (parameterize ([print-graph #t] [print-level #f] [print-length #f] [print-gensym #t])
+        (write value out))))
+
   (define $write-string
     (lambda (value)
-      (parameterize ([print-graph #t] [print-level #f] [print-length #f])
-        (call-with-string-output-port (lambda (out) (write value out))))))
+      (call-with-string-output-port (lambda (out) ($write-readable-datum value out)))))
 
   (define $readback-equal?
     (lambda (value text)
@@ -1361,20 +1365,21 @@ The `benchmark-comparison-improvement?` procedure returns whether comparison
 The `benchmark-datum-reporter` procedure returns a reporter that writes one
 complete Scheme datum per result to the output port, independent of printer limits.
 Shared and cyclic data use readable graph notation without printer warnings.
+Generated symbols retain their identity regardless of the ambient gensym printer mode.
 |#
   (define benchmark-datum-reporter
     (lambda ()
       (make-benchmark-reporter
        $void-procedure
        (lambda (result out)
-         (parameterize ([print-graph #t] [print-level #f] [print-length #f])
-           (write `((name . ,(benchmark-result-name result))
+         ($write-readable-datum
+                  `((name . ,(benchmark-result-name result))
                     (args . ,(benchmark-result-args result))
                     (template-args . ,(benchmark-result-template-args result))
                     (summary . ,(benchmark-result-summary result))
                     (counters . ,(benchmark-result-counters result))
                     (error . ,(and (benchmark-result-error result) #t)))
-                  out))
+                  out)
          (newline out))
        (lambda (results out)
          (flush-output-port out)))))
@@ -2382,6 +2387,7 @@ The `benchmark-save-baseline` procedure writes benchmark `results` to file
 `benchmark-load-baseline`. Runtime and template argument keys must be readable
 Scheme data; unsupported values such as procedures or ports are rejected before
 changing `path`. Unreadable error who fields and irritants are saved as diagnostic strings.
+Generated symbol keys retain their identity independently of ambient printer settings.
 |#
   (define benchmark-save-baseline
     (lambda (results path)

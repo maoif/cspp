@@ -1835,3 +1835,57 @@
   ;; A real NaN measurement propagates NaN rather than acquiring a negative direction at zero.
   (and (nan? (benchmark-percent-difference 0 +nan.0))
        (nan? (benchmark-percent-difference +nan.0 1))))
+
+(mat benchmark-datum-preserves-generated-symbols
+  ;; Distinct generated argument keys and shared references must survive datum serialization.
+  (let* ([left (gensym "temp")] [right (gensym "temp")]
+         [benchmark
+          (make-benchmark 'generated-data (lambda (state key mirror) (void))
+            `((args (key mirror) (,left ,left) (,right ,right))
+              (template-args . ((kind . ,left)))))]
+         [results (benchmark-run benchmark (benchmark-test-config))])
+    (for-all
+      (lambda (mode)
+        (let ([text
+               (parameterize ([print-gensym mode] [print-graph #f]
+                              [print-length 1] [print-level 1])
+                 (call-with-string-output-port
+                   (lambda (out) (benchmark-report results (benchmark-datum-reporter) out))))])
+          (call-with-port (open-input-string text)
+            (lambda (in)
+              (let* ([first (read in)] [second (read in)]
+                     [first-args (cdr (assq 'args first))]
+                     [second-args (cdr (assq 'args second))])
+                (and (eq? (cdr (assq 'key first-args)) left)
+                     (eq? (cdr (assq 'mirror first-args)) left)
+                     (eq? (cdr (assq 'key second-args)) right)
+                     (eq? (cdr (assq 'mirror second-args)) right)
+                     (eq? (cdr (assq 'kind (cdr (assq 'template-args first)))) left)
+                     (eof-object? (read in))))))))
+      '(#t #f pretty))))
+
+(mat benchmark-baseline-preserves-generated-symbols
+  ;; Readable generated keys must save, reload, and match current cases under any gensym mode.
+  (let* ([left (gensym "temp")] [right (gensym "temp")]
+         [benchmark
+          (make-benchmark 'generated-baseline (lambda (state key) (void))
+            `((args (key) (,left) (,right)) (template-args . ((kind . ,left)))))]
+         [results (benchmark-run benchmark (benchmark-test-config))]
+         [path (benchmark-temp-file)])
+    (dynamic-wind
+      (lambda () (void))
+      (lambda ()
+        (for-all
+          (lambda (mode)
+            (guard (condition [else #f])
+              (parameterize ([print-gensym mode] [print-graph #f]
+                             [print-length 1] [print-level 1])
+                (benchmark-save-baseline results path))
+              (let ([loaded (benchmark-load-baseline path)])
+                (and (equal? (map benchmark-result-args loaded)
+                             (list (list (cons 'key left)) (list (cons 'key right))))
+                     (equal? (map benchmark-result-template-args loaded)
+                             (list (list (cons 'kind left)) (list (cons 'kind left))))
+                     (= (length (benchmark-compare-results loaded results)) 2)))))
+          '(#t #f pretty)))
+      (lambda () (when (file-exists? path) (delete-file path))))))
