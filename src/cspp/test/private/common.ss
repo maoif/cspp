@@ -193,7 +193,7 @@ supplied, it is returned for a missing key; otherwise a missing key is an error.
   (define test-symbol-alist?
     (lambda (value)
       (and (list? value)
-           (let ([seen (make-eq-hashtable)])
+           (let ([seen (make-eq-hashtable (length value))])
              (let loop ([entries value])
                (or (null? entries)
                    (let ([entry (car entries)])

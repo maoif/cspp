@@ -201,6 +201,21 @@ association-list filters as `test-select`.
           (errorf 'test-run "body must accept zero or one argument: ~a" body))
         (apply body (if (logbit? 1 arity-mask) (list parameters) '())))))
 
+  (define $current-predicate-cache (make-parameter #f))
+
+  (define $resolve-predicate
+    (lambda (predicate)
+      (if (procedure? predicate)
+          predicate
+          (let* ([cache ($current-predicate-cache)]
+                 [cached (and cache (hashtable-ref cache predicate #f))])
+            (or cached
+                (let ([callback (eval predicate (environment '(chezscheme)))])
+                  (unless (test-callback-accepts? callback 1)
+                    (errorf 'test-run "condition predicate must accept one argument: ~s" predicate))
+                  (when cache (hashtable-set! cache predicate callback))
+                  callback))))))
+
   (define $rule-active?
     (lambda (metadata key parameters)
       (let ([rule (test-metadata-ref metadata key #f)])
@@ -208,10 +223,7 @@ association-list filters as `test-select`.
              (let ([predicate (car rule)])
                ;; Macro-generated metadata stores procedures directly, but
                ;; low-level tests may use quoted lambda data.
-               ((if (procedure? predicate)
-                    predicate
-                    (eval predicate (environment '(chezscheme))))
-                parameters))))))
+               (($resolve-predicate predicate) parameters))))))
 
   (define $rule-message
     (lambda (metadata key)
@@ -322,7 +334,7 @@ association-list filters as `test-select`.
       (let ([predicate (test-metadata-ref metadata 'raises #f)])
         (cond
          [(procedure? predicate) predicate]
-         [predicate (eval predicate (environment '(chezscheme)))]
+         [predicate ($resolve-predicate predicate)]
          [else #f]))))
 
   (define $run-with-expected-condition
@@ -486,34 +498,36 @@ association-list filters as `test-select`.
   and inherited metadata. An empty list returns no results. Mixed lists are rejected.
   Allowed continuable warnings resume the case body unless accepted by `raises`.
   A `raises` predicate is called once per condition; rejected allowed warnings resume
-  until a matching condition is raised. Skip and expected-failure rules apply to every phase. An
+  until a matching condition is raised. Quoted predicates are resolved once per run.
+  Skip and expected-failure rules apply to every phase. An
   unexpected pass has status `failed` under effective strict xfail policy and
   `xpass` otherwise; only `failed` and `errored` stop a stop-on-failure run.
   |#
   (define test-run
     (lambda (tests config)
       (pcheck ([list? tests] [test-config? config])
-              (let* ([cases (cond
-                             [(andmap test-concrete-case? tests) tests]
-                             [(andmap test-descriptor? tests) ($expand-descriptors tests)]
-                             [else (errorf 'test-run
-                                     "tests must all be descriptors or all concrete cases: ~a"
-                                     tests)])]
-                     [results
-                      (let loop ([cases cases] [out '()])
-                        (if (null? cases)
-                            (reverse out)
-                            (let ([result ($run-case-with-policy (car cases) config)])
-                              (if ($stop-after-result? config result)
-                                  (reverse (cons result out))
-                                  (loop (cdr cases) (cons result out))))))])
-                (when (and (test-config-reporter config)
-                           (test-config-output config))
-                  (parameterize ([test-current-report-color (test-config-color config)])
-                    (test-report (test-config-reporter config)
-                                 (test-config-output config)
-                                 (test-summarize results))))
-                results))))
+              (parameterize ([$current-predicate-cache (make-eq-hashtable)])
+                (let* ([cases (cond
+                               [(andmap test-concrete-case? tests) tests]
+                               [(andmap test-descriptor? tests) ($expand-descriptors tests)]
+                               [else (errorf 'test-run
+                                       "tests must all be descriptors or all concrete cases: ~a"
+                                       tests)])]
+                       [results
+                        (let loop ([cases cases] [out '()])
+                          (if (null? cases)
+                              (reverse out)
+                              (let ([result ($run-case-with-policy (car cases) config)])
+                                (if ($stop-after-result? config result)
+                                    (reverse (cons result out))
+                                    (loop (cdr cases) (cons result out))))))])
+                  (when (and (test-config-reporter config)
+                             (test-config-output config))
+                    (parameterize ([test-current-report-color (test-config-color config)])
+                      (test-report (test-config-reporter config)
+                                   (test-config-output config)
+                                   (test-summarize results))))
+                  results)))))
 
   #|proc:test-run-registry
   The `test-run-registry` procedure executes every descriptor registered in

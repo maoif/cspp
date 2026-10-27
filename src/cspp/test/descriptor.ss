@@ -457,11 +457,7 @@ case parameters, and `metadata` is an association list of case metadata.
       (pcheck ([natural? id] [symbol? name] [test-descriptor? descriptor]
                [list? parameters metadata])
               (test-check-metadata 'make-test-concrete-case metadata)
-              (unless (let loop ([entries parameters] [seen '()])
-                        (or (null? entries)
-                            (and (pair? (car entries)) (symbol? (caar entries))
-                                 (not (memq (caar entries) seen))
-                                 (loop (cdr entries) (cons (caar entries) seen)))))
+              (unless (test-symbol-alist? parameters)
                 (errorf 'make-test-concrete-case "parameters must have unique symbolic keys: ~s"
                         parameters))
               ($make-test-concrete-case id name descriptor parameters metadata))))
@@ -523,7 +519,11 @@ message or `#f`, `condition` is the captured condition or `#f`, `stdout` and
     (lambda (id name status message condition stdout stderr parameters source)
       (pcheck ([$test-id? id] [symbol? name] [$result-status? status]
                [(lambda (value) (or (string? value) (not value))) message]
-               [string? stdout stderr] [test-symbol-alist? parameters])
+               [string? stdout stderr]
+               [(lambda (value)
+                  (and (list? value)
+                       (andmap (lambda (entry) (and (pair? entry) (symbol? (car entry)))) value)))
+                parameters])
               ($make-test-result id name status message condition stdout stderr parameters source))))
 
   #|proc:test-result-id

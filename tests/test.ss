@@ -1882,3 +1882,28 @@
       (lambda ()
         (when (file-exists? path) (delete-file path))
         (remprop 'test-path-validation 'loaded)))))
+
+(mat test-quoted-policy-resolution-is-shared-per-run
+  ;; Equivalent quoted predicates must not compile separately for every parameter row.
+  (let* ([descriptor
+          (make-test-case 'quoted-policy (lambda () #t)
+            `((parameterize . (,(cons '(number) (map list (iota 100)))))
+              (skip-when . ((lambda (parameters) #f) . "skip"))))]
+         [before (statistics)]
+         [results (test-run (list descriptor) (test-silent-config))]
+         [bytes (sstats-bytes (sstats-difference (statistics) before))])
+    (and (= (length results) 100)
+         (andmap (lambda (result) (eq? (test-result-status result) 'passed)) results)
+         (< bytes 5000000))))
+
+(mat test-wide-concrete-parameter-validation-is-linear
+  (let* ([names (map (lambda (n) (string->symbol (format "parameter-~a" n))) (iota 512))]
+         [parameters (map cons names (iota 512))]
+         [descriptor (make-test-case 'wide (lambda () #t) '())])
+    (and (test-concrete-case?
+           (make-test-concrete-case 0 'wide descriptor parameters '()))
+         ;; Error: sharing the validator must still detect a duplicate at the end.
+         (guard (raised [else #t])
+           (make-test-concrete-case 0 'wide descriptor
+             (append parameters (list (cons (car names) 99))) '())
+           #f))))

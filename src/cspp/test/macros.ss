@@ -5,6 +5,24 @@
           (cspp test descriptor)
           (for (cspp test private common) expand))
 
+  (define $input-values
+    (lambda (parameters names)
+      (let ([values (make-vector (length names))])
+        (let loop ([entries parameters] [names-left names] [offset 0])
+          (cond
+           [(null? names-left) values]
+           [(and (pair? entries) (eq? (caar entries) (car names-left)))
+            (vector-set! values offset (cdar entries))
+            (loop (cdr entries) (cdr names-left) (fx+ offset 1))]
+           [else
+            (let ([index (make-eq-hashtable (length parameters))])
+              (for-each (lambda (entry) (hashtable-set! index (car entry) (cdr entry))) parameters)
+              (for-each (lambda (name)
+                          (vector-set! values offset (hashtable-ref index name #f))
+                          (set! offset (fx+ offset 1)))
+                        names-left)
+              values)])))))
+
   (define-syntax $test-binding-context
     (make-compile-time-value '(() ())))
 
@@ -229,33 +247,28 @@
                 [_ (loop (cdr options) out)])]
              [else (loop (cdr options) out)]))))
       (define build-bindings
-        (lambda (ids body)
-          (let loop ([ids ids] [body body])
+        (lambda (ids body offset)
+          (let loop ([ids ids] [offset offset])
             (if (null? ids)
                 #`(begin #,@body)
-                (let ([id (car ids)])
-                  #`(let ([binding (assq '#,(datum->syntax id (syntax->datum id)) params)])
-                      (let ([#,id (if binding (cdr binding) #f)])
-                        #,(loop (cdr ids) body))))))))
+                #`(let ([#,(car ids) (vector-ref input-values #,offset)])
+                    #,(loop (cdr ids) (fx+ offset 1)))))))
       (define build-callback
         (lambda (local-ids inherited-ids body)
-          ;; Rebind suite aliases to fresh lexical variables at each deferred code boundary.
-          ;; The expander resolves references hygienically; no body traversal is needed.
+          ;; Decode inputs once, then introduce fresh lexical aliases at the code boundary.
           (let ([values (generate-temporaries inherited-ids)])
-            #`(let (#,@(map (lambda (id value)
-                             #`[#,value
-                                (let ([binding
-                                       (assq '#,(datum->syntax id (syntax->datum id)) params)])
-                                  (if binding (cdr binding) #f))])
-                           inherited-ids values))
-                (fluid-let-syntax
-                  (#,@(map (lambda (id value)
-                             #`[#,id
-                                (identifier-syntax
-                                  [reference #,value]
-                                  [(set! reference new-value) (set! #,value new-value)])])
-                           inherited-ids values))
-                  #,(build-bindings local-ids body))))))
+            #`(let ([input-values ($input-values params '(#,@inherited-ids #,@local-ids))])
+                (let (#,@(map (lambda (value offset)
+                               #`[#,value (vector-ref input-values #,offset)])
+                             values (iota (length inherited-ids))))
+                  (fluid-let-syntax
+                    (#,@(map (lambda (id value)
+                               #`[#,id
+                                  (identifier-syntax
+                                    [reference #,value]
+                                    [(set! reference new-value) (set! #,value new-value)])])
+                             inherited-ids values))
+                    #,(build-bindings local-ids body (length inherited-ids))))))))
       (define lexical-bindings
         (lambda (ids)
           ;; Establish suite declaration scopes before expanding children. Values exist only
