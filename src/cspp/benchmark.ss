@@ -459,15 +459,25 @@
 
   (define $write-json-object
     (lambda (alist out ancestors)
-      (display "{" out)
-      (let loop ([alist alist] [first? #t])
-        (unless (null? alist)
-          (unless first? (display "," out))
-          ($json-string ($json-key (caar alist)) out)
-          (display ":" out)
-          ($write-json (cdar alist) out ancestors)
-          (loop (cdr alist) #f)))
-      (display "}" out)))
+      (let* ([keys (map (lambda (entry) ($json-key (car entry))) alist)]
+             [seen (make-hashtable string-hash string=?)]
+             [unique? (andmap (lambda (key)
+                                (and (not (hashtable-contains? seen key))
+                                     (begin (hashtable-set! seen key #t) #t)))
+                              keys)])
+        (if (not unique?)
+            ;; JSON object names cannot represent every distinct Scheme key.
+            ($json-string ($write-string alist) out)
+            (begin
+              (display "{" out)
+              (let loop ([alist alist] [keys keys] [first? #t])
+                (unless (null? alist)
+                  (unless first? (display "," out))
+                  ($json-string (car keys) out)
+                  (display ":" out)
+                  ($write-json (cdar alist) out ancestors)
+                  (loop (cdr alist) (cdr keys) #f)))
+              (display "}" out))))))
 
   (define $write-json
     (lambda (datum out ancestors)
@@ -1122,7 +1132,8 @@ The `current-benchmark-registry` parameter stores the default benchmark
 registry used by definition macros and `(benchmark-run)`.
 |#
   (define current-benchmark-registry
-    (make-parameter ($mk-benchmark-registry '() '())))
+    (make-parameter ($mk-benchmark-registry '() '())
+      (lambda (registry) (pcheck ([benchmark-registry? registry]) registry))))
 
 
 ;;;;===----------------------------------------------------------------------===
@@ -1272,6 +1283,9 @@ callbacks. `start` receives `(results output-port)`, `result` receives
   (define make-benchmark-reporter
     (lambda (start result finish)
       (pcheck ([procedure? start result finish])
+              (unless (andmap (lambda (callback) (logbit? 2 (procedure-arity-mask callback)))
+                              (list start result finish))
+                (errorf 'make-benchmark-reporter "callbacks must accept two arguments"))
               ($mk-benchmark-reporter start result finish))))
 
   #|proc:benchmark-comparison-name
@@ -1436,7 +1450,8 @@ The `benchmark-json-reporter` procedure returns a reporter that writes benchmark
 results as one JSON object containing a `results` array. The JSON writer is
 self-contained and supports the Scheme data emitted by benchmark results.
 Cyclic substructures use readable Scheme strings when recursion would repeat a value.
-Generated symbol keys use their readable unique names. Exact fractions outside the
+Generated symbol keys use their readable unique names. Associations with colliding
+JSON names use a readable Scheme string preserving all keys and values. Exact fractions outside the
 nonzero finite flonum range use exact Scheme strings; other fractions use decimal numbers.
 |#
   (define benchmark-json-reporter
@@ -1463,7 +1478,7 @@ style. Supported keys are `title`, `caption`, `box`, `show-header?`,
 `show-lines?`, `padding`, and `columns`. `columns` is an alist whose keys select
 result fields and whose values are column labels; supported field keys are
 `name`, `args`, `template-args`, `iterations`, `cpu-ns`, `real-ns`, `bytes`,
-`counters`, and `error`.
+`counters`, and `error`. Invalid or duplicate options are rejected at construction.
 |#
   (define benchmark-rich-reporter
     (case-lambda
@@ -1471,6 +1486,18 @@ result fields and whose values are column labels; supported field keys are
        (benchmark-rich-reporter '())]
       [(options)
        (pcheck ([list? options])
+               ($check-option-keys 'benchmark-rich-reporter options
+                 '(title caption box show-header? show-lines? padding columns) '())
+               (let ([columns ($option-ref options 'columns $benchmark-rich-default-columns)])
+                 (unless (and (list? columns)
+                              (andmap (lambda (column)
+                                        (and (pair? column)
+                                             (assq (car column) $benchmark-rich-default-columns)
+                                             (string? (cdr column))))
+                                      columns))
+                   (errorf 'benchmark-rich-reporter "invalid columns: ~s" columns)))
+               ;; Reuse the rich table's own field validators before any benchmark runs.
+               ($benchmark-rich-table '() options)
                (make-benchmark-reporter
                 $void-procedure
                 $void-procedure
@@ -2458,7 +2485,12 @@ historical summary-only records are preserved without synthesizing samples.
     (lambda (path)
       (pcheck ([string? path])
               (let ([datum (parameterize ([case-sensitive #t])
-                             (call-with-input-file path read))])
+                             (call-with-input-file path
+                               (lambda (in)
+                                 (let ([datum (read in)])
+                                   (unless (eof-object? (read in))
+                                     (errorf 'benchmark-load-baseline "unexpected trailing datum"))
+                                   datum))))])
                 ($baseline-alist datum 'baseline)
                 ($baseline-check list? ($alist-ref datum 'results '()) 'results)
                 (unless (eq? ($alist-ref datum 'format #f) 'cspp-benchmark-baseline)
@@ -2515,6 +2547,7 @@ Finite inputs use exact arithmetic on their represented values to avoid intermed
   mean for the selected metric. Runs with no samples are excluded, including after
   baseline save/load. Historical baselines without sample data remain comparable;
   their omission of sample data is preserved when saved. A measured zero is comparable.
+  Percentage magnitude determines significance; the absolute change determines direction.
   |#
   (define benchmark-compare-results
     (case-lambda
@@ -2574,7 +2607,7 @@ Finite inputs use exact arithmetic on their represented values to avoid intermed
                                                            (>= abs-percent noise-threshold-percent))]
                                         [regression? (and significant?
                                                           (positive? absolute)
-                                                          (>= percent threshold-percent))]
+                                                          (>= abs-percent threshold-percent))]
                                         [improvement? (and significant?
                                                            (negative? absolute)
                                                            (>= (abs percent) threshold-percent))])

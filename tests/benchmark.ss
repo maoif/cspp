@@ -2058,3 +2058,49 @@
     (eval '(let () (define-benchmark-suite invalid () #f) invalid)
           (environment '(cspp)))
     #f))
+
+(mat benchmark-json-preserves-colliding-key-associations
+  ;; Error: distinct Scheme keys must not disappear behind duplicate JSON member names.
+  (let* ([payload '((foo . 1) ("foo" . 2))]
+         [benchmark (make-benchmark 'colliding-json (lambda (state value) (void))
+                      `((args (value) (,payload))))]
+         [results (benchmark-run benchmark (benchmark-test-config))]
+         [text (call-with-string-output-port
+                 (lambda (out) (benchmark-report results (benchmark-json-reporter) out)))])
+    (and (json5-document? (parse-json5 text))
+         (benchmark-string-contains? text "((foo . 1) (\\\"foo\\\" . 2))"))))
+
+(mat benchmark-negative-metric-regressions
+  (let* ([baseline (benchmark-results-from-data
+                     '(((name . negative) (summary . ((score . ((mean . -100))))))))]
+         [current (benchmark-results-from-data
+                    '(((name . negative) (summary . ((score . ((mean . -50))))))))]
+         [comparison (car (benchmark-compare-results baseline current '((metric . score))))])
+    (and (= (benchmark-comparison-percent-difference comparison) -50)
+         (benchmark-comparison-regression? comparison)
+         (not (benchmark-comparison-improvement? comparison)))))
+
+(mat benchmark-rich-options-reject-at-construction
+  ;; Error: unknown, duplicate, malformed and incorrectly typed options must reject early.
+  (for-all
+    (lambda (options)
+      (guard (raised [else #t]) (benchmark-rich-reporter options) #f))
+    '(((titel . "typo")) ((padding . -1)) ((show-header? . yes))
+      ((title . 42)) ((box . unknown)) ((columns . ((unknown . "Unknown"))))
+      ((columns . ((name . 42)))) ((title . "first") (title . "second")) (invalid))))
+
+(mat benchmark-baseline-rejects-trailing-content
+  ;; Error: a baseline file must contain exactly one complete document.
+  (let ([path (benchmark-temp-file)])
+    (dynamic-wind
+      (lambda ()
+        (call-with-output-file path
+          (lambda (out)
+            (display "((format . cspp-benchmark-baseline) (version . 1) (results . ()))\n(" out))
+          'replace))
+      (lambda () (guard (raised [else #t]) (benchmark-load-baseline path) #f))
+      (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat benchmark-current-registry-rejects-invalid-values
+  ;; Error: invalid parameter values must reject before any registration can occur.
+  (guard (raised [else #t]) (parameterize ([current-benchmark-registry 42]) #f)))
