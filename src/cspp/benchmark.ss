@@ -1743,16 +1743,17 @@ cost-center measurement is enabled in runner `config`.
 
   (define $walk-argument-axes
     (lambda (axes visit)
-      (let loop ([axes axes] [reversed '()])
-        (if (null? axes)
-            (visit (reverse reversed))
-            (for-all
-              (lambda (row)
-                (loop (cdr axes)
-                      (fold-left (lambda (bindings name value)
-                                   (cons (cons name value) bindings))
-                                 reversed (caar axes) row)))
-              (cdar axes))))))
+      (or (exists (lambda (axis) (null? (cdr axis))) axes)
+          (let loop ([axes axes] [reversed '()])
+            (if (null? axes)
+                (visit (reverse reversed))
+                (for-all
+                  (lambda (row)
+                    (loop (cdr axes)
+                          (fold-left (lambda (bindings name value)
+                                       (cons (cons name value) bindings))
+                                     reversed (caar axes) row)))
+                  (cdar axes)))))))
 
   #|macro:benchmark-options
   The `benchmark-options` macro converts benchmark option syntax into an option

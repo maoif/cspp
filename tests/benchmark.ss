@@ -2154,3 +2154,16 @@
     (equal? (map (lambda (expanded) (benchmark-state-args (car expanded)))
                  (benchmark-expand benchmark (benchmark-test-config)))
             '(((value . 7))))))
+
+(mat benchmark-empty-later-axis-short-circuits-prefix-products
+  (let* ([options (append
+                    (map (lambda (n)
+                           (cons 'args
+                             (list (list (string->symbol (format "axis-~a" n))) '(0) '(1))))
+                         (iota 15))
+                    '((args (empty))))]
+         [benchmark (make-benchmark 'empty-product (lambda arguments (void)) options)]
+         [before (statistics)]
+         [expanded (benchmark-expand benchmark (benchmark-test-config))]
+         [bytes (sstats-bytes (sstats-difference (statistics) before))])
+    (and (null? expanded) (< bytes 1000000))))
