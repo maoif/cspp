@@ -2104,3 +2104,26 @@
 (mat benchmark-current-registry-rejects-invalid-values
   ;; Error: invalid parameter values must reject before any registration can occur.
   (guard (raised [else #t]) (parameterize ([current-benchmark-registry 42]) #f)))
+
+(mat benchmark-empty-descriptor-report-precedence
+  (call-with-port (open-output-string)
+    (lambda (actual)
+      (call-with-port (open-output-string)
+        (lambda (fallback)
+          (let* ([benchmark (make-benchmark 'empty-json (lambda (state value) (void))
+                              `((args (value))
+                                (reporter . ,(benchmark-json-reporter)) (output . ,actual)))]
+                 [config (parameterize ([current-output-port fallback])
+                           (default-benchmark-config))])
+            (and (null? (benchmark-run benchmark config))
+                 (string=? (get-output-string actual) "{\"results\":[]}\n")
+                 (string=? (get-output-string fallback) "")))))))
+
+  ;; Explicitly disabled descriptor reporting must not fall back to a default reporter.
+  (call-with-port (open-output-string)
+    (lambda (fallback)
+      (let* ([benchmark (make-benchmark 'empty-disabled (lambda (state value) (void))
+                          '((args (value)) (reporter . #f) (output . #f)))]
+             [config (parameterize ([current-output-port fallback]) (default-benchmark-config))])
+        (and (null? (benchmark-run benchmark config))
+             (string=? (get-output-string fallback) ""))))))

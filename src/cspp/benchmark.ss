@@ -1648,22 +1648,24 @@ cost-center measurement is enabled in runner `config`.
     (lambda (config options)
       (pcheck ([benchmark-config? config] [list? options])
               ($check-option-keys 'benchmark-config-with options $benchmark-config-keys '())
-              (let loop ([options options]
-                         [fields ($benchmark-config-options config)]
-                         [explicit ($benchmark-config-explicit-options config)])
-                (if (null? options)
-                    (apply $make-checked-config
-                           (append (map (lambda (key) ($alist-ref fields key))
-                                        $benchmark-config-keys)
-                                   (list explicit)))
-                    (let ([option (car options)])
-                      (unless (and (pair? option) (memq (car option) $benchmark-config-keys))
-                        (errorf 'benchmark-config-with "unknown config option: ~s" option))
-                      (loop (cdr options)
-                            ($replace-option fields (car option) (cdr option))
-                            (if (memq (car option) explicit)
-                                explicit
-                                (cons (car option) explicit)))))))))
+              (if (null? options)
+                  config
+                  (let loop ([options options]
+                             [fields ($benchmark-config-options config)]
+                             [explicit ($benchmark-config-explicit-options config)])
+                    (if (null? options)
+                        (apply $make-checked-config
+                               (append (map (lambda (key) ($alist-ref fields key))
+                                            $benchmark-config-keys)
+                                       (list explicit)))
+                        (let ([option (car options)])
+                          (unless (and (pair? option) (memq (car option) $benchmark-config-keys))
+                            (errorf 'benchmark-config-with "unknown config option: ~s" option))
+                          (loop (cdr options)
+                                ($replace-option fields (car option) (cdr option))
+                                (if (memq (car option) explicit)
+                                    explicit
+                                    (cons (car option) explicit))))))))))
 
   (define $effective-benchmark-config
     (lambda (benchmark config)
@@ -2096,6 +2098,36 @@ suffix.
             (collector results reporter out)
             (benchmark-report results reporter out)))))
 
+  (define-record-type ($report-groups $make-report-groups $report-groups?)
+    (fields index (mutable ordered $report-groups-ordered $report-groups-ordered-set!)))
+
+  (define $make-report-collector
+    (lambda ()
+      ($make-report-groups (make-eq-hashtable) '())))
+
+  (define $collect-report!
+    (lambda (groups results reporter out)
+      (when (and reporter out)
+        (let* ([index ($report-groups-index groups)]
+               [ports (or (hashtable-ref index reporter #f)
+                          (let ([ports (make-eq-hashtable)])
+                            (hashtable-set! index reporter ports)
+                            ports))]
+               [group (or (hashtable-ref ports out #f)
+                          (let ([group (cons (cons reporter out) '())])
+                            (hashtable-set! ports out group)
+                            ($report-groups-ordered-set! groups
+                              (cons group ($report-groups-ordered groups)))
+                            group))])
+          (for-each (lambda (result) (set-cdr! group (cons result (cdr group)))) results)))))
+
+  (define $dispatch-reports
+    (lambda (groups)
+      (for-each
+        (lambda (group)
+          ($dispatch-benchmark-report (reverse (cdr group)) (caar group) (cdar group)))
+        (reverse ($report-groups-ordered groups)))))
+
   #|proc:benchmark-expand
 The `benchmark-expand` procedure expands `benchmark` into concrete run pairs
 for `config`. Each pair contains a benchmark state in the car and the descriptor
@@ -2314,17 +2346,10 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                     [setup-value #f]
                     [failure #f]
                     [results '()]
-                    [report-groups '()])
+                    [report-groups ($make-report-collector)])
                 (define collect-report!
                   (lambda (results reporter out)
-                    (let ([group (find (lambda (group)
-                                         (and (eq? reporter (caar group))
-                                              (eq? out (cdar group))))
-                                       report-groups)])
-                      (if group
-                          (set-cdr! group (append (reverse results) (cdr group)))
-                          (set! report-groups
-                            (cons (cons (cons reporter out) (reverse results)) report-groups))))))
+                    ($collect-report! report-groups results reporter out)))
                 (dynamic-wind
                   (lambda () (void))
                   (lambda ()
@@ -2347,10 +2372,7 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                     (when (and reporter out)
                       (collect-report! (list result) reporter out))
                     (set! results (append results (list result)))))
-                (for-each
-                  (lambda (group)
-                    ($dispatch-benchmark-report (reverse (cdr group)) (caar group) (cdar group)))
-                  (reverse report-groups))
+                ($dispatch-reports report-groups)
                 results))))
 
   (define $benchmark-matches-selector?
@@ -2366,32 +2388,16 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
 
   (define $run-benchmarks
     (lambda (benchmarks config)
-      (let ([report-groups '()])
+      (let ([report-groups ($make-report-collector)] [selected? #f])
         (define record-report!
-          (lambda (result effective)
-            (let ([reporter (benchmark-config-reporter effective)]
-                  [out (benchmark-config-output effective)])
-              (when (and reporter out)
-                (let ([group (find (lambda (group)
-                                     (and (eq? reporter (caar group))
-                                          (eq? out (cdar group))))
-                                   report-groups)])
-                  (if group
-                      (set-cdr! group (cons result (cdr group)))
-                      (set! report-groups
-                            (cons (cons (cons reporter out) (list result)) report-groups))))))))
+          (lambda (results effective)
+            ($collect-report! report-groups results
+              (benchmark-config-reporter effective) (benchmark-config-output effective))))
         (define finish
           (lambda (results)
-            ;; An empty run still owns one configured reporter lifecycle. Descriptor
-            ;; groups take precedence whenever at least one result was collected.
-            (when (and (null? results) (null? report-groups)
-                       (benchmark-config-reporter config) (benchmark-config-output config))
-              ($dispatch-benchmark-report '() (benchmark-config-reporter config)
-                                          (benchmark-config-output config)))
-            (for-each (lambda (group)
-                        ($dispatch-benchmark-report
-                         (reverse (cdr group)) (caar group) (cdar group)))
-                      (reverse report-groups))
+            ;; With no selected descriptors, the run configuration owns the empty report.
+            (unless selected? (record-report! '() config))
+            ($dispatch-reports report-groups)
             (reverse results)))
         (let loop-benchmarks ([benchmarks benchmarks] [results '()])
           (if (null? benchmarks)
@@ -2401,16 +2407,19 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                 (if (not ($benchmark-matches-selector?
                           benchmark (benchmark-config-filter effective)))
                     (loop-benchmarks (cdr benchmarks) results)
-                    (let loop-cases ([expanded (benchmark-expand benchmark effective)]
-                                     [results results])
+                    (begin
+                      (set! selected? #t)
+                      (record-report! '() effective)
+                      (let loop-cases ([expanded (benchmark-expand benchmark effective)]
+                                       [results results])
                       (if (null? expanded)
                           (loop-benchmarks (cdr benchmarks) results)
                           (let ([result ($run-expanded (car expanded) effective)])
-                            (record-report! result effective)
+                            (record-report! (list result) effective)
                             (if (and ($benchmark-config-stop-on-error? effective)
                                      (benchmark-result-error result))
                                 (finish (cons result results))
-                                (loop-cases (cdr expanded) (cons result results)))))))))))))
+                                (loop-cases (cdr expanded) (cons result results))))))))))))))
 
   #|proc:benchmark-run
   The `benchmark-run` procedure runs registered benchmarks, descriptors, or a
