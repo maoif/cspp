@@ -11,7 +11,8 @@
           (cspp io))
 
 
-
+
+
   #|doc
 (for/fold (<init-clause>?
            <index-clause>?    ; global index
@@ -293,15 +294,6 @@
                                                 #'(lambda () (void))))])
                (unless (= (length loop-vars) (length updates))
                  (syntax-error stx "loop vars and recur call args do not match:"))
-               ;; (println "for -------------------------")
-               ;; (printf "gen-preloops: ~a~n" gen-preloops)
-               ;; (printf "loop-vars:    ~a~n" loop-vars)
-               ;; (printf "termination-checks: ~a~n" termination-checks)
-               ;; (printf "updates:      ~a~n" updates)
-               ;; (printf "gen-getters:  ~a~n" gen-getters)
-               ;; (printf "call/finish-proc: ~a~n" call/finish-proc)
-               ;; (printf "frag-config:  ~a~n" frag-config)
-               ;; (println "for -------------------------")
                #`(let ([t-finish #,(cadr call/finish-proc)])
                    #,(let lp-preloops ([gen-preloops gen-preloops])
                        (if (null? gen-preloops)
@@ -341,20 +333,9 @@
                                                         #`(if e
                                                               #,(lp-configs (cdr configs))
                                                               (for-loop #,@skip-updates))]
-                                                       [(:let v e)
-                                                        (memq (datum :let) '(:let :let* :letrec :letrec*))
-                                                        #`(#,(case (datum :let)
-                                                               [(:let) #'let]
-                                                               [(:let*) #'let*]
-                                                               [(:letrec) #'letrec]
-                                                               [(:letrec*) #'letrec*])
-                                                            ([v e])
-                                                            #,(lp-configs (cdr configs)))]
-                                                       [(:let-values (v* ...) e)
-                                                        (memq (datum :let-values) '(:let-values :let*-values))
-                                                        #`(let-values ([(v* ...) e])
-                                                            #,(lp-configs (cdr configs)))]
-                                                       [_ (syntax-error conf "unknown config clause:")]))))
+                                                       [_ (compile-binding-clause
+                                                           conf (lambda (names)
+                                                                  (lp-configs (cdr configs))))]))))
                                              (if (car gen-getters)
                                                  ((car gen-getters) (lp-getters (cdr gen-getters)))
                                                  (lp-getters (cdr gen-getters)))))
@@ -368,7 +349,8 @@
                                (lp-preloops (cdr gen-preloops)))))))))])))
 
 
-
+
+
   #|doc
 (for*/fold (<init-clause>?
             <index-clause>?    ; global index
@@ -482,7 +464,7 @@
                     [init/index-vars (let* ([vars (if frag-index (list index-var)    '())]
                                             [vars (if frag-init  (cons init-var vars) vars)])
                                        vars)]
-                    ;; (((gen-preloop loop-var tycheck term-check update gen-getter) config0 config1 ...) ...)
+                    ;; Each loop level pairs a named iterator fragment with its configurations.
                     [iters/configs (map (lambda (i/c)
                                           (cons (process-iter-clause/direct (car i/c) #t)
                                                 (cdr i/c)))
@@ -505,11 +487,6 @@
                                                           [(_ e) #'e]))))
                                           (list #'(t-finish)
                                                 #'(lambda () (void))))])
-               ;; (println "for* -------------------------")
-               ;; (for-each displayln iters/configs)
-               ;; (printf "index-def: ~a~n" index-def)
-               ;; (printf "index-var: ~a~n" index-var)
-               ;; (println "for* -------------------------")
                #`(let ([t-finish #,(cadr call/finish-proc)])
                    #,(let lp-for-loop ([i/c* iters/configs] [last-forloop #f] [last-update '()] [shadowed '()])
                      (let ([call-lastforloop #`(#,last-forloop #,@init/index-vars #,@last-update)])
@@ -629,23 +606,14 @@
                                                        #`(if e
                                                              #,(lp-configs (cdr configs) shadowed)
                                                              (forloop #,@init/index-vars #,@update))]
-                                                      [(:let v e)
-                                                       (memq (datum :let) '(:let :let* :letrec :letrec*))
-                                                       #`(#,(case (datum :let)
-                                                               [(:let) #'let]
-                                                               [(:let*) #'let*]
-                                                               [(:letrec) #'letrec]
-                                                               [(:letrec*) #'letrec*])
-                                                            ([v e])
-                                                           #,(lp-configs (cdr configs) (cons #'v shadowed)))]
-                                                      [(:let-values (v* ...) e)
-                                                       (memq (datum :let-values) '(:let-values :let*-values))
-                                                       #`(let-values ([(v* ...) e])
-                                                           #,(lp-configs (cdr configs) (append #'(v* ...) shadowed)))]
-                                                      [_ (syntax-error conf "unknown config clause:")]))))))))))))))))))])))
+                                                      [_ (compile-binding-clause
+                                                          conf (lambda (names)
+                                                                 (lp-configs (cdr configs)
+                                                                             (append names shadowed))))]))))))))))))))))))])))
 
 
-
+
+
   #|
 (<for> (<index-clause>?
         <iter-clause>+

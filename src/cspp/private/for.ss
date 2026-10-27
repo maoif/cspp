@@ -18,7 +18,7 @@
           make-clause-handler add-clause! true
           handle-init handle-index handle-finish handle-iter handle-config
           handle-length handle-fill
-          handle-iter/config-iter handle-iter/config-config
+          handle-iter/config-iter handle-iter/config-config compile-binding-clause
 
           process-iter-clause process-iter-clause/direct process-iter-clauses
           fragment-setup fragment-bindings fragment-termination fragment-updates
@@ -105,7 +105,8 @@
   (define kw:fill?       (gen-kw? ':fill))
 
 
-
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
 ;;;   clause handlers
@@ -115,7 +116,7 @@
   (define (make-clause-handler . table)
     (assert (eq? 'start (caar table)))
     (lambda (s clauses)
-      (let loop ([n 0] [state (caar table)] [cl* clauses])
+      (let loop ([state (caar table)] [cl* clauses])
         (if (eq? 'end state)
             (if (null? cl*)
                 (begin
@@ -141,16 +142,16 @@
                     ;; when cl* is '(), only epsilon transition is possible
                     (if (null? cl*)
                         (if (eq? handler 'epsilon)
-                            (loop (fx1+ n) to cl*)
+                            (loop to cl*)
                             (loop-trans (cdr trans)))
                         ;; TODO remove `next?`
                         (if (eq? handler 'epsilon)
-                            (loop (fx1+ n) to cl*)
+                            (loop to cl*)
                             (let-values ([(handled? next?) (handler s (car cl*))])
                               (if handled?
                                   (if next?
-                                      (loop (fx1+ n) to (cdr cl*))
-                                      (loop (fx1+ n) to cl*))
+                                      (loop to (cdr cl*))
+                                      (loop to cl*))
                                   (loop-trans (cdr trans)))))))))))))
 
 
@@ -279,6 +280,26 @@
                 (values #t #t))]
         [_ (values #f #f)])))
 
+  #|proc:compile-binding-clause
+  The `compile-binding-clause` helper compiles one `clause` using its Scheme binding form.
+  `continue` receives the list of newly bound identifiers and returns syntax in their scope.
+  For example, `[:let x 10]` wraps the continuation in `(let ([x 10]) ...)` and supplies `(x)`;
+  `[:let-values (x y) (values 10 20)]` supplies `(x y)` within a `let-values` form.
+  |#
+  (define (compile-binding-clause clause continue)
+    (pcheck ([procedure? continue])
+      (syntax-case clause ()
+        [(tag variable expression)
+         (memq (datum tag) '(:let :let* :letrec :letrec*))
+         #`(#,(case (datum tag)
+                [(:let) #'let] [(:let*) #'let*] [(:letrec) #'letrec] [(:letrec*) #'letrec*])
+             ([variable expression])
+             #,(continue #'(variable)))]
+        [(tag (variable ...) expression)
+         (memq (datum tag) '(:let-values :let*-values))
+         #`(let-values ([(variable ...) expression]) #,(continue #'(variable ...)))]
+        [_ (syntax-error clause "for: unknown configuration clause:")])))
+
   (define handle-iter/config-iter
     (lambda (state cl)
       (define (add-clause! cl)
@@ -355,7 +376,8 @@
         [_ (values #f #f)])))
 
 
-
+
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
 ;;;   clause processors
@@ -384,17 +406,14 @@
               (loop (list-tail remaining (fx1+ arity)) (cons tag seen)
                     (cons (cons tag (list-head (cdr remaining) arity)) result)))))))
 
-  (define *vector-ops*
+  (define *sequence-ops*
     ;; op     nop-args
     '((:from  . 1)
       (:to    . 1)
       (:step  . 1)
       (:rev   . 0)))
-  (define *string-ops*   *vector-ops*)
-  (define *fxvector-ops* *vector-ops*)
-  (define *flvector-ops* *vector-ops*)
   (define *bytevector-ops*
-    (append *vector-ops*
+    (append *sequence-ops*
             '((:big    . 0)
               (:little . 0)
               ;; type: single double u8 s8 u16 s16 ...
@@ -468,11 +487,11 @@
     The `process-list-iter-clause` helper compiles sliced list traversal for `variable` and
     source/options syntax `arguments`. It returns the iterator fragment described above.
     Forward traversal follows list links with constant auxiliary space; backward traversal
-    snapshots only selected positions in a vector. For example, source `(a b c)` with `:from 1` yields
-    `b` and `c` with source positions `1` and `2`, without copying the source.
+    snapshots only selected positions in a vector. For example, source `(a b c)` with
+    `:from 1` yields `b` and `c` with source positions `1` and `2`, without copying the source.
     |#
     (define (process-list-iter-clause variable arguments)
-      (let* ([options (check-ops *vector-ops* (cdr arguments))]
+      (let* ([options (check-ops *sequence-ops* (cdr arguments))]
              [from-option (assoc ':from options)]
              [to-option (assoc ':to options)]
              [step-option (assoc ':step options)]
@@ -555,6 +574,68 @@
                            (list-tail tail step)
                            tail)
                      #'(if forward? (cdr tail) tail)))))))
+    #|proc:process-indexed-sequence
+    The `process-indexed-sequence` helper compiles `variable` over sequence type `type` with
+    source/options syntax `arguments`. It chooses hygienic primitive predicates, lengths, and
+    accessors at expansion time, then shares bounds, reverse, stride, and source-index logic.
+    For example, vector `#(a b c)` with `:rev :step 2` yields `c`, then `a`, at positions 2 and 0.
+    |#
+    (define (process-indexed-sequence variable type arguments)
+      (when (null? arguments) (syntax-error cl "for: missing sequence source:"))
+      (let* ([options (check-ops *sequence-ops* (cdr arguments))]
+             [from-option (assq ':from options)]
+             [to-option (assq ':to options)]
+             [step-option (assq ':step options)]
+             [reverse-option (assq ':rev options)])
+        (let-values ([(predicate length-procedure reference)
+                      (case type
+                        [(:vector) (values #'vector? #'vector-length #'vector-ref)]
+                        [(:string) (values #'string? #'string-length #'string-ref)]
+                        [(:fxvector) (values #'fxvector? #'fxvector-length #'fxvector-ref)]
+                        [(:flvector) (values #'flvector? #'flvector-length #'flvector-ref)])])
+          (with-syntax ([(source size position from to original-from step)
+                         (generate-temporaries '(source size position from to original-from step))]
+                        [who (datum->syntax variable type)])
+            (source-fragment
+             (lambda (body)
+               #`(let ([source #,(car arguments)])
+                   (unless (#,predicate source)
+                     (errorf 'who "invalid sequence source: ~a" source))
+                   (let* ([size (#,length-procedure source)]
+                          [from #,(if from-option (cadr from-option) #'0)]
+                          [to #,(if to-option (cadr to-option) #'size)]
+                          [original-from
+                           (begin
+                             (unless (and (fixnum? from) (fixnum? to)
+                                          (if (fx<= from to)
+                                              (fx<= 0 from to size)
+                                              (fx<= -1 to from (fx1- size))))
+                               (errorf 'who "invalid source bounds: ~a to ~a, length ~a"
+                                       from to size))
+                             from)]
+                          [from #,(if reverse-option
+                                      #'(if (fx<= from to) (fx1- to) (fx1+ to)) #'from)]
+                          [to #,(if reverse-option
+                                    #'(if (fx<= original-from to)
+                                          (fx1- original-from) (fx1+ original-from)) #'to)]
+                          [step #,(if step-option
+                                      #`(let ([stride #,(cadr step-option)])
+                                          (unless (and (positive-natural? stride) (exact? stride))
+                                            (errorf 'who
+                                                    "step has to be an exact positive integer: ~a"
+                                                    stride))
+                                          (let ([stride (min stride (abs (fx- to from)))])
+                                            (if (fx<= from to) stride (fx- stride))))
+                                      #'(if (fx<= from to) 1 -1))])
+                     #,body)))
+             #'[position from]
+             #'(if (fx<= from to) (fx>= position to) (fx<= position to))
+             #'(if (fx> step 0)
+                   (if (fx>= step (fx- to position)) to (fx+ position step))
+                   (if (fx<= step (fx- to position)) to (fx+ position step)))
+             (lambda (body)
+               #`(let ([#,variable (#,reference source position)]) #,body))
+             #'position)))))
     (define (process-single-var-iter-clause v ty op*)
       (define (numeric-next step)
         #`(let ([next (+ #,v #,step)])
@@ -684,297 +765,8 @@
                    (lambda (e)
                      #`(let ([#,v (car t-ls)])
                          #,e))))]
-          [:vector
-           (when (< nops 1)
-             (syntax-error op* "invalid number of options for iter type `:vector`:"))
-           ;; op*: ((:from 10) (:until 20) (:step 2) (:rev))
-           (let* ([ops (check-ops *vector-ops* (cdr op*))])
-             ;; (println "ops: ~a" ops)
-             ;; all args are syntax objs
-             (let ([op-from (assoc ':from ops)]
-                   [op-to   (assoc ':to   ops)]
-                   [op-step (assoc ':step ops)]
-                   [op-rev  (assoc ':rev  ops)])
-               ;; (println "op-from: ~a" op-from)
-               ;; (println "op-to:   ~a" op-to)
-               ;; (println "op-step: ~a" op-step)
-               ;; (println "op-rev:  ~a" op-rev)
-               ;; Q: how to use these ops?
-               (with-syntax ([(t-vec t-len t-i t-from t-to t-step)
-                              (generate-temporaries '(t-vec t-len t-i t-from t-to t-step))])
-                 (source-fragment (lambda (e)
-                         #`(let ([t-vec #,(car op*)]) ; it seems tycheck can be put here
-                             (unless (vector? t-vec)
-                               (errorf ':vector "not a vector: ~a" t-vec))
-                             (let* ([t-len (vector-length t-vec)]
-                                    [t-from #,(if op-from
-                                                  (cadr op-from)
-                                                  #'0)]
-                                    [t-to   #,(if op-to
-                                                  (cadr op-to)
-                                                  #'t-len)]
-                                    ;; handle :rev
-                                    [tt-from
-                                     (begin
-                                       (unless (and (fixnum? t-from) (fixnum? t-to)
-                                                    (if (fx<= t-from t-to)
-                                                        (fx<= 0 t-from t-to t-len)
-                                                        (fx<= -1 t-to t-from (fx1- t-len))))
-                                         (errorf ':vector "invalid source bounds: ~a to ~a, length ~a"
-                                                 t-from t-to t-len))
-                                       t-from)]
-                                    [t-from #,(if op-rev
-                                                  #'(if (<= t-from t-to)
-                                                        (sub1 t-to)
-                                                        (add1 t-to))
-                                                  #'t-from)]
-                                    [t-to   #,(if op-rev
-                                                  #'(if (<= tt-from t-to)
-                                                        (sub1 tt-from)
-                                                        (add1 tt-from))
-                                                  #'t-to)]
-                                    [t-step #,(if op-step
-                                                  (let ([s (cadr op-step)])
-                                                    #`(let ([s #,s])
-                                                        (unless (and (positive-natural? s) (exact? s))
-                                                          (errorf ':vector "step has to be an exact positive integer: ~a" s))
-                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
-                                                          (if (fx<= t-from t-to)
-                                                              stride
-                                                              (fx- stride)))))
-                                                  #'(if (<= t-from t-to)
-                                                        1
-                                                        -1))])
-                               ;; (println ":vector :from ~a :to ~a :step ~a" t-from t-to t-step)
-                               #,e)))
-                       #`[t-i t-from]
-                       #`(if (fx<= t-from t-to)
-                             (fx>= t-i t-to)
-                             (fx<= t-i t-to))
-                       #`(if (fx> t-step 0)
-                               (if (fx>= t-step (fx- t-to t-i))
-                                   t-to
-                                   (fx+ t-i t-step))
-                               (if (fx<= t-step (fx- t-to t-i))
-                                   t-to
-                                   (fx+ t-i t-step)))
-                       (lambda (e)
-                         #`(let ([#,v (vector-ref t-vec t-i)])
-                             #,e))
-                       #'t-i))))]
-          [:string
-           (when (< nops 1)
-             (syntax-error op* "invalid number of options for iter type `:string`:"))
-           (let* ([ops (check-ops *string-ops* (cdr op*))])
-             ;; all args are syntax objs
-             (let ([op-from (assoc ':from ops)]
-                   [op-to   (assoc ':to   ops)]
-                   [op-step (assoc ':step ops)]
-                   [op-rev  (assoc ':rev  ops)])
-               (with-syntax ([(t-vec t-len t-i t-from t-to t-step)
-                              (generate-temporaries '(t-vec t-len t-i t-from t-to t-step))])
-                 (source-fragment (lambda (e)
-                         #`(let ([t-vec #,(car op*)]) ; it seems tycheck can be put here
-                             (unless (string? t-vec)
-                               (errorf ':string "not a string: ~a" t-vec))
-                             (let* ([t-len (string-length t-vec)]
-                                    [t-from #,(if op-from
-                                                  (cadr op-from)
-                                                  #'0)]
-                                    [t-to   #,(if op-to
-                                                  (cadr op-to)
-                                                  #'t-len)]
-                                    ;; handle :rev
-                                    [tt-from
-                                     (begin
-                                       (unless (and (fixnum? t-from) (fixnum? t-to)
-                                                    (if (fx<= t-from t-to)
-                                                        (fx<= 0 t-from t-to t-len)
-                                                        (fx<= -1 t-to t-from (fx1- t-len))))
-                                         (errorf ':string "invalid source bounds: ~a to ~a, length ~a"
-                                                 t-from t-to t-len))
-                                       t-from)]
-                                    [t-from #,(if op-rev
-                                                  #'(if (<= t-from t-to)
-                                                        (sub1 t-to)
-                                                        (add1 t-to))
-                                                  #'t-from)]
-                                    [t-to   #,(if op-rev
-                                                  #'(if (<= tt-from t-to)
-                                                        (sub1 tt-from)
-                                                        (add1 tt-from))
-                                                  #'t-to)]
-                                    [t-step #,(if op-step
-                                                  (let ([s (cadr op-step)])
-                                                    #`(let ([s #,s])
-                                                        (unless (and (positive-natural? s) (exact? s))
-                                                          (errorf ':string "step has to be an exact positive integer: ~a" s))
-                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
-                                                          (if (fx<= t-from t-to)
-                                                              stride
-                                                              (fx- stride)))))
-                                                  #'(if (<= t-from t-to)
-                                                        1
-                                                        -1))])
-                               ;; (println ":string :from ~a :to ~a :step ~a" t-from t-to t-step)
-                               #,e)))
-                       #`[t-i t-from]
-                       #`(if (fx<= t-from t-to)
-                             (fx>= t-i t-to)
-                             (fx<= t-i t-to))
-                       #`(if (fx> t-step 0)
-                               (if (fx>= t-step (fx- t-to t-i))
-                                   t-to
-                                   (fx+ t-i t-step))
-                               (if (fx<= t-step (fx- t-to t-i))
-                                   t-to
-                                   (fx+ t-i t-step)))
-                       (lambda (e)
-                         #`(let ([#,v (string-ref t-vec t-i)])
-                             #,e))
-                       #'t-i))))]
-          [:fxvector
-           (when (< nops 1)
-             (syntax-error op* "invalid number of options for iter type `:fxvector`:"))
-           (let* ([ops (check-ops *fxvector-ops* (cdr op*))])
-             ;; all args are syntax objs
-             (let ([op-from (assoc ':from ops)]
-                   [op-to   (assoc ':to   ops)]
-                   [op-step (assoc ':step ops)]
-                   [op-rev  (assoc ':rev  ops)])
-               (with-syntax ([(t-vec t-len t-i t-from t-to t-step)
-                              (generate-temporaries '(t-vec t-len t-i t-from t-to t-step))])
-                 (source-fragment (lambda (e)
-                         #`(let ([t-vec #,(car op*)]) ; it seems tycheck can be put here
-                             (unless (fxvector? t-vec)
-                               (errorf ':fxvector "not a fxvector: ~a" t-vec))
-                             (let* ([t-len (fxvector-length t-vec)]
-                                    [t-from #,(if op-from
-                                                  (cadr op-from)
-                                                  #'0)]
-                                    [t-to   #,(if op-to
-                                                  (cadr op-to)
-                                                  #'t-len)]
-                                    ;; handle :rev
-                                    [tt-from
-                                     (begin
-                                       (unless (and (fixnum? t-from) (fixnum? t-to)
-                                                    (if (fx<= t-from t-to)
-                                                        (fx<= 0 t-from t-to t-len)
-                                                        (fx<= -1 t-to t-from (fx1- t-len))))
-                                         (errorf ':fxvector "invalid source bounds: ~a to ~a, length ~a"
-                                                 t-from t-to t-len))
-                                       t-from)]
-                                    [t-from #,(if op-rev
-                                                  #'(if (<= t-from t-to)
-                                                        (sub1 t-to)
-                                                        (add1 t-to))
-                                                  #'t-from)]
-                                    [t-to   #,(if op-rev
-                                                  #'(if (<= tt-from t-to)
-                                                        (sub1 tt-from)
-                                                        (add1 tt-from))
-                                                  #'t-to)]
-                                    [t-step #,(if op-step
-                                                  (let ([s (cadr op-step)])
-                                                    #`(let ([s #,s])
-                                                        (unless (and (positive-natural? s) (exact? s))
-                                                          (errorf ':fxvector "step has to be an exact positive integer: ~a" s))
-                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
-                                                          (if (fx<= t-from t-to)
-                                                              stride
-                                                              (fx- stride)))))
-                                                  #'(if (<= t-from t-to)
-                                                        1
-                                                        -1))])
-                               ;; (println ":fxvector :from ~a :to ~a :step ~a" t-from t-to t-step)
-                               #,e)))
-                       #`[t-i t-from]
-                       #`(if (fx<= t-from t-to)
-                             (fx>= t-i t-to)
-                             (fx<= t-i t-to))
-                       #`(if (fx> t-step 0)
-                               (if (fx>= t-step (fx- t-to t-i))
-                                   t-to
-                                   (fx+ t-i t-step))
-                               (if (fx<= t-step (fx- t-to t-i))
-                                   t-to
-                                   (fx+ t-i t-step)))
-                       (lambda (e)
-                         #`(let ([#,v (fxvector-ref t-vec t-i)])
-                             #,e))
-                       #'t-i))))]
-          [:flvector
-           (when (< nops 1)
-             (syntax-error op* "invalid number of options for iter type `:flvector`:"))
-           (let* ([ops (check-ops *flvector-ops* (cdr op*))])
-             ;; all args are syntax objs
-             (let ([op-from (assoc ':from ops)]
-                   [op-to   (assoc ':to   ops)]
-                   [op-step (assoc ':step ops)]
-                   [op-rev  (assoc ':rev  ops)])
-               (with-syntax ([(t-vec t-len t-i t-from t-to t-step)
-                              (generate-temporaries '(t-vec t-len t-i t-from t-to t-step))])
-                 (source-fragment (lambda (e)
-                         #`(let ([t-vec #,(car op*)]) ; it seems tycheck can be put here
-                             (unless (flvector? t-vec)
-                               (errorf ':flvector "not a flvector: ~a" t-vec))
-                             (let* ([t-len (flvector-length t-vec)]
-                                    [t-from #,(if op-from
-                                                  (cadr op-from)
-                                                  #'0)]
-                                    [t-to   #,(if op-to
-                                                  (cadr op-to)
-                                                  #'t-len)]
-                                    ;; handle :rev
-                                    [tt-from
-                                     (begin
-                                       (unless (and (fixnum? t-from) (fixnum? t-to)
-                                                    (if (fx<= t-from t-to)
-                                                        (fx<= 0 t-from t-to t-len)
-                                                        (fx<= -1 t-to t-from (fx1- t-len))))
-                                         (errorf ':flvector "invalid source bounds: ~a to ~a, length ~a"
-                                                 t-from t-to t-len))
-                                       t-from)]
-                                    [t-from #,(if op-rev
-                                                  #'(if (<= t-from t-to)
-                                                        (sub1 t-to)
-                                                        (add1 t-to))
-                                                  #'t-from)]
-                                    [t-to   #,(if op-rev
-                                                  #'(if (<= tt-from t-to)
-                                                        (sub1 tt-from)
-                                                        (add1 tt-from))
-                                                  #'t-to)]
-                                    [t-step #,(if op-step
-                                                  (let ([s (cadr op-step)])
-                                                    #`(let ([s #,s])
-                                                        (unless (and (positive-natural? s) (exact? s))
-                                                          (errorf ':flvector "step has to be an exact positive integer: ~a" s))
-                                                        (let ([stride (min s (abs (fx- t-to t-from)))])
-                                                          (if (fx<= t-from t-to)
-                                                              stride
-                                                              (fx- stride)))))
-                                                  #'(if (<= t-from t-to)
-                                                        1
-                                                        -1))])
-                               ;; (println ":flvector :from ~a :to ~a :step ~a" t-from t-to t-step)
-                               #,e)))
-                       #`[t-i t-from]
-                       #`(if (fx<= t-from t-to)
-                             (fx>= t-i t-to)
-                             (fx<= t-i t-to))
-                       #`(if (fx> t-step 0)
-                               (if (fx>= t-step (fx- t-to t-i))
-                                   t-to
-                                   (fx+ t-i t-step))
-                               (if (fx<= t-step (fx- t-to t-i))
-                                   t-to
-                                   (fx+ t-i t-step)))
-                       (lambda (e)
-                         #`(let ([#,v (flvector-ref t-vec t-i)])
-                             #,e))
-                       #'t-i))))]
+          [(:vector :string :fxvector :flvector)
+           (process-indexed-sequence v ty op*)]
           [:bytevector
            (when (< nops 1)
              (syntax-error op* "invalid number of options for iter type `:bytevector`:"))
@@ -1022,13 +814,12 @@
                               (generate-temporaries '(t-vec t-len t-i t-from t-to t-step))])
                  (let ([vref (datum->syntax #'bytevector-u8-ref (caddr (assoc op-type *bv-table*)))]
                        [size (datum->syntax v (cadr  (assoc op-type *bv-table*)))])
-                   ;; (println "vref: ~a size: ~a" vref size)
                    (source-fragment (lambda (e)
                            #`(let ([t-vec #,(car op*)])
                                (unless (bytevector? t-vec)
                                  (errorf ':bytevector "not a bytevector: ~a" t-vec))
                                (let* ([t-len (bytevector-length t-vec)]
-                                      ;; TODO in terms of what, bytes?
+                                      ;; Bounds are byte offsets.
                                       [t-from #,(if op-from
                                                     (cadr op-from)
                                                     #'0)]
@@ -1073,7 +864,6 @@
                                                     #`(if (<= t-from t-to)
                                                           (fx*  1 #,size)
                                                           (fx* -1 #,size)))])
-                                 ;; (println ":bytevector :from ~a :to ~a :step ~a" t-from t-to t-step)
                                  #,e)))
                          #`[t-i t-from]
                          #`(if (fx<= t-from t-to)
@@ -1203,7 +993,7 @@
                                  (append '((:guard . 1) (:index . 1))
                                          (case type
                                            [(:list :vector :string :fxvector :flvector)
-                                            *vector-ops*]
+                                            *sequence-ops*]
                                            [(:bytevector) *bytevector-ops*]
                                            [else '()])))])
               (cond
@@ -1332,7 +1122,6 @@
     (process-iter-clause/direct clause #f))
 
   (define (process-iter-clauses cl*)
-    ;; (for-each displayln cl*)
     (map (lambda (clause) (process-iter-clause/direct clause (null? (cdr cl*)))) cl*))
 
 
