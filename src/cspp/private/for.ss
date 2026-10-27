@@ -468,7 +468,7 @@
     The `process-list-iter-clause` helper compiles sliced list traversal for `variable` and
     source/options syntax `arguments`. It returns the iterator fragment described above.
     Forward traversal follows list links with constant auxiliary space; backward traversal
-    snapshots the source in a vector. For example, source `(a b c)` with `:from 1` yields
+    snapshots only selected positions in a vector. For example, source `(a b c)` with `:from 1` yields
     `b` and `c` with source positions `1` and `2`, without copying the source.
     |#
     (define (process-list-iter-clause variable arguments)
@@ -477,24 +477,22 @@
              [to-option (assoc ':to options)]
              [step-option (assoc ':step options)]
              [reverse-option (assoc ':rev options)])
-        (with-syntax ([(source size from to original-from step position forward? tail snapshot)
+        (with-syntax ([(source size from to original-from step position forward? tail snapshot complete-snapshot count base stride)
                        (generate-temporaries
-                        '(source size from to original-from step position forward? tail snapshot))])
+                        '(source size from to original-from step position forward? tail snapshot complete-snapshot count base stride))])
           (source-fragment
            (lambda (body)
              #`(let ([source #,(car arguments)])
                  (unless (list? source) (errorf ':list "not a list: ~a" source))
                  (let* ([from #,(if from-option (cadr from-option) #'0)]
                         [to #,(if to-option (cadr to-option) #'#f)]
-                        ;; A backward snapshot supplies its own length, avoiding another scan.
-                        [snapshot
-                         (and (fixnum? from)
-                              #,(if to-option
-                                    #`(and (fixnum? to)
-                                           (#,(if reverse-option #'fx< #'fx>) from to))
-                                    (if reverse-option #'#t #'#f))
-                              (list->vector source))]
-                        [size (if snapshot (vector-length snapshot) (length source))]
+                        ;; The common full reverse already needs every source element.
+                        [complete-snapshot
+                         #,(if (and reverse-option (not from-option) (not to-option)
+                                    (not step-option))
+                               #'(list->vector source) #'#f)]
+                        [size (if complete-snapshot
+                                  (vector-length complete-snapshot) (length source))]
                         [to #,(if to-option #'to #'size)]
                         [original-from
                          (begin
@@ -522,7 +520,22 @@
                                         (let ([stride (min stride (abs (fx- to from)))])
                                           (if forward? stride (fx- stride))))
                                     #'(if forward? 1 -1))]
-                        [tail (if (fx< from to) (list-tail source from) '())])
+                        [tail (if (fx< from to) (list-tail source from) '())]
+                        [stride (if forward? step (fx- step))]
+                        [count (if (fx> from to)
+                                   (fx1+ (fxquotient (fx1- (fx- from to)) stride)) 0)]
+                        [base (if (fxzero? count) 0
+                                  (fx- from (fx* (fx1- count) stride)))]
+                        [snapshot
+                         (or complete-snapshot
+                             (and (not forward?)
+                                  (let ([result (make-vector count)])
+                                    (unless (fxzero? count)
+                                      (let fill ([source (list-tail source base)] [index 0])
+                                        (vector-set! result index (car source))
+                                        (unless (fx= (fx1+ index) count)
+                                          (fill (list-tail source stride) (fx1+ index)))))
+                                    result)))])
                    #,body)))
            #'[position from]
            #'(if forward? (fx>= position to) (fx<= position to))
@@ -532,7 +545,7 @@
                      (if (fx<= step (fx- to position)) to (fx+ position step)))
                #'(if forward? (fx1+ position) (fx1- position)))
            (lambda (body)
-             #`(let ([#,variable (if forward? (car tail) (vector-ref snapshot position))])
+             #`(let ([#,variable (if forward? (car tail) (vector-ref snapshot (fxquotient (fx- position base) stride)))])
                  #,body))
            #'position
            #f

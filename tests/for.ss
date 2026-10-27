@@ -2528,3 +2528,16 @@
                  (for/fold ([:init result '()] [:finish (reverse result)]
                              [x :nums 0 2 :index i :guard #t] [other 2])
                    (visit) (cons (list x i) result)))))))
+
+(mat backward-list-slice-storage
+     (let* ([source (iota 100000)]
+            [before (statistics)]
+            [result (for/list ([x :list source :from 1 :to 0]) x)]
+            [bytes (sstats-bytes (sstats-difference (statistics) before))])
+       (and (equal? '(1) result) (< bytes 200000)))
+
+     (let* ([source (iota 100000)]
+            [before (statistics)]
+            [result (for/list ([x :list source :from 99999 :to -1 :step 100000]) x)]
+            [bytes (sstats-bytes (sstats-difference (statistics) before))])
+       (and (equal? '(99999) result) (< bytes 200000))))

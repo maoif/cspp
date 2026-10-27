@@ -105,7 +105,7 @@
   the complete chunks anchored at the original start, then traverses them in reverse order.
   Numeric ranges, hashtables, and iterators count source items starting from zero.
   Lists support the sequence traversal options. Forward list slices use constant auxiliary space;
-  backward traversal snapshots the source in a vector using O(n) space. Bounds checks scan the list.
+  backward traversal snapshots selected values in a vector. Bounds checks scan the whole list.
   Sequence `:from` and `:to` require fixnum source positions within the selected source.
   Ascending slices use `0 <= from <= to <= length`; descending slices use
   `-1 <= to <= from < length`. Sequence `:step` requires an exact positive integer.
