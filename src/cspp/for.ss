@@ -126,6 +126,14 @@
   unknown-length iterators, discovering exhaustion can consume one unpaired companion value.
   |#
   (define-syntax for/fold
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/fold #t clauses body ...)]))
+
+  #|macro:$for/fold
+  The `$for/fold` helper parses and compiles one loop. `folding?` permits accumulator and finish
+  clauses only for the public fold form. Wrappers delegate here without reparsing the clauses.
+  |#
+  (define-syntax $for/fold
     (lambda (stx)
       ;; this differs from that of for*
       (define handler
@@ -165,7 +173,7 @@
          `(config config ,handle-config)
          `(config end    epsilon)))
       (syntax-case stx ()
-        [(_ (cl* ...) body* ...)
+        [(_ folding? (cl* ...) body* ...)
          (let* ([fragments (handler (make-eq-hashtable) #'(cl* ...))]
                 [frag-init   (hashtable-ref fragments 'init #f)]
                 [frag-index  (hashtable-ref fragments 'index #f)]
@@ -180,6 +188,9 @@
                                    (cons conf (car (generate-temporaries '(guard-index))))]
                                   [_ #f]))
                               (or frag-config '())))])
+           (unless (datum folding?)
+             (when (or frag-init frag-finish)
+               (syntax-error stx "for: :init and :finish require a fold form:")))
            (with-syntax ([(for-loop t-acc t-finish state-acc state-index)
                           (generate-temporaries '(for-loop t-acc t-finish state-acc state-index))])
              (let* ([iter-frags (process-iter-clauses (hashtable-ref fragments 'iter #f))]
@@ -395,6 +406,14 @@
   or an unspecified value when that expression is omitted.
   |#
   (define-syntax for*/fold
+    (syntax-rules ()
+      [(_ clauses body ...) ($for*/fold #t clauses body ...)]))
+
+  #|macro:$for*/fold
+  The `$for*/fold` helper parses and compiles one loop. `folding?` permits accumulator and finish
+  clauses only for the public fold form. Wrappers delegate here without reparsing the clauses.
+  |#
+  (define-syntax $for*/fold
     (lambda (stx)
       (define handler
         (make-clause-handler
@@ -437,12 +456,15 @@
          `(e5 iter ,handle-iter/config-iter)
          `(e5 end  epsilon)))
       (syntax-case stx ()
-        [(_ (cl* ...) body* ...)
+        [(_ folding? (cl* ...) body* ...)
          (let* ([fragments (handler (make-eq-hashtable) #'(cl* ...))]
                 [frag-init        (hashtable-ref fragments 'init #f)]
                 [frag-index       (hashtable-ref fragments 'index #f)]
                 [frag-finish      (hashtable-ref fragments 'finish #f)]
                 [frag-iter/config (hashtable-ref fragments 'iter/config #f)])
+           (unless (datum folding?)
+             (when (or frag-init frag-finish)
+               (syntax-error stx "for: :init and :finish require a fold form:")))
            (with-syntax ([(t-acc t-finish state-acc state-index)
                           (generate-temporaries '(t-acc t-finish state-acc state-index))])
              (let* ([init-def (if frag-init
@@ -637,76 +659,106 @@
   `for/fold`.
   |#
   (define-syntax for
-    (lambda (stx)
-      (define handler
-        (make-clause-handler
-         `(start index ,handle-index)
-         `(start e0    epsilon)
-
-         `(index iter0 ,handle-iter)
-         `(e0    iter0 ,handle-iter)
-
-         `(iter0 iter ,handle-iter)
-         `(iter0 e1   epsilon)
-
-         `(iter iter   ,handle-iter)
-         `(iter config ,handle-config)
-         `(iter e2     epsilon)
-
-         `(e1 config ,handle-config)
-         `(e1 e2     epsilon)
-
-         `(config config ,handle-config)
-         `(config end    epsilon)
-
-         `(e2 end epsilon)))
-      (syntax-case stx ()
-        [(_ (cl* ...) body* ...)
-         (let ([_ (handler (make-eq-hashtable) #'(cl* ...))])
-           #'(for/fold (cl* ...) body* ...))])))
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/fold #f clauses body ...)]))
 
 
-  #|macro:$for/list
-  The `$for/list` helper collects results using `loop`, either `for` or `for*`; `who` names the
-  public form in errors. It accepts a leading global index and optional `:length` before the
-  ordinary loop clauses. A length is a nonnegative fixnum limiting accepted body results across
-  all loop levels; zero evaluates neither sources nor the body. For example, a limit of two
-  over source `(0 1 2)` returns `(0 1)`. Without a limit it uses the original list-builder loop.
+  #|proc:make-vector-collector
+  The `make-vector-collector` helper returns a procedure that accepts one value to append,
+  or no arguments to return an exact-sized vector of all collected values. It stores values
+  in vector blocks, starting at 16 slots and growing up to 1024 slots per block, then copies
+  each block once into the result. For example, calls with `a`, `b`, then no arguments return
+  `#(a b)`. No intermediate list of individual results is allocated.
   |#
-  (define-syntax $for/list
+  (define make-vector-collector
+    (lambda ()
+      (let ([completed '()] [block #f] [position 0] [count 0])
+        (case-lambda
+          [()
+           (let ([result (make-vector count)])
+             (let copy ([blocks (reverse completed)] [offset 0])
+               (if (null? blocks)
+                   (when block (vector-copy! block 0 result offset position))
+                   (let ([size (vector-length (car blocks))])
+                     (vector-copy! (car blocks) 0 result offset size)
+                     (copy (cdr blocks) (fx+ offset size)))))
+             result)]
+          [(value)
+           (unless block (set! block (make-vector 16)))
+           (when (fx= position (vector-length block))
+             (set! completed (cons block completed))
+             (set! block (make-vector (fxmin 1024 (fx* 2 (vector-length block)))))
+             (set! position 0))
+           (vector-set! block position value)
+           (set! position (fx1+ position))
+           (set! count (fx1+ count))]))))
+
+  #|macro:$for/collect
+  The `$for/collect` helper parses collection options once for `loop`, either `for` or `for*`.
+  `vector?` selects vector storage, and `who` names the public form in errors. A leading global
+  index precedes optional length and fill clauses; the loop compiler parses ordinary clauses.
+  Lists use a list builder, vectors use a block collector or preallocated vector. For example,
+  `:length 2` limits collected results to two and skips all source setup when it is zero.
+  |#
+  (define-syntax $for/collect
     (lambda (stx)
-      (define (generate loop who limit clauses body)
-        (with-syntax ([loop loop] [who who] [(clause ...) clauses] [(body ...) body])
-          (if limit
-              #`(let ([limit #,limit])
-                  (unless (and (fixnum? limit) (fx>= limit 0))
-                    (errorf 'who "length is not a nonnegative fixnum: ~a" limit))
-                  (let ([builder (make-list-builder)] [position 0])
-                    (unless (fxzero? limit)
-                      ;; Leave all nested levels immediately after collecting the limit.
-                      (call/1cc
-                       (lambda (finish)
-                         (loop (clause ...)
-                           (builder (begin body ...))
-                           (set! position (fx1+ position))
-                           (when (fx= position limit) (finish (void)))))))
-                    (builder)))
-              #'(let ([builder (make-list-builder)])
-                  (loop (clause ...) (builder (begin body ...)))
-                  (builder)))))
+      (define (generate loop vector? who clauses body)
+        (let* ([index (and (pair? clauses) (syntax-case (car clauses) ()
+                          [(tag name) (kw:index? #'tag) (car clauses)] [_ #f]))]
+               [clauses (if index (cdr clauses) clauses)]
+               [length (and (pair? clauses) (syntax-case (car clauses) ()
+                           [(tag value) (kw:length? #'tag) #'value] [_ #f]))]
+               [clauses (if length (cdr clauses) clauses)]
+               [fill (and (pair? clauses) (syntax-case (car clauses) ()
+                         [(tag value) (kw:fill? #'tag) #'value] [_ #f]))]
+               [clauses (if fill (cdr clauses) clauses)])
+          (when (and fill (not (and vector? length)))
+            (syntax-error stx "for: :fill requires a vector form with :length:"))
+          (when (and length (pair? clauses)
+                     (syntax-case (car clauses) () [(tag . rest) (kw:index? #'tag)] [_ #f]))
+            (syntax-error (car clauses) "global :index must precede :length:"))
+          (with-syntax ([loop loop] [who who] [(clause ...) (if index (cons index clauses) clauses)]
+                        [(body ...) body])
+            (if length
+                #`(let ([limit #,length])
+                    (unless (and (fixnum? limit) (fx>= limit 0))
+                      (errorf 'who "length is not a nonnegative fixnum: ~a" limit))
+                    (let ([storage #,(if vector? #`(make-vector limit #,(or fill #'#f))
+                                        #'(make-list-builder))]
+                          [position 0])
+                      (unless (fxzero? limit)
+                        ;; Leave all loop levels immediately after collecting the limit.
+                        (call/1cc
+                         (lambda (finish)
+                           (loop (clause ...)
+                             #,(if vector?
+                                   #'(vector-set! storage position (begin body ...))
+                                   #'(storage (begin body ...)))
+                             (set! position (fx1+ position))
+                             (when (fx= position limit) (finish (void)))))))
+                      #,(if vector? #'storage #'(storage))))
+                (let ([inferred
+                       (and vector?
+                            (syntax-case clauses ()
+                              [((variable tag bound))
+                               (eq? (datum tag) ':fxiota)
+                               (with-syntax ([(size) (generate-temporaries '(size))])
+                                 #`(let ([size bound])
+                                     (unless (and (fixnum? size) (fx>= size 0))
+                                       (errorf ':fxiota "not a nonnegative fixnum: ~a" size))
+                                     #,(generate #'loop #t #'who
+                                                 (append (if index (list index) '())
+                                                         #'((:length size) (variable tag size)))
+                                                 #'(body ...))))]
+                              [_ #f]))])
+                  (or inferred
+                      #`(let ([builder #,(if vector? #'(make-vector-collector)
+                                            #'(make-list-builder))])
+                          (loop (clause ...) (builder (begin body ...)))
+                          (builder))))))))
       (syntax-case stx ()
-        [(_ loop who clauses body ...)
-         (syntax-case #'clauses ()
-           [((index-tag index) (length-tag limit) clause ...)
-            (and (kw:index? #'index-tag) (kw:length? #'length-tag))
-            (generate #'loop #'who #'limit #'((index-tag index) clause ...) #'(body ...))]
-           [((length-tag limit) (index-tag . arguments) clause ...)
-            (and (kw:length? #'length-tag) (kw:index? #'index-tag))
-            (syntax-error #'(index-tag . arguments) "global :index must precede :length:")]
-           [((length-tag limit) clause ...)
-            (kw:length? #'length-tag)
-            (generate #'loop #'who #'limit #'(clause ...) #'(body ...))]
-           [_ (generate #'loop #'who #f #'clauses #'(body ...))])])))
+        [(_ loop vector? who (clause ...) body ...)
+         (generate #'loop (datum vector?) #'who #'(clause ...) #'(body ...))])))
 
   #|doc
 (for/list (<index-clause>?
@@ -724,10 +776,8 @@
   For example, `(for/list ([:length 2] [x 5]) x)` returns `(0 1)`.
   |#
   (define-syntax for/list
-    (lambda (stx)
-      (syntax-case stx ()
-        [(_ (cl* ...) body* ...)
-         #'($for/list for for/list (cl* ...) body* ...)])))
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/collect for #f for/list clauses body ...)]))
 
 
   #|doc
@@ -744,82 +794,14 @@
   #|macro:for/vector
   The `for/vector` macro runs `for` and collects body results in a vector.
   With `:length`, it preallocates that many slots and stops when full; `:fill` supplies the
-  initial value. Without `:length`, it grows a list builder and converts the results to a vector.
+  initial value. Without `:length`, it collects values in vector blocks and copies them into
+  the final vector. A single unfiltered `:fxiota` source supplies an inferred exact length.
   `:fill` requires `:length`; a fill-only form is a syntax violation. The fill expression is
   evaluated once, even when the length is zero.
   |#
   (define-syntax for/vector
-    (lambda (stx)
-      (define handler
-        (make-clause-handler
-         `(start index ,handle-index)
-         `(start e0    epsilon)
-
-         `(index length ,handle-length)
-         `(index e1     epsilon)
-
-         `(e0 length ,handle-length)
-         `(e0 e1     epsilon)
-
-         `(length fill ,handle-fill)
-         `(length e2   epsilon)
-
-         `(e1 fill ,handle-fill)
-         `(e1 e2   epsilon)
-
-         `(fill iter0 ,handle-iter)
-         `(e2   iter0 ,handle-iter)
-
-         `(iter0 iter ,handle-iter)
-         `(iter0 e3   epsilon)
-
-         `(iter iter   ,handle-iter)
-         `(iter config ,handle-config)
-         `(iter e4     epsilon)
-
-         `(e3 config ,handle-config)
-         `(e3 e4     epsilon)
-
-         `(config config ,handle-config)
-         `(config end    epsilon)
-
-         `(e4 end epsilon)))
-      (syntax-case stx ()
-        [(_ (cl* ...) body* ...)
-         (let* ([fragments  (handler (make-eq-hashtable) #'(cl* ...))]
-                [frag-len   (hashtable-ref fragments 'length #f)]
-                [frag-index (hashtable-ref fragments 'index  #f)]
-                [frag-fill  (hashtable-ref fragments 'fill   #f)]
-                ;; feed the clauses w/o for/vector extensions
-                [cl* (filter id `(,(hashtable-ref fragments 'index  #f)
-                                  ;; TODO what if there's no iter clauses?
-                                  ,@(hashtable-ref fragments 'iter '(#f))
-                                  ,@(hashtable-ref fragments 'config  '())))])
-           (when (and frag-fill (not frag-len))
-             (syntax-error frag-fill "for/vector: :fill requires :length:"))
-           (if frag-len
-               #`(let ([len #,(syntax-case frag-len () [(_ l) #'l])])
-                   (unless (and (fixnum? len) (nonnegative? len))
-                     (errorf 'for/vector "length is not a nonnegative fixnum: ~a" len))
-                   (let ([vec (make-vector len
-                                           #,(if frag-fill
-                                                 (syntax-case frag-fill () [(_ v) #'v])
-                                                 #'#f))]
-                         [position 0])
-                     (unless (fx= len 0)
-                       ;; Escape all loop levels as soon as the vector is full.
-                       (call/1cc
-                        (lambda (finish)
-                          (for (#,@cl*)
-                            (vector-set! vec position (begin body* ...))
-                            (set! position (fx1+ position))
-                            (when (fx= position len)
-                              (finish (void)))))))
-                     vec))
-               #`(let ([lb (make-list-builder)])
-                   (for (#,@cl*)
-                     (lb (begin body* ...)))
-                   (list->vector (lb)))))])))
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/collect for #t for/vector clauses body ...)]))
 
 
   #|doc
@@ -834,36 +816,8 @@
   follow `for*/fold`.
   |#
   (define-syntax for*
-    (lambda (stx)
-      (define handler
-        (make-clause-handler
-         `(start index ,handle-index)
-         `(start e0    epsilon)
-
-         `(index iter0 ,handle-iter/config-iter)
-         `(e0    iter0 ,handle-iter/config-iter)
-
-         `(iter0 config0 ,handle-iter/config-config)
-         `(iter0 e1       epsilon)
-
-         `(config0 config0 ,handle-iter/config-config)
-         `(config0 e2      epsilon)
-
-         `(e1 e2   epsilon)
-         `(e2 iter ,handle-iter/config-iter)
-         `(e2 end  epsilon)
-
-         `(iter config ,handle-iter/config-config)
-         `(iter iter   ,handle-iter/config-iter)
-         `(iter end    epsilon)
-
-         `(config config ,handle-iter/config-config)
-         `(config iter   ,handle-iter/config-iter)
-         `(config end    epsilon)))
-      (syntax-case stx ()
-        [(_ (cl* ...) body* ...)
-         (let ([_ (handler (make-eq-hashtable) #'(cl* ...))])
-           #'(for*/fold (cl* ...) body* ...))])))
+    (syntax-rules ()
+      [(_ clauses body ...) ($for*/fold #f clauses body ...)]))
 
 
   #|doc
@@ -880,10 +834,8 @@
   `(for*/list ([:length 3] [x 2] [y 2]) (list x y))` returns `((0 0) (0 1) (1 0))`.
   |#
   (define-syntax for*/list
-    (lambda (stx)
-      (syntax-case stx ()
-        [(_ (cl* ...) body* ...)
-         #'($for/list for* for*/list (cl* ...) body* ...)])))
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/collect for* #f for*/list clauses body ...)]))
 
 
   #|doc
@@ -895,83 +847,13 @@
   #|macro:for*/vector
   The `for*/vector` macro runs `for*` and collects body results in a vector.
   With `:length`, it preallocates the vector and stops when full; `:fill` supplies its initial
-  value. Without `:length`, it uses a list builder and converts the nested results to a vector.
+  value. Without `:length`, it collects nested results in vector blocks and creates the final
+  vector. A single unfiltered `:fxiota` source supplies an inferred exact length.
   As with `for/vector`, `:fill` requires `:length` and its expression is evaluated once,
   including when the length is zero.
   |#
   (define-syntax for*/vector
-    (lambda (stx)
-      (define handler
-        (make-clause-handler
-         `(start index ,handle-index)
-         `(start e0    epsilon)
-
-         `(index length ,handle-length)
-         `(index e1     epsilon)
-
-         `(e0 length ,handle-length)
-         `(e0 e1     epsilon)
-
-         `(length fill ,handle-fill)
-         `(length e2   epsilon)
-
-         `(e1 fill ,handle-fill)
-         `(e1 e2   epsilon)
-
-         `(fill iter0 ,handle-iter/config-iter)
-         `(e2   iter0 ,handle-iter/config-iter)
-
-         `(iter0 config0 ,handle-iter/config-config)
-         `(iter0 e3       epsilon)
-
-         `(config0 config0 ,handle-iter/config-config)
-         `(config0 e4      epsilon)
-
-         `(e3 e4   epsilon)
-         `(e4 iter ,handle-iter/config-iter)
-         `(e4 end  epsilon)
-
-         `(iter config ,handle-iter/config-config)
-         `(iter iter   ,handle-iter/config-iter)
-         `(iter end    epsilon)
-
-         `(config config ,handle-iter/config-config)
-         `(config iter   ,handle-iter/config-iter)
-         `(config end    epsilon)))
-      (syntax-case stx ()
-        [(_ (cl* ...) body* ...)
-         (let* ([fragments  (handler (make-eq-hashtable) #'(cl* ...))]
-                [frag-len   (hashtable-ref fragments 'length #f)]
-                [frag-index (hashtable-ref fragments 'index  #f)]
-                [frag-fill  (hashtable-ref fragments 'fill   #f)]
-                ;; feed the clauses w/o for/vector extensions
-                [cl* (filter id `(,(hashtable-ref fragments 'index #f)
-                                  ,@(apply append
-                                           (hashtable-ref fragments 'iter/config '(#f)))))])
-           (when (and frag-fill (not frag-len))
-             (syntax-error frag-fill "for*/vector: :fill requires :length:"))
-           (if frag-len
-               #`(let ([len #,(syntax-case frag-len () [(_ l) #'l])])
-                   (unless (and (fixnum? len) (nonnegative? len))
-                     (errorf 'for*/vector "length is not a nonnegative fixnum: ~a" len))
-                   (let ([vec (make-vector len
-                                           #,(if frag-fill
-                                                 (syntax-case frag-fill () [(_ v) #'v])
-                                                 #'#f))]
-                         [position 0])
-                     (unless (fx= len 0)
-                       ;; Escape all loop levels as soon as the vector is full.
-                       (call/1cc
-                        (lambda (finish)
-                          (for* (#,@cl*)
-                            (vector-set! vec position (begin body* ...))
-                            (set! position (fx1+ position))
-                            (when (fx= position len)
-                              (finish (void)))))))
-                     vec))
-               #`(let ([lb (make-list-builder)])
-                   (for* (#,@cl*)
-                     (lb (begin body* ...)))
-                   (list->vector (lb)))))])))
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/collect for* #t for*/vector clauses body ...)]))
 
   )

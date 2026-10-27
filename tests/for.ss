@@ -2541,3 +2541,36 @@
             [result (for/list ([x :list source :from 99999 :to -1 :step 100000]) x)]
             [bytes (sstats-bytes (sstats-difference (statistics) before))])
        (and (equal? '(99999) result) (< bytes 200000))))
+
+(mat vector-collector-storage
+     (let* ([before (statistics)]
+            [result (for/vector ([x :fxiota 100000]) x)]
+            [bytes (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= (vector-length result) 100000)
+            (= (vector-ref result 99999) 99999)
+            (< bytes 2100000)))
+
+     (equal? (list->vector (iota 2049)) (for/vector ([x :fxiota 2049]) x))
+
+     (equal? '#() (for/vector ([x 3] [:guard #f]) x))
+
+     (equal? '#((0 0) (0 1) (1 0) (1 1))
+             (for*/vector ([x 2] [y 2]) (list x y)))
+
+     (equal? '#(0 1 2) (for/vector ([x 10] [:break (= x 3)]) x)))
+
+(mat vector-collector-filtered-storage
+     (let* ([before (statistics)]
+            [result (for/vector ([x :fxiota 100000 :guard (even? x)]) x)]
+            [bytes (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= (vector-length result) 50000)
+            (= (vector-ref result 49999) 99998)
+            (< bytes 1100000)))
+
+     (let ([calls 0])
+       (and (equal? '#(0 1 2)
+                    (for/vector ([x :fxiota (begin (set! calls (+ calls 1)) 3)]) x))
+            (= calls 1)))
+
+     ;; Inferred lengths retain strict source-bound types, including an empty range.
+     (error? (for/vector ([x :fxiota 0.0]) x)))
