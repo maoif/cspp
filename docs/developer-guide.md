@@ -94,7 +94,7 @@ For example:
 ```scheme
 (import (cspp))
 
-(let ([resume #f] [replayed? #f] [first #f])
+(let ([resume #f] [replayed? #f])
   (let ([result
          (for/list ([i :fxiota 3])
            (if (= i 1)
@@ -105,18 +105,27 @@ For example:
                   i))
                i))])
     (if replayed?
-        (list first result)
+        result
         (begin
-          (set! first result)
           (set! replayed? #t)
           (resume 9)))))
-;; Required result: ((0 1 2) (0 9 2))
+;; => (0 9 2)
 ```
 
-Re-entry restores the traversal point at item `1`. The second traversal retains its earlier
-`0`, collects `9`, and continues with `2`. The first returned list must remain unchanged by
-the collector. A vector collector must similarly preserve earlier returned vectors and avoid
-stale write positions. A `:length` limit must remain effective on each replayed path.
+Re-entry restores the traversal point at item `1`. The second traversal collects `9` and
+continues with `2`. Loop parameters restore positions, indexes, accumulator bindings, list
+tails, and vector block cursors. A `:length` limit remains effective on each replayed path,
+and vector writes stay within bounds. These guarantees do not restore mutable storage.
+
+Prefer loop parameters for internal counters and cursors. If a counter must be mutable,
+document where it lives, what advances it, and that continuation re-entry does not reset it.
+
+List cells, output heads, vector buffers, and cached block links remain shared by saved
+continuations. Replay may overwrite earlier results or detach list prefixes; earlier returned
+containers are not guaranteed to remain unchanged. An unbounded vector collector copies its
+current buffered prefix at finalization, while a preallocated vector is reused directly.
+Callers who retain results across replay must account for this sharing and any intervening
+mutation, just as with a raw named loop that writes to outer mutable storage.
 
 `match` must preserve matching progress and accumulated captures across re-entry without
 accidentally duplicating captures or internally modifying an earlier returned capture list.
@@ -136,9 +145,9 @@ interleaving and execution on multiple workers. Test independent calls separatel
 bindings or shared caller-owned objects.
 
 For continuation tests, capture in the middle of a traversal, allow it to finish, then replay
-the saved continuation repeatedly. Verify positions, counters, accumulation, length limits,
-and previously returned objects. Use nondestructive sources to isolate bookkeeping defects
-from the expected effects of consuming an external iterator.
+the saved continuation repeatedly. Verify restored positions, counters, cursors, and length
+limits separately from the documented effects on shared result objects. Use nondestructive
+sources to isolate bookkeeping defects from consumption of an external iterator.
 
 Chez Scheme documents continuation semantics in
 [Control Structures](https://cisco.github.io/ChezScheme/csug/control.html) and primitive thread

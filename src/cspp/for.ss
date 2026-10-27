@@ -131,14 +131,18 @@
   Callers must coordinate shared mutable state and avoid changing a source's traversal structure
   during iteration. A `:iter` source advances destructively and is not rewound by continuation
   re-entry; callers remain responsible for its reset and finalization, including on early exit.
+  Source positions, indexes, guard counts, and fold accumulators are loop parameters, restored
+  on continuation replay. Mutation of an accumulator object or external source is not undone.
   |#
   (define-syntax for/fold
     (syntax-rules ()
-      [(_ clauses body ...) ($for/fold #t clauses body ...)]))
+      [(_ clauses body ...) ($for/fold #t #f clauses body ...)]))
 
   #|macro:$for/fold
   The `$for/fold` helper parses and compiles one loop. `folding?` permits accumulator and finish
   clauses only for the public fold form. Wrappers delegate here without reparsing the clauses.
+  Optional private identifier `counter` adds a body-visit counter as a loop parameter. It is
+  separate from public indexes and is also in scope for an internal collection finish clause.
   |#
   (define-syntax $for/fold
     (lambda (stx)
@@ -180,7 +184,7 @@
          `(config config ,handle-config)
          `(config end    epsilon)))
       (syntax-case stx ()
-        [(_ folding? (cl* ...) body* ...)
+        [(_ folding? counter (cl* ...) body* ...)
          (let* ([fragments (handler (make-eq-hashtable) #'(cl* ...))]
                 [frag-init   (hashtable-ref fragments 'init #f)]
                 [frag-index  (hashtable-ref fragments 'index #f)]
@@ -225,7 +229,8 @@
                                  ;; order matters
                                  (when frag-index (set! res (cons index-def res)))
                                  (when frag-init  (set! res (cons init-def  res)))
-                                 (append res (map (lambda (entry) #`[#,(cdr entry) 0])
+                                 (append res (if (identifier? #'counter) #'([counter 0]) '())
+                                         (map (lambda (entry) #`[#,(cdr entry) 0])
                                                   guard-indices)))]
                     [termination-checks
                      (append
@@ -245,12 +250,14 @@
                                                  res)))
                                (when frag-init
                                  (set! res (cons #'t-acc res)))
-                               (append res (map cdr guard-indices)))]
+                               (append res (if (identifier? #'counter) #'((fx1+ counter)) '())
+                                       (map cdr guard-indices)))]
                     ;; Rejected configuration guards advance sources, not the body count or fold.
                     [skip-updates (append (if frag-init (list #'state-acc) '())
                                           (if frag-index (list #'state-index) '())
                                           (apply append
                                                  (map fragment-updates iter-frags))
+                                          (if (identifier? #'counter) #'(counter) '())
                                           (map cdr guard-indices))]
                     [bind-loop-state
                      (lambda (body)
@@ -277,11 +284,12 @@
                                   #`(for-loop #,@(if frag-init (list #'state-acc) '())
                                               #,@(if frag-index (list #'state-index) '())
                                               #,@(fragment-updates (car iter-frags))
+                                              #,@(if (identifier? #'counter) #'(counter) '())
                                               #,@(map cdr guard-indices)))))
                          (cons bind-loop-state
                                (map (lambda (x*) (fragment-getter x*)) iter-frags)))]
                     [call/finish-proc (if frag-finish
-                                          (let ([params '()])
+                                          (let ([params (if (identifier? #'counter) #'(counter) '())])
                                             (when frag-index
                                               (set! params (cons (syntax-case frag-index ()
                                                                    [(_ v) #'v])
@@ -292,7 +300,8 @@
                                                                  params)))
                                             ;; code to call `t-finish` and its def
                                             (list #`(t-finish #,@(if frag-init (list #'state-acc) '())
-                                                                  #,@(if frag-index (list #'state-index) '()))
+                                                                  #,@(if frag-index (list #'state-index) '())
+                                                                  #,@(if (identifier? #'counter) #'(counter) '()))
                                                   #`(lambda #,params
                                                       #,(syntax-case frag-finish ()
                                                           [(_ e) #'e]))))
@@ -396,11 +405,13 @@
   |#
   (define-syntax for*/fold
     (syntax-rules ()
-      [(_ clauses body ...) ($for*/fold #t clauses body ...)]))
+      [(_ clauses body ...) ($for*/fold #t #f clauses body ...)]))
 
   #|macro:$for*/fold
   The `$for*/fold` helper parses and compiles one loop. `folding?` permits accumulator and finish
   clauses only for the public fold form. Wrappers delegate here without reparsing the clauses.
+  Optional private identifier `counter` travels through all loop levels as a body-visit counter,
+  independently of public index bindings. An internal collection finish clause may use it.
   |#
   (define-syntax $for*/fold
     (lambda (stx)
@@ -445,7 +456,7 @@
          `(e5 iter ,handle-iter/config-iter)
          `(e5 end  epsilon)))
       (syntax-case stx ()
-        [(_ folding? (cl* ...) body* ...)
+        [(_ folding? counter (cl* ...) body* ...)
          (let* ([fragments (handler (make-eq-hashtable) #'(cl* ...))]
                 [frag-init        (hashtable-ref fragments 'init #f)]
                 [frag-index       (hashtable-ref fragments 'index #f)]
@@ -469,7 +480,8 @@
                                    #'state-index
                                    #f)]
                     [init/index-vars (let* ([vars (if frag-index (list index-var)    '())]
-                                            [vars (if frag-init  (cons init-var vars) vars)])
+                                            [vars (if frag-init  (cons init-var vars) vars)]
+                                            [vars (append vars (if (identifier? #'counter) #'(counter) '()))])
                                        vars)]
                     ;; Each loop level pairs a named iterator fragment with its configurations.
                     [iters/configs (map (lambda (i/c)
@@ -477,7 +489,7 @@
                                                 (cdr i/c)))
                                         frag-iter/config)]
                     [call/finish-proc (if frag-finish
-                                          (let ([params '()])
+                                          (let ([params (if (identifier? #'counter) #'(counter) '())])
                                             (when frag-index
                                               (set! params (cons (syntax-case frag-index ()
                                                                    [(_ v) #'v])
@@ -488,7 +500,8 @@
                                                                  params)))
                                             ;; code to call `t-finish` and its def
                                             (list #`(t-finish #,@(if frag-init (list #'state-acc) '())
-                                                                  #,@(if frag-index (list #'state-index) '()))
+                                                                  #,@(if frag-index (list #'state-index) '())
+                                                                  #,@(if (identifier? #'counter) #'(counter) '()))
                                                   #`(lambda #,params
                                                       #,(syntax-case frag-finish ()
                                                           [(_ e) #'e]))))
@@ -500,8 +513,12 @@
                        (if (null? i/c*)
                            (let ([call-loop (lambda (init?)
                                               (if frag-index
-                                                  #`(#,last-forloop #,@init? (fx1+ #,index-var) #,@last-update)
-                                                  #`(#,last-forloop #,@init?                    #,@last-update)))])
+                                                  #`(#,last-forloop #,@init? (fx1+ #,index-var)
+                                                     #,@(if (identifier? #'counter) #'((fx1+ counter)) '())
+                                                     #,@last-update)
+                                                  #`(#,last-forloop #,@init?
+                                                     #,@(if (identifier? #'counter) #'((fx1+ counter)) '())
+                                                     #,@last-update)))])
                              (if frag-init
                                  #`(let ([t-acc (begin body* ...)])
                                      #,(call-loop (list #'t-acc)))
@@ -533,7 +550,10 @@
                                                      (let* ([vars (if frag-index (list index-def)     '())]
                                                             [vars (if frag-init  (cons init-def vars) vars)])
                                                        vars))])
-                                       `(,@vars ,@loop-var
+                                       `(,@vars
+                                         ,@(if (identifier? #'counter)
+                                               (if last-forloop #'([counter counter]) #'([counter 0])) '())
+                                         ,@loop-var
                                          ,@(map (lambda (entry) #`[#,(cdr entry) 0]) guard-indices)))])
                                ;; if current level terminates, call forloop of last level
                                (gen-preloop
@@ -592,6 +612,7 @@
                                                                        #`(let ([break-result e2])
                                                                            (#,last-forloop break-result
                                                                             #,@(if frag-index (list index-var) '())
+                                                                            #,@(if (identifier? #'counter) #'(counter) '())
                                                                             #,@last-update))
                                                                        #`(begin e2 #,call-lastforloop))
                                                                    #'e2)
@@ -635,47 +656,61 @@
   |#
   (define-syntax for
     (syntax-rules ()
-      [(_ clauses body ...) ($for/fold #f clauses body ...)]))
+      [(_ clauses body ...) ($for/fold #f #f clauses body ...)]))
 
 
-  #|proc:make-vector-collector
-  The `make-vector-collector` helper returns a procedure that accepts one value to append,
-  or no arguments to return an exact-sized vector of all collected values. It stores values
-  in vector blocks, starting at 16 slots and growing up to 1024 slots per block, then copies
-  each block once into the result. For example, calls with `a`, `b`, then no arguments return
-  `#(a b)`. No intermediate list of individual results is allocated.
-  The returned procedure owns mutable collection state and has no internal synchronization.
-  One loop invocation uses one collector; concurrent access to a shared collector is unsupported.
+  ;; A block's start and buffer are fixed; replay may reuse and overwrite its buffer.
+  ;; The next link caches allocated storage, while numeric positions remain loop parameters.
+  (define-record-type collection-block
+    (fields start data (mutable next)))
+
+  #|proc:collection-block-add!
+  The `collection-block-add!` helper writes `value` at logical `position` and returns its block.
+  `block` is the block used by the preceding iteration. At a block boundary it reuses the next
+  block or allocates one, growing from 16 slots to at most 1024 slots per block.
+  For example, position 16 after a full 16-slot block writes slot zero of its successor.
+  Positions and block cursors are loop parameters; buffers and cached next links stay mutable.
+  Replaying a continuation can overwrite these buffers, without restoring their earlier contents.
   |#
-  (define make-vector-collector
-    (lambda ()
-      (let ([completed '()] [block #f] [position 0] [count 0])
-        (case-lambda
-          [()
-           (let ([result (make-vector count)])
-             (let copy ([blocks (reverse completed)] [offset 0])
-               (if (null? blocks)
-                   (when block (vector-copy! block 0 result offset position))
-                   (let ([size (vector-length (car blocks))])
-                     (vector-copy! (car blocks) 0 result offset size)
-                     (copy (cdr blocks) (fx+ offset size)))))
-             result)]
-          [(value)
-           (unless block (set! block (make-vector 16)))
-           (when (fx= position (vector-length block))
-             (set! completed (cons block completed))
-             (set! block (make-vector (fxmin 1024 (fx* 2 (vector-length block)))))
-             (set! position 0))
-           (vector-set! block position value)
-           (set! position (fx1+ position))
-           (set! count (fx1+ count))]))))
+  (define (collection-block-add! block position value)
+    (let* ([data (collection-block-data block)]
+           [block (if (fx< position (fx+ (collection-block-start block) (vector-length data)))
+                      block
+                      (or (collection-block-next block)
+                          (let ([next (make-collection-block
+                                       position
+                                       (make-vector (fxmin 1024 (fx* 2 (vector-length data))))
+                                       #f)])
+                            (collection-block-next-set! block next)
+                            next)))])
+      (vector-set! (collection-block-data block) (fx- position (collection-block-start block)) value)
+      block))
+
+  #|proc:collection-block->vector
+  The `collection-block->vector` helper copies `count` collected values from `first` into a new
+  exact-sized vector. `first` is the initial block and `count` is the restored loop count.
+  For example, blocks holding `a`, `b`, and stale later values with count 2 return `#(a b)`.
+  Later buffered positions are ignored. Concurrent access to shared buffers needs synchronization.
+  |#
+  (define (collection-block->vector first count)
+    (let ([result (make-vector count)])
+      (let copy ([block first])
+        (let ([start (collection-block-start block)])
+          (when (fx< start count)
+            (let* ([data (collection-block-data block)]
+                   [size (fxmin (vector-length data) (fx- count start))])
+              (vector-copy! data 0 result start size)
+              (when (fx< (fx+ start size) count)
+                (copy (collection-block-next block)))))))
+      result))
 
   #|macro:$for/collect
-  The `$for/collect` helper parses collection options once for `loop`, either `for` or `for*`.
-  `vector?` selects vector storage, and `who` names the public form in errors. A leading global
-  index precedes optional length and fill clauses; the loop compiler parses ordinary clauses.
-  Lists use a list builder, vectors use a block collector or preallocated vector. For example,
-  `:length 2` limits collected results to two and skips all source setup when it is zero.
+  The `$for/collect` helper parses collection options for `loop`, either `for` or `for*`, then
+  delegates to the fold compiler with a private result count. `vector?` selects vector storage
+  and `who` names the public form in errors. List tails and vector block cursors are fold state.
+  A leading global index precedes length and fill clauses. For example, `:length 2` limits a
+  traversal to two accepted results, including after replay; zero skips source setup and body.
+  Storage is mutable and shared by saved continuations. Replay can change earlier results.
   |#
   (define-syntax $for/collect
     (lambda (stx)
@@ -688,51 +723,97 @@
                [clauses (if length (cdr clauses) clauses)]
                [fill (and (pair? clauses) (syntax-case (car clauses) ()
                          [(tag value) (kw:fill? #'tag) #'value] [_ #f]))]
-               [clauses (if fill (cdr clauses) clauses)])
+               [clauses (if fill (cdr clauses) clauses)]
+               [nested? (eq? (syntax->datum loop) 'for*)])
           (when (and fill (not (and vector? length)))
             (syntax-error stx "for: :fill requires a vector form with :length:"))
           (when (and length (pair? clauses)
                      (syntax-case (car clauses) () [(tag . rest) (kw:index? #'tag)] [_ #f]))
             (syntax-error (car clauses) "global :index must precede :length:"))
-          (with-syntax ([loop loop] [who who] [(clause ...) (if index (cons index clauses) clauses)]
-                        [(body ...) body])
-            (if length
-                #`(let ([limit #,length])
-                    (unless (and (fixnum? limit) (fx>= limit 0))
-                      (errorf 'who "length is not a nonnegative fixnum: ~a" limit))
-                    (let ([storage #,(if vector? #`(make-vector limit #,(or fill #'#f))
-                                        #'(make-list-builder))]
-                          [position 0])
-                      (unless (fxzero? limit)
-                        ;; Leave all loop levels immediately after collecting the limit.
-                        (call/1cc
-                         (lambda (finish)
-                           (loop (clause ...)
-                             #,(if vector?
-                                   #'(vector-set! storage position (begin body ...))
-                                   #'(storage (begin body ...)))
-                             (set! position (fx1+ position))
-                             (when (fx= position limit) (finish (void)))))))
-                      #,(if vector? #'storage #'(storage))))
-                (let ([inferred
-                       (and vector?
-                            (syntax-case clauses ()
-                              [((variable tag bound))
-                               (eq? (datum tag) ':fxiota)
-                               (with-syntax ([(size) (generate-temporaries '(size))])
-                                 #`(let ([size bound])
-                                     (unless (and (fixnum? size) (fx>= size 0))
-                                       (errorf ':fxiota "not a nonnegative fixnum: ~a" size))
-                                     #,(generate #'loop #t #'who
-                                                 (append (if index (list index) '())
-                                                         #'((:length size) (variable tag size)))
-                                                 #'(body ...))))]
-                              [_ #f]))])
-                  (or inferred
-                      #`(let ([builder #,(if vector? #'(make-vector-collector)
-                                            #'(make-list-builder))])
-                          (loop (clause ...) (builder (begin body ...)))
-                          (builder))))))))
+          ;; Infer only a single unfiltered source, retaining its once-only type check.
+          (let ([inferred
+                 (and vector? (not length)
+                      (syntax-case clauses ()
+                        [((variable tag bound))
+                         (eq? (datum tag) ':fxiota)
+                         (with-syntax ([(size) (generate-temporaries '(size))])
+                           #`(let ([size bound])
+                               (unless (and (fixnum? size) (fx>= size 0))
+                                 (errorf ':fxiota "not a nonnegative fixnum: ~a" size))
+                               #,(generate loop #t who
+                                           (append (if index (list index) '())
+                                                   #'((:length size) (variable tag size))) body)))]
+                        [_ #f]))])
+            (or inferred
+                (with-syntax ([(storage cursor count limit finish next)
+                               (generate-temporaries '(storage cursor count limit finish next))]
+                              [compiler (if nested? #'$for*/fold #'$for/fold)]
+                              [who who] [(body ...) body])
+                  (let* ([counter? (or vector? length)]
+                         [result (cond [(not vector?) #'(begin (set-cdr! cursor '()) (cdr storage))]
+                                       [length #'storage]
+                                       [else #'(collection-block->vector storage count)])]
+                         [mapped
+                          (let map-clauses ([remaining clauses] [level 0])
+                            (if (null? remaining) '()
+                                (let* ([clause (car remaining)]
+                                       [configuration?
+                                        (syntax-case clause ()
+                                          [(tag . arguments)
+                                           (and (identifier? #'tag)
+                                                (kw-for*-config-clause? #'tag))]
+                                          [_ #f])]
+                                       [level (if configuration? level (fx1+ level))]
+                                       [exit (if (and nested? (fx> level 1)) #'cursor result)]
+                                       [clause
+                                        (syntax-case clause ()
+                                          [(tag condition)
+                                           (kw:break? #'tag) #`(tag condition #,exit)]
+                                          [(tag condition value)
+                                           (kw:break? #'tag) #`(tag condition (begin value #,exit))]
+                                          [(tag condition)
+                                           (and nested? (kw:stop? #'tag)) #`(tag condition #,result)]
+                                          [(tag condition value)
+                                           (and nested? (kw:stop? #'tag))
+                                           #`(tag condition (begin value #,result))]
+                                          [_ clause])])
+                                  (cons clause (map-clauses (cdr remaining) level)))))]
+                         [append-value
+                          (cond
+                           [(not vector?)
+                            #'(let ([next (cons (begin body ...) '())])
+                                (set-cdr! cursor next)
+                                next)]
+                           [length #'(begin (vector-set! storage count (begin body ...)) cursor)]
+                           [else #'(collection-block-add! cursor count (begin body ...))])]
+                         [traversal
+                          #`(compiler #t #,(if counter? #'count #'#f)
+                              ((:init cursor storage)
+                               #,@(if index (list index) '())
+                               (:finish #,result)
+                               #,@mapped)
+                              #,(if length
+                                    #`(let ([next #,append-value])
+                                        (when (fx= (fx1+ count) limit)
+                                          ;; Leave every level with the completed shared storage.
+                                          (finish #,(if vector? #'storage #'(cdr storage))))
+                                        next)
+                                    append-value))]
+                         [storage #`(let ([storage #,(cond [(not vector?) #'(cons #f '())]
+                                                          [length #`(make-vector limit #,(or fill #'#f))]
+                                                          [else #'(make-collection-block 0 (make-vector 16) #f)])])
+                                      #,(if length
+                                            #`(if (fxzero? limit)
+                                                  #,(if vector? #'storage #'(cdr storage))
+                                                  ;; A captured general continuation promotes this escape.
+                                                  (call/1cc (lambda (finish) #,traversal)))
+                                            traversal))])
+                    (if length
+                        #`(let ([limit #,length])
+                            (unless (and (fixnum? limit) (fx>= limit 0))
+                              (errorf 'who "length is not a nonnegative fixnum: ~a" limit))
+                            #,storage)
+                        storage)))))))
       (syntax-case stx ()
         [(_ loop vector? who (clause ...) body ...)
          (generate #'loop (datum vector?) #'who #'(clause ...) #'(body ...))])))
@@ -751,8 +832,11 @@
   after the global index limits the number of collected results to a nonnegative fixnum.
   Its expression is evaluated once before the sources; zero skips the sources and body.
   For example, `(for/list ([:length 2] [x 5]) x)` returns `(0 1)`.
-  Independent invocations have separate builders. Source and result objects are not protected
-  against concurrent caller mutation; the ownership rules of `for/fold` also apply here.
+  The list tail and optional length counter are loop parameters restored by continuation replay.
+  List cells and the output head remain shared mutable storage: replay may overwrite links or
+  change previously returned lists, and does not reconstruct detached prefixes. Mutating shared
+  results while replaying a saved continuation is caller responsibility. Independent invocations
+  have separate storage; the ownership and synchronization rules of `for/fold` apply here.
   |#
   (define-syntax for/list
     (syntax-rules ()
@@ -779,6 +863,12 @@
   evaluated once, even when the length is zero.
   Independent invocations have separate collection storage. Source and result objects are not
   protected against concurrent caller mutation; the ownership rules of `for/fold` apply here.
+  Result counts and block cursors are loop parameters restored by continuation replay, keeping
+  length limits and write positions valid. Buffers and cached block links remain shared mutable
+  storage and are not rolled back. With an explicit or inferred length, replay can overwrite
+  the previously returned vector; slots not written by a shorter replay retain their contents.
+  Without a length, finalization copies the current buffered
+  prefix into a new vector; intervening buffer writes remain visible to later finalizations.
   |#
   (define-syntax for/vector
     (syntax-rules ()
@@ -798,7 +888,7 @@
   |#
   (define-syntax for*
     (syntax-rules ()
-      [(_ clauses body ...) ($for*/fold #f clauses body ...)]))
+      [(_ clauses body ...) ($for*/fold #f #f clauses body ...)]))
 
 
   #|doc

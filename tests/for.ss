@@ -2596,3 +2596,84 @@
                 (if (= phase 2)
                     #t
                     (begin (set! phase (+ phase 1)) (resume #t))))))))
+
+(mat collector-loop-parameter-replay
+     (let ()
+       (define (check kind size target)
+         (let ([resume #f] [phase 0])
+           (define (visit item)
+             (if (= item target)
+                 ;; Restore collection positions, while allowing shared results to change.
+                 (call/cc (lambda (continuation) (set! resume continuation) item))
+                 item))
+           (let* ([result
+                   (case kind
+                     [(list) (for/list ([x :fxiota size]) (visit x))]
+                     [(nested-list) (for*/list ([outer 1] [x :fxiota size]) (visit x))]
+                     [(bounded-list) (for/list ([:length size] [x :fxiota (+ size 2)]) (visit x))]
+                     [(nested-bounded-list)
+                      (for*/list ([:length size] [outer 2] [x :fxiota (+ size 2)]) (visit x))]
+                     [(vector) (for/vector ([x :fxiota size :guard #t]) (visit x))]
+                     [(nested-vector) (for*/vector ([outer 1] [x :fxiota size]) (visit x))]
+                     [(bounded-vector)
+                      (for/vector ([:length size] [x :fxiota (+ size 2)]) (visit x))]
+                     [(nested-bounded-vector)
+                      (for*/vector ([:length size] [outer 2] [x :fxiota (+ size 2)]) (visit x))]
+                     [(inferred-vector) (for/vector ([x :fxiota size]) (visit x))])]
+                  [expected (iota size)]
+                  [expected (if (= phase 0) expected
+                                (append (list-head expected target) (list (- phase))
+                                        (list-tail expected (+ target 1))))])
+             (and (equal? expected (if (vector? result) (vector->list result) result))
+                  (if (= phase 2)
+                      #t
+                      (begin (set! phase (+ phase 1)) (resume (- phase))))))))
+       (andmap
+        (lambda (kind)
+          (andmap (lambda (size)
+                    (andmap (lambda (target) (check kind size target))
+                            (list 0 (quotient size 2) (- size 1))))
+                  '(3 17 49 1041 2049)))
+        '(list nested-list bounded-list nested-bounded-list
+               vector nested-vector bounded-vector nested-bounded-vector inferred-vector))))
+
+(mat collection-replay-shared-storage
+     (let ([resume #f] [replayed? #f] [first #f])
+       (let ([result
+              (for/vector ([:length 3] [x 5])
+                (if (= x 1)
+                    ;; The saved position restores, but the preallocated vector is reused.
+                    (call/cc (lambda (continuation) (set! resume continuation) x))
+                    x))])
+         (if replayed?
+             (and (eq? first result) (equal? '#(0 9 2) result))
+             (begin (set! first result) (set! replayed? #t) (resume 9)))))
+
+     (let ([resume #f] [replayed? #f] [first #f])
+       (let ([result
+              (for/list ([x 3])
+                (if (= x 1)
+                    ;; Replaying replaces the shared prefix link instead of copying history.
+                    (call/cc (lambda (continuation) (set! resume continuation) x))
+                    x))])
+         (if replayed?
+             (and (eq? first result) (equal? '(0 9 2) result))
+             (begin (set! first result) (set! replayed? #t) (resume 9))))))
+
+(mat collection-private-position-and-exits
+     ;; Public index mutation and shadowing must not change the private result count.
+     (equal? '#((0 0) (0 1) (0 2))
+             (for*/vector ([:index i] [:length 3] [x 2] [y 4] [:let i 100])
+               (set! i 200)
+               (list x y)))
+
+     ;; Collection exit results are evaluated and discarded, even with multiple values.
+     (equal? '(0)
+             (for/list ([x 3] [:break (= x 1) (values 'ignored 'also-ignored)]) x))
+
+     (equal? '#((0 0) (1 0))
+             (for*/vector ([x 2] [y 3] [:break (= y 1) (values 'ignored 'also-ignored)])
+               (list x y)))
+
+     (equal? '#((0 0))
+             (for*/vector ([x 2] [y 3] [:stop (= y 1) (values)]) (list x y))))
