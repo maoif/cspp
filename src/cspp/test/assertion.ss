@@ -130,7 +130,8 @@ condition rejected by `predicate`, a framework assertion failure is raised.
   #|proc:test-assert-not-raises
 The `test-assert-not-raises` procedure succeeds when zero-argument procedure
 `thunk` returns without raising a condition. If `thunk` raises any condition,
-a framework assertion failure is raised. `message` is recorded on failure. Callback arities are checked before invoking `thunk`.
+a framework assertion failure is raised. `message` is recorded on failure.
+Callback arities are checked before invoking `thunk`.
 |#
   (define test-assert-not-raises
     (lambda (thunk message)

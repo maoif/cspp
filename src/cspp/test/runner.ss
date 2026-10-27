@@ -18,82 +18,81 @@
             (loop (test-alist-set metadata (caar child) (cdar child))
                   (cdr child))))))
 
-  (define $expand-parameter-table
-    (lambda (table)
-      (let ([names (car table)]
-            [rows (cdr table)])
-        (map (lambda (row) (map cons names row)) rows))))
-
-  (define $append-map
-    (lambda (proc items)
-      (let loop ([items items] [out '()])
-        (if (null? items)
-            (reverse out)
-            (loop (cdr items) (append (reverse (proc (car items))) out))))))
-
-  (define $parameter-product
-    (lambda (tables)
-      (test-check-parameter-tables 'test-expand-parameters tables)
-      (let loop ([tables tables] [cases '(() )])
-        (if (null? tables)
-            cases
-            (let ([rows ($expand-parameter-table (car tables))])
-              (loop (cdr tables)
-                    ($append-map
-                     (lambda (case-parameters)
-                       (map (lambda (row-parameters)
-                              (append case-parameters row-parameters))
-                            rows))
-                     cases)))))))
-
   (define $check-fixture-bindings
     (lambda (metadata parameter-names)
       (test-check-fixture-names 'test-run
         (map car (test-metadata-ref metadata 'fixtures '())) parameter-names)))
 
-  (define $expand-descriptor
-    (lambda (descriptor inherited-metadata id)
-      (let ([metadata ($metadata-merge inherited-metadata
-                                       (test-descriptor-metadata descriptor))])
-        (if (test-suite-descriptor? descriptor)
-            (let loop ([children (test-descriptor-children descriptor)]
-                       [id id]
-                       [out '()])
-              (if (null? children)
-                  (values (reverse out) id)
-                  (let-values ([(child-cases next-id)
-                                ($expand-descriptor (car children) metadata id)])
-                    (loop (cdr children)
-                          next-id
-                          (append (reverse child-cases) out)))))
-            (let ([parameter-cases
-                   ($parameter-product (test-metadata-ref metadata 'parameterize '()))])
-              ($check-fixture-bindings metadata
-                (apply append
-                  (map car (test-metadata-ref metadata 'parameterize '()))))
-              (let loop ([parameter-cases parameter-cases]
-                         [id id]
-                         [out '()])
-                (if (null? parameter-cases)
-                    (values (reverse out) id)
-                    (loop (cdr parameter-cases)
-                          (fx+ id 1)
-                          (cons (make-test-concrete-case
-                                 id
-                                 (test-descriptor-name descriptor)
-                                 descriptor
-                                 (car parameter-cases)
-                                 metadata)
-                                out)))))))))
+  (define-record-type ($test-leaf $make-test-leaf $test-leaf?)
+    (fields descriptor metadata tables count selected?))
 
-  (define $expand-descriptors
-    (lambda (descriptors)
-      (let loop ([descriptors descriptors] [id 0] [out '()])
-        (if (null? descriptors)
-            (reverse out)
-            (let-values ([(cases next-id)
-                          ($expand-descriptor (car descriptors) '() id)])
-              (loop (cdr descriptors) next-id (append (reverse cases) out)))))))
+  (define $prepare-descriptors
+    (lambda (descriptors selectors)
+      (let ([leaves '()])
+        (define prepare
+          (lambda (descriptor inherited)
+            (let ([metadata ($metadata-merge inherited (test-descriptor-metadata descriptor))])
+              (if (test-suite-descriptor? descriptor)
+                  (for-each (lambda (child) (prepare child metadata))
+                            (test-descriptor-children descriptor))
+                  (let* ([tables (test-metadata-ref metadata 'parameterize '())]
+                         [selected? ($descriptor-selected?
+                                      (test-descriptor-name descriptor) metadata selectors)])
+                    ;; Validate every leaf before executing any body, including excluded leaves.
+                    (test-check-parameter-tables 'test-expand-parameters tables)
+                    ($check-fixture-bindings metadata (apply append (map car tables)))
+                    (set! leaves
+                      (cons ($make-test-leaf
+                              descriptor metadata
+                              (and selected?
+                                   ;; Snapshot caller-owned table rows before any body runs.
+                                   (map (lambda (table)
+                                          (cons (list-copy (car table)) (map list-copy (cdr table))))
+                                        tables))
+                              (fold-left (lambda (count table) (* count (length (cdr table))))
+                                         1 tables)
+                              selected?)
+                            leaves)))))))
+        (for-each (lambda (descriptor) (prepare descriptor '())) descriptors)
+        (reverse leaves))))
+
+  (define $walk-parameter-tables
+    (lambda (tables visit)
+      (or (exists (lambda (axis) (null? (cdr axis))) tables)
+          (let loop ([tables tables] [reversed '()])
+            (if (null? tables)
+                (visit (reverse reversed))
+                (for-all
+                  (lambda (row)
+                    (loop (cdr tables)
+                          (fold-left (lambda (parameters name value)
+                                       (cons (cons name value) parameters))
+                                     reversed (caar tables) row)))
+                  (cdar tables)))))))
+
+  (define $walk-prepared-cases
+    (lambda (leaves visit)
+      (let ([id 0])
+        (for-all
+          (lambda (leaf)
+            (if ($test-leaf-selected? leaf)
+                ($walk-parameter-tables ($test-leaf-tables leaf)
+                  (lambda (parameters)
+                    (let* ([descriptor ($test-leaf-descriptor leaf)]
+                           [concrete (make-test-concrete-case
+                                       id (test-descriptor-name descriptor) descriptor parameters
+                                       ($test-leaf-metadata leaf))])
+                      (set! id (+ id 1))
+                      (visit concrete))))
+                (begin (set! id (+ id ($test-leaf-count leaf))) #t)))
+          leaves))))
+
+  (define $collect-cases
+    (lambda (descriptors selectors)
+      (let ([cases '()])
+        ($walk-prepared-cases ($prepare-descriptors descriptors selectors)
+          (lambda (concrete) (set! cases (cons concrete cases)) #t))
+        (reverse cases))))
 
   (define $string-prefix?
     (lambda (prefix string)
@@ -127,8 +126,8 @@
                           [else #f])
                         (loop (cdr selectors)))))))))
 
-  (define $case-selected?
-    (lambda (concrete-case selectors)
+  (define $descriptor-selected?
+    (lambda (name metadata selectors)
       (let loop ([selectors selectors])
         (if (null? selectors)
             #t
@@ -137,15 +136,12 @@
                 [(name-prefix)
                  (and ($string-prefix?
                        (cdr selector)
-                       (symbol->string (test-concrete-case-name concrete-case)))
+                       (symbol->string name))
                       (loop (cdr selectors)))]
                 [(include-tags)
                  (and ($all-tags-present?
                        (cdr selector)
-                       (test-metadata-ref
-                        (test-concrete-case-metadata concrete-case)
-                        'tags
-                        '()))
+                       (test-metadata-ref metadata 'tags '()))
                       (loop (cdr selectors)))]
                 [else (errorf 'test-select "unknown selector: ~a" (car selector))]))))))
 
@@ -162,27 +158,20 @@ before expansion, including tables that would otherwise produce no cases.
   (define test-expand-parameters
     (lambda (descriptor)
       (pcheck ([test-descriptor? descriptor])
-              (let-values ([(cases next-id) ($expand-descriptor descriptor '() 0)])
-                cases))))
+              ($collect-cases (list descriptor) '()))))
 
   #|proc:test-select
 The `test-select` procedure returns concrete test cases from `registry` that
 match `selectors`. `registry` is a test registry. `selectors` is an association
 list; `(name-prefix . string)` keeps cases whose symbolic name starts with the
 string, and `(include-tags . (tag ...))` keeps cases whose metadata `tags`
-contain every listed tag.
+contain every listed tag. Descriptor filters run before parameter products are materialized;
+concrete case IDs retain their positions in the complete unfiltered expansion.
 |#
   (define test-select
     (lambda (registry selectors)
       (pcheck ([test-registry? registry] [$test-selectors? selectors])
-              (let ([cases
-                     ($expand-descriptors (test-registry-descriptors registry))])
-                (let loop ([cases cases] [out '()])
-                  (cond
-                   [(null? cases) (reverse out)]
-                   [($case-selected? (car cases) selectors)
-                    (loop (cdr cases) (cons (car cases) out))]
-                   [else (loop (cdr cases) out)]))))))
+              ($collect-cases (test-registry-descriptors registry) selectors))))
 
   #|proc:test-list
 The `test-list` procedure returns concrete test cases from `registry` selected
@@ -502,32 +491,32 @@ association-list filters as `test-select`.
   Skip and expected-failure rules apply to every phase. An
   unexpected pass has status `failed` under effective strict xfail policy and
   `xpass` otherwise; only `failed` and `errored` stop a stop-on-failure run.
+  Descriptor domains are validated first; concrete rows are then produced incrementally,
+  allowing stop-on-failure to avoid allocating later Cartesian combinations.
   |#
   (define test-run
     (lambda (tests config)
       (pcheck ([list? tests] [test-config? config])
               (parameterize ([$current-predicate-cache (make-eq-hashtable)])
-                (let* ([cases (cond
-                               [(andmap test-concrete-case? tests) tests]
-                               [(andmap test-descriptor? tests) ($expand-descriptors tests)]
-                               [else (errorf 'test-run
-                                       "tests must all be descriptors or all concrete cases: ~a"
-                                       tests)])]
-                       [results
-                        (let loop ([cases cases] [out '()])
-                          (if (null? cases)
-                              (reverse out)
-                              (let ([result ($run-case-with-policy (car cases) config)])
-                                (if ($stop-after-result? config result)
-                                    (reverse (cons result out))
-                                    (loop (cdr cases) (cons result out))))))])
-                  (when (and (test-config-reporter config)
-                             (test-config-output config))
-                    (parameterize ([test-current-report-color (test-config-color config)])
-                      (test-report (test-config-reporter config)
-                                   (test-config-output config)
-                                   (test-summarize results))))
-                  results)))))
+                (let* ([concrete? (andmap test-concrete-case? tests)]
+                       [prepared (cond
+                                   [concrete? #f]
+                                   [(andmap test-descriptor? tests) ($prepare-descriptors tests '())]
+                                   [else (errorf 'test-run
+                                           "tests must all be descriptors or all concrete cases: ~s"
+                                           tests)])]
+                       [reversed '()])
+                  (let ([visit (lambda (concrete)
+                                 (let ([result ($run-case-with-policy concrete config)])
+                                   (set! reversed (cons result reversed))
+                                   (not ($stop-after-result? config result))))])
+                    (if concrete? (for-all visit tests) ($walk-prepared-cases prepared visit)))
+                  (let ([results (reverse reversed)])
+                    (when (and (test-config-reporter config) (test-config-output config))
+                      (parameterize ([test-current-report-color (test-config-color config)])
+                        (test-report (test-config-reporter config)
+                                     (test-config-output config) (test-summarize results))))
+                    results))))))
 
   #|proc:test-run-registry
   The `test-run-registry` procedure executes every descriptor registered in

@@ -1907,3 +1907,77 @@
            (make-test-concrete-case 0 'wide descriptor
              (append parameters (list (cons (car names) 99))) '())
            #f))))
+
+(mat test-filtering-and-early-stop-do-not-materialize-products
+  (let* ([rows (map list (iota 200))]
+         [descriptor (make-test-case 'excluded (lambda () (test-true #f))
+                       `((parameterize . (,(cons '(left) rows) ,(cons '(right) rows)))))]
+         [registry (make-test-registry)])
+    (test-register! registry descriptor)
+    (let* ([before (statistics)]
+           [selected (test-select registry '((name-prefix . "included")))]
+           [results (test-run (list descriptor)
+                      (test-config-with (test-silent-config) '((stop-on-failure? . #t))))]
+           [bytes (sstats-bytes (sstats-difference (statistics) before))])
+      (and (null? selected) (= (length results) 1)
+           (eq? (test-result-status (car results)) 'failed)
+           (equal? (test-result-parameters (car results)) '((left . 0) (right . 0)))
+           (< bytes 1000000)))))
+
+(mat test-nested-suite-flattening-does-not-copy-descendants
+  (let ([descriptor
+         (let loop ([depth 100]
+                    [descriptor
+                     (make-test-case 'leaf (lambda () #t)
+                       `((parameterize . (,(cons '(number) (map list (iota 2000)))))))])
+           (if (zero? depth) descriptor
+               (loop (- depth 1) (make-test-suite 'nested (list descriptor) '()))))])
+    (let* ([before (statistics)]
+           [cases (test-expand-parameters descriptor)]
+           [bytes (sstats-bytes (sstats-difference (statistics) before))])
+      (and (= (length cases) 2000)
+           (= (test-concrete-case-id (car cases)) 0)
+           (= (test-concrete-case-id (car (reverse cases))) 1999)
+           (< bytes 5000000)))))
+
+(mat test-streaming-preserves-selection-ids-and-row-snapshots
+  (let ([registry (make-test-registry)])
+    (test-register! registry
+      (make-test-case 'excluded (lambda () #t) '((parameterize . (((n) (0) (1)))))))
+    (test-register! registry
+      (make-test-case 'included (lambda () #t) '((parameterize . (((n) (2) (3)))))))
+    (let ([selected (test-select registry '((name-prefix . "included")))])
+      (and (equal? (map test-concrete-case-id selected) '(2 3))
+           (equal? (map test-concrete-case-parameters selected) '(((n . 2)) ((n . 3)))))))
+
+  ;; Changes to caller-owned table rows during execution do not change the prepared run.
+  (let* ([first (list 1)] [second (list 2)]
+         [descriptor (make-test-case 'snapshot
+                       (lambda (parameters)
+                         (when (= (cdr (assq 'number parameters)) 1) (set-car! second 99)))
+                       (list (cons 'parameterize (list (list '(number) first second)))))]
+         [results (test-run (list descriptor) (test-silent-config))])
+    (equal? (map test-result-parameters results) '(((number . 1)) ((number . 2))))))
+
+(mat test-streaming-validates-later-descriptors-before-running
+  ;; Error: deferred expansion must not defer invalid descriptor-domain checks past body effects.
+  (let ([called? #f])
+    (guard (raised [else (not called?)])
+      (test-run
+        (list (make-test-case 'first (lambda () (set! called? #t)) '())
+              (make-test-case 'invalid (lambda () #t) '((parameterize . (((n) (1 2)))))))
+        (test-silent-config))
+      #f)))
+
+(mat test-empty-later-axis-short-circuits-prefix-products
+  (let* ([tables (append
+                   (map (lambda (n)
+                          (list (list (string->symbol (format "axis-~a" n))) '(0) '(1)))
+                        (iota 15))
+                   '(((empty))))]
+         [descriptor (make-test-case 'empty-product (lambda () #t)
+                       (list (cons 'parameterize tables)))]
+         [before (statistics)]
+         [cases (test-expand-parameters descriptor)]
+         [bytes (sstats-bytes (sstats-difference (statistics) before))])
+    (and (null? cases) (< bytes 1000000))))
