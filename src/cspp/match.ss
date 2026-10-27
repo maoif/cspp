@@ -131,6 +131,14 @@ Examples:
   or local definitions within a result, and `and` to combine conditions. The old `(guard ...)`
   marker is unsupported; Chez exception-handling `guard` remains an ordinary expression.
   An unmatched input without a fallback raises an error. The selected result supplies its values.
+  Independent invocations keep their matcher state separate and may run in different fibers or
+  threads. Matching does not lock or snapshot mutable inputs; callers must coordinate mutation
+  of shared lists, vectors, strings, boxes, records, and hashtables with their readers.
+  Repeated captures before a suffix may construct their lists lazily on first reference.
+  If closures share one such capture across fibers or threads, callers must serialize its first
+  reads and assignments, or materialize it once before publishing it for read-only access.
+  Unsynchronized access can construct different lists or lose assignments; this is a caller bug.
+  Later shared assignments and mutation of captured values also require caller synchronization.
   |#
   (define-syntax match
     (lambda (stx)
@@ -339,6 +347,8 @@ Examples:
           Reads and assignments share a private location, including references from closures.
           For example, `(x (reverse prefix))` reverses `prefix` once if `x` is read, and never
           reverses it if `x` is unused or assigned first. Assigning `#f` remains a valid value.
+          Initialization and assignment are unsynchronized. Callers sharing the generated binding
+          across fibers or threads must serialize its first reads and assignments, as for `match`.
           |#
           (define bind-lazy-pattern-captures
             (lambda (entries body)

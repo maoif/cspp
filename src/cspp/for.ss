@@ -125,6 +125,12 @@
   A `:nums` range raises an error if its next value is unchanged or unordered, including NaN.
   Known exhausted parallel sources stop before a companion `:iter` advances. With only
   unknown-length iterators, discovering exhaustion can consume one unpaired companion value.
+  Independent invocations keep their loop state separate and may run in different fibers or
+  threads; callbacks and bodies may yield or block. Sources and accumulator objects remain
+  caller-owned. The loop does not synchronize shared mutation or consumption of one iterator.
+  Callers must coordinate shared mutable state and avoid changing a source's traversal structure
+  during iteration. A `:iter` source advances destructively and is not rewound by continuation
+  re-entry; callers remain responsible for its reset and finalization, including on early exit.
   |#
   (define-syntax for/fold
     (syntax-rules ()
@@ -386,6 +392,7 @@
   break and is returned directly on an outermost break. Without an accumulator, inner results
   are evaluated and discarded. `:stop` leaves all levels, returning its optional second expression
   or an unspecified value when that expression is omitted.
+  Source ownership, shared-state synchronization, and iterator lifecycle follow `for/fold`.
   |#
   (define-syntax for*/fold
     (syntax-rules ()
@@ -637,6 +644,8 @@
   in vector blocks, starting at 16 slots and growing up to 1024 slots per block, then copies
   each block once into the result. For example, calls with `a`, `b`, then no arguments return
   `#(a b)`. No intermediate list of individual results is allocated.
+  The returned procedure owns mutable collection state and has no internal synchronization.
+  One loop invocation uses one collector; concurrent access to a shared collector is unsupported.
   |#
   (define make-vector-collector
     (lambda ()
@@ -742,6 +751,8 @@
   after the global index limits the number of collected results to a nonnegative fixnum.
   Its expression is evaluated once before the sources; zero skips the sources and body.
   For example, `(for/list ([:length 2] [x 5]) x)` returns `(0 1)`.
+  Independent invocations have separate builders. Source and result objects are not protected
+  against concurrent caller mutation; the ownership rules of `for/fold` also apply here.
   |#
   (define-syntax for/list
     (syntax-rules ()
@@ -766,6 +777,8 @@
   the final vector. A single unfiltered `:fxiota` source supplies an inferred exact length.
   `:fill` requires `:length`; a fill-only form is a syntax violation. The fill expression is
   evaluated once, even when the length is zero.
+  Independent invocations have separate collection storage. Source and result objects are not
+  protected against concurrent caller mutation; the ownership rules of `for/fold` apply here.
   |#
   (define-syntax for/vector
     (syntax-rules ()
@@ -800,6 +813,7 @@
   apply at the iterator level where they appear. Optional `:length` follows `for/list` and limits
   the total results across all levels. For example,
   `(for*/list ([:length 3] [x 2] [y 2]) (list x y))` returns `((0 0) (0 1) (1 0))`.
+  Independent invocations have separate builders; ownership and synchronization follow `for/list`.
   |#
   (define-syntax for*/list
     (syntax-rules ()
@@ -819,6 +833,7 @@
   vector. A single unfiltered `:fxiota` source supplies an inferred exact length.
   As with `for/vector`, `:fill` requires `:length` and its expression is evaluated once,
   including when the length is zero.
+  Independent invocations have separate storage; ownership and synchronization follow `for/vector`.
   |#
   (define-syntax for*/vector
     (syntax-rules ()
