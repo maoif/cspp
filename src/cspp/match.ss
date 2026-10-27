@@ -90,6 +90,8 @@ Examples:
   partition of an already matched pattern. Literal symbols use bare names; `'name` is the
   structural list pattern `(quote name)`, and `_` and repetition-position `...` retain their
   special meanings. Use captures and conditions to distinguish reserved pattern shapes as data.
+  Vector lengths are checked before element patterns run. A fixed-length suffix after a
+  repetition is tried only at its possible ending position, skipping impossible candidates.
   Records use `,(record Type :fields (field pattern) ...)` for a named subset of fields,
   or `,(record Type :values pattern ...)` for all fields in declaration order. Both native Chez
   and CSPP record types are supported. Empty `:fields` checks only the type; empty `:values`
@@ -378,6 +380,21 @@ Examples:
                               (mentions-variable? suffix (car variables)))
                           (loop (cdr variables) (cdr accumulators) (cons entry early) late)
                           (loop (cdr variables) (cdr accumulators) early (cons entry late))))))))
+          #|proc:vector-pattern-size
+          The `vector-pattern-size` helper returns a pattern sequence's minimum length and
+          whether that length is exact. For example, `(a b)` returns `2` and `#t`, while
+          `(a ... b)` returns `1` and `#f`. These facts reject impossible vector shapes before
+          matching elements and avoid retrying a fixed suffix at impossible source positions.
+          |#
+          (define vector-pattern-size
+            (lambda (patterns)
+              (let loop ([patterns patterns] [minimum 0] [exact? #t])
+                (syntax-case patterns ()
+                  [() (values minimum exact?)]
+                  [(pattern dots . rest)
+                   (eq? (datum dots) '...)
+                   (loop #'rest minimum #f)]
+                  [(pattern . rest) (loop #'rest (fx1+ minimum) exact?)]))))
           #|proc:process-vector-pats
           The `process-vector-pats` helper compiles fixed and repeated vector elements.
           For example, `#(,x ...)` against `#(1 2)` binds `x` to `(1 2)` and checks the vector
@@ -408,7 +425,8 @@ Examples:
                                                    #'(viter (fx1+ i) (cons patvars bindings) ...)))))))))]
                 [(pat0 dots . pat1)
                  (eq? (datum dots) '...)
-                 (compile-repeated-pattern rho #'pat0 fk
+                 (let-values ([(minimum exact?) (vector-pattern-size #'pat1)])
+                  (compile-repeated-pattern rho #'pat0 fk
                    (lambda (variables compile-item)
                      (with-syntax ([(patvars ...) variables])
                        (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
@@ -424,13 +442,16 @@ Examples:
                                #,(bind-suffix-captures
                                   variables #'(bindings ...) #'pat1 body
                                   (lambda (success)
-                                    (process-vector-pats vecid vlen #'i #'pat1 success #'new-fk)))))))))]
+                                    #`(if (#,(if exact? #'fx= #'fx>=) (fx- #,vlen i) #,minimum)
+                                          #,(process-vector-pats vecid vlen #'i #'pat1 success #'new-fk)
+                                          (new-fk)))))))))))]
                 [(pat0 pat1 ...)
-                 (with-syntax ([(vitem) (generate-temporaries '(vitem))])
+                 (with-syntax ([(vitem next-index) (generate-temporaries '(vitem next-index))])
                    #`(if (fx< #,veci #,vlen)
-                         (let ([vitem (vector-ref #,vecid #,veci)])
+                         (let ([vitem (vector-ref #,vecid #,veci)]
+                               [next-index (fx1+ #,veci)])
                            #,(process-pattern rho #'vitem #'pat0
-                                              (process-vector-pats vecid vlen #`(fx1+ #,veci)
+                                              (process-vector-pats vecid vlen #'next-index
                                                                    #'(pat1 ...) body fk)
                                               fk))
                          (#,fk)))])))
@@ -486,21 +507,20 @@ Examples:
                      #,(compile-repeated-pattern rho #'pat fk
                          (lambda (variables compile-item)
                            (with-syntax ([(patvars ...) variables]
-                                         [(lbs ...) (generate-temporaries variables)]
+                                         [(bindings ...) (generate-temporaries variables)]
                                          [(iter first rest) (generate-temporaries '(iter first rest))])
-                             #`(let ([lbs (make-list-builder)] ...)
-                                 (let iter ([ls expr-id])
+                             #`(let iter ([ls expr-id] [bindings '()] ...)
                                    (cond
                                     [(null? ls)
                                      #,(bind-pattern-captures variables
-                                                              (map (lambda (builder) #`(#,builder)) #'(lbs ...))
+                                                              (map (lambda (binding) #`(reverse #,binding))
+                                                                   #'(bindings ...))
                                                               body)]
                                     [(pair? ls)
                                      (let ([first (car ls)] [rest (cdr ls)])
                                        #,(compile-item #'first
-                                                       #'(begin (lbs patvars) ...
-                                                                (iter rest))))]
-                                    [else (#,fk)]))))))
+                                                       #'(iter rest (cons patvars bindings) ...)))]
+                                    [else (#,fk)])))))
                      (#,fk))]
               ;; ... in the middle, prefer `pat1`
               [(pat0 dots . pat1)
@@ -540,11 +560,14 @@ Examples:
                      (#,fk))]
               ;; `pats` has at least one pattern
               [#(pats ...)
-               #`(if (vector? expr-id)
+               (let-values ([(minimum exact?) (vector-pattern-size #'(pats ...))])
+                #`(if (vector? expr-id)
                      #,(with-syntax ([(vlen) (generate-temporaries '(vlen))])
                          #`(let ([vlen (vector-length expr-id)])
-                             #,(process-vector-pats #'expr-id #'vlen #'0 #'(pats ...) body fk)))
-                     (#,fk))]
+                             (if (#,(if exact? #'fx= #'fx>=) vlen #,minimum)
+                                 #,(process-vector-pats #'expr-id #'vlen #'0 #'(pats ...) body fk)
+                                 (#,fk))))
+                     (#,fk)))]
               [lit
                (literal? #'lit)
                #`(if (equal? lit expr-id) #,body (#,fk))]

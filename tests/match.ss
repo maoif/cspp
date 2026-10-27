@@ -1891,3 +1891,46 @@
 
      ;; Variadic matching procedure fallbacks also have a single result expression.
      (error? (eval '(mlambda+ [else 1 2]) (environment '(cspp)))))
+
+(mat vector-shape-before-elements
+     (let ([calls 0])
+       (and (not (match '#("a")
+                   [#(,(regex (begin (set! calls (+ calls 1)) ".")) _) #t]
+                   [else #f]))
+            (= calls 0)))
+
+     (let ([calls 0])
+       (and (equal? '(1 2)
+                    (match '#(1 2 "stop")
+                      [#(,prefix ... ,(regex (begin (set! calls (+ calls 1)) "^stop$"))) prefix]))
+            (= calls 1))))
+
+(mat hash-single-lookup
+     (let ([calls 0])
+       (let ([table (make-hashtable (lambda (key) (set! calls (+ calls 1)) 0) eq?)])
+         (hashtable-set! table 'key #f)
+         (set! calls 0)
+         (and (not (match table [,(hash (key ,value)) value])) (= calls 1)))))
+
+(mat repeated-list-continuation-state
+     (let ([resume #f] [resumed? #f])
+       (let ([result
+              (match '("a" "b")
+                [(,(regex (begin
+                            (when (and (not resumed?) (not resume))
+                              ;; Resume before accumulating this repeated capture.
+                              (call/cc (lambda (continuation) (set! resume continuation))))
+                            ".") (0 ,text)) ...) text])])
+         (if resumed?
+             (equal? '("a" "b") result)
+             (begin (set! resumed? #t) (resume 'continue))))))
+
+(mat fixed-vector-expansion-size
+     (let* ([pattern (make-vector 100 '_)]
+            [expanded (expand `(lambda (input) (match input [,pattern #t] [else #f]))
+                              (environment '(cspp)))])
+       (define (nodes expression)
+         (if (pair? expression)
+             (+ 1 (nodes (car expression)) (nodes (cdr expression)))
+             1))
+       (< (nodes expanded) 30000)))

@@ -343,18 +343,20 @@
         ;; `k`s are just literals right now
         [(h (k pat) ...)
          (andmap literal? #'(k ...))
-         #`(if (hashtable? #,expr-id)
+         (with-syntax ([(missing) (generate-temporaries '(missing))])
+          #`(if (hashtable? #,expr-id)
+               (let ([missing '#,(datum->syntax #'h (gensym "missing-hash-key"))])
                #,(let loop ([k* #'(k ...)] [pat* #'(pat ...)])
                    (if (null? k*)
                        body
                        (with-syntax ([(v) (generate-temporaries '(v))])
-                         #`(if (hashtable-contains? #,expr-id '#,(car k*))
-                               (let ([v (hashtable-ref #,expr-id '#,(car k*) #f)])
+                         #`(let ([v (hashtable-ref #,expr-id '#,(car k*) missing)])
+                             (if (eq? v missing)
+                                 (#,fk)
                                  #,(pp rho #'v (car pat*)
                                        (loop (cdr k*) (cdr pat*))
-                                       fk))
-                               (#,fk)))))
-               (#,fk))]
+                                       fk)))))))
+               (#,fk)))]
         [else (syntax-error pat "match: invalid pattern for hash: ")])))
 
   )
