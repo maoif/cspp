@@ -538,13 +538,13 @@
                                ;; if current level terminates, call forloop of last level
                                (gen-preloop
                                 #`(let forloop (#,@loop-var)
-                                   (if #,termination-check
+                                   #,(compile-termination termination-check
                                        ;; continue on the outer loop
-                                       #,(if last-forloop
+                                       (if last-forloop
                                              call-lastforloop
                                              ;; already outermost loop, stop
                                              (car call/finish-proc))
-                                       #,(let* ([state-shadowed (if direct-filter
+                                       (let* ([state-shadowed (if direct-filter
                                                                     (append exposed shadowed)
                                                                     shadowed)]
                                                 [bind-loop-state

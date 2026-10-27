@@ -20,7 +20,7 @@
           handle-length handle-fill
           handle-iter/config-iter handle-iter/config-config compile-binding-clause
 
-          process-iter-clause process-iter-clause/direct process-iter-clauses
+          process-iter-clause process-iter-clause/direct process-iter-clauses compile-termination
           fragment-setup fragment-bindings fragment-termination fragment-updates
           fragment-getter fragment-source-index fragment-exposed fragment-raw-termination
           fragment-filter fragment-visit)
@@ -457,6 +457,18 @@
       [(setup binding termination advance getter index raw bindings updates)
        (make-iterator-fragment setup (cons binding bindings) termination (cons advance updates)
                                getter index '() raw #f #f)]))
+
+  #|proc:compile-termination
+  The `compile-termination` helper applies an exhaustion check to two syntax continuations.
+  `check` is either a boolean expression or a generator accepting `(success exhausted)`.
+  `exhausted` leaves the source and `success` visits its current item. A generator may bind
+  a fetched value around `success`, keeping that value in the captured continuation.
+  For example, expression `done?` produces `(if done? exhausted success)`.
+  |#
+  (define (compile-termination check exhausted success)
+    (if (procedure? check)
+        (check success exhausted)
+        #`(if #,check #,exhausted #,success)))
 
   (define (process-iter-clause/direct cl direct-filter?)
     (define (process-multi-var-iter-clause v* ty op*)
@@ -921,20 +933,18 @@
           [:iter
            (unless (= nops 1)
              (syntax-error op* "invalid number of options for iter type `:iter`:"))
-           (with-syntax ([(t-it t-v pending unused) (generate-temporaries '(t-it t-v pending unused))])
+           (with-syntax ([(t-it t-v unused) (generate-temporaries '(t-it t-v unused))])
              (source-fragment (lambda (e)
                      #`(let ([t-it #,(car op*)])
                          (unless (iter? t-it)
                            (errorf ':iter "not a iter: ~a" t-it))
-                         (let ([t-v #f] [pending #t]) #,e)))
+                         #,e))
                    #'[unused #f]
                    ;; Fetch after known companion bounds, at most once per visit.
-                   #'(begin
-                       (when pending
-                         (set! t-v (iter-next! t-it))
-                         (set! pending #f))
-                       (iter-end? t-v))
-                   #'(begin (set! pending #t) #f)
+                   (lambda (success exhausted)
+                     #`(let ([t-v (iter-next! t-it)])
+                         (if (iter-end? t-v) #,exhausted #,success)))
+                   #'#f
                    (lambda (e)
                      #`(let ([#,v t-v])
                          #,e))
@@ -1083,8 +1093,9 @@
              #`(let seek (#,@(map (lambda (binding)
                                    (syntax-case binding () [(name initial) #'[name name]]))
                                  bindings))
-                 (if #,termination #,exhausted
-                     #,(getter #`(if #,(bind-public predicate) #,body (seek #,@updates))))))))))
+                 #,(compile-termination
+                    termination exhausted
+                    (getter #`(if #,(bind-public predicate) #,body (seek #,@updates))))))))))
     (define (single-fragment variable type arguments)
       (cond
        [(memq type '(:iota :fxiota :nums :fixnums))

@@ -2574,3 +2574,25 @@
 
      ;; Inferred lengths retain strict source-bound types, including an empty range.
      (error? (for/vector ([x :fxiota 0.0]) x)))
+
+(mat iterator-prefetch-continuation-state
+     (let ([resume #f] [phase 0])
+       (let ([result
+              (for/fold
+                ([:init result '()] [:finish (reverse result)]
+                 [item :iter (list->iter '(a b c d e f))]
+                 [position :fxiota 2
+                           :guard (begin
+                                    (when (and (= position 0) (not resume))
+                                      ;; Replay after the current item has already been fetched.
+                                      (call/cc (lambda (continuation) (set! resume continuation))))
+                                    #t)])
+                (cons (list item position) result))])
+         (let ([expected (case phase
+                           [(0) '((a 0) (b 1))]
+                           [(1) '((a 0) (c 1))]
+                           [else '((a 0) (d 1))])])
+           (and (equal? expected result)
+                (if (= phase 2)
+                    #t
+                    (begin (set! phase (+ phase 1)) (resume #t))))))))
