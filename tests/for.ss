@@ -2457,3 +2457,43 @@
 
      (equal? '(1 3)
              (for/list ([x :list '(0 1 2 3 4) :from 0] [:guard (odd? x)]) x)))
+
+(mat source-setup-clause-order
+     (let ([events '()])
+       (for ([x :iota (begin (set! events (append events '(x))) 1)]
+             [y :iota (begin (set! events (append events '(y))) 1)]) (void))
+       (equal? '(x y) events))
+
+     (let ([events '()])
+       (for/vector ([x :list (begin (set! events (append events '(x))) '(1))]
+                    [y :vector (begin (set! events (append events '(y))) '#(2))]) (+ x y))
+       (equal? '(x y) events)))
+
+(mat option-argument-positions
+     (let ([:end 2] [:stride 2])
+       (equal? '(a c)
+               (for/list ([x :vector '#(a b c d) :to (+ :end 1) :step :stride]) x)))
+
+     (let ([:end 2])
+       (equal? '(a b) (for/list ([x :vector '#(a b c) :to :end]) x)))
+
+     (let ([:index 2] [:guard 1])
+       (equal? '(b) (for/list ([x :list '(a b c) :from :guard :to :index]) x)))
+
+     (let ([:guard '(a b)])
+       (equal? '(a b) (for/list ([x :list :guard :guard #t]) x)))
+
+     (let ([:index 3])
+       (equal? '(0 1 2) (for/list ([x :iota :index]) x)))
+
+     ;; A missing option value must be rejected.
+     (error? (eval '(for/list ([x :vector '#(a b) :to]) x)))
+
+     ;; Unknown option tags must still be rejected.
+     (error? (eval '(for/list ([x :vector '#(a b) :unknown 1]) x))))
+
+(mat many-valid-loop-clauses
+     (guard (condition [#t #f])
+       (expand `(lambda () (for/fold ([x 1] ,@(make-list 5100 '[:guard #t])) #t))
+               (environment '(cspp)))
+       #t))

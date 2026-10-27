@@ -113,11 +113,19 @@
     (assert (eq? 'start (caar table)))
     (lambda (s clauses)
       (let loop ([n 0] [state (caar table)] [cl* clauses])
-        (when (fx> n 5000)
-          (errorf 'for "clause handler loop limit (~a) reached" n))
         (if (eq? 'end state)
             (if (null? cl*)
-                s
+                (begin
+                  (for-each
+                   (lambda (name)
+                     (when (hashtable-contains? s name)
+                       (hashtable-set! s name (reverse (hashtable-ref s name '())))))
+                   '(iter config))
+                  (when (hashtable-contains? s 'iter/config)
+                    (hashtable-set! s 'iter/config
+                      (map (lambda (group) (cons (car group) (reverse (cdr group))))
+                           (reverse (hashtable-ref s 'iter/config '())))))
+                  s)
                 (errorf 'for "clauses are not handled entirely: ~a" cl*))
             (let loop-trans ([trans (filter (lambda (row)
                                               (eq? (car row) state))
@@ -217,7 +225,7 @@
     (lambda (state cl)
       (define (add-clause! cl)
         (hashtable-set! state 'iter
-                        (snoc! (hashtable-ref state 'iter '()) cl)))
+                        (cons cl (hashtable-ref state 'iter '()))))
       (syntax-case cl ()
         [((v* ...) iter-ty op* ...)
          (and (andmap identifier? #'(v* ...))
@@ -239,7 +247,7 @@
     (lambda (state cl)
       (define (add-clause! cl)
         (hashtable-set! state 'config
-                        (snoc! (hashtable-ref state 'config '()) cl)))
+                        (cons cl (hashtable-ref state 'config '()))))
       (syntax-case cl ()
         [(:break e)
          (kw:break? #':break)
@@ -273,7 +281,7 @@
       (define (add-clause! cl)
         (let ([res (hashtable-ref state 'iter/config '())])
           (hashtable-set! state 'iter/config
-                          (snoc! res (list cl)))))
+                          (cons (list cl) res))))
       (syntax-case cl ()
         [(:index . rest)
          (kw:index? #':index)
@@ -301,7 +309,7 @@
         (let ([res (hashtable-ref state 'iter/config '())])
           (if (null? res)
               (errorf 'for "no iter clause before config clause: ~a" cl)
-              (snoc! (list-last res) cl))))
+              (set-cdr! (car res) (cons cl (cdar res))))))
       (syntax-case cl ()
         [(:index v)
          (and (kw:index? #':index) (identifier? #'v))
@@ -352,55 +360,26 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
-  (define (op? x)
-    (let ([x (syntax->datum x)])
-      (and (symbol? x)
-           (let ([x (symbol->string x)])
-             (char=? (string-ref x 0) #\:)))))
-  ;; groups ops and their args into a list
-  (define-who (preprocess-ops ops)
-    (fold-left (lambda (res ?op)
-                 (if (op? ?op)
-                     (cons (list (syntax->datum ?op)) res)
-                     (if (null? res)
-                         (errorf who "op arg without preceding op: ~a" ops)
-                         (begin (snoc! (car res)
-                                       ?op)
-                                res))))
-               '() ops))
-  ;; return: ((:from 10) (:until 20) (:step 2) (:rev))
+  #|proc:check-ops
+  The `check-ops` helper parses option syntax `ops` using `(tag . arity)` entries in
+  `op-configs`, returning option/argument lists. It consumes each option's arguments before
+  looking for the next tag, so `:to :end` treats `:end` as an expression, not an option.
+  Duplicate tags, unknown tags, and missing arguments are syntax errors.
+  |#
   (define (check-ops op-configs ops)
-    (let ([ops (preprocess-ops ops)])
-      (let loop ([remaining ops] [seen '()])
-        (unless (null? remaining)
-          (let ([option (caar remaining)])
-            (when (memq option seen)
-              (errorf 'for "duplicate iterator option: ~a" option))
-            (loop (cdr remaining) (cons option seen)))))
-      (for-each (lambda (op)
-                  (unless (assoc (car op) op-configs)
-                    (errorf ':vector (format "unknown op: ~a" (car op)))))
-                ops)
-      (let loop ([op-configs op-configs] [res '()])
-        (if (null? op-configs)
-            (reverse res)
-            (let* ([op-conf (car op-configs)]
-                   [op (car op-conf)]
-                   [nop-args (cdr op-conf)])
-              (assert (and (natural? nop-args) "bad numebr of iter options"))
-              (let ([?op-args (assoc op ops)])
-                (if ?op-args
-                    (let ([option-args (cdr ?op-args)])
-                      (unless (= (length option-args) nop-args)
-                        (errorf 'check-ops
-                                (format "expected ~a args for option ~a, given ~a"
-                                        (number->string nop-args)
-                                        (symbol->string op)
-                                        (number->string (length option-args)))))
-                      (loop (cdr op-configs)
-                            (cons ?op-args res)))
-                    (loop (cdr op-configs) res))))))))
-
+    (let loop ([remaining ops] [seen '()] [result '()])
+      (if (null? remaining)
+          (reverse result)
+          (let* ([tag (syntax->datum (car remaining))]
+                 [config (assq tag op-configs)])
+            (unless config (syntax-error (car remaining) "for: unknown iterator option:"))
+            (when (memq tag seen)
+              (syntax-error (car remaining) "for: duplicate iterator option:"))
+            (let ([arity (cdr config)])
+              (when (< (length (cdr remaining)) arity)
+                (syntax-error (car remaining) "for: missing iterator option argument:"))
+              (loop (list-tail remaining (fx1+ arity)) (cons tag seen)
+                    (cons (cons tag (list-head (cdr remaining) arity)) result)))))))
 
   (define *vector-ops*
     ;; op     nop-args
@@ -1173,23 +1152,43 @@
                 (if indexed? (list state) '()))))
     ;; Common options filter each iterator independently. Sequence indexes describe
     ;; source positions; other iterators count their unfiltered source values from zero.
-    (define (split-common-options options)
-      (let loop ([options options] [arguments '()] [predicate #f] [index #f])
-        (cond
-         [(null? options) (values (reverse arguments) predicate index)]
-         [(or (kw:guard? (car options)) (kw:index? (car options)))
-          (when (null? (cdr options))
-            (syntax-error cl "missing iterator option argument:"))
-          (if (kw:guard? (car options))
-              (begin
-                (when predicate (syntax-error cl "duplicate iterator guard:"))
-                (loop (cddr options) arguments (cadr options) index))
-              (begin
-                (when index (syntax-error cl "duplicate iterator index:"))
-                (unless (identifier? (cadr options))
-                  (syntax-error (cadr options) "iterator index is not an identifier:"))
-                (loop (cddr options) arguments predicate (cadr options))))]
-         [else (loop (cdr options) (cons (car options) arguments) predicate index)])))
+    (define (split-common-options type options)
+      (when (null? options) (syntax-error cl "for: missing iterator source:"))
+      (let loop ([remaining (cdr options)] [arguments (list (car options))]
+                 [positional 1] [predicate #f] [index #f])
+        (if (null? remaining)
+            (values (reverse arguments) predicate index)
+            (let* ([option (syntax->datum (car remaining))]
+                   [config (assq option
+                                 (append '((:guard . 1) (:index . 1))
+                                         (case type
+                                           [(:list :vector :string :fxvector :flvector)
+                                            *vector-ops*]
+                                           [(:bytevector) *bytevector-ops*]
+                                           [else '()])))])
+              (cond
+               [config
+                (when (< (length (cdr remaining)) (cdr config))
+                  (syntax-error (car remaining) "for: missing iterator option argument:"))
+                (case option
+                  [(:guard)
+                   (when predicate (syntax-error cl "duplicate iterator guard:"))
+                   (loop (cddr remaining) arguments positional (cadr remaining) index)]
+                  [(:index)
+                   (when index (syntax-error cl "duplicate iterator index:"))
+                   (unless (identifier? (cadr remaining))
+                     (syntax-error (cadr remaining) "iterator index is not an identifier:"))
+                   (loop (cddr remaining) arguments positional predicate (cadr remaining))]
+                  [else
+                   (let ([count (fx1+ (cdr config))])
+                     (loop (list-tail remaining count)
+                           (append (reverse (list-head remaining count)) arguments)
+                           positional predicate index))])]
+               [(and (memq type '(:nums :fixnums)) (< positional 3)
+                     (not (memq option '(:from :to :step :rev :type :big :little))))
+                (loop (cdr remaining) (cons (car remaining) arguments)
+                      (fx1+ positional) predicate index)]
+               [else (syntax-error (car remaining) "for: unknown iterator option:")])))))
     (define (decorate-fragment fragment variables predicate index)
       (let* ([source-index (and (> (length fragment) 5) (list-ref fragment 5))]
              [raw-termination (or (and (> (length fragment) 6) (list-ref fragment 6))
@@ -1290,7 +1289,7 @@
             (process-literal-iter-clause #'v (datum lit)))
         (list #'v) #f #f)]
       [((v* ...) iter-ty op* ...)
-       (let-values ([(arguments predicate index) (split-common-options #'(op* ...))])
+       (let-values ([(arguments predicate index) (split-common-options (datum iter-ty) #'(op* ...))])
          (if (and predicate (not direct-filter?))
              (parallel-filter-fragment
               #'(v* ...) predicate index
@@ -1298,7 +1297,7 @@
              (decorate-fragment (process-multi-var-iter-clause #'(v* ...) (datum iter-ty) arguments)
                                 #'(v* ...) predicate index)))]
       [(v iter-ty op* ...)
-       (let-values ([(arguments predicate index) (split-common-options #'(op* ...))])
+       (let-values ([(arguments predicate index) (split-common-options (datum iter-ty) #'(op* ...))])
          (if (and predicate (not direct-filter?))
              (parallel-filter-fragment
               (list #'v) predicate index

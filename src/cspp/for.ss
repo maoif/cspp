@@ -95,6 +95,7 @@
   uses its corresponding Scheme binding form with one binding. An indexed guard binds a zero-based
   index counting passes through that guard, including passes rejected by a later guard.
   Clause tags such as `:length` and `:guard` are reserved as bare iterator-binding names.
+  Source expressions are evaluated left to right in clause order.
   Iterator-local `:guard` filters its own source before parallel items are paired. Iterator-local
   `:index` binds the original source position, before filtering, and is available to the guard.
   Local guards share item and index bindings with the body. They see surrounding lexical
@@ -200,7 +201,7 @@
                                                (if (list-ref x* 0)
                                                    (cons (list-ref x* 0) res)
                                                    res))
-                                             '() iter-frags)]
+                                             '() (reverse iter-frags))]
                     [loop-vars (let ([res (apply append
                                                 (map (lambda (fragment)
                                                        (cons (list-ref fragment 1)
