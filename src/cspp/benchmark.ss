@@ -64,7 +64,7 @@
 ;;;;===----------------------------------------------------------------------===
 
   (define-record-type ($benchmark $mk-benchmark benchmark?)
-    (fields name body options args arg-names setup teardown
+    (fields name body options axes setup teardown
             (immutable fixture $benchmark-fixture-ref)
             (immutable suite $benchmark-suite-ref)
             template-args))
@@ -1055,7 +1055,8 @@ Setup has signature `(lambda (state) value)`; teardown has signature
 Without setup, teardown receives `#f` and the body receives no extra argument.
 A fixture supplies both hooks; combining it with non-false descriptor hooks is an error.
 `unit`, `complexity`, and `throughput` are descriptive metadata; they do not change
-measurement or reporting.
+measurement or reporting. Argument axes are validated at construction; the runner
+traverses their Cartesian product incrementally, preserving option and row order.
 |#
   (define make-benchmark
     (lambda (name body options)
@@ -1074,7 +1075,6 @@ measurement or reporting.
                                body
                                options
                                args
-                               ($argument-names args)
                                (if fixture ($benchmark-fixture-setup fixture) setup)
                                (if fixture ($benchmark-fixture-teardown fixture) teardown)
                                fixture
@@ -1705,101 +1705,54 @@ cost-center measurement is enabled in runner `config`.
          [(memq (car names) seen) (car names)]
          [else (loop (cdr names) (cons (car names) seen))]))))
 
-  (define $any-shared-symbol?
-    (lambda (left right)
-      (let loop ([left left])
-        (cond
-         [(null? left) #f]
-         [(memq (car left) right) (car left)]
-         [else (loop (cdr left))]))))
-
-  (define $zip-argument-row
-    (lambda (names values)
-      (let loop ([names names] [values values] [out '()])
-        (cond
-         [(and (null? names) (null? values)) (reverse out)]
-         [(or (null? names) (null? values))
-          (errorf '$zip-argument-row "argument value row length does not match names")]
-         [else
-          (loop (cdr names)
-                (cdr values)
-                (cons (cons (car names) (car values)) out))]))))
-
-  (define $args-spec->rows
-    (lambda (spec)
-      (unless (and (pair? spec) (list? (car spec)) (not (null? (car spec))))
-        (errorf '$args-spec->rows "invalid :args option: ~s" spec))
-      (let ([names (car spec)]
-            [value-rows (cdr spec)])
-        (unless (andmap symbol? names)
-          (errorf '$args-spec->rows "argument names must be symbols: ~s" names))
-        (let ([duplicate ($duplicate-symbol? names)])
-          (when duplicate
-            (errorf '$args-spec->rows "duplicate argument name: ~a" duplicate)))
-        (map (lambda (values)
-               (unless (list? values)
-                 (errorf '$args-spec->rows "invalid argument value row: ~s" values))
-               (list names values ($zip-argument-row names values)))
-             value-rows))))
-
   (define $normalize-arguments
     (lambda (options)
-      (when (assq 'arg-product options)
-        (errorf '$normalize-arguments ":arg-product has been removed; use repeated :args forms"))
-      (let ([args-options (filter (lambda (option)
-                                    (memq (car option) '(args arg-range dense-arg-range)))
-                                  options)])
-        (if (null? args-options)
-            (list (list '() '() '()))
-            (let loop ([options args-options] [rows (list (list '() '() '()))] [seen-names '()])
-              (if (null? options)
-                  rows
-                  (let* ([option (car options)]
-                         [new-rows
-                          (case (car option)
-                            [(args)
-                             ($args-spec->rows (cdr option))]
-                            [(arg-range)
-                             (let* ([spec (cdr option)]
-                                    [name (car spec)]
-                                    [values ($range-values (cadr spec) (caddr spec) (cadddr spec) #t)])
-                               (map (lambda (value)
-                                      (list (list name) (list value) (list (cons name value))))
-                                    values))]
-                            [(dense-arg-range)
-                             (let* ([spec (cdr option)]
-                                    [name (car spec)]
-                                    [values ($range-values (cadr spec) (caddr spec) (cadddr spec) #f)])
-                               (map (lambda (value)
-                                      (list (list name) (list value) (list (cons name value))))
-                                    values))]
-                            [else (errorf '$normalize-arguments "unknown argument option: ~a" (car option))])]
-                         [new-names (case (car option)
-                                      [(args) (cadr option)]
-                                      [(arg-range dense-arg-range) (list (cadr option))]
-                                      [else (if (null? new-rows) '() (car (car new-rows)))])]
-                         [duplicate ($duplicate-symbol? new-names)]
-                         [shared ($any-shared-symbol? new-names seen-names)])
-                    (when duplicate
-                      (errorf '$normalize-arguments "duplicate argument name: ~a" duplicate))
-                    (when shared
-                      (errorf '$normalize-arguments "duplicate argument name across argument options: ~a" shared))
-                    (loop (cdr options)
-                          (apply append
-                                 (map (lambda (left)
-                                        (map (lambda (right)
-                                               (list (append (car left) (car right))
-                                                     (append (cadr left) (cadr right))
-                                                     (append (caddr left) (caddr right))))
-                                             new-rows))
-                                      rows))
-                          (append seen-names new-names)))))))))
+      ;; Keep validated axes factorized; combinations exist only during traversal.
+      (let ([seen (make-eq-hashtable)])
+        (map
+          (lambda (option)
+            (let ([axis
+                   (case (car option)
+                     [(args) (cdr option)]
+                     [(arg-range dense-arg-range)
+                      (let ([spec (cdr option)])
+                        (cons (list (car spec))
+                              (map list ($range-values (cadr spec) (caddr spec) (cadddr spec)
+                                          (eq? (car option) 'arg-range)))))])])
+              (unless (and (list? axis) (pair? axis)
+                           (list? (car axis)) (pair? (car axis)))
+                (errorf 'make-benchmark "invalid argument table: ~s" axis))
+              (for-each
+                (lambda (name)
+                  (unless (symbol? name)
+                    (errorf 'make-benchmark "argument names must be symbols: ~s" name))
+                  (when (hashtable-contains? seen name)
+                    (errorf 'make-benchmark "duplicate argument name across options: ~s" name))
+                  (hashtable-set! seen name #t))
+                (car axis))
+              (let ([width (length (car axis))])
+                (for-each
+                  (lambda (row)
+                    (unless (and (list? row) (= (length row) width))
+                      (errorf 'make-benchmark "argument row length must match names: ~s" row)))
+                  (cdr axis)))
+              ;; Preserve the constructor's row snapshot without copying products.
+              (cons (list-copy (car axis)) (map list-copy (cdr axis)))))
+          (filter (lambda (option) (memq (car option) '(args arg-range dense-arg-range)))
+                  options)))))
 
-  (define $argument-names
-    (lambda (args)
-      (if (null? args)
-          '()
-          (car (car args)))))
+  (define $walk-argument-axes
+    (lambda (axes visit)
+      (let loop ([axes axes] [reversed '()])
+        (if (null? axes)
+            (visit (reverse reversed))
+            (for-all
+              (lambda (row)
+                (loop (cdr axes)
+                      (fold-left (lambda (bindings name value)
+                                   (cons (cons name value) bindings))
+                                 reversed (caar axes) row)))
+              (cdar axes))))))
 
   #|macro:benchmark-options
   The `benchmark-options` macro converts benchmark option syntax into an option
@@ -2128,6 +2081,13 @@ suffix.
           ($dispatch-benchmark-report (reverse (cdr group)) (caar group) (cdar group)))
         (reverse ($report-groups-ordered groups)))))
 
+  (define $expand-benchmark-case
+    (lambda (benchmark args)
+      (cons ($make-benchmark-state ($benchmark-name benchmark)
+                                  (or ($current-suite-context) ($benchmark-suite-ref benchmark))
+                                  args ($benchmark-template-args benchmark) 0 1 0 '() '() #f)
+            benchmark)))
+
   #|proc:benchmark-expand
 The `benchmark-expand` procedure expands `benchmark` into concrete run pairs
 for `config`. Each pair contains a benchmark state in the car and the descriptor
@@ -2136,21 +2096,12 @@ to run in the cdr.
   (define benchmark-expand
     (lambda (benchmark config)
       (pcheck ([benchmark? benchmark] [benchmark-config? config])
-              (map (lambda (arg-row)
-                     (let ([args (caddr arg-row)])
-                       (cons ($make-benchmark-state ($benchmark-name benchmark)
-                                                    (or ($current-suite-context)
-                                                        ($benchmark-suite-ref benchmark))
-                                                    args
-                                                    ($benchmark-template-args benchmark)
-                                                    0
-                                                    1
-                                                    0
-                                                    '()
-                                                    '()
-                                                    #f)
-                             benchmark)))
-                   ($benchmark-args benchmark)))))
+              (let ([expanded '()])
+                ($walk-argument-axes ($benchmark-axes benchmark)
+                  (lambda (args)
+                    (set! expanded (cons ($expand-benchmark-case benchmark args) expanded))
+                    #t))
+                (reverse expanded)))))
 
   #|proc:benchmark-select
 The `benchmark-select` procedure selects benchmarks from `registry` according
@@ -2410,16 +2361,19 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                     (begin
                       (set! selected? #t)
                       (record-report! '() effective)
-                      (let loop-cases ([expanded (benchmark-expand benchmark effective)]
-                                       [results results])
-                      (if (null? expanded)
-                          (loop-benchmarks (cdr benchmarks) results)
-                          (let ([result ($run-expanded (car expanded) effective)])
-                            (record-report! (list result) effective)
-                            (if (and ($benchmark-config-stop-on-error? effective)
-                                     (benchmark-result-error result))
-                                (finish (cons result results))
-                                (loop-cases (cdr expanded) (cons result results))))))))))))))
+                      (let* ([next-results results]
+                             [completed?
+                              ($walk-argument-axes ($benchmark-axes benchmark)
+                                (lambda (args)
+                                  (let ([result ($run-expanded
+                                                  ($expand-benchmark-case benchmark args) effective)])
+                                    (record-report! (list result) effective)
+                                    (set! next-results (cons result next-results))
+                                    (not (and ($benchmark-config-stop-on-error? effective)
+                                              (benchmark-result-error result))))))])
+                        (if completed?
+                            (loop-benchmarks (cdr benchmarks) next-results)
+                            (finish next-results)))))))))))
 
   #|proc:benchmark-run
   The `benchmark-run` procedure runs registered benchmarks, descriptors, or a

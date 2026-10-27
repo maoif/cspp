@@ -2127,3 +2127,30 @@
              [config (parameterize ([current-output-port fallback]) (default-benchmark-config))])
         (and (null? (benchmark-run benchmark config))
              (string=? (get-output-string fallback) ""))))))
+
+(mat benchmark-cartesian-construction-and-stop-are-bounded
+  ;; A failing first case must not allocate states for the remaining Cartesian product.
+  (let* ([rows (map list (iota 200))]
+         [options (list (cons 'args (cons '(left) rows))
+                        (cons 'args (cons '(right) rows)))]
+         [before (statistics)]
+         [benchmark (make-benchmark 'large-product
+                      (lambda (state left right) (error 'large-product "stop")) options)]
+         [config (benchmark-config-with (benchmark-test-config)
+                   '((samples . 1) (stop-on-error? . #t)))]
+         [results (benchmark-run benchmark config)]
+         [bytes (sstats-bytes (sstats-difference (statistics) before))])
+    (and (= (length results) 1)
+         (benchmark-result-error (car results))
+         (equal? (benchmark-result-args (car results)) '((left . 0) (right . 0)))
+         (< bytes 1000000))))
+
+(mat benchmark-argument-axes-snapshot-input-rows
+  (let* ([names (list 'value)] [row (list 7)]
+         [benchmark (make-benchmark 'snapshot (lambda (state value) (void))
+                      (list (cons 'args (list names row))))])
+    (set-car! names 'changed)
+    (set-car! row 99)
+    (equal? (map (lambda (expanded) (benchmark-state-args (car expanded)))
+                 (benchmark-expand benchmark (benchmark-test-config)))
+            '(((value . 7))))))
