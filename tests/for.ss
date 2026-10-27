@@ -2497,3 +2497,34 @@
        (expand `(lambda () (for/fold ([x 1] ,@(make-list 5100 '[:guard #t])) #t))
                (environment '(cspp)))
        #t))
+
+(mat counter-continuation-state
+     (let ()
+       (define (check traverse)
+         (let ([resume #f] [resumed? #f])
+           (let ([result
+                  (traverse
+                   (lambda ()
+                     (when (and (not resumed?) (not resume))
+                       ;; Restore the source and its private counters together.
+                       (call/cc (lambda (continuation) (set! resume continuation))))))])
+             (if resumed?
+                 (equal? '((0 0) (1 1)) result)
+                 (begin (set! resumed? #t) (resume 'continue))))))
+       (and
+        (check (lambda (visit)
+                 (for/fold ([:init result '()] [:finish (reverse result)]
+                             [x :nums 0 2 :index i])
+                   (visit) (cons (list x i) result))))
+        (check (lambda (visit)
+                 (for/fold ([:init result '()] [:finish (reverse result)]
+                             [x 2] [:guard #t :index i])
+                   (visit) (cons (list x i) result))))
+        (check (lambda (visit)
+                 (for*/fold ([:init result '()] [:finish (reverse result)]
+                              [outer 1] [x 2] [:index i])
+                   (visit) (cons (list x i) result))))
+        (check (lambda (visit)
+                 (for/fold ([:init result '()] [:finish (reverse result)]
+                             [x :nums 0 2 :index i :guard #t] [other 2])
+                   (visit) (cons (list x i) result)))))))

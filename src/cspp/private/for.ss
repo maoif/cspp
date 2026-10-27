@@ -20,7 +20,10 @@
           handle-length handle-fill
           handle-iter/config-iter handle-iter/config-config
 
-          process-iter-clause process-iter-clause/direct process-iter-clauses)
+          process-iter-clause process-iter-clause/direct process-iter-clauses
+          fragment-setup fragment-bindings fragment-termination fragment-updates
+          fragment-getter fragment-source-index fragment-exposed fragment-raw-termination
+          fragment-filter fragment-visit)
   (import (cspp chez)
           (cspp utils)
           (cspp internal)
@@ -398,21 +401,44 @@
               (:type   . 1))))
 
 
-  #|
-  For each iter clause, the following syntax/procedures are returned:
-  - gen-preloop-proc: generate code binding variables needed before the loop,
-      plus type checking of inputs
-  - loop-var: induction variables that correspond to each loop variable
-  - terminate: termination checks for the loop variable
-  - next: code that advances the loop variable
-  - gen-getter: generate code that binds the value to be used in the body
-  - source-index: source position expression when the iterator has a native index, otherwise #f
-  - exposed-variables: public item and iterator-local index identifiers bound by the getter
-  - raw-termination: exhaustion check before filtering, or #f for an unfiltered source
-  - direct-filter: optional (body retry) generator that binds and filters without seeking
-  - visit: optional (body exhausted) generator that seeks in private item binding scopes
-  - extra-bindings / extra-updates: additional resumable induction variables and their updates
+  #|doc
+  Iterator fragments are immutable compile-time records. Every induction variable, including
+  source positions and list cursors, has an entry in `fragment-bindings` and a corresponding
+  expression in `fragment-updates`. The other accessors describe source setup, exhaustion,
+  item bindings, public aliases, direct filtering, and parallel seeking. A fragment is never
+  reinterpreted as a different positional layout during decoration.
   |#
+  (define-record-type (iterator-fragment make-iterator-fragment iterator-fragment?)
+    (fields (immutable setup fragment-setup)
+            (immutable bindings fragment-bindings)
+            (immutable termination fragment-termination)
+            (immutable updates fragment-updates)
+            (immutable getter fragment-getter)
+            (immutable source-index fragment-source-index)
+            (immutable exposed fragment-exposed)
+            (immutable raw-termination fragment-raw-termination)
+            (immutable filter fragment-filter)
+            (immutable visit fragment-visit)))
+
+  #|proc:source-fragment
+  The `source-fragment` helper constructs an undecorated iterator fragment from source setup,
+  one induction binding, termination, advance, and getter syntax. Optional source-index and
+  raw-exhaustion syntax describe native positions and iterator fetching. Additional bindings
+  and advances are combined with the primary state immediately. For example, a list slice
+  carries both its source position and list tail as ordinary resumable induction variables.
+  |#
+  (define source-fragment
+    (case-lambda
+      [(setup binding termination advance getter)
+       (source-fragment setup binding termination advance getter #f #f '() '())]
+      [(setup binding termination advance getter index)
+       (source-fragment setup binding termination advance getter index #f '() '())]
+      [(setup binding termination advance getter index raw)
+       (source-fragment setup binding termination advance getter index raw '() '())]
+      [(setup binding termination advance getter index raw bindings updates)
+       (make-iterator-fragment setup (cons binding bindings) termination (cons advance updates)
+                               getter index '() raw #f #f)]))
+
   (define (process-iter-clause/direct cl direct-filter?)
     (define (process-multi-var-iter-clause v* ty op*)
       (let ([nops (length op*)])
@@ -423,7 +449,7 @@
            (unless (= 2 (length v*))
              (syntax-error v* "invalid number of bound variables for iter type `:hashtable`:"))
            (with-syntax ([(t-ht t-i t-len t-ks t-vs) (generate-temporaries '(t-ht t-i t-len t-ks t-vs))])
-             (list (lambda (e)
+             (source-fragment (lambda (e)
                      #`(let ([t-ht #,(car op*)])
                          (unless (hashtable? t-ht)
                            (errorf ':hashtable "not a hashtable: ~a" t-ht))
@@ -454,7 +480,7 @@
         (with-syntax ([(source size from to original-from step position forward? tail snapshot)
                        (generate-temporaries
                         '(source size from to original-from step position forward? tail snapshot))])
-          (list
+          (source-fragment
            (lambda (body)
              #`(let ([source #,(car arguments)])
                  (unless (list? source) (errorf ':list "not a list: ~a" source))
@@ -529,7 +555,7 @@
            (unless (= 1 nops)
              (syntax-error op* "invalid number of options for iter type `:iota`:"))
            (with-syntax ([(t-stop) (generate-temporaries '(t-stop))])
-             (list (lambda (e)
+             (source-fragment (lambda (e)
                      #`(let ([t-stop #,(car op*)])
                          (unless (and (natural? t-stop) (exact? t-stop))
                            (errorf ':iota "not an exact natural number: ~a" t-stop))
@@ -542,7 +568,7 @@
            (unless (= 1 nops)
              (syntax-error op* "invalid number of options for iter type `:fxiota`:"))
            (with-syntax ([(t-stop) (generate-temporaries '(t-stop))])
-             (list (lambda (e)
+             (source-fragment (lambda (e)
                      #`(let ([t-stop #,(car op*)])
                          (unless (and (fixnum? t-stop) (fx>= t-stop 0))
                            (errorf ':fxiota "not a nonnegative fixnum: ~a" t-stop))
@@ -557,7 +583,7 @@
              (syntax-error op* "invalid number of options for iter type `:nums`:"))
            (with-syntax ([(t-start t-stop t-step) (generate-temporaries '(t-start t-stop t-step))])
              (case nops
-               [1 (list (lambda (e)
+               [1 (source-fragment (lambda (e)
                           #`(let ([t-stop #,(car op*)])
                               (unless (and (real? t-stop) (nonnegative? t-stop))
                                 (errorf ':nums "not a nonnegative real number: ~a" t-stop))
@@ -566,7 +592,7 @@
                         #`(>= #,v t-stop)
                         (numeric-next #'1)
                         #f)]
-               [2 (list (lambda (e)
+               [2 (source-fragment (lambda (e)
                           #`(let ([t-start #,(car op*)] [t-stop #,(cadr op*)])
                               (unless (and (real? t-start) (real? t-stop) (<= t-start t-stop))
                                 (errorf ':nums "invalid range from ~a to ~a" t-start t-stop))
@@ -575,7 +601,7 @@
                         #`(>= #,v t-stop)
                         (numeric-next #'1)
                         #f)]
-               [3 (list (lambda (e)
+               [3 (source-fragment (lambda (e)
                           #`(let ([t-start #,(car op*)] [t-stop #,(cadr op*)] [t-step #,(caddr op*)])
                               (unless (and (real? t-start) (real? t-stop) (real? t-step)
                                            (or (and (<= t-start t-stop) (> t-step 0))
@@ -593,7 +619,7 @@
              (syntax-error op* "invalid number of options for iter type `:fxnums`:"))
            (with-syntax ([(t-start t-stop t-step) (generate-temporaries '(t-start t-stop t-step))])
              (case nops
-               [1 (list (lambda (e)
+               [1 (source-fragment (lambda (e)
                           #`(let ([t-stop #,(car op*)])
                               (unless (and (fixnum? t-stop) (fx>= t-stop 0))
                                 (errorf ':fxnums "not a nonnegative fixnum: ~a" t-stop))
@@ -602,7 +628,7 @@
                         #`(fx= #,v t-stop)
                         #`(fx+ #,v 1)
                         #f)]
-               [2 (list (lambda (e)
+               [2 (source-fragment (lambda (e)
                           #`(let ([t-start #,(car op*)] [t-stop #,(cadr op*)])
                               (unless (and (fixnum? t-start) (fixnum? t-stop) (fx<= t-start t-stop))
                                 (errorf ':fxnums "invalid range from ~a to ~a" t-start t-stop))
@@ -611,7 +637,7 @@
                         #`(>= #,v t-stop)
                         #`(fx+ #,v 1)
                         #f)]
-               [3 (list (lambda (e)
+               [3 (source-fragment (lambda (e)
                           #`(let ([t-start #,(car op*)] [t-stop #,(cadr op*)] [t-step #,(caddr op*)])
                               (unless (and (fixnum? t-start) (fixnum? t-stop) (fixnum? t-step)
                                            (or (and (fx<= t-start t-stop) (fx> t-step 0))
@@ -634,7 +660,7 @@
            (unless (= nops 1)
              (syntax-error op* "invalid number of options for iter type `:list`:"))
            (with-syntax ([(t-ls) (generate-temporaries '(t-ls))])
-             (list (lambda (e)
+             (source-fragment (lambda (e)
                      #`(let ([t-ls #,(car op*)])
                          (unless (list? t-ls)
                            (errorf ':list "not a list: ~a" t-ls))
@@ -663,7 +689,7 @@
                ;; Q: how to use these ops?
                (with-syntax ([(t-vec t-len t-i t-from t-to t-step)
                               (generate-temporaries '(t-vec t-len t-i t-from t-to t-step))])
-                 (list (lambda (e)
+                 (source-fragment (lambda (e)
                          #`(let ([t-vec #,(car op*)]) ; it seems tycheck can be put here
                              (unless (vector? t-vec)
                                (errorf ':vector "not a vector: ~a" t-vec))
@@ -734,7 +760,7 @@
                    [op-rev  (assoc ':rev  ops)])
                (with-syntax ([(t-vec t-len t-i t-from t-to t-step)
                               (generate-temporaries '(t-vec t-len t-i t-from t-to t-step))])
-                 (list (lambda (e)
+                 (source-fragment (lambda (e)
                          #`(let ([t-vec #,(car op*)]) ; it seems tycheck can be put here
                              (unless (string? t-vec)
                                (errorf ':string "not a string: ~a" t-vec))
@@ -805,7 +831,7 @@
                    [op-rev  (assoc ':rev  ops)])
                (with-syntax ([(t-vec t-len t-i t-from t-to t-step)
                               (generate-temporaries '(t-vec t-len t-i t-from t-to t-step))])
-                 (list (lambda (e)
+                 (source-fragment (lambda (e)
                          #`(let ([t-vec #,(car op*)]) ; it seems tycheck can be put here
                              (unless (fxvector? t-vec)
                                (errorf ':fxvector "not a fxvector: ~a" t-vec))
@@ -876,7 +902,7 @@
                    [op-rev  (assoc ':rev  ops)])
                (with-syntax ([(t-vec t-len t-i t-from t-to t-step)
                               (generate-temporaries '(t-vec t-len t-i t-from t-to t-step))])
-                 (list (lambda (e)
+                 (source-fragment (lambda (e)
                          #`(let ([t-vec #,(car op*)]) ; it seems tycheck can be put here
                              (unless (flvector? t-vec)
                                (errorf ':flvector "not a flvector: ~a" t-vec))
@@ -984,7 +1010,7 @@
                  (let ([vref (datum->syntax #'bytevector-u8-ref (caddr (assoc op-type *bv-table*)))]
                        [size (datum->syntax v (cadr  (assoc op-type *bv-table*)))])
                    ;; (println "vref: ~a size: ~a" vref size)
-                   (list (lambda (e)
+                   (source-fragment (lambda (e)
                            #`(let ([t-vec #,(car op*)])
                                (unless (bytevector? t-vec)
                                  (errorf ':bytevector "not a bytevector: ~a" t-vec))
@@ -1059,7 +1085,7 @@
            (unless (= nops 1)
              (syntax-error op* "invalid number of options for iter type `:hashtable-keys`:"))
            (with-syntax ([(t-ht t-i t-len t-vec) (generate-temporaries '(t-ht t-i t-len t-vec))])
-             (list (lambda (e)
+             (source-fragment (lambda (e)
                      #`(let ([t-ht #,(car op*)])
                          (unless (hashtable? t-ht)
                            (errorf ':hashtable-keys "not a hashtable: ~a" t-ht))
@@ -1076,7 +1102,7 @@
            (unless (= nops 1)
              (syntax-error op* "invalid number of options for iter type `:hashtable-values`:"))
            (with-syntax ([(t-ht t-i t-len t-vec) (generate-temporaries '(t-ht t-i t-len t-vec))])
-             (list (lambda (e)
+             (source-fragment (lambda (e)
                      #`(let ([t-ht #,(car op*)])
                          (unless (hashtable? t-ht)
                            (errorf ':hashtable-values "not a hashtable: ~a" t-ht))
@@ -1093,7 +1119,7 @@
            (unless (= nops 1)
              (syntax-error op* "invalid number of options for iter type `:iter`:"))
            (with-syntax ([(t-it t-v pending unused) (generate-temporaries '(t-it t-v pending unused))])
-             (list (lambda (e)
+             (source-fragment (lambda (e)
                      #`(let ([t-it #,(car op*)])
                          (unless (iter? t-it)
                            (errorf ':iter "not a iter: ~a" t-it))
@@ -1115,14 +1141,14 @@
     (define (process-literal-iter-clause v lit)
       (let ([lit (->literal lit)])
         (cond [(natural? lit)
-               (list #f
+               (source-fragment #f
                      #`[#,v 0]
                      #`(= #,v #,lit)
                      #`(+ #,v 1)
                      #f)]
               [(string? lit)
                (with-syntax ([(t-str t-i) (generate-temporaries '(t-str t-i))])
-                 (list (lambda (e)
+                 (source-fragment (lambda (e)
                          #`(let ([t-str #,lit])
                              #,e))
                        #'[t-i 0]
@@ -1133,7 +1159,7 @@
                              #,e))))]
               [(vector? lit)
                (with-syntax ([(t-vec t-i) (generate-temporaries '(t-vec t-i))])
-                 (list (lambda (e)
+                 (source-fragment (lambda (e)
                          #`(let ([t-vec '#,(datum->syntax v lit)])
                              #,e))
                        #'[t-i 0]
@@ -1143,13 +1169,14 @@
                          #`(let ([#,v (vector-ref t-vec t-i)])
                              #,e))))]
               [else (syntax-error lit "bad iter literal type:")])))
-    ;; Numeric induction state must remain distinct from the exposed item binding.
+    ;; Numeric induction state remains distinct from the public item alias.
     (define (numeric-fragment variable indexed? generate)
       (let* ([state (car (generate-temporaries '(numeric-state)))]
              [fragment (generate state)])
-        (append (list-head fragment 4)
-                (list (lambda (body) #`(let ([#,variable #,state]) #,body)))
-                (if indexed? (list state) '()))))
+        (make-iterator-fragment
+         (fragment-setup fragment) (fragment-bindings fragment) (fragment-termination fragment)
+         (fragment-updates fragment) (lambda (body) #`(let ([#,variable #,state]) #,body))
+         (and indexed? state) '() (fragment-raw-termination fragment) #f #f)))
     ;; Common options filter each iterator independently. Sequence indexes describe
     ;; source positions; other iterators count their unfiltered source values from zero.
     (define (split-common-options type options)
@@ -1190,47 +1217,39 @@
                       (fx1+ positional) predicate index)]
                [else (syntax-error (car remaining) "for: unknown iterator option:")])))))
     (define (decorate-fragment fragment variables predicate index)
-      (let* ([source-index (and (> (length fragment) 5) (list-ref fragment 5))]
-             [raw-termination (or (and (> (length fragment) 6) (list-ref fragment 6))
-                                  (and predicate (list-ref fragment 2)))]
-             [extra-bindings (if (> (length fragment) 7) (list-ref fragment 7) '())]
-             [extra-updates (if (> (length fragment) 8) (list-ref fragment 8) '())]
-             [exposed (if index (append variables (list index)) variables)])
-        (define (finish fragment)
-          (append (list-head fragment 5)
-                  (list source-index exposed raw-termination #f #f extra-bindings extra-updates)))
-        (cond
-         [(not (or predicate index)) (finish fragment)]
-         [(and predicate direct-filter?)
-          ;; A single source can filter in the item's lexical scope and retry its
-          ;; own loop. No accepted-item cache or mutable seeking state is needed.
-          (let* ([indexed (decorate-fragment fragment variables #f index)]
-                 [getter (or (list-ref indexed 4) (lambda (body) body))])
-            (append (list-head indexed 8)
-                    (list (lambda (body retry)
-                            (getter #`(if #,predicate #,body #,retry)))
-                          #f)
-                    (list-tail indexed 10)))]
-         [(not predicate)
-          ;; Index-only sources need neither filtering nor accepted-item caches.
-          (with-syntax ([(position) (generate-temporaries '(position))])
-            (let ([preloop (or (car fragment) (lambda (body) body))]
-                  [getter (or (list-ref fragment 4) (lambda (body) body))])
-              (finish
-               (list (if source-index
-                         (car fragment)
-                         (lambda (body) (preloop #`(let ([position 0]) #,body))))
-                     (list-ref fragment 1)
-                     (list-ref fragment 2)
-                     (if source-index
-                         (list-ref fragment 3)
-                         #`(begin (set! position (+ position 1)) #,(list-ref fragment 3)))
-                     (lambda (body)
-                       (getter #`(let ([#,index #,(or source-index #'position)]) #,body)))))))]
-         [else (syntax-error cl "parallel filter requires private source bindings:")])))
-    ;; Each visitor binds fresh private variables. Public aliases are visible only
-    ;; to that source's predicate, and later to the body, so parallel guards cannot
-    ;; accidentally capture a previously visited companion's item bindings.
+      (let* ([native-index (fragment-source-index fragment)]
+             [exposed (if index (append variables (list index)) variables)]
+             [position (and index (not native-index)
+                            (car (generate-temporaries '(source-position))))]
+             [getter (or (fragment-getter fragment) (lambda (body) body))]
+             [indexed
+              (make-iterator-fragment
+               (fragment-setup fragment)
+               (append (fragment-bindings fragment) (if position (list #`[#,position 0]) '()))
+               (fragment-termination fragment)
+               (append (fragment-updates fragment)
+                       (if position (list #`(+ #,position 1)) '()))
+               (if index
+                   (lambda (body) (getter #`(let ([#,index #,(or native-index position)]) #,body)))
+                   (fragment-getter fragment))
+               native-index exposed
+               (or (fragment-raw-termination fragment)
+                   (and predicate (fragment-termination fragment)))
+               #f #f)])
+        (if predicate
+            (if direct-filter?
+                (make-iterator-fragment
+                 (fragment-setup indexed) (fragment-bindings indexed) (fragment-termination indexed)
+                 (fragment-updates indexed) (fragment-getter indexed) native-index exposed
+                 (fragment-raw-termination indexed)
+                 (lambda (body retry)
+                   ((or (fragment-getter indexed) (lambda (body) body))
+                    #`(if #,predicate #,body #,retry)))
+                 #f)
+                (syntax-error cl "parallel filter requires private source bindings:"))
+            indexed)))
+
+    ;; Parallel visitors bind private item locations before exposing source-local aliases.
     (define (parallel-filter-fragment variables predicate index generate)
       (let* ([private-variables (generate-temporaries variables)]
              [private-index (and index (car (generate-temporaries '(source-index))))]
@@ -1238,19 +1257,14 @@
                                           private-variables #f private-index)]
              [public (if index (append variables (list index)) variables)]
              [private (if index (append private-variables (list private-index)) private-variables)]
-             [getter (or (list-ref fragment 4) (lambda (body) body))]
-             [binding (list-ref fragment 1)]
-             [state (syntax-case binding () [(state initial) #'state])]
-             [termination (list-ref fragment 2)]
-             [advance (list-ref fragment 3)]
-             [extra-bindings (list-ref fragment 10)]
-             [extra-updates (list-ref fragment 11)]
+             [getter (or (fragment-getter fragment) (lambda (body) body))]
+             [bindings (fragment-bindings fragment)]
+             [termination (fragment-termination fragment)]
+             [updates (fragment-updates fragment)]
              [bind-public
               (lambda (body)
-                ;; The index may shadow the item, as in the direct-source getter.
                 (let bind ([names public] [values private])
-                  (if (null? names)
-                      body
+                  (if (null? names) body
                       #`(let-syntax
                             ([#,(car names)
                               (identifier-syntax
@@ -1258,21 +1272,16 @@
                                ((set! reference expression) (set! #,(car values) expression)))])
                           #,(bind (cdr names) (cdr values))))))])
         (with-syntax ([(seek) (generate-temporaries '(seek))])
-          (list (car fragment) binding termination advance bind-public
-                (list-ref fragment 5) public
-                (or (list-ref fragment 7) termination)
-                #f
-                (lambda (body exhausted)
-                  #`(let seek ([#,state #,state]
-                               #,@(map (lambda (binding)
-                                         (syntax-case binding () [(name initial) #'[name name]]))
-                                       extra-bindings))
-                      (if #,termination
-                          #,exhausted
-                          #,(getter #`(if #,(bind-public predicate)
-                                          #,body
-                                          (seek #,advance #,@extra-updates))))))
-                extra-bindings extra-updates))))
+          (make-iterator-fragment
+           (fragment-setup fragment) bindings termination updates bind-public
+           (fragment-source-index fragment) public
+           (or (fragment-raw-termination fragment) termination) #f
+           (lambda (body exhausted)
+             #`(let seek (#,@(map (lambda (binding)
+                                   (syntax-case binding () [(name initial) #'[name name]]))
+                                 bindings))
+                 (if #,termination #,exhausted
+                     #,(getter #`(if #,(bind-public predicate) #,body (seek #,@updates))))))))))
     (define (single-fragment variable type arguments)
       (cond
        [(memq type '(:iota :fxiota :nums :fixnums))

@@ -183,8 +183,8 @@
            (with-syntax ([(for-loop t-acc t-finish state-acc state-index)
                           (generate-temporaries '(for-loop t-acc t-finish state-acc state-index))])
              (let* ([iter-frags (process-iter-clauses (hashtable-ref fragments 'iter #f))]
-                    [direct-filter (and (null? (cdr iter-frags)) (list-ref (car iter-frags) 8))]
-                    [direct-exposed (if direct-filter (list-ref (car iter-frags) 6) '())]
+                    [direct-filter (and (null? (cdr iter-frags)) (fragment-filter (car iter-frags)))]
+                    [direct-exposed (if direct-filter (fragment-exposed (car iter-frags)) '())]
                     [init-def (if frag-init
                                   (syntax-case frag-init () [(_ v e) #'[state-acc e]])
                                   #f)]
@@ -198,49 +198,42 @@
                                    #'state-index
                                    #f)]
                     [gen-preloops (fold-left (lambda (res x*)
-                                               (if (list-ref x* 0)
-                                                   (cons (list-ref x* 0) res)
+                                               (if (fragment-setup x*)
+                                                   (cons (fragment-setup x*) res)
                                                    res))
                                              '() (reverse iter-frags))]
                     [loop-vars (let ([res (apply append
-                                                (map (lambda (fragment)
-                                                       (cons (list-ref fragment 1)
-                                                             (list-ref fragment 10)))
-                                                     iter-frags))])
+                                                (map fragment-bindings iter-frags))])
                                  ;; order matters
                                  (when frag-index (set! res (cons index-def res)))
                                  (when frag-init  (set! res (cons init-def  res)))
-                                 res)]
+                                 (append res (map (lambda (entry) #`[#,(cdr entry) 0])
+                                                  guard-indices)))]
                     [termination-checks
                      (append
                       ;; Check all known bounds before any filter can seek indefinitely.
-                      (if (exists (lambda (fragment) (list-ref fragment 7)) iter-frags)
+                      (if (exists (lambda (fragment) (fragment-raw-termination fragment)) iter-frags)
                           (map (lambda (fragment)
-                                 (or (list-ref fragment 7) (list-ref fragment 2)))
+                                 (or (fragment-raw-termination fragment) (fragment-termination fragment)))
                                iter-frags)
                           '())
-                      (map (lambda (fragment) (or (list-ref fragment 9) (list-ref fragment 2)))
+                      (map (lambda (fragment) (or (fragment-visit fragment) (fragment-termination fragment)))
                            iter-frags))]
                     [updates (let ([res (apply append
-                                              (map (lambda (fragment)
-                                                     (cons (list-ref fragment 3)
-                                                           (list-ref fragment 11)))
-                                                   iter-frags))])
+                                              (map fragment-updates iter-frags))])
                                (when frag-index
                                  (set! res (cons (syntax-case frag-index ()
                                                    [(_ v) #'(fx1+ state-index)])
                                                  res)))
                                (when frag-init
                                  (set! res (cons #'t-acc res)))
-                               res)]
+                               (append res (map cdr guard-indices)))]
                     ;; Rejected configuration guards advance sources, not the body count or fold.
                     [skip-updates (append (if frag-init (list #'state-acc) '())
                                           (if frag-index (list #'state-index) '())
                                           (apply append
-                                                 (map (lambda (fragment)
-                                                        (cons (list-ref fragment 3)
-                                                              (list-ref fragment 11)))
-                                                      iter-frags)))]
+                                                 (map fragment-updates iter-frags))
+                                          (map cdr guard-indices))]
                     [bind-loop-state
                      (lambda (body)
                              #`(let (#,@(if (and frag-init
@@ -265,10 +258,10 @@
                                   (bind-loop-state body)
                                   #`(for-loop #,@(if frag-init (list #'state-acc) '())
                                               #,@(if frag-index (list #'state-index) '())
-                                              #,(list-ref (car iter-frags) 3)
-                                              #,@(list-ref (car iter-frags) 11)))))
+                                              #,@(fragment-updates (car iter-frags))
+                                              #,@(map cdr guard-indices)))))
                          (cons bind-loop-state
-                               (map (lambda (x*) (list-ref x* 4)) iter-frags)))]
+                               (map (lambda (x*) (fragment-getter x*)) iter-frags)))]
                     [call/finish-proc (if frag-finish
                                           (let ([params '()])
                                             (when frag-index
@@ -298,8 +291,7 @@
                ;; (printf "call/finish-proc: ~a~n" call/finish-proc)
                ;; (printf "frag-config:  ~a~n" frag-config)
                ;; (println "for -------------------------")
-               #`(let ([t-finish #,(cadr call/finish-proc)]
-                       #,@(map (lambda (entry) #`[#,(cdr entry) 0]) guard-indices))
+               #`(let ([t-finish #,(cadr call/finish-proc)])
                    #,(let lp-preloops ([gen-preloops gen-preloops])
                        (if (null? gen-preloops)
                            #`(let for-loop (#,@loop-vars)
@@ -330,8 +322,7 @@
                                                         (kw:guard? #':guard)
                                                         (let ([counter (cdr (assq conf guard-indices))])
                                                           #`(if e
-                                                                (let ([v #,counter])
-                                                                  (set! #,counter (fx1+ #,counter))
+                                                                (let ([v #,counter] [#,counter (fx1+ #,counter)])
                                                                   #,(lp-configs (cdr configs)))
                                                                 (for-loop #,@skip-updates)))]
                                                        [(:guard e)
@@ -512,7 +503,7 @@
                                           #,(call-loop '()))))
                            (with-syntax ([(forloop) (generate-temporaries '(forloop))])
                              (let* ([i/c (car i/c*)] [iter-cl (car i/c)] [configs (cdr i/c)]
-                                    [exposed (list-ref iter-cl 6)]
+                                    [exposed (fragment-exposed iter-cl)]
                                     [guard-indices
                                      (filter id
                                              (map (lambda (conf)
@@ -522,17 +513,12 @@
                                                        (cons conf (car (generate-temporaries '(guard-index))))]
                                                       [_ #f]))
                                                   configs))]
-                                    [gen-preloop
-                                     (lambda (e)
-                                       ((or (car iter-cl) (lambda (e) e))
-                                        #`(let (#,@(map (lambda (entry) #`[#,(cdr entry) 0])
-                                                       guard-indices))
-                                            #,e)))]
-                                    [loop-var          (list-ref iter-cl 1)]
-                                    [termination-check (list-ref iter-cl 2)]
-                                    [update (cons (list-ref iter-cl 3) (list-ref iter-cl 11))]
-                                    [gen-getter        (list-ref iter-cl 4)]
-                                    [direct-filter     (list-ref iter-cl 8)]
+                                    [gen-preloop (or (fragment-setup iter-cl) (lambda (body) body))]
+                                    [loop-var          (fragment-bindings iter-cl)]
+                                    [termination-check (fragment-termination iter-cl)]
+                                    [update (append (fragment-updates iter-cl) (map cdr guard-indices))]
+                                    [gen-getter        (fragment-getter iter-cl)]
+                                    [direct-filter     (fragment-filter iter-cl)]
                                     [loop-var
                                      (let ([vars (if last-forloop
                                                      (let* ([vars (if frag-index (list #`[#,index-var #,index-var])     '())]
@@ -541,7 +527,8 @@
                                                      (let* ([vars (if frag-index (list index-def)     '())]
                                                             [vars (if frag-init  (cons init-def vars) vars)])
                                                        vars))])
-                                       `(,@vars ,loop-var ,@(list-ref iter-cl 10)))])
+                                       `(,@vars ,@loop-var
+                                         ,@(map (lambda (entry) #`[#,(cdr entry) 0]) guard-indices)))])
                                ;; if current level terminates, call forloop of last level
                                (gen-preloop
                                 #`(let forloop (#,@loop-var)
@@ -612,8 +599,7 @@
                                                        (kw:guard? #':guard)
                                                        (let ([counter (cdr (assq conf guard-indices))])
                                                          #`(if e
-                                                               (let ([v #,counter])
-                                                                 (set! #,counter (fx1+ #,counter))
+                                                               (let ([v #,counter] [#,counter (fx1+ #,counter)])
                                                                  #,(lp-configs (cdr configs) (cons #'v shadowed)))
                                                                (forloop #,@init/index-vars #,@update)))]
                                                       [(:guard e)
