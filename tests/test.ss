@@ -1838,3 +1838,47 @@
     (test-config-with (test-silent-config)
       '((xfail-strict? . #t) (xfail-strict? . #f)))
     #f))
+
+(mat test-callback-contracts-before-execution
+  ;; Error: assertion invocation errors must not satisfy expected body conditions.
+  (for-all
+    (lambda (predicate)
+      (guard (raised [else #t])
+        (test-raises predicate (lambda (required) #t))
+        #f))
+    (list condition? assertion-violation?))
+
+  ;; Error: reporters reject callbacks that cannot receive output and summary.
+  (guard (raised [else #t])
+    (make-test-reporter 'invalid (lambda () #t))
+    #f)
+
+  ;; Optional and variadic callbacks remain valid when they accept the required arguments.
+  (and (test-raises error? (lambda arguments (error 'expected "body")))
+       (test-reporter? (make-test-reporter 'valid (lambda arguments (void))))))
+
+(mat test-strict-result-and-registry-domains
+  ;; Error: summaries and result parameter lists must contain correctly typed elements.
+  (and (guard (raised [else #t])
+         (make-test-summary 1 1 0 0 0 0 0 '(invalid)) #f)
+       (guard (raised [else #t])
+         (make-test-result 0 'invalid 'passed "" #f "" "" '(invalid) #f) #f)
+       (guard (raised [else #t])
+         (parameterize ([current-test-registry 42]) #f))))
+
+(mat test-run-files-validates-all-path-types
+  ;; Error: a later invalid path must reject before an earlier file is loaded.
+  (let ([path (format "test-path-validation-~a.ss" (random 1000000))])
+    (dynamic-wind
+      (lambda ()
+        (putprop 'test-path-validation 'loaded #f)
+        (call-with-output-file path
+          (lambda (out) (display "(putprop 'test-path-validation 'loaded #t)\n" out))
+          'replace))
+      (lambda ()
+        (guard (raised [else (not (getprop 'test-path-validation 'loaded))])
+          (test-run-files (list path 42) (test-silent-config))
+          #f))
+      (lambda ()
+        (when (file-exists? path) (delete-file path))
+        (remprop 'test-path-validation 'loaded)))))

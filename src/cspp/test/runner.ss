@@ -532,13 +532,12 @@ list of file path strings, and `config` is a test runner configuration.
 |#
   (define test-run-files
     (lambda (paths config)
-      (pcheck ([list? paths] [test-config? config])
+      (pcheck ([(lambda (value) (and (list? value) (andmap string? value))) paths]
+               [test-config? config])
               (let ([registry (make-test-registry)])
                 (parameterize ([current-test-registry registry])
                   (for-each
                    (lambda (path)
-                     (unless (string? path)
-                       (errorf 'test-run-files "path is not a string: ~a" path))
                      (load path))
                    paths)
                   (test-run-registry registry config))))))

@@ -5,6 +5,7 @@
           test-natural-version-list?
           test-check-parameter-tables test-check-fixture-names test-check-metadata
           test-color-mode? test-current-report-color
+          test-callback-accepts? test-symbol-alist?
           chez-version
           chez-version<? chez-version<=? chez-version=? chez-version>=? chez-version>?)
   (import (cspp chez)
@@ -39,6 +40,8 @@
   (define make-test-reporter
     (lambda (kind write)
       (pcheck ([symbol? kind] [procedure? write])
+              (unless (test-callback-accepts? write 2)
+                (errorf 'make-test-reporter "write must accept output and summary"))
               ($make-test-reporter kind write))))
 
   #|proc:test-reporter-write
@@ -174,9 +177,31 @@ supplied, it is returned for a missing key; otherwise a missing key is an error.
                       (errorf who "fixture name conflicts with parameter: ~s" name))
                     (loop (cdr names) (cons name seen))))))))
 
-  (define $callback-accepts?
+  #|proc:test-callback-accepts?
+  The internal `test-callback-accepts?` procedure returns whether `value` is a
+  procedure accepting `arity` arguments, where `arity` is a natural number.
+  |#
+  (define test-callback-accepts?
     (lambda (value arity)
-      (and (procedure? value) (logbit? arity (procedure-arity-mask value)))))
+      (pcheck ([natural? arity])
+              (and (procedure? value) (logbit? arity (procedure-arity-mask value))))))
+
+  #|proc:test-symbol-alist?
+  The internal `test-symbol-alist?` procedure returns whether `value` is a proper
+  association list with unique symbolic keys. Association values may be arbitrary data.
+  |#
+  (define test-symbol-alist?
+    (lambda (value)
+      (and (list? value)
+           (let ([seen (make-eq-hashtable)])
+             (let loop ([entries value])
+               (or (null? entries)
+                   (let ([entry (car entries)])
+                     (and (pair? entry) (symbol? (car entry))
+                          (not (hashtable-contains? seen (car entry)))
+                          (begin
+                            (hashtable-set! seen (car entry) #t)
+                            (loop (cdr entries)))))))))))
 
   (define $predicate-data?
     (lambda (value)
@@ -219,19 +244,19 @@ supplied, it is returned for a missing key; otherwise a missing key is an error.
                            (or (not value)
                                (and (test-natural-version-list? value) (= (length value) 3)))]
                           [(before after condition-handler)
-                           (or (not value) ($callback-accepts? value 1))]
+                           (or (not value) (test-callback-accepts? value 1))]
                           [(raises)
-                           (or (not value) ($callback-accepts? value 1) ($predicate-data? value))]
+                           (or (not value) (test-callback-accepts? value 1) ($predicate-data? value))]
                           [(skip-when xfail-when)
                            (or (not value)
                                (and (pair? value) (string? (cdr value))
-                                    (or ($callback-accepts? (car value) 1)
+                                    (or (test-callback-accepts? (car value) 1)
                                         ($predicate-data? (car value)))))]
                           [(fixtures)
                            (and (list? value)
                                 (andmap (lambda (fixture)
                                           (and (pair? fixture) (symbol? (car fixture))
-                                               ($callback-accepts? (cdr fixture) 0)))
+                                               (test-callback-accepts? (cdr fixture) 0)))
                                         value))]
                           ;; Parameter domains are checked before Cartesian expansion.
                           [(parameterize) (list? value)]

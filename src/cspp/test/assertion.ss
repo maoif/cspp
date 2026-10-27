@@ -7,7 +7,8 @@
           test-true test-false test-eq test-eqv test-equal test-=
           test-pred test-raises test-not-raises test-fail)
   (import (cspp chez)
-          (cspp utils))
+          (cspp utils)
+          (cspp test private common))
 
   (define-condition-type &test-failure &error
     %make-test-failure
@@ -106,11 +107,14 @@ The `test-assert-raises` procedure succeeds when zero-argument procedure
 `thunk` raises a condition accepted by `predicate`. `predicate` has signature
 `(lambda (condition) ...)`. If `thunk` raises no condition, or raises a
 condition rejected by `predicate`, a framework assertion failure is raised.
-`message` is recorded on failure.
+`message` is recorded on failure. Callback arities are checked before invoking `thunk`.
 |#
   (define test-assert-raises
     (lambda (predicate thunk message)
       (pcheck ([procedure? predicate thunk] [string? message])
+              (unless (and (test-callback-accepts? predicate 1)
+                           (test-callback-accepts? thunk 0))
+                (errorf 'test-assert-raises "expected unary predicate and zero-argument thunk"))
               (let ([raised
                      (guard (condition
                              [else
@@ -126,11 +130,13 @@ condition rejected by `predicate`, a framework assertion failure is raised.
   #|proc:test-assert-not-raises
 The `test-assert-not-raises` procedure succeeds when zero-argument procedure
 `thunk` returns without raising a condition. If `thunk` raises any condition,
-a framework assertion failure is raised. `message` is recorded on failure.
+a framework assertion failure is raised. `message` is recorded on failure. Callback arities are checked before invoking `thunk`.
 |#
   (define test-assert-not-raises
     (lambda (thunk message)
       (pcheck ([procedure? thunk] [string? message])
+              (unless (test-callback-accepts? thunk 0)
+                (errorf 'test-assert-not-raises "thunk must accept zero arguments"))
               (guard (condition
                       [else ($raise-test-failure message 'no-condition condition)])
                 (thunk)

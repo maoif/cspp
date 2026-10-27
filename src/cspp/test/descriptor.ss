@@ -408,7 +408,8 @@ The `current-test-registry` parameter stores the default mutable test
 descriptor registry.
 |#
   (define current-test-registry
-    (make-parameter (make-test-registry)))
+    (make-parameter (make-test-registry)
+      (lambda (registry) (pcheck ([test-registry? registry]) registry))))
 
   #|proc:test-register!
   The `test-register!` procedure appends `descriptor` to `registry` in constant time
@@ -522,7 +523,7 @@ message or `#f`, `condition` is the captured condition or `#f`, `stdout` and
     (lambda (id name status message condition stdout stderr parameters source)
       (pcheck ([$test-id? id] [symbol? name] [$result-status? status]
                [(lambda (value) (or (string? value) (not value))) message]
-               [string? stdout stderr] [list? parameters])
+               [string? stdout stderr] [test-symbol-alist? parameters])
               ($make-test-result id name status message condition stdout stderr parameters source))))
 
   #|proc:test-result-id
@@ -609,6 +610,7 @@ The `test-result-source` procedure returns the source object stored in
   #|proc:make-test-summary
 The `make-test-summary` procedure creates a summary from natural-number counts:
 `total`, `passed`, `failed`, `errored`, `skipped`, `xfail`, and `xpass`.
+The optional `results` argument is a list of test result records; it defaults to empty.
 |#
   (define make-test-summary
     (case-lambda
@@ -616,6 +618,8 @@ The `make-test-summary` procedure creates a summary from natural-number counts:
        (make-test-summary total passed failed errored skipped xfail xpass '())]
       [(total passed failed errored skipped xfail xpass results)
        (pcheck ([natural? total passed failed errored skipped xfail xpass] [list? results])
+               (unless (andmap test-result? results)
+                 (errorf 'make-test-summary "results must contain test result records"))
                ($make-test-summary total passed failed errored skipped xfail xpass results))]))
 
   #|proc:test-summary-total
