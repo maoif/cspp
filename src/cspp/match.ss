@@ -368,6 +368,7 @@ Examples:
           |#
           (define bind-suffix-captures
             (lambda (variables accumulators suffix success generate)
+             (let ([transparent? (transparent-suffix? suffix)])
               (let loop ([variables variables] [accumulators accumulators]
                          [early '()] [late '()])
                 (define (bind entries body)
@@ -376,10 +377,10 @@ Examples:
                     (bind-lazy-pattern-captures
                      (reverse early) (generate (bind (reverse late) success)))
                     (let ([entry (list (car variables) #`(reverse #,(car accumulators)))])
-                      (if (or (not (transparent-suffix? suffix))
+                      (if (or (not transparent?)
                               (mentions-variable? suffix (car variables)))
                           (loop (cdr variables) (cdr accumulators) (cons entry early) late)
-                          (loop (cdr variables) (cdr accumulators) early (cons entry late))))))))
+                          (loop (cdr variables) (cdr accumulators) early (cons entry late)))))))))
           #|proc:vector-pattern-size
           The `vector-pattern-size` helper returns a pattern sequence's minimum length and
           whether that length is exact. For example, `(a b)` returns `2` and `#t`, while
