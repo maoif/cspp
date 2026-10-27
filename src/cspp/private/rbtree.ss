@@ -186,6 +186,9 @@
                      [else  (loop (R n))]))))]))
 
 
+  ;; Canonical-key lookup uses the normal search policy but returns the stored
+  ;; key rather than its value. Equivalent query objects can carry different
+  ;; metadata; navigator submaps must keep the original representative.
   (define rbtree-ref-key
     (lambda (tree key default)
       (let ([same? (rbtree-=? tree)] [less? (rbtree-<? tree)])

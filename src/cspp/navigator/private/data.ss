@@ -106,6 +106,10 @@
   Optional `replace!-proc` has signature `(map entries) -> unspecified`; it replaces
   all membership from the supplied entry list and rebuilds indexes even if the old
   keys have mutated. This supports clearing inside mutable keys without detaching them first.
+  The key policy is the container's equivalence, hashing, and/or ordering rules. A canonical
+  key is the stored object matching a lookup key under that policy. The replacement entry
+  list is complete membership, not a list of edits; process it in order so later entries
+  win equivalent-key collisions. Existing seven- and eight-argument registrations remain valid.
   Registration returns an unspecified value.
   |#
   (define nav-register-keyed!
@@ -486,6 +490,10 @@
                   (($keyed-protocol-ref-proc protocol) value key nav-missing))]
             [else (nav-focus-error 'nav/key "unsupported keyed value: ~s" value)])))
 
+  ;; Return the stored representative, not merely the query key. For legacy
+  ;; adapters there is no exported equivalence predicate: pure-delete the query
+  ;; from a copy, then find which original key is absent there. This derives the
+  ;; policy from existing callbacks; the optional canonical callback avoids that cost.
   (define keyed-canonical-key
     (lambda (value key)
       (cond [(hashtable? value)
@@ -599,6 +607,9 @@
 
   ;; Rebuilding belongs to the container protocol, so submaps and entry updates
   ;; preserve key equivalence without depending on the concrete map implementation.
+  ;; `entries` is complete replacement membership in collision-resolution order.
+  ;; An empty builder plus mutable inserts avoids repeated whole-container copies;
+  ;; legacy adapters fall back to their existing pure delete/set callbacks.
   (define keyed-rebuild-entries
     (lambda (value entries)
       (cond [(hashtable? value)
@@ -669,6 +680,15 @@
   ;; Entry/key suffixes may mutate hash or ordering fields in a retained key.
   ;; Work from a snapshot and rebuild membership even if a suffix raises or escapes.
   ;; Legacy adapters detach first because their delete callback needs the old index.
+  ;; Reindexing means inserting retained keys using their current hash/order; eq?
+  ;; identity alone cannot prove an old bucket or tree position is still correct.
+  ;; Snapshot pairs are copied, but keys/values are shared so nested mutation works.
+  ;; The after-thunk repairs membership, not a transaction rollback: earlier changes
+  ;; remain, and current key equivalence can collapse formerly distinct entries.
+  ;; Read-only hashtable ancestors bypass rebuilding; keyed-set! permits retained
+  ;; identical values and rejects a replacement write. Alist entries are restored
+  ;; into their original pairs. Basic nav/entries handles alists directly to expose
+  ;; actual stored entry identity to suffix predicates.
   (define keyed-transform-entries!
     (lambda (value update!)
       (let* ([entries (map (lambda (entry) (cons (car entry) (cdr entry)))

@@ -79,8 +79,9 @@
       [(next!-proc reset!-proc fini-proc)
        (mk-$iter next!-proc reset!-proc fini-proc)]))
 
-  ;; Get the next item from the iterator,
-  ;; also run the item through the ops pipeline, if any.
+  ;; Raw advancement owns the producer and operation-pipeline loop. A filter may
+  ;; reject several producer values within one pull; iter-next!'s scope covers all
+  ;; of them, including exceptions or escapes from map/filter callbacks.
   (define iter-next/raw!
     (lambda (iter)
       (if ($iter-finalized? iter)
@@ -109,6 +110,8 @@
   (define iter-next!
     (lambda (iter)
       (pcheck ([$iter? iter])
+              ;; Keep the scope at this common boundary so custom make-iter sources
+              ;; and iterator pulls nested inside transducer callbacks need no hooks.
               (let ([pull (current-iter-pull)])
                 (if pull
                     (pull (lambda () (iter-next/raw! iter)))

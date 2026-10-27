@@ -33,6 +33,25 @@
           (cspp list)
           (cspp utils))
 
+;;;;===----------------------------------------------------------------------===
+;;;; Reduction terminology and driver conventions
+;;;;===----------------------------------------------------------------------===
+
+  ;; A reducer consumes values using three arities: () initializes an accumulator,
+  ;; (acc value) performs a step, and (acc) completes the reduction. `acc` is the
+  ;; current reduction state, which may differ from the final returned result.
+  ;; Completion can flush buffered outputs, as in tpartition-all; it is not cleanup.
+  ;;
+  ;; A transducer wraps a downstream reducer to produce an effective reducer.
+  ;; Downstream means closer to the final consumer; upstream means closer to input.
+  ;; A reduced wrapper requests early termination while carrying the last accumulator.
+  ;; An eduction pairs a source and transducer for traversal with fresh reduction state.
+  ;;
+  ;; A driver controls traversal, stepping, and completion. One pass runs from its
+  ;; initialization/reset until exhaustion, early termination, failure, or escape.
+  ;; Generated adapter iterators are owned by the driver that creates them; supplied
+  ;; iterators are borrowed. Ownership determines who must finalize resources, not
+  ;; whether the input collection itself is mutable.
   (define-record-type ($reduced mk-$reduced $reduced?)
     (fields (immutable value))
     (opaque #t)
@@ -202,13 +221,20 @@
                   acc
                   (loop (reducer-step reducer acc x))))))))
 
-  ;; Generated source iterators belong to this traversal; caller-supplied iterators do not.
+  ;; Eager traversal of an owned adapter. `pulling?` covers producer/pipeline work;
+  ;; reducer work runs between pulls. Normal generator transfers can leave and reenter
+  ;; this wind while pulling, so its after-thunk must not finalize then. The explicit
+  ;; exception handler still closes on errors. A source-level escape cannot be told
+  ;; apart from a transfer here; source code must manage resources across such exits.
+  ;; `outer` composes this pull handler with any enclosing sequence or owned traversal.
   (define run-owned-iter
     (lambda (reducer acc iterator)
       (let ([pulling? #f] [cleanup-attempted? #f] [outer (current-iter-pull)])
         (define close!
           (lambda ()
             (unless (or cleanup-attempted? (iter-finalized? iterator))
+              ;; Mark before calling user cleanup: a raising finalizer must not be
+              ;; retried by both the exception handler and the wind's after-thunk.
               (set! cleanup-attempted? #t)
               (iter-finalize! iterator))))
         (dynamic-wind
@@ -1149,6 +1175,12 @@
               (if (eduction? source)
                   (sequence (tcompose ($eduction-xform source) xform)
                             ($eduction-source source))
+                  ;; One input may emit zero, one, or many values. The linked queue
+                  ;; holds a complete step's expansion (and initialization/completion
+                  ;; emissions); next! drains it before pulling more source input.
+                  ;; `done?` stops further input but still permits completed queued output.
+                  ;; `source-incomplete?` marks an unfinished top-level or nested pull;
+                  ;; if it survives until another external advance, that pull escaped.
                   (let ([upstream #f]
                         [cleanup-attempted? #f]
                         [effective #f]
@@ -1223,9 +1255,15 @@
                             (lambda ()
                               (unless completed?
                                 (abandon-pass!)))))))
-                    ;; Source pulls may transfer to a continuation captured by an
-                    ;; earlier consumer. Only reducer callbacks belong inside an
-                    ;; escape-cleanup wind; source failures are handled by next!'s guard.
+                    ;; Protect step/completion work with an escape-cleanup wind.
+                    ;; A wind runs its before/after thunks on dynamic entry/exit,
+                    ;; including continuation transfers. Source pulls inside a step
+                    ;; (for example tcat) must temporarily suppress escape cleanup.
+                    ;; They mark done?/source-incomplete? before calling the source,
+                    ;; restoring the previous values only on normal return. Saving
+                    ;; previous state, rather than setting it unconditionally to #f,
+                    ;; preserves nested pulls and completion's already-done state.
+                    ;; Source exceptions still reach next!'s guard and close the pass.
                     (define protect-pass
                       (lambda (thunk)
                         (let ([completed? #f] [pulling? #f] [outer (current-iter-pull)])
@@ -1257,6 +1295,8 @@
                         (unless done?
                           (protect-pass
                            (lambda ()
+                             ;; Mark before completion so it runs at most once, even
+                             ;; when flushing buffered output raises or escapes.
                              (set! done? #t)
                              (set! acc (reducer-complete effective (unreduced acc)))
                              (unless (iter? source)

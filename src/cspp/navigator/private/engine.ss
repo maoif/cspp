@@ -13,15 +13,24 @@
           (cspp navigator private core)
           (cspp navigator private data))
 
+  ;; An environment is a stack of recursive-name binding frames. Each resolved
+  ;; reference uses its defining (lexical) environment, rather than whichever group
+  ;; happens to be active when an outer suffix or delegated callback resumes.
   (define current-recursive-env (make-parameter '()))
 
   ;; Wrapped paths inherit whether their result has an outer selection suffix.
   ;; Public selection entry points start a fresh context, including reentrant calls.
+  ;; Terminal means no suffix remains anywhere in the composed traversal. This
+  ;; affects nav/children's terminal tree selection, rather than just the current path.
   (define current-selection-terminal? (make-parameter #t))
 
   ;; A custom step may delegate through a fresh public operation. Its engine
   ;; continuation still belongs to the defining traversal, including optional
   ;; sibling handling, recursive references, and virtual-default update tracking.
+  ;; Capture the engine callback's dynamic scope at definition time: a custom step
+  ;; can invoke it inside nav-transform/nav-traverse, whose fresh public scope must
+  ;; not erase the outer path's bindings, optional handling, or update counter.
+  ;; The equality fast path avoids parameterization when no scope changed.
   (define bind-continuation
     (lambda (continue)
       (let ([env (current-recursive-env)]
@@ -385,6 +394,12 @@
   |#
   (define nav-traverse->iter
     (lambda (path data)
+      ;; `resume` is the producer continuation after its last emitted focus;
+      ;; `return` is the consumer continuation for the current iter-next! call.
+      ;; Each yield saves the next producer segment and returns one focus. Each
+      ;; advance replaces return before resuming, so later errors belong to the
+      ;; current consumer. `failure` carries a producer condition across that
+      ;; transfer; it is re-raised outside the suspended producer's handler.
       (let ([compiled (nav-compile-path path)]
             [resume #f] [return #f] [done? #f] [failure '()])
         (define reset!

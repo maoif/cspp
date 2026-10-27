@@ -48,8 +48,21 @@
     (opaque #t)
     (sealed #t))
 
-  ;; One counter belongs to each public update. Virtual default focuses use it to
-  ;; distinguish a visited suffix from an actual invocation of the terminal callback.
+;;;;===----------------------------------------------------------------------===
+;;;; Focus, continuation, and absence terminology
+;;;;===----------------------------------------------------------------------===
+
+  ;; A focus is a value reached by a navigator step. A path composes steps; the
+  ;; suffix is the part still to run after the current step selects a child.
+  ;; The engine passes each step a continuation procedure that runs this suffix.
+  ;; This ordinary callback differs from the captured Scheme continuations used
+  ;; by nav-traverse->iter to suspend and resume an entire traversal.
+  ;;
+  ;; The terminal callback runs only after the full path reaches a focus. A virtual
+  ;; default focus supplies a fallback for an absent location without creating it.
+  ;; Its suffix can select nothing, so visiting the default alone must not insert it.
+  ;; One shared mutable counter per public update records terminal invocations;
+  ;; comparing its version before/after the suffix decides whether insertion occurs.
   (define current-update-count (make-parameter #f))
   (define nav-update-version
     (lambda () (let ([counter (current-update-count)]) (if counter (car counter) 0))))
@@ -58,6 +71,10 @@
       (let ([counter (current-update-count)])
         (when counter (set-car! counter (+ 1 (car counter)))))))
 
+  ;; Private identity token: lookup uses it for absence, and clear continuations
+  ;; return it to request removal. A retained child may instead be a rebuilt value.
+  ;; #f is valid user data/default, so it cannot represent absence or removal.
+  ;; Fixed-size or read-only parent locations must reject actual removal requests.
   (define nav-missing (list 'nav-missing))
   (define nav-missing? (lambda (x) (eq? x nav-missing)))
 
@@ -98,8 +115,10 @@
                         (make-who-condition who)
                         (make-message-condition (apply format fmt args))))))
 
-  ;; Absence is handled at the failing step, allowing enclosing collection walks
-  ;; to retain successful siblings. User callbacks and outer suffixes stay protected.
+  ;; Optional scope means an absent/unsupported focus is skipped at the failing step,
+  ;; retaining successful siblings in the same collection walk. It does not suppress
+  ;; all errors: a present location that cannot be removed raises an ordinary error,
+  ;; and navigation errors raised by user callbacks are marked separately below.
   (define current-optional-focus? (make-parameter #f))
   (define nav-call-step
     (lambda (proc value continue fallback)

@@ -27,6 +27,9 @@
 
   ;; Only steps inside the wrapped traversal are optional. Its continuation belongs
   ;; to the caller, so protect its failures and restore the caller's optional scope.
+  ;; For (nav/path (nav/maybe inner) suffix), absence inside inner is optional;
+  ;; absence in suffix is governed by the caller's scope. The terminal callback
+  ;; crosses this boundary even when inner delegates through another public call.
   (define optional-focus
     (lambda (run callback)
       (let ([outer-optional? (current-optional-focus?)])

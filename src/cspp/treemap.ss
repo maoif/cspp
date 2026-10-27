@@ -1082,6 +1082,10 @@
 ;;;; Navigator extension registration
 ;;;;===----------------------------------------------------------------------===
 
+  ;; Final adapter callbacks provide a fresh map with the same comparison policy,
+  ;; canonical stored-key lookup, and complete mutable membership replacement.
+  ;; Clearing before reinsertion avoids searching an old tree whose key ordering
+  ;; may already have changed through nested mutation; entry order decides collisions.
   (nav-register-keyed!
    treemap?
    (lambda (tm key default)

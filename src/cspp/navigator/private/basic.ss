@@ -11,6 +11,8 @@
 
   ;; Scheme map does not prescribe callback order. Navigation callbacks always
   ;; follow selection order, including indexed updates and stateful suffixes.
+  ;; Preserve this order even when the result list itself would be identical:
+  ;; nav-transform/i numbers visits, and callbacks may observe preceding updates.
   (define map-in-order
     (lambda (proc items)
       (let ([builder (make-list-builder)])
@@ -35,6 +37,8 @@
     (lambda (who value)
       (nav-error who "focused value cannot be removed from: ~s" value)))
 
+  ;; A suffix that selects no values returns without changing the operation's
+  ;; update counter. Only a terminal invocation authorizes materializing a default.
   (define update-default-focus
     (lambda (default update absent present)
       (let* ([before (nav-update-version)] [child (update default)])
@@ -108,6 +112,8 @@
               (loop (cdr remaining)
                     (if (nav-missing? child) retained (cons child retained))))))))
 
+  ;; Unsupported input is absence, handled by nav/maybe or nav/choice. Removing
+  ;; a present fixed-size child is a different error, enforced by container helpers.
   (define clear-all-values
     (lambda (value clear)
       (cond [(indexed-supported? value)
@@ -269,6 +275,10 @@
       (let ([location (alist-selected-location who value key)])
         (and location (car location)))))
 
+  ;; Canonical means the actual stored key object equivalent to the query under
+  ;; the map's key policy. Keeping it preserves key metadata and identity even
+  ;; when a distinct query object compares equal. Read-only hashtables are copied
+  ;; once because Chez's efficient cell lookup requires a mutable table.
   (define selected-submap
     (lambda (keys value)
       (let ([lookup (if (and (hashtable? value) (not (hashtable-mutable? value)))
@@ -316,6 +326,9 @@
                        (cons (if replacement (cdr replacement) (car entries))
                              (loop (cdr entries)))))))]
             [(keyed-supported? value)
+             ;; Snapshot original membership before the suffix can modify submap.
+             ;; Selected keys are canonical objects, so eq? suffices to identify
+             ;; which original entries to omit without querying by mutated keys.
              (let* ([submap (selected-submap keys value)]
                     [selected-keys (make-eq-hashtable)]
                     [original (keyed-entries value)])
@@ -327,8 +340,9 @@
                              (unless (hashtable-contains? selected-keys (car entry))
                                (builder entry)))
                            original)
-                 ;; Rebuild the complete membership once. Pure per-key setters
-                 ;; can copy the whole parent on every deletion and insertion.
+                 ;; Unselected originals precede all replacement entries, so a
+                 ;; replacement wins an equivalent-key collision. Rebuild once:
+                 ;; pure per-key setters can copy the parent on every write.
                  (for-each builder updated)
                  (keyed-rebuild-entries value (builder))))]
             [else (nav-focus-error 'nav-transform "unsupported keyed value: ~s" value)])))
@@ -425,12 +439,17 @@
                     clear-all-values
                     clear-all-values!))
 
+  ;; Clearing still runs the suffix. Retention means its result is a key value,
+  ;; not the removal token; nested pure clears can rebuild that key. Mutable
+  ;; clearing additionally requires the original key object (checked in data.ss).
   (define retained-key
     (lambda (value key clear)
       (let ([child (clear key)])
         (when (nav-missing? child) (unsupported-clear 'nav/keys value))
         child)))
 
+  ;; An indexed key is a position, not replaceable storage. A nonmatching suffix
+  ;; is a no-op, but an actual removal or changed index remains an error.
   (define clear-index-keys
     (lambda (value clear)
       (for-each (lambda (index)
