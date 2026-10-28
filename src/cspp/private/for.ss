@@ -21,7 +21,7 @@
           handle-iter/config-iter handle-iter/config-config compile-binding-clause
 
           process-iter-clause process-iter-clause/direct process-iter-clauses compile-termination
-          fragment-setup fragment-bindings fragment-termination fragment-updates
+          fragment-evaluations fragment-setup fragment-bindings fragment-termination fragment-updates
           fragment-getter fragment-source-index fragment-exposed fragment-raw-termination
           fragment-filter fragment-visit)
   (import (cspp chez)
@@ -423,12 +423,14 @@
   #|doc
   Iterator fragments are immutable compile-time records. Every induction variable, including
   source positions and list cursors, has an entry in `fragment-bindings` and a corresponding
-  expression in `fragment-updates`. The other accessors describe source setup, exhaustion,
+  expression in `fragment-updates`. `fragment-evaluations` holds peer expression bindings for
+  the enclosing setup `let`. The other accessors describe source setup, exhaustion,
   item bindings, public aliases, direct filtering, and parallel seeking. A fragment is never
   reinterpreted as a different positional layout during decoration.
   |#
   (define-record-type (iterator-fragment make-iterator-fragment iterator-fragment?)
-    (fields (immutable setup fragment-setup)
+    (fields (immutable evaluations fragment-evaluations)
+            (immutable setup fragment-setup)
             (immutable bindings fragment-bindings)
             (immutable termination fragment-termination)
             (immutable updates fragment-updates)
@@ -455,7 +457,7 @@
       [(setup binding termination advance getter index raw)
        (source-fragment setup binding termination advance getter index raw '() '())]
       [(setup binding termination advance getter index raw bindings updates)
-       (make-iterator-fragment setup (cons binding bindings) termination (cons advance updates)
+       (make-iterator-fragment '() setup (cons binding bindings) termination (cons advance updates)
                                getter index '() raw #f #f)]))
 
   #|proc:compile-termination
@@ -987,17 +989,23 @@
       (let* ([state (car (generate-temporaries '(numeric-state)))]
              [fragment (generate state)])
         (make-iterator-fragment
+         (fragment-evaluations fragment)
          (fragment-setup fragment) (fragment-bindings fragment) (fragment-termination fragment)
          (fragment-updates fragment) (lambda (body) #`(let ([#,variable #,state]) #,body))
          (and indexed? state) '() (fragment-raw-termination fragment) #f #f)))
     ;; Common options filter each iterator independently. Sequence indexes describe
     ;; source positions; other iterators count their unfiltered source values from zero.
     (define (split-common-options type options)
+      (define evaluations '())
+      (define (bind-expression expression)
+        (let ([name (car (generate-temporaries '(source-expression)))])
+          (set! evaluations (cons #`[#,name #,expression] evaluations))
+          name))
       (when (null? options) (syntax-error cl "for: missing iterator source:"))
-      (let loop ([remaining (cdr options)] [arguments (list (car options))]
+      (let loop ([remaining (cdr options)] [arguments (list (bind-expression (car options)))]
                  [positional 1] [predicate #f] [index #f])
         (if (null? remaining)
-            (values (reverse arguments) predicate index)
+            (values (reverse arguments) predicate index (reverse evaluations))
             (let* ([option (syntax->datum (car remaining))]
                    [config (assq option
                                  (append '((:guard . 1) (:index . 1))
@@ -1022,11 +1030,15 @@
                   [else
                    (let ([count (fx1+ (cdr config))])
                      (loop (list-tail remaining count)
-                           (append (reverse (list-head remaining count)) arguments)
+                           (append (reverse
+                                    (if (memq option '(:from :to :step))
+                                        (list (car remaining) (bind-expression (cadr remaining)))
+                                        (list-head remaining count)))
+                                   arguments)
                            positional predicate index))])]
                [(and (memq type '(:nums :fixnums)) (< positional 3)
                      (not (memq option '(:from :to :step :rev :type :big :little))))
-                (loop (cdr remaining) (cons (car remaining) arguments)
+                (loop (cdr remaining) (cons (bind-expression (car remaining)) arguments)
                       (fx1+ positional) predicate index)]
                [else (syntax-error (car remaining) "for: unknown iterator option:")])))))
     (define (decorate-fragment fragment variables predicate index)
@@ -1037,6 +1049,7 @@
              [getter (or (fragment-getter fragment) (lambda (body) body))]
              [indexed
               (make-iterator-fragment
+               (fragment-evaluations fragment)
                (fragment-setup fragment)
                (append (fragment-bindings fragment) (if position (list #`[#,position 0]) '()))
                (fragment-termination fragment)
@@ -1052,6 +1065,7 @@
         (if predicate
             (if direct-filter?
                 (make-iterator-fragment
+                 (fragment-evaluations indexed)
                  (fragment-setup indexed) (fragment-bindings indexed) (fragment-termination indexed)
                  (fragment-updates indexed) (fragment-getter indexed) native-index exposed
                  (fragment-raw-termination indexed)
@@ -1086,6 +1100,7 @@
                           #,(bind (cdr names) (cdr values))))))])
         (with-syntax ([(seek) (generate-temporaries '(seek))])
           (make-iterator-fragment
+           (fragment-evaluations fragment)
            (fragment-setup fragment) bindings termination updates bind-public
            (fragment-source-index fragment) public
            (or (fragment-raw-termination fragment) termination) #f
@@ -1104,6 +1119,18 @@
        [(and (eq? type ':list) (> (length arguments) 1))
         (process-list-iter-clause variable arguments)]
        [else (process-single-var-iter-clause variable type arguments)]))
+    #|proc:with-evaluations
+    The `with-evaluations` helper attaches peer source-expression bindings to `fragment`.
+    `evaluations` is a list of generated `(name expression)` bindings. For example, a vector
+    source and `:from start` supply two bindings evaluated by the surrounding setup `let`,
+    before the fragment validates its source and initializes traversal state.
+    |#
+    (define (with-evaluations evaluations fragment)
+      (make-iterator-fragment
+       evaluations (fragment-setup fragment) (fragment-bindings fragment)
+       (fragment-termination fragment) (fragment-updates fragment) (fragment-getter fragment)
+       (fragment-source-index fragment) (fragment-exposed fragment)
+       (fragment-raw-termination fragment) (fragment-filter fragment) (fragment-visit fragment)))
     (syntax-case cl ()
       [(v lit)
        (decorate-fragment
@@ -1112,21 +1139,25 @@
             (process-literal-iter-clause #'v (datum lit)))
         (list #'v) #f #f)]
       [((v* ...) iter-ty op* ...)
-       (let-values ([(arguments predicate index) (split-common-options (datum iter-ty) #'(op* ...))])
-         (if (and predicate (not direct-filter?))
+       (let-values ([(arguments predicate index evaluations)
+                     (split-common-options (datum iter-ty) #'(op* ...))])
+         (with-evaluations evaluations
+          (if (and predicate (not direct-filter?))
              (parallel-filter-fragment
               #'(v* ...) predicate index
               (lambda (variables) (process-multi-var-iter-clause variables (datum iter-ty) arguments)))
              (decorate-fragment (process-multi-var-iter-clause #'(v* ...) (datum iter-ty) arguments)
-                                #'(v* ...) predicate index)))]
+                                #'(v* ...) predicate index))))]
       [(v iter-ty op* ...)
-       (let-values ([(arguments predicate index) (split-common-options (datum iter-ty) #'(op* ...))])
-         (if (and predicate (not direct-filter?))
+       (let-values ([(arguments predicate index evaluations)
+                     (split-common-options (datum iter-ty) #'(op* ...))])
+         (with-evaluations evaluations
+          (if (and predicate (not direct-filter?))
              (parallel-filter-fragment
               (list #'v) predicate index
               (lambda (variables) (single-fragment (car variables) (datum iter-ty) arguments)))
              (decorate-fragment (single-fragment #'v (datum iter-ty) arguments)
-                                (list #'v) predicate index)))]
+                                (list #'v) predicate index))))]
       [_ (syntax-error cl "unknown iter clause:")]))
 
   (define (process-iter-clause clause)

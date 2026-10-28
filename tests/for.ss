@@ -2363,11 +2363,13 @@
 
      (let ([events '()])
        (let ([result
-              (for/list ([x :list (begin (set! events '(source)) '(0 1 2 3))
+              (for/list ([x :list (begin (set! events (cons 'source events)) '(0 1 2 3))
                              :from (begin (set! events (append events '(from))) 1)
                              :to (begin (set! events (append events '(to))) 4)
                              :step (begin (set! events (append events '(step))) 2)]) x)])
-         (and (equal? '(1 3) result) (equal? '(source from to step) events))))
+         (and (equal? '(1 3) result)
+              (equal? '("from" "source" "step" "to")
+                      (sort string<? (map symbol->string events))))))
 
      ;; List slices retain strict source types.
      (error? (for/list ([x :list '#(0 1 2) :from 0]) x))
@@ -2458,16 +2460,16 @@
      (equal? '(1 3)
              (for/list ([x :list '(0 1 2 3 4) :from 0] [:guard (odd? x)]) x)))
 
-(mat source-setup-clause-order
+(mat parallel-source-evaluation
      (let ([events '()])
        (for ([x :iota (begin (set! events (append events '(x))) 1)]
              [y :iota (begin (set! events (append events '(y))) 1)]) (void))
-       (equal? '(x y) events))
+       (equal? '("x" "y") (sort string<? (map symbol->string events))))
 
      (let ([events '()])
        (for/vector ([x :list (begin (set! events (append events '(x))) '(1))]
                     [y :vector (begin (set! events (append events '(y))) '#(2))]) (+ x y))
-       (equal? '(x y) events)))
+       (equal? '("x" "y") (sort string<? (map symbol->string events)))))
 
 (mat option-argument-positions
      (let ([:end 2] [:stride 2])
@@ -2677,3 +2679,68 @@
 
      (equal? '#((0 0))
              (for*/vector ([x 2] [y 3] [:stop (= y 1) (values)]) (list x y))))
+
+(mat iterator-clause-let-semantics
+     ;; All source and bound expressions run before their source type is checked.
+     (andmap
+      (lambda (kind)
+        (andmap
+         (lambda (source-type)
+           (eval
+            `(let ([calls 0])
+               (guard (condition [else (= calls 4)])
+                 (,kind ([value ,source-type (begin (set! calls (+ calls 1)) #f)
+                                :from (begin (set! calls (+ calls 1)) 0)
+                                :step (begin (set! calls (+ calls 1)) 1)
+                                :to (begin (set! calls (+ calls 1)) 2)])
+                   value)
+                 #f))
+            (environment '(cspp))))
+         '(:list :vector :string :fxvector :flvector :bytevector)))
+      '(for for/fold for/list for/vector for* for*/fold for*/list for*/vector))
+
+     ;; An invalid bound must not prevent another peer expression from running.
+     (let ([step-calls 0])
+       (guard (condition [else (= step-calls 1)])
+         (for/list ([value :vector '#(a b) :from #f
+                          :step (begin (set! step-calls (+ step-calls 1)) 1)])
+           value)
+         #f))
+
+     ;; Peer expressions see the surrounding binding, including the source itself.
+     (let ([value '#(10 20)] [position 1])
+       (equal? '((20 1))
+               (for/list ([value :vector value :from position
+                                 :to (vector-length value) :index position])
+                 (list value position))))
+
+     ;; Nested sources see earlier iterator bindings, but their own options see outer ones.
+     (let ([value '#(10 20)])
+       (equal? '((1 20) (2 10) (2 20))
+               (for*/list ([outer 3]
+                           [value :vector value :from (- 2 outer)
+                                  :to (vector-length value)])
+                 (list outer value)))))
+
+(mat parallel-source-let-semantics
+     ;; Parallel source expressions all run before validating any one source.
+     (andmap
+      (lambda (kind)
+        (eval
+         `(let ([calls 0])
+            (guard (condition [else (= calls 2)])
+              (,kind ([x :vector (begin (set! calls (+ calls 1)) #f)]
+                      [y :list (begin (set! calls (+ calls 1)) '(a))])
+                (list x y))
+              #f))
+         (environment '(cspp))))
+      '(for for/fold for/list for/vector))
+
+     ;; A parallel companion source sees the outer binding rather than the current item.
+     (let ([x '(a b)])
+       (equal? '((0 a) (1 b)) (for/list ([x 2] [y :list x]) (list x y))))
+
+     ;; An empty outer nested source never evaluates its inner source.
+     (let ([calls 0])
+       (and (null? (for*/list ([x 0] [y :list (begin (set! calls (+ calls 1)) '(a))]) y))
+            (= calls 0))))

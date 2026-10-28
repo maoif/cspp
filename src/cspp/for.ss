@@ -96,7 +96,10 @@
   uses its corresponding Scheme binding form with one binding. An indexed guard binds a zero-based
   index counting passes through that guard, including passes rejected by a later guard.
   Clause tags such as `:length` and `:guard` are reserved as bare iterator-binding names.
-  Source expressions are evaluated left to right in clause order.
+  Iterator sources and traversal-option expressions use `let` semantics: their evaluation
+  order is unspecified, and all are evaluated before validating sources or binding items.
+  Parallel source expressions see the surrounding scope, not companion item bindings.
+  Guards run during traversal, after their own item and optional source index are bound.
   Iterator-local `:guard` filters its own source before parallel items are paired. Iterator-local
   `:index` binds the original source position, before filtering, and is available to the guard.
   Local guards share item and index bindings with the body. They see surrounding lexical
@@ -309,7 +312,8 @@
                                                 #'(lambda () (void))))])
                (unless (= (length loop-vars) (length updates))
                  (syntax-error stx "loop vars and recur call args do not match:"))
-               #`(let ([t-finish #,(cadr call/finish-proc)])
+               #`(let ([t-finish #,(cadr call/finish-proc)]
+                       #,@(apply append (map fragment-evaluations iter-frags)))
                    #,(let lp-preloops ([gen-preloops gen-preloops])
                        (if (null? gen-preloops)
                            #`(let for-loop (#,@loop-vars)
@@ -384,6 +388,9 @@
   #|macro:for*/fold
   The `for*/fold` macro nests its source clauses and evaluates the body for each combination.
   Inner sources can use outer bindings and are evaluated on every entry to their loop level.
+  Source clauses nest like `let*`; within each source clause, the source and traversal-option
+  expressions use `let` semantics in the surrounding scope and are evaluated before validation.
+  Their evaluation order is unspecified. No expression sees its own clause's item bindings.
   `:init` binds an accumulator updated from the body result; `:finish` supplies the final value.
   Binding clauses use the corresponding Scheme binding form and scope over subsequent clauses.
   Indexed guards count passes starting at zero and reset on every entry to their loop level.
@@ -536,7 +543,12 @@
                                                        (cons conf (car (generate-temporaries '(guard-index))))]
                                                       [_ #f]))
                                                   configs))]
-                                    [gen-preloop (or (fragment-setup iter-cl) (lambda (body) body))]
+                                    [gen-preloop
+                                     (lambda (body)
+                                       #`(let (#,@(fragment-evaluations iter-cl))
+                                           #,(if (fragment-setup iter-cl)
+                                                 ((fragment-setup iter-cl) body)
+                                                 body)))]
                                     [loop-var          (fragment-bindings iter-cl)]
                                     [termination-check (fragment-termination iter-cl)]
                                     [update (append (fragment-updates iter-cl) (map cdr guard-indices))]
