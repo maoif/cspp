@@ -1791,6 +1791,37 @@
        (and (equal? '("a") (matcher '("a")))
             (equal? '("b") (matcher '("b"))))))
 
+(mat regex-cache-capture-shadowing
+     ;; An earlier capture turns apparent quotation into a call on every candidate.
+     (let ([calls 0] [argument 'ignored])
+       (let ([result
+              (match (list (lambda (value)
+                             (set! calls (+ calls 1))
+                             (if (= calls 1) "^a$" "^b$"))
+                           '("a" "b"))
+                [(,quote (,(regex (quote argument) (0 ,text)) ...)) text]
+                [else 'failed])])
+         (and (equal? '("a" "b") result) (= calls 2))))
+
+     ;; Vector repetition must resolve the same generated capture binding.
+     (let ([calls 0] [argument 'ignored])
+       (let ([result
+              (match (vector (lambda (value)
+                               (set! calls (+ calls 1))
+                               (if (= calls 1) "^a$" "^b$"))
+                             '#("a" "b"))
+                [#(,quote #(,(regex (quote argument) (0 ,text)) ...)) text]
+                [else 'failed])])
+         (and (equal? '("a" "b") result) (= calls 2))))
+
+     ;; The captured procedure can also change between repeated element matches.
+     (let ([argument 'ignored])
+       (equal? '("a" "b")
+               (match (list (list (lambda (value) "^a$") "a")
+                            (list (lambda (value) "^b$") "b"))
+                 [((,quote ,(regex (quote argument) (0 ,text))) ...) text]
+                 [else 'failed]))))
+
 (mat strict-regex-capture-tags
      ;; A quoted identifier is not a regex capture declaration.
      (guard (condition [(syntax-violation? condition) #t] [else #f])

@@ -19,6 +19,24 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
           (cspp private match)
           (cspp io))
 
+  #|macro:$match/constant-regex
+  The `$match/constant-regex` helper checks `expression` after preceding captures are bound.
+  A literal string or quoted SRE compiles once into the private mutable `cache`; other
+  expressions retain their ordinary evaluation. For example, `"."` uses the cache, whereas
+  `(quote argument)` calls a captured procedure named `quote` on every candidate.
+  |#
+  (define-syntax $match/constant-regex
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ cache expression)
+         (if (or (string? (syntax->datum #'expression))
+                 (syntax-case #'expression (quote) [(quote datum) #t] [_ #f]))
+             #'(or cache
+                   (let ([compiled (irregex expression)])
+                     (set! cache compiled)
+                     compiled))
+             #'expression)])))
+
   #|doc
 (match <expr>
   <clause> ...
@@ -113,6 +131,7 @@ Examples:
   extensions are evaluated as expressions and do not declare pattern captures.
   Literal regex strings and quoted SREs compile lazily once per match invocation, including
   its catamorphism calls. Other regex expressions are evaluated on every visited candidate.
+  Quotation is recognized in the expression's binding scope, including earlier captures.
   Regex group numbers require exact nonnegative integers; group names are literal symbols.
   Hash keys are literal data, including bare symbols. An empty `,(hash)` checks the input type.
   Pattern variables intentionally shadow outer bindings in the selected body. Generated matcher
@@ -161,10 +180,10 @@ Examples:
       (define regex-cache-bindings '())
       #|proc:cache-constant-regex
       The `cache-constant-regex` helper rewrites a regex extension `pattern` to compile a literal
-      string or quoted SRE once, when first reached during a match invocation. It records a
-      private cache binding outside the recursive matcher. For example, `(regex "." (0 ,x))`
-      becomes an equivalent pattern with a cached compiled regex; `(regex expression (0 ,x))`
-      retains its original evaluation on every visit when `expression` is not a constant.
+      string or apparent quoted SRE once, when first reached during a match invocation.
+      It records a private cache binding outside the recursive matcher and defers the final
+      constant check until preceding captures are in scope. For example, `(regex "." (0 ,x))`
+      caches its regex; `(regex (quote argument) (0 ,x))` remains dynamic if `quote` is captured.
       |#
       (define cache-constant-regex
         (lambda (pattern)
@@ -172,14 +191,9 @@ Examples:
             [(extension expression . groups)
              (if (or (string? (syntax->datum #'expression))
                      (syntax-case #'expression (quote) [(quote datum) #t] [_ #f]))
-                 (with-syntax ([(cache compiled) (generate-temporaries '(cache compiled))])
+                 (with-syntax ([(cache) (generate-temporaries '(cache))])
                    (set! regex-cache-bindings (cons #'[cache #f] regex-cache-bindings))
-                   #'(extension
-                      (or cache
-                          (let ([compiled (irregex expression)])
-                            (set! cache compiled)
-                            compiled))
-                      . groups))
+                   #'(extension ($match/constant-regex cache expression) . groups))
                  pattern)])))
       #|proc:pattern-identifier?
       The `pattern-identifier?` helper checks whether `variable` occurs in the original syntax
