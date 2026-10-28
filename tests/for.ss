@@ -17,7 +17,7 @@
 #;
 (fold/fold ([x :iota 20]
             [:guard (odd? x)])
-           (displayln x))
+           (void))
 
 
 
@@ -199,8 +199,7 @@
        (and (equal? '(res . 5)
                     (for/fold ([x :iota 20]
                                [:break (= x 5)
-                                       (begin (displayln "breaking~")
-                                              (cons 'res x))])
+                                       (cons 'res x)])
                         (set! ls (cons x ls))))
             (equal? ls
                     (reverse (iota 5)))))
@@ -220,11 +219,11 @@
 
      (error?
       (for/fold ([x :string #f])
-          (displayln x)))
+          (void)))
 
      (error?
       (for/fold ([x :string #f :from 10 :to 21])
-          (displayln x)))
+          (void)))
 
      ;; CJK Common Range: U+4E00 – U+9FFF (+ Ext A U+3400–U+4DBF)
      ;; Emoji Common Range: U+1F300 – U+1FAFF (with some in U+2600–U+27BF)
@@ -241,7 +240,6 @@
       (for/fold ([:init acc '()]
                  [:finish (apply string (reverse acc))]
                  [x :string str :from 10 :to 21])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -249,7 +247,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :string str :from 10 :to 21 :step 2])
-          (displayln x)
         (cons x acc)))
 
      ;; :rev
@@ -259,7 +256,6 @@
       (for/fold ([:init acc '()]
                  [:finish acc]
                  [x :string str :from 10 :to 21 :rev])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -267,7 +263,6 @@
       (for/fold ([:init acc '()]
                  [:finish acc]
                  [x :string str :from 10 :to 21 :step 2 :rev])
-          (displayln x)
         (cons x acc)))
 
      ;; reorder ops
@@ -277,7 +272,6 @@
       (for/fold ([:init acc '()]
                  [:finish (apply string (reverse acc))]
                  [x :string str :to 21 :from 10])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -285,7 +279,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :string str :step 2 :to 21 :from 10])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -293,7 +286,6 @@
       (for/fold ([:init acc '()]
                  [:finish acc]
                  [x :string str :to 21 :from 10 :rev :step 2])
-          (displayln x)
         (cons x acc)))
 
      )
@@ -303,11 +295,11 @@
 
      (error?
       (for/fold ([x :vector #f])
-          (displayln x)))
+          (void)))
 
      (error?
       (for/fold ([x :vector #f :from 10 :to 21])
-          (displayln x)))
+          (void)))
 
      (begin (define v (random-vector 30))
             (define ls (vector->list v))
@@ -318,7 +310,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :vector v :from 10 :to 21])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -326,7 +317,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :vector v :from 10 :to 21 :step 2])
-          (displayln x)
         (cons x acc)))
 
 
@@ -337,7 +327,6 @@
       (for/fold ([:init acc '()]
                  [:finish acc]
                  [x :vector v :from 10 :to 21 :rev])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -345,7 +334,6 @@
       (for/fold ([:init acc '()]
                  [:finish acc]
                  [x :vector v :from 10 :to 21 :step 2 :rev])
-          (displayln x)
         (cons x acc)))
 
 
@@ -356,7 +344,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :vector v :to 21 :from 10])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -364,7 +351,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :vector v :step 2 :to 21 :from 10])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -372,7 +358,6 @@
       (for/fold ([:init acc '()]
                  [:finish acc]
                  [x :vector v :to 21 :from 10 :rev :step 2])
-          (displayln x)
         (cons x acc)))
 
      )
@@ -382,11 +367,11 @@
 
      (error?
       (for/fold ([x :fxvector #f])
-          (displayln x)))
+          (void)))
 
      (error?
       (for/fold ([x :fxvector #f :from 10 :to 21])
-          (displayln x)))
+          (void)))
 
      (begin (define v (random-fxvector 30))
             (define ls (fxvector->list v))
@@ -397,7 +382,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :fxvector v :from 10 :to 21])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -405,7 +389,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :fxvector v :from 10 :to 21 :step 2])
-          (displayln x)
         (cons x acc)))
 
 
@@ -416,7 +399,6 @@
       (for/fold ([:init acc '()]
                  [:finish acc]
                  [x :fxvector v :from 10 :to 21 :rev])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -424,7 +406,6 @@
       (for/fold ([:init acc '()]
                  [:finish acc]
                  [x :fxvector v :from 10 :to 21 :step 2 :rev])
-          (displayln x)
         (cons x acc)))
 
 
@@ -435,7 +416,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :fxvector v :to 21 :from 10])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -443,7 +423,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :fxvector v :step 2 :to 21 :from 10])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -451,7 +430,6 @@
       (for/fold ([:init acc '()]
                  [:finish acc]
                  [x :fxvector v :to 21 :from 10 :rev :step 2])
-          (displayln x)
         (cons x acc)))
 
      )
@@ -461,11 +439,11 @@
 
      (error?
       (for/fold ([x :flvector #f])
-          (displayln x)))
+          (void)))
 
      (error?
       (for/fold ([x :flvector #f :from 10 :to 21])
-          (displayln x)))
+          (void)))
 
      (begin (define v (random-flvector 30))
             (define ls (flvector->list v))
@@ -476,7 +454,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :flvector v :from 10 :to 21])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -484,7 +461,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :flvector v :from 10 :to 21 :step 2])
-          (displayln x)
         (cons x acc)))
 
 
@@ -495,7 +471,6 @@
       (for/fold ([:init acc '()]
                  [:finish acc]
                  [x :flvector v :from 10 :to 21 :rev])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -503,7 +478,6 @@
       (for/fold ([:init acc '()]
                  [:finish acc]
                  [x :flvector v :from 10 :to 21 :step 2 :rev])
-          (displayln x)
         (cons x acc)))
 
 
@@ -514,7 +488,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :flvector v :to 21 :from 10])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -522,7 +495,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :flvector v :step 2 :to 21 :from 10])
-          (displayln x)
         (cons x acc)))
 
      (equal?
@@ -530,7 +502,6 @@
       (for/fold ([:init acc '()]
                  [:finish acc]
                  [x :flvector v :to 21 :from 10 :rev :step 2])
-          (displayln x)
         (cons x acc)))
 
      )
@@ -540,11 +511,11 @@
 
      (error?
       (for/fold ([x :bytevector #f])
-          (displayln x)))
+          (void)))
 
      (error?
       (for/fold ([x :bytevector #f :from 10 :to 21])
-          (displayln x)))
+          (void)))
 
      (begin (define v (bytevector #xA  #xB  #xC  #xD
                                   #xE  #xAA #xBB #xCC
@@ -557,7 +528,6 @@
       (for/fold ([:init acc '()]
                  [:finish (reverse acc)]
                  [x :bytevector v])
-          (println "#x~x" x)
         (cons x acc)))
 
 
@@ -569,7 +539,6 @@
                   (for/fold ([:init acc '()]
                              [:finish (reverse acc)]
                              [x :bytevector v :type ty])
-                      (println "#x~x" x)
                     (cons x acc)))]))
             #t)
 
@@ -646,7 +615,6 @@
                   (for/fold ([:init acc '()]
                              [:finish (reverse acc)]
                              [x :bytevector v :type ty end])
-                      (println "#x~x" x)
                     (cons x acc)))]))
             #t)
 
@@ -758,7 +726,6 @@
                   (for/fold ([:init acc '()]
                              [:finish (reverse acc)]
                              [x :bytevector v end :type ty :rev])
-                      (println "#x~x" x)
                     (cons x acc)))]))
             #t)
 
@@ -801,7 +768,6 @@
      (let ([vec (make-vector 10)])
        (for/fold ([:index i]
                   [(k v) :hashtable ht])
-           (println "~a -> ~a" k v)
            (vector-set! vec i (cons k v)))
        (equal? vec
                (hashtable-cells ht)))
@@ -1146,8 +1112,7 @@
                            [:break (= y 4)]
                            [z 10]
                            [:stop (= z 3)
-                                  (begin (displayln "early quit...")
-                                         42)])
+                                  42])
                    (lb (list x y z))))
             (equal? (lb)
                     '((0 0 0)
@@ -1160,8 +1125,7 @@
                            [:break (= x 5)]
                            [y 10]
                            [:stop (= y 2)
-                                  (begin (displayln "early quit...")
-                                         42)]
+                                  42]
                            [z 3])
                    (lb (list x y z))))
             (equal? (lb)
@@ -1176,8 +1140,7 @@
        (and (= 42
                (for*/fold ([x 10]
                            [:stop (= x 2)
-                                  (begin (displayln "early quit...")
-                                         42)]
+                                  42]
                            [y 2]
                            [:break (= y 4)]
                            [z 3])

@@ -139,13 +139,13 @@
      (let ([lb (make-list-builder)])
        (for ([i #e1e5])
          (lb `(((,i) ,i ,i) (,i (,i) ,i) (,i (,i) ,i) . ((,i) (,i) (,i)))))
-       (time (match (lb)
-               [((((,a) ,b ,c) (,d (,e) ,f) (,g (,h) ,i) . ((,j) (,k) (,l)))
-                 ...)
-                (and (equal? a d)
-                     (equal? g j)
-                     (equal? h k))]
-               [else #f])))
+       (match (lb)
+         [((((,a) ,b ,c) (,d (,e) ,f) (,g (,h) ,i) . ((,j) (,k) (,l)))
+           ...)
+          (and (equal? a d)
+               (equal? g j)
+               (equal? h k))]
+         [else #f]))
 
      (match '(json (object
                     (items
@@ -456,8 +456,7 @@
 
      (match `(1 . 2)
        [[#`p (,x . ,y)]
-        (begin (displayln p)
-               (equal? p (cons x y)))])
+        (equal? p (cons x y))])
 
      ;; ellipsis
 
@@ -630,7 +629,7 @@
 
 
      ;; nested ellipses, custom proc
-     (begin (define proc (lambda (x) (displayln x) (collapse-list x)))
+     (begin (define proc (lambda (x) (collapse-list x)))
             (define (collapse-list data)
               (match data
                 [#f
