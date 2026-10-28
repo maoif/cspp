@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp concurrency fiber))
 
 (define list-copy*
   (lambda (x)
@@ -2484,3 +2484,181 @@
     (and (eq? source (nav-clearval! (nav/path nav/keys (nav/key 'drop)) source))
          (= 1 (hashtable-size table))
          (eq? 'value (hashtable-ref table key #f)))))
+
+
+;; Each worker keeps its dynamic scope open while the other crosses its callback.
+(define navigator-thread-overlap
+  (lambda (left right)
+    (let ([mutex (make-mutex)] [changed (make-condition)] [phase 0]
+          [left-result #f] [right-result #f])
+      (define signal!
+        (lambda (next)
+          (with-mutex mutex (set! phase next) (condition-broadcast changed))))
+      (define wait
+        (lambda (next)
+          (with-mutex mutex
+            (let loop ()
+              (when (< phase next) (condition-wait changed mutex) (loop))))))
+      (let* ([a (fork-thread
+                 (lambda ()
+                   (set! left-result
+                         (left (lambda () (signal! 1) (wait 2))))
+                   (signal! 3)))]
+             [b (fork-thread
+                 (lambda ()
+                   (wait 1)
+                   (set! right-result
+                         (right (lambda () (signal! 2) (wait 3))))))])
+        (thread-join a)
+        (thread-join b)
+        (list left-result right-result)))))
+
+(mat navigator-thread-isolation
+  (equal?
+   (navigator-thread-overlap
+    (lambda (overlap)
+      (nav-transform (nav/path (nav/key/default 'new 0)
+                               (nav/pred (lambda (value) (overlap) #t))) add1 '()))
+    (lambda (overlap)
+      (nav-transform (nav/pred (lambda (value) (overlap) #f)) values 42)))
+   '(((new . 1)) 42))
+
+  (let ([results
+         (navigator-thread-overlap
+          (lambda (overlap)
+            (nav/letrec ([outer (nav/key 'x)])
+              (begin (overlap) (nav/letrec ([inner (make-nav-ref 'outer)]) inner))))
+          (lambda (overlap)
+            (nav/letrec ([outer (nav/key 'y)]) (begin (overlap) nav/stay))))])
+    (equal? (nav-select (car results) '((x . 10) (y . 20))) '(10)))
+
+  (let ([child-path #f])
+    (nav/letrec ([outer (nav/key 'x)])
+      (begin
+        (thread-join
+         (fork-thread
+          (lambda ()
+            (set! child-path (nav/letrec ([inner (make-nav-ref 'outer)]) inner)))))
+        nav/stay))
+    ;; A child construction has no lexical outer binding from its parent's dynamic scope.
+    ;; Selecting the unresolved symbolic outer reference must raise an error.
+    (guard (exn [else #t])
+      (nav-select child-path '((x . 10)))
+      #f)))
+
+
+(mat navigator-shared-pure-path
+  (let ([path (nav/path nav/all (nav/key/default 'x 0))] [first? #t])
+    (equal?
+     (navigator-thread-overlap
+      (lambda (overlap)
+        (nav-transform path
+                       (lambda (value)
+                         (if first? (set! first? #f) (overlap))
+                         (+ value 1))
+                       '(() ())))
+      (lambda (overlap)
+        (nav-transform path (lambda (value) (overlap) (+ value 1)) '(()))))
+     '((((x . 1)) ((x . 1))) (((x . 1))))))
+
+  (let ([path (nav/path nav/all (nav/key/default 'x 0))] [child-result #f])
+    (and (equal?
+          (nav-transform
+           path
+           (lambda (value)
+             (thread-join
+              (fork-thread
+               (lambda ()
+                 (set! child-result (nav-transform path add1 '(() ()))))))
+             (+ value 1))
+           '(() ()))
+          '(((x . 1)) ((x . 1))))
+         (equal? child-result '(((x . 1)) ((x . 1)))))))
+
+;; Pure shared paths and independent roots remain correct under both timer
+;; preemption and explicit suspension, including worker migration.
+(mat navigator-fiber-isolation
+  (let ([check
+         (lambda (workers suspend?)
+           (let ([done (make-channel)]
+                 [path (nav/path nav/all (nav/key/default 'x 0))]
+                 [optional (nav/choice (nav/path nav/all (nav/key 'x)) nav/none)])
+             (define work
+               (lambda ()
+                 (let loop ([remaining 100] [correct? #t])
+                   (if (= remaining 0)
+                       (channel-put! done correct?)
+                       (let ([result
+                              (nav-transform
+                               path
+                               (lambda (value)
+                                 (when suspend? (fiber-yield))
+                                 (+ value 1))
+                               '(() () ()))]
+                             [selected
+                              (nav-select optional
+                                          '(((x . 1)) ((missing . 2)) ((x . 3))))])
+                         (loop (- remaining 1)
+                               (and correct?
+                                    (equal? result '(((x . 1)) ((x . 1)) ((x . 1))))
+                                    (equal? selected '(1 3)))))))))
+             (run-fibers
+              (lambda ()
+                (do ([task 0 (+ task 1)]) ((= task 8))
+                  (spawn-fiber work))
+                (let collect ([remaining 8] [correct? #t])
+                  (if (= remaining 0)
+                      correct?
+                      (let ([result (channel-get done)])
+                        (collect (- remaining 1) (and correct? result))))))
+              workers)))])
+    (and (check 1 #f) (check 4 #f) (check 1 #t) (check 4 #t))))
+
+
+(mat navigator-resource-free-cursor
+  (let ([cursor (nav-traverse->iter nav/all '(1 2 3))])
+    (and (equal? (iter->list cursor) '(1 2 3))
+         (not (iter-finalized? cursor))
+         (begin
+           (iter-reset! cursor)
+           (equal? (iter->list cursor) '(1 2 3))))))
+
+
+;; Predicates count only the final read, after all publishers have joined. The
+;; predicates and adapter callbacks therefore introduce no caller-owned races.
+(mat navigator-registry-publication
+  (let ([check
+         (lambda (register recognize)
+           (let ([count 0] [count? #f] [mutex (make-mutex)]
+                 [changed (make-condition)] [go? #f])
+             (let* ([predicate (lambda (value)
+                                 (when count? (set! count (+ count 1)))
+                                 #f)]
+                    [threads
+                     (map (lambda (worker)
+                            (fork-thread
+                             (lambda ()
+                               (with-mutex mutex
+                                 (let wait ()
+                                   (unless go?
+                                     (condition-wait changed mutex)
+                                     (wait))))
+                               (do ([index 0 (+ index 1)]) ((= index 256))
+                                 (register predicate)))))
+                          '(0 1 2 3 4 5 6 7))])
+               (with-mutex mutex (set! go? #t) (condition-broadcast changed))
+               (for-each thread-join threads)
+               (set! count? #t)
+               (recognize)
+               (set! count? #f)
+               (= count 2048))))])
+    (and
+     (check (lambda (predicate)
+              (nav-register-indexed! predicate void void void void))
+            (lambda () (guard (exn [else (void)]) (nav-select nav/all 'unknown))))
+     (check (lambda (predicate)
+              (nav-register-keyed! predicate void void void void void void))
+            (lambda () (guard (exn [else (void)]) (nav-select nav/keys 'unknown))))
+     (check (lambda (predicate)
+              (nav-register-set! predicate void void void void void))
+            (lambda () (guard (exn [else (void)]) (nav-select nav/all 'unknown)))))))

@@ -1,0 +1,70 @@
+(library (cspp private iter-state)
+  (export mk-$iter $iter? $iter-next!-proc $iter-reset!-proc $iter-fini-proc
+          $iter-children $iter-ops $iter-finalized? $iter-finalized?-set!
+          iter-resource? finalize-iter-chain!)
+  (import (chezscheme) (cspp list) (cspp utils))
+
+  ;; A chain is an iterator and the upstream iterators reachable through children.
+  ;; Ownership means responsibility for an actual resource's finalizer. Ordinary
+  ;; cursors have no finalizer. Child links carry cleanup responsibility without
+  ;; requiring exclusive handles or retaining an ownership graph of user data.
+  (define-record-type ($iter mk-$iter $iter?)
+    (fields (immutable next!-proc) (immutable reset!-proc) (immutable fini-proc) (immutable children)
+            (immutable ops) (mutable finalized?))
+    (opaque #t)
+    (sealed #t)
+    (protocol (lambda (p)
+                (case-lambda
+                  [(next!-proc reset!-proc fini-proc)
+                   (pcheck ([procedure? next!-proc reset!-proc fini-proc])
+                           (p next!-proc reset!-proc (if (eq? fini-proc void) #f fini-proc)
+                              (lambda () '()) (make-list-builder) #f))]
+                  [(next!-proc reset!-proc fini-proc children)
+                   (p next!-proc reset!-proc fini-proc children (make-list-builder) #f)]
+                  [(next!-proc reset!-proc)
+                   (pcheck ([procedure? next!-proc reset!-proc])
+                           (p next!-proc reset!-proc #f (lambda () '()) (make-list-builder) #f))]))))
+
+  ;; Repeated handles form a DAG (a directed acyclic graph), not necessarily a tree.
+  ;; Memoize negative answers too: nested (iter-concat previous previous) has only
+  ;; linear unique handles but exponentially many paths to a resource-free leaf.
+  (define iter-resource?
+    (lambda (iterator)
+      (if ($iter-fini-proc iterator)
+          #t
+          (let ([children (($iter-children iterator))])
+            (and (pair? children)
+                 (let ([seen (make-eq-hashtable)])
+                   (let visit ([iterator iterator])
+                     (cond [(hashtable-contains? seen iterator)
+                            (hashtable-ref seen iterator #f)]
+                           [else
+                            (hashtable-set! seen iterator #f)
+                            (let ([resource? (or (and ($iter-fini-proc iterator) #t)
+                                                 (exists visit (($iter-children iterator))))])
+                              (hashtable-set! seen iterator resource?)
+                              resource?)]))))))))
+
+  (define finalize-iter-chain!
+    (lambda (iterator)
+      (unless (and (not ($iter-fini-proc iterator))
+                   (null? (($iter-children iterator))))
+        (let ([seen (make-eq-hashtable)])
+          (let visit ([iterator iterator])
+            (if (hashtable-contains? seen iterator)
+                (hashtable-ref seen iterator #f)
+                (begin
+                  (hashtable-set! seen iterator #f)
+                  (let* ([children (($iter-children iterator))]
+                         ;; Visit every child even if an earlier one has resources.
+                         [child-resources? (fold-left
+                                            (lambda (found? child) (or (visit child) found?))
+                                            #f children)]
+                         [resource? (or ($iter-fini-proc iterator) child-resources?)])
+                    (unless ($iter-finalized? iterator)
+                      ;; Mark before invoking user cleanup, including raising finalizers.
+                      (when resource? ($iter-finalized?-set! iterator #t))
+                      (when ($iter-fini-proc iterator) (($iter-fini-proc iterator))))
+                    (hashtable-set! seen iterator resource?)
+                    resource?))))))))
+)

@@ -16,13 +16,13 @@
   ;; An environment is a stack of recursive-name binding frames. Each resolved
   ;; reference uses its defining (lexical) environment, rather than whichever group
   ;; happens to be active when an outer suffix or delegated callback resumes.
-  (define current-recursive-env (make-parameter '()))
+  (define current-recursive-env (make-nav-scope-parameter '()))
 
   ;; Wrapped paths inherit whether their result has an outer selection suffix.
-  ;; Public selection entry points start a fresh context, including reentrant calls.
+  ;; Public selection entry points start a fresh context, including nested public calls.
   ;; Terminal means no suffix remains anywhere in the composed traversal. This
   ;; affects nav/children's terminal tree selection, rather than just the current path.
-  (define current-selection-terminal? (make-parameter #t))
+  (define current-selection-terminal? (make-nav-scope-parameter #t))
 
   ;; A custom step may delegate through a fresh public operation. Its engine
   ;; continuation still belongs to the defining traversal, including optional
@@ -107,7 +107,7 @@
       (if (null? steps)
           (if (null? tails)
               (emit value)
-              (parameterize ([current-recursive-env (caar tails)])
+              (nav-with-scope ([current-recursive-env (caar tails)])
                 (run-select (cdar tails) (cdr tails) value emit)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
@@ -116,12 +116,12 @@
                                           (for-all (lambda (tail) (null? (cdr tail))) tails))])
                      (if (and terminal? (nav-children-step? step))
                          (emit-nav-children-tree value emit)
-                         (parameterize ([current-selection-terminal? terminal?])
+                         (nav-with-scope ([current-selection-terminal? terminal?])
                            (nav-call-step
                             ($navigator-select-proc step) value
                             (bind-continuation
                              (lambda (child)
-                               (parameterize ([current-selection-terminal? outer-terminal?])
+                               (nav-with-scope ([current-selection-terminal? outer-terminal?])
                                  (run-select rest tails child emit))))
                             (void)))))]
                   [($recursive-nav-group? step)
@@ -147,7 +147,7 @@
       [(path data emit)
        (run-select (nav-path-steps (nav-compile-path path)) '() data emit)]
       [(path data emit terminal?)
-       (parameterize ([current-selection-terminal? terminal?])
+       (nav-with-scope ([current-selection-terminal? terminal?])
          (select-path path data emit))]))
 
   (define run-transform
@@ -155,7 +155,7 @@
       (if (null? steps)
           (if (null? tails)
               (update value)
-              (parameterize ([current-recursive-env (caar tails)])
+              (nav-with-scope ([current-recursive-env (caar tails)])
                 (run-transform (cdar tails) (cdr tails) value update)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
@@ -191,7 +191,7 @@
       (if (null? steps)
           (if (null? tails)
               (update! value)
-              (parameterize ([current-recursive-env (caar tails)])
+              (nav-with-scope ([current-recursive-env (caar tails)])
                 (run-transform! (cdar tails) (cdr tails) value update!)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
@@ -223,7 +223,7 @@
       (if (null? steps)
           (if (null? tails)
               (clear value)
-              (parameterize ([current-recursive-env (caar tails)])
+              (nav-with-scope ([current-recursive-env (caar tails)])
                 (run-clear (cdar tails) (cdr tails) value clear)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
@@ -254,7 +254,7 @@
       (if (null? steps)
           (if (null? tails)
               (clear! value)
-              (parameterize ([current-recursive-env (caar tails)])
+              (nav-with-scope ([current-recursive-env (caar tails)])
                 (run-clear! (cdar tails) (cdr tails) value clear!)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
@@ -294,7 +294,9 @@
 
   #|proc:nav-traverse
   The `nav-traverse` procedure calls `proc` once for each value selected by
-  `path` from `data`, in traversal order.
+  `path` from `data`, in traversal order. `proc` has signature `(value) -> unspecified`;
+  the traversal returns an unspecified value and does not change `data` itself.
+  Kind: Eager callback traversal; each call has independent traversal state.
   |#
   (define nav-traverse
     (lambda (path data proc)
@@ -305,6 +307,9 @@
   #|proc:nav-traverse/i
   The `nav-traverse/i` procedure calls `proc` with the selected-value index and
   selected value for each value selected by `path` from `data`.
+  `proc` has signature `(index value) -> unspecified`; the result is unspecified.
+  Indexes start at zero for each invocation; continuation resumption does not rewind them.
+  Kind: Eager callback traversal; each call has independent traversal state.
   |#
   (define nav-traverse/i
     (lambda (path data proc)
@@ -318,6 +323,7 @@
   #|proc:nav-select
   The `nav-select` procedure returns a list of all values selected by `path`
   from `data`.
+  Kind: Eager selector; each call owns its collection/counting state.
   |#
   (define nav-select
     (lambda (path data)
@@ -328,12 +334,14 @@
   #|proc:nav-selected->list
   The `nav-selected->list` procedure returns a list of all values selected by
   `path` from `data`.
+  Kind: Eager selector; each call owns its collection/counting state.
   |#
   (define nav-selected->list nav-select)
 
   #|proc:nav-select-count
   The `nav-select-count` procedure returns the number of values selected by
   `path` from `data`.
+  Kind: Eager selector; each call owns its collection/counting state.
   |#
   (define nav-select-count
     (lambda (path data)
@@ -346,6 +354,7 @@
   #|proc:nav-selected?
   The `nav-selected?` procedure returns `#t` when `path` selects at least one
   value from `data`.
+  Kind: Short-circuit selector; stops after the first focus.
   |#
   (define nav-selected?
     (lambda (path data)
@@ -360,6 +369,7 @@
   The `nav-select-first` procedure returns the first value selected by `path`
   from `data`, or `default` when provided and no value is selected. Without a
   default, it returns `#f` for no selection.
+  Kind: Short-circuit selector; stops after the first focus.
   |#
   (define nav-select-first
     (case-lambda
@@ -375,6 +385,7 @@
   #|proc:nav-select-one
   The `nav-select-one` procedure returns the only value selected by `path` from
   `data` and signals an error unless exactly one value is selected.
+  Kind: Eager selector; each call owns its collection/counting state.
   |#
   (define nav-select-one
     (lambda (path data)
@@ -391,6 +402,12 @@
   The `nav-traverse->iter` procedure returns an iterator over the values
   selected by `path` from `data`. Traversal errors are raised by the advance that
   encounters them. After an error the iterator is exhausted until reset.
+  `iter-reset!` restarts the path against the current `data` using fresh private traversal state.
+  Exhaustion returns `iter-end`. The cursor owns no file/port, so finalization is a no-op;
+  terminal consumption does not prevent a later reset. Traversal callbacks run on demand.
+  Separate cursors over a pure path and unchanged data may run concurrently; operations on
+  the same cursor are dependent. Continuation resumption does not rewind its mutable cursor.
+  Kind: Lazy iterator bridge; each returned iterator has its own destructive cursor.
   |#
   (define nav-traverse->iter
     (lambda (path data)
@@ -443,15 +460,12 @@
                      (let ([exn (car failure)])
                        (set! failure '())
                        (raise exn))))))
-         reset!
-         (lambda ()
-           (set! done? #t)
-           (set! resume #f)
-           (set! return #f))))))
+         reset!))))
 
   #|proc:nav-selected->vector
   The `nav-selected->vector` procedure returns a vector of all values selected
   by `path` from `data`.
+  Kind: Eager selector; each call owns its collection/counting state.
   |#
   (define nav-selected->vector
     (lambda (path data)
@@ -483,6 +497,9 @@
   record `reducer` to values selected by `path` from `data`, returning the completed
   reduction result. The four-argument form uses the reducer's initializer; the
   five-argument form uses `init`. Traversal stops when the reduction terminates early.
+  Successful completion finalizes the private iterator chain according to the terminal
+  reduction contract. The selection cursor owns no external resource.
+  Kind: Eager reduction bridge; creates a fresh selection cursor for this reduction.
   |#
   (define nav-selected-transduce
     (case-lambda
@@ -496,6 +513,9 @@
   #|proc:nav-transform
   The `nav-transform` procedure returns a rebuilt `data` value with each value
   focused by `path` replaced by the result of applying `proc` to it.
+  `proc` has signature `(old-value) -> new-value`. Persistent rebuilding does not undo
+  callback effects or make a mutating callback pure. Internal update tracking is per call.
+  Kind: Persistent transform; rebuilds focused ancestry and may share unchanged children.
   |#
   (define nav-transform
     (lambda (path proc data)
@@ -507,6 +527,9 @@
   #|proc:nav-transform/i
   The `nav-transform/i` procedure is like `nav-transform`, but `proc` receives
   the selected-value index before the selected value.
+  `proc` has signature `(index old-value) -> new-value`; indexes start at zero per call.
+  Continuation resumption does not restore the mutable index counter.
+  Kind: Persistent transform; rebuilds focused ancestry and may share unchanged children.
   |#
   (define nav-transform/i
     (lambda (path proc data)
@@ -522,6 +545,9 @@
   #|proc:nav-transform!
   The `nav-transform!` procedure mutates locations focused by `path` in `data`
   by applying `proc` to each old value, then returns `data`.
+  `proc` has signature `(old-value) -> new-value`. The root object must remain identical;
+  an unsupported replacement raises an error. Errors may leave partial mutations.
+  Kind: Destructive transform; conflicting accesses to the same data require caller ordering.
   |#
   (define nav-transform!
     (lambda (path proc data)
@@ -540,6 +566,9 @@
   #|proc:nav-transform!/i
   The `nav-transform!/i` procedure is like `nav-transform!`, but `proc`
   receives the selected-value index before the selected value.
+  `proc` has signature `(index old-value) -> new-value`; the result is the original `data`.
+  Continuation resumption does not restore the mutable index counter or earlier mutations.
+  Kind: Destructive transform; conflicting accesses to the same data require caller ordering.
   |#
   (define nav-transform!/i
     (lambda (path proc data)
@@ -554,7 +583,8 @@
 
   #|proc:nav-setval
   The `nav-setval` procedure purely replaces each value focused by `path` with
-  `value` in `data`.
+  `value` in `data`, returning the rebuilt root.
+  Kind: Persistent transform; rebuilds focused ancestry and may share unchanged children.
   |#
   (define nav-setval
     (lambda (path value data)
@@ -563,6 +593,7 @@
   #|proc:nav-setval!
   The `nav-setval!` procedure mutates each value focused by `path` to `value`
   in `data`, then returns `data`.
+  Kind: Destructive transform; conflicting accesses to the same data require caller ordering.
   |#
   (define nav-setval!
     (lambda (path value data)
@@ -570,7 +601,9 @@
 
   #|proc:nav-clearval
   The `nav-clearval` procedure removes or clears values focused by `path` from
-  `data` when the final navigator supports removal.
+  `data` when the final navigator supports removal, returning the rebuilt root.
+  Removing the input root itself is unsupported.
+  Kind: Persistent transform; rebuilds focused ancestry and may share unchanged children.
   |#
   (define nav-clearval
     (lambda (path data)
@@ -582,7 +615,9 @@
 
   #|proc:nav-clearval!
   The `nav-clearval!` procedure mutates `data` to remove or clear values
-  focused by `path` when the final navigator supports removal.
+  focused by `path` when the final navigator supports removal, then returns `data`.
+  Removing the input root itself is unsupported; errors may leave partial mutations.
+  Kind: Destructive transform; conflicting accesses to the same data require caller ordering.
   |#
   (define nav-clearval!
     (lambda (path data)

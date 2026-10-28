@@ -8,7 +8,7 @@
 
   ;; Each lexical frame maps names to stable reference objects. Frames are captured
   ;; while constructing nested groups, before recursive bodies are linked to targets.
-  (define current-recursive-construction-env (make-parameter '()))
+  (define current-recursive-construction-env (make-nav-scope-parameter '()))
 
   (define make-recursive-nav-group
     (lambda (bindings root)
@@ -83,6 +83,7 @@
   values when composed with later path steps. As a final selection step, it
   focuses collection descendants in tree order. Both modes support registered indexed
   and keyed containers as well as built-in containers.
+  Kind: Reusable tree traversal step.
   |#
   (define nav/children
     (make-tree-nav
@@ -112,6 +113,7 @@
 
   #|proc:nav/leaves
   The `nav/leaves` navigator focuses nested values with no supported children.
+  Kind: Reusable tree traversal step.
   |#
   (define nav/leaves
     (make-tree-nav
@@ -129,6 +131,9 @@
   #|proc:nav/walker
   The `nav/walker` procedure returns a navigator that recursively walks nested
   values and focuses every value for which `predicate` returns true.
+  `predicate` has signature `(value) -> boolean`. The returned step supports selection;
+  transformation and clearing are unsupported.
+  Kind: Reusable tree traversal step constructor.
   |#
   (define nav/walker
     (lambda (predicate)
@@ -149,6 +154,7 @@
   The `nav/before` procedure returns a navigator that focuses immediate leaf children
   of the current value before values selected by `path`. If no immediate child is a leaf,
   it focuses the current value itself first.
+  Kind: Reusable tree traversal step constructor.
   |#
   (define nav/before
     (lambda (path)
@@ -167,6 +173,7 @@
   The `nav/after` procedure returns a navigator that focuses values selected by `path`
   before focusing immediate leaf children of the current value. If no immediate child is
   a leaf, it focuses the current value itself last.
+  Kind: Reusable tree traversal step constructor.
   |#
   (define nav/after
     (lambda (path)
@@ -184,6 +191,7 @@
   #|macro:nav/rec
   The `nav/rec` macro creates a recursive navigator named by identifier `name`
   whose body is `body`.
+  Kind: Recursive builder.
   |#
   (define-syntax nav/rec
     (lambda (stx)
@@ -196,8 +204,11 @@
   #|macro:nav/letrec
   The `nav/letrec` macro creates a mutually recursive navigator group from
   bindings and returns a navigator group rooted at `root`. Each identifier names a stable
-  lexical reference. Nested groups retain their defining bindings, and list-valued bodies
+  lexical reference. Construction links private references before returning a reusable group;
+  independent constructions in threads/fibers do not share a construction frame.
+  Nested groups retain their defining bindings, and list-valued bodies
   are compiled at construction so subsequent list mutation cannot change the group.
+  Kind: Recursive builder.
   |#
   (define-syntax nav/letrec
     (lambda (stx)

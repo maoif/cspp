@@ -40,7 +40,8 @@
 
   #|proc:nav/pred
   The `nav/pred` procedure returns a navigator that focuses the current value
-  only when `predicate` returns true for that value.
+  only when `predicate` returns true for that value. Its signature is `(value) -> boolean`.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/pred
     (lambda (predicate)
@@ -62,6 +63,8 @@
   #|proc:nav/not-pred
   The `nav/not-pred` procedure returns a navigator that focuses the current
   value only when `predicate` returns false for that value.
+  `predicate` has signature `(value) -> boolean`.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/not-pred
     (lambda (predicate)
@@ -72,6 +75,7 @@
   The `nav/maybe` procedure wraps `path` so each absent or unsupported focus is skipped.
   Successful sibling focuses are retained in selection, transformation, and clearing.
   Errors from user callbacks or later path steps propagate normally. The result is a navigator.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/maybe
     (lambda (path)
@@ -109,6 +113,7 @@
   The `nav/must` procedure wraps `path` so selecting no values signals an error.
   Each operation checks its own traversal without a separate selection pass.
   The result is a navigator.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/must
     (lambda (path)
@@ -129,6 +134,7 @@
   #|proc:nav/if
   The `nav/if` procedure chooses `then-path` when `test-path` selects at least
   one value from the current focus, otherwise it chooses `else-path`.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/if
     (lambda (test-path then-path else-path)
@@ -154,6 +160,7 @@
   #|proc:nav/when
   The `nav/when` procedure chooses `then-path` when `test-path` selects at
   least one value; otherwise it selects nothing.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/when
     (lambda (test-path then-path)
@@ -162,6 +169,7 @@
   #|proc:nav/unless
   The `nav/unless` procedure chooses `then-path` when `test-path` selects no
   values; otherwise it selects nothing.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/unless
     (lambda (test-path then-path)
@@ -170,6 +178,7 @@
   #|proc:nav/multi-path
   The `nav/multi-path` procedure returns a navigator that focuses all values
   selected by each path in `paths`, preserving path order.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/multi-path
     (lambda paths
@@ -200,7 +209,7 @@
                  (loop (cdr paths) (clear-path! (car paths) clear! value)))))))))
 
   ;; Try each path using the operation itself. Once a path yields a focus its
-  ;; continuation is used immediately; predicates/getters are never replayed.
+  ;; continuation is used immediately; predicates/getters are not called again.
   (define run-choice
     (lambda (paths run callback value)
       (let loop ([paths paths])
@@ -216,6 +225,7 @@
   The `nav/choice` procedure returns a navigator that uses the first path in
   `paths` that yields a focus during the current operation. Each candidate is traversed
   once. Absent focuses are skipped; successful sibling focuses of the chosen path remain.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/choice
     (lambda paths

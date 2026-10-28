@@ -41,7 +41,7 @@
 
      (let* ([source (list->iter '(1 2))]
             [iter (iter-concat source source)])
-       (equal? '(1 2) (collect-iter iter)))
+       (equal? '(1 2 1 2) (collect-iter iter)))
 
      (let ([iter (iter-distinct equal? (list->iter '(1 2 1 3 2)))])
        (and (equal? '(1 2 3) (collect-iter iter))
@@ -208,22 +208,23 @@
      )
 
 (mat iterator-lifecycle
-     (error? (let ([it (range 1)])
-               (iter->list it)
-               (iter-next! it)))
-     (error? (let ([it (range 1)])
-               (iter->list it)
-               (iter-reset! it)))
-     (let ([p (open-input-string "a\nb\n")])
-       (let ([it (port-lines->iter p)])
-         (iter->list it)
-         (not (port-closed? p))))
-     (let ([path "iter-owned-port-test.txt"])
-       (call-with-output-file path
-         (lambda (p) (put-string p "a\nb\n")))
-       (iter->list (file-lines->iter path))
-       (delete-file path)
-       #t))
+  (let ([iterator (range 1)])
+    (and (equal? '(0) (iter->list iterator))
+         (iter-end? (iter-next! iterator))
+         (begin (iter-reset! iterator) #t)
+         (equal? '(0) (iter->list iterator))))
+
+  (call-with-port (open-input-string "a\nb\n")
+    (lambda (port)
+      (iter->list (port-lines->iter port))
+      (not (port-closed? port))))
+
+  (let ([path "iter-owned-port-test.txt"])
+    (call-with-output-file path (lambda (port) (put-string port "a\nb\n")))
+    (let ([iterator (file-lines->iter path)])
+      (let ([result (iter->list (iter-concat iterator iterator))])
+        (delete-file path)
+        (and (equal? '("a" "b" "a" "b") result) (iter-finalized? iterator))))))
 
 (mat duplicate-source-registration
      (let* ([source 424242]
@@ -484,16 +485,17 @@
      (let* ([it (range 10)]
             [ls (iter->list it)])
        (and (equal? ls (iota 10))
-            (iter-finalized? it)))
+            (not (iter-finalized? it))))
 
      (let* ([it (range 10)]
             [i 0])
        (iter-for-each (lambda (x) (incr! i)) it)
        (= i 10))
 
-     (error? (let ([r (range 10)])
-               (iter->list r)
-               (iter-finalize! r)))
+     (let ([r (range 10)])
+       (iter->list r)
+       (iter-finalize! r)
+       (not (iter-finalized? r)))
 
      )
 
@@ -602,3 +604,198 @@
 
 
      )
+
+
+(mat iterator-concurrent-registration
+  (let* ([mutex (make-mutex)] [changed (make-condition)] [open? #f]
+         [accepted 0] [seen 0] [count? #f]
+         [predicates
+          (list->vector
+           (map (lambda (index)
+                  (lambda (source)
+                    (when count? (set! seen (+ seen 1)))
+                    #f))
+                (iota 320)))]
+         [workers
+          (map (lambda (worker)
+                 (fork-thread
+                  (lambda ()
+                    (with-mutex mutex
+                      (let loop ()
+                        (unless open? (condition-wait changed mutex) (loop))))
+                    (do ([index worker (+ index 8)]) ((>= index 320))
+                      ;; Two workers compete for each predicate: exactly one must succeed.
+                      (guard (exn [else (void)])
+                        (iter-register-source! (vector-ref predicates index)
+                                               (lambda (source) (list->iter '())))
+                        (with-mutex mutex (set! accepted (+ accepted 1))))))))
+               '(0 0 1 1 2 2 3 3 4 4 5 5 6 6 7 7))])
+    (with-mutex mutex (set! open? #t) (condition-broadcast changed))
+    (for-each thread-join workers)
+    (set! count? #t)
+    (iterable? #f)
+    (set! count? #f)
+    (and (= accepted 320) (= seen 320)))
+
+  ;; Source predicates run outside the registration lock and scan a stable snapshot.
+  (let ([register? #t] [new-seen? #f])
+    (iter-register-source!
+     (lambda (source)
+       (when register?
+         (set! register? #f)
+         (iter-register-source! (lambda (source) (set! new-seen? #t) #f)
+                                (lambda (source) (list->iter '()))))
+       #f)
+     (lambda (source) (list->iter '())))
+    (iterable? #f)
+    (let ([snapshot? (not new-seen?)])
+      (iterable? #f)
+      (and snapshot? new-seen?))))
+
+(mat iter-take-stops-producer
+  (let ([pulls 0])
+    (let ([source (make-iter
+                   (lambda () (set! pulls (fx1+ pulls)) iter-end)
+                   (lambda () (set! pulls 0)))])
+      (and (iter-end? (iter-next! (iter-take 0 source))) (= pulls 0))))
+
+  (let ([pulls 0])
+    (let ([source (make-iter
+                   (lambda ()
+                     (set! pulls (fx1+ pulls))
+                     ;; A third producer pull after take 2 is a library error.
+                     (when (> pulls 2) (error 'take-test "unexpected pull"))
+                     pulls)
+                   (lambda () (set! pulls 0)))])
+      (guard (exn [else #f])
+        (and (equal? '(1 2) (iter->list (iter-take 2 source))) (= pulls 2)))))
+
+  (let ([source (iter-filter even? (iter-take 3 (range 10)))])
+    (equal? '(0 2) (iter->list source)))
+
+  (let ([source (iter-take 3 (iter-filter even? (range 10)))])
+    (equal? '(0 2 4) (iter->list source))))
+
+(mat iter-reset-and-resource-chains
+  (let ([source (iter-take 2 (iter-drop 1 (iter-map add1 (list->iter '(1 2 3 4)))))])
+    (and (equal? '(3 4) (iter->list source))
+         (not (iter-finalized? source))
+         (begin (iter-reset! source) #t)
+         (equal? '(3 4) (iter->list source))))
+
+  (let ([source (list->iter '(1 2))])
+    (equal? '(1 2 1 2 1 2) (iter->list (iter-concat source source source))))
+
+  (let ([closed 0] [cursor 0])
+    (let* ([source (make-iter
+                    (lambda () (if (= cursor 2) iter-end
+                                   (begin (set! cursor (+ cursor 1)) cursor)))
+                    (lambda () (set! cursor 0))
+                    (lambda () (set! closed (+ closed 1))))]
+           [output (iter-concat source source)])
+      (and (= 1 (iter-next! output))
+           (equal? '(2 1 2) (iter->list output))
+           (= closed 1) (iter-finalized? source)
+           (begin (iter-finalize! output) #t) (= closed 1))))
+
+  (andmap
+   (lambda (wrap)
+     (let ([closed 0])
+       (let* ([source (make-iter (lambda () iter-end) void
+                               (lambda () (set! closed (+ closed 1))))]
+              [output (wrap source)])
+         (iter->list output)
+         (= closed 1))))
+   (list (lambda (source) (iter-concat source))
+         (lambda (source) (iter-append source (range 0)))
+         (lambda (source) (iter-zip source (range 0)))
+         (lambda (source) (iter-interleave source (range 0)))
+         (lambda (source) (iter-distinct equal? source))
+         (lambda (source) (iter-sorted < source)))))
+
+(mat iter-indexes-are-exact
+  (let ([constructor (make-indexed-iter 'exact-index vector? vector-length
+                       (lambda (source index) (exact? index)))])
+    (and (equal? '(#t #t #t) (iter->list (constructor '#(a b c) 0.0 3.0 1.0)))
+         (equal? '(#t #t) (iter->list (constructor '#(a b c) -1.0 -4.0 -2.0)))))
+
+  ;; Invalid adapter lengths must fail before a native indexed read can occur.
+  (error? ((make-indexed-iter 'bad-length vector? (lambda (source) -1) vector-ref) '#(1))))
+
+(mat iter-inexact-native-bounds
+  (equal? '(10 30) (iter->list (vector->iter '#(10 20 30) 0.0 3.0 2.0)))
+
+  (equal? '(#\c #\a) (iter->list (string->iter "abc" -1.0 -4.0 -2.0)))
+
+  (equal? '(30 10) (iter->list (bytevector->iter #vu8(10 20 30) -1.0 -4.0 -2.0)))
+
+  (equal? '(10 30) (iter->list (fxvector->iter (fxvector 10 20 30) 0.0 3.0 2.0)))
+
+  (equal? '(30.0 10.0)
+          (iter->list (flvector->iter (flvector 10.0 20.0 30.0) -1.0 -4.0 -2.0)))
+
+  (equal? '() (iter->list (vector->iter '#(10 20) 2.0 3.0 1.0)))
+
+  (equal? '() (iter->list (vector->iter '#(10 20) -5.0 -3.0 -1.0))))
+
+(mat iter-terminal-closes-unvisited-sources
+  (let ([closed 0])
+    (let* ([resource (make-iter (lambda () iter-end) void
+                               (lambda () (set! closed (+ closed 1))))]
+           [chain (iter-take 1 (iter-concat (range 3) resource))])
+      (and (equal? '(0) (iter->list chain)) (= closed 1)))))
+
+(mat iter-shared-chain-finalization
+  ;; A repeated-handle graph has many paths but only 65 unique cursor nodes.
+  (let loop ([depth 0] [chain (list->iter '(1))])
+    (if (= depth 64)
+        (begin (iter-finalize! chain) (not (iter-finalized? chain)))
+        (loop (+ depth 1) (iter-concat chain chain)))))
+
+(mat iter-resource-lifecycle-boundaries
+  ;; A resource cursor is disabled after explicit finalization; plain cursors are not.
+  (let ([closed 0])
+    (let ([source (make-iter (lambda () 'value) void
+                             (lambda () (set! closed (+ closed 1))))])
+      (iter-finalize! source)
+      (and (= closed 1)
+           (guard (exn [else #t]) (iter-next! source) #f)
+           (guard (exn [else #t]) (iter-reset! source) #f)
+           (begin (iter-finalize! source) #t)
+           (= closed 1))))
+
+  (let ([resets 0] [source #f])
+    (set! source (make-iter (lambda () iter-end) (lambda () (set! resets (+ resets 1)))))
+    (let ([chain (iter-concat source source source)])
+      (iter-reset! chain)
+      (= resets 1))))
+
+(mat iter-numeric-terminals-finalize
+  (andmap
+   (lambda (terminal)
+     (let ([remaining '(1 2)] [closed 0])
+       (let ([source (make-iter
+                      (lambda ()
+                        (if (null? remaining) iter-end
+                            (let ([value (car remaining)])
+                              (set! remaining (cdr remaining)) value)))
+                      (lambda () (set! remaining '(1 2)))
+                      (lambda () (set! closed (+ closed 1))))])
+         (terminal source)
+         (= closed 1))))
+   (list iter-sum iter-product iter-avg iter-fxsum iter-fxproduct iter-fxavg
+         iter-max iter-min))
+
+  (andmap
+   (lambda (terminal)
+     (let ([remaining '(1.0 2.0)] [closed 0])
+       (let ([source (make-iter
+                      (lambda ()
+                        (if (null? remaining) iter-end
+                            (let ([value (car remaining)])
+                              (set! remaining (cdr remaining)) value)))
+                      (lambda () (set! remaining '(1.0 2.0)))
+                      (lambda () (set! closed (+ closed 1))))])
+         (terminal source)
+         (= closed 1))))
+   (list iter-flsum iter-flproduct iter-flavg)))

@@ -29,7 +29,7 @@
   (import (cspp chez)
           (cspp internal)
           (cspp iter)
-          (cspp private iter-scope)
+          (cspp private iter-state)
           (cspp list)
           (cspp utils))
 
@@ -47,11 +47,36 @@
   ;; A reduced wrapper requests early termination while carrying the last accumulator.
   ;; An eduction pairs a source and transducer for traversal with fresh reduction state.
   ;;
-  ;; A driver controls traversal, stepping, and completion. One pass runs from its
-  ;; initialization/reset until exhaustion, early termination, failure, or escape.
-  ;; Generated adapter iterators are owned by the driver that creates them; supplied
-  ;; iterators are borrowed. Ownership determines who must finalize resources, not
-  ;; whether the input collection itself is mutable.
+  ;; A description stores reusable configuration. A stateless transducer has no input
+  ;; history; a stateful transducer allocates counters/history/buffers in each applied
+  ;; reducer closure. Built-in reducer descriptions allocate mutable accumulators on
+  ;; initialization. Applying/completing an inner eduction does not complete its outer
+  ;; reducer. A driver controls initialization, source traversal, steps and completion.
+  ;; A pass is one driver run; resetting a lazy sequence creates a fresh applied reducer.
+  ;;
+  ;; A constructor returns a description or cursor. An intermediate combinator changes
+  ;; the stream without consuming it until driven. A terminal consumes input, completes
+  ;; the effective reducer, then finalizes the whole resource chain on success, including
+  ;; early termination. A lazy sequence buffers one input expansion and completion output;
+  ;; exhaustion alone never releases resources. A resource is a handle needing cleanup;
+  ;; ownership is responsibility for that cleanup. Plain collection cursors need neither.
+  ;; Borrowed ports stay open. Supplied resource-owning iterators join the terminal chain,
+  ;; as do adapter iterators and nested tcat inputs; they are finalized once by identity.
+  ;;
+  ;; Independent operations need no ordering between conflicting mutable accesses.
+  ;; Shared descriptions with separate cursors/accumulators are independent and support
+  ;; threads, fibers, suspension and migration. Shared destructive sources, explicit
+  ;; mutable seeds, or mutable callback captures make operations dependent; ordering or
+  ;; synchronization is the caller's responsibility. An eduction retains its source;
+  ;; wrapping one destructive iterator twice does not create independent cursors.
+  ;;
+  ;; Continuation resumption restores control/bindings, not advanced counters, history,
+  ;; buffers, cached output queues, heap mutations, I/O or consumed input. Resuming after
+  ;; reset/finalization does not reopen or restore resources. Fiber suspension preserves
+  ;; a live pass. Errors/nonlocal exits leave chain state undefined; no automatic cleanup,
+  ;; rollback, snapshot or recovery is promised. Use explicit finalization when appropriate.
+  ;; No dynamic-wind exit is interpreted as failure: ordinary scheduler suspension and
+  ;; generator continuation transfers also leave dynamic extents.
   (define-record-type ($reduced mk-$reduced $reduced?)
     (fields (immutable value))
     (opaque #t)
@@ -60,7 +85,7 @@
   (define-record-type ($reducer mk-$reducer $reducer?)
     (fields (immutable name)
             (immutable proc)
-            (immutable metadata))
+            (immutable context))
     (opaque #t)
     (sealed #t))
 
@@ -118,11 +143,14 @@
       (and (input-port? x) (binary-port? x) (not (port-closed? x)))))
 
   #|proc:current-transducer-source-mode
-  The `current-transducer-source-mode` parameter controls generic source
-  traversal. Supported values are `'direct` and `'iter`.
+  Thread parameter selecting generic source dispatch: `'direct` uses native traversal
+  where available; `'iter` creates adapter cursors. Each pass captures its effective mode
+  at initialization. Scoped `parameterize` overrides survive fiber suspension/migration.
+  A new thread inherits its parent's mode; later changes remain thread-local. Within
+  fibers use scoped overrides, since direct setter calls change the current worker default.
   |#
   (define current-transducer-source-mode
-    (make-parameter
+    (make-thread-parameter
      'direct
      (lambda (mode)
        (case mode
@@ -150,7 +178,7 @@
     (lambda (xform reducer)
       (let ([next (($transducer-reducer-proc xform) reducer)])
         (if (reducer? next)
-            next
+            (reducer-with-context next ($reducer-context reducer))
             (errorf 'transduce "transducer ~a returned a non-reducer: ~a"
                     ($transducer-name xform)
                     next)))))
@@ -221,38 +249,50 @@
                   acc
                   (loop (reducer-step reducer acc x))))))))
 
-  ;; Eager traversal of an owned adapter. `pulling?` covers producer/pipeline work;
-  ;; reducer work runs between pulls. Normal generator transfers can leave and reenter
-  ;; this wind while pulling, so its after-thunk must not finalize then. The explicit
-  ;; exception handler still closes on errors. A source-level escape cannot be told
-  ;; apart from a transfer here; source code must manage resources across such exits.
-  ;; `outer` composes this pull handler with any enclosing sequence or owned traversal.
-  (define run-owned-iter
+  ;; A resource context is explicit per-pass state, never an ambient handler. It
+  ;; carries source dispatch and the actual resource cursors discovered by that pass.
+  ;; The identity set is allocated only when a resource is discovered. User callbacks
+  ;; cannot observe or share this context except through a dependent active cursor.
+  (define-record-type ($resource-context mk-$resource-context $resource-context?)
+    (fields (mutable source-mode) (immutable resources) (mutable seen)))
+
+  (define make-resource-context
+    (lambda ()
+      (mk-$resource-context (current-transducer-source-mode) (make-list-builder) #f)))
+
+  (define reducer-with-context
+    (lambda (reducer context)
+      (mk-$reducer ($reducer-name reducer) ($reducer-proc reducer) context)))
+
+  (define remember-resource!
+    (lambda (context iterator)
+      (when (and context (iter-resource? iterator))
+        (unless ($resource-context-seen context)
+          ($resource-context-seen-set! context (make-eq-hashtable)))
+        (let ([seen ($resource-context-seen context)])
+          (unless (hashtable-ref seen iterator #f)
+            (hashtable-set! seen iterator #t)
+            (($resource-context-resources context) iterator))))))
+
+  (define context-resources
+    (lambda (context) (($resource-context-resources context))))
+
+  (define call-with-reduction-resources
+    (lambda (reducer run)
+      (let* ([context (make-resource-context)]
+             [result (run (reducer-with-context reducer context))])
+        ;; Only successful terminal completion finalizes a chain. Fiber suspension,
+        ;; continuation transfers, exceptions and lazy exhaustion are not finalization.
+        (for-each iter-finalize! (context-resources context))
+        result)))
+
+  (define run-tracked-iter
     (lambda (reducer acc iterator)
-      (let ([pulling? #f] [cleanup-attempted? #f] [outer (current-iter-pull)])
-        (define close!
-          (lambda ()
-            (unless (or cleanup-attempted? (iter-finalized? iterator))
-              ;; Mark before calling user cleanup: a raising finalizer must not be
-              ;; retried by both the exception handler and the wind's after-thunk.
-              (set! cleanup-attempted? #t)
-              (iter-finalize! iterator))))
-        (dynamic-wind
-          (lambda () (set! pulling? #f))
-          (lambda ()
-            (guard (exn [else
-                         (close!)
-                         (raise exn)])
-              (parameterize ([current-iter-pull
-                              (lambda (pull)
-                                (let ([previous? pulling?])
-                                  (set! pulling? #t)
-                                  (let ([value (if outer (outer pull) (pull))])
-                                    (set! pulling? previous?)
-                                    value)))])
-                (run-iter reducer acc iterator))))
-          (lambda ()
-            (unless pulling? (close!)))))))
+      (let ([result (run-iter reducer acc iterator)])
+        ;; A lazy source can acquire resources while being pulled. Record it after
+        ;; traversal, so an initially resource-free sequence is handled correctly.
+        (remember-resource! ($reducer-context reducer) iterator)
+        result)))
 
   (define run-port-lines
     (lambda (reducer acc port)
@@ -276,9 +316,11 @@
 
   (define run-source
     (lambda (reducer acc source)
-      (if (and (eq? (current-transducer-source-mode) 'iter)
+      (if (and (eq? (if ($reducer-context reducer)
+                           ($resource-context-source-mode ($reducer-context reducer))
+                           (current-transducer-source-mode)) 'iter)
                (not (iter? source)))
-          (run-owned-iter reducer acc (source->iter source))
+          (run-tracked-iter reducer acc (source->iter source))
           (cond [(list? source) (run-list reducer acc source)]
                 [(vector? source) (run-vector reducer acc source)]
                 [(bytevector? source) (run-bytevector reducer acc source)]
@@ -286,43 +328,51 @@
                 [(fxvector? source) (run-fxvector reducer acc source)]
                 [(flvector? source) (run-flvector reducer acc source)]
                 [(hashtable? source) (run-hashtable reducer acc source)]
-                [(iter? source) (run-iter reducer acc source)]
-                [else (run-owned-iter reducer acc (iter-source->iter source))]))))
+                [(iter? source) (run-tracked-iter reducer acc source)]
+                [else (run-tracked-iter reducer acc (iter-source->iter source))]))))
 
   (define transduce-run
     (lambda (who xform reducer init source runner)
       (pcheck ([transducer? xform] [reducer? reducer])
-              (let ([effective (apply-transducer xform reducer)])
-                (finish-transduce effective
-                                  (runner effective
-                                          (if (eq? init default-init)
-                                              (reducer-init effective)
-                                              init)
-                                          source))))))
+              (call-with-reduction-resources
+               reducer
+               (lambda (reducer)
+                 (let* ([effective (apply-transducer xform reducer)]
+                        [acc (runner effective
+                                     (if (eq? init default-init)
+                                         (reducer-init effective) init)
+                                     source)])
+                   (when (iter? source)
+                     (remember-resource! ($reducer-context effective) source))
+                   (finish-transduce effective acc)))))))
 
   (define finish-transduce
     (lambda (reducer acc)
       (reducer-complete reducer (unreduced acc))))
 
+  ;; An inner eduction shares the outer resource context; only its own reduction
+  ;; state completes. Completing its reducer must not close an outer pass's inputs.
+  (define transduce-pass
+    (lambda (xform reducer init source)
+      (if ($eduction? source)
+          (transduce-pass (tcompose ($eduction-xform source) xform) reducer init
+                          ($eduction-source source))
+          (let ([effective (apply-transducer xform reducer)])
+            (finish-transduce effective
+                              (run-source effective
+                                          (if (eq? init default-init)
+                                              (reducer-init effective) init)
+                                          source))))))
+
   (define transduce-explicit
     (lambda (xform reducer init source)
       (pcheck ([transducer? xform] [reducer? reducer] [transducible? source])
-              (cond [($eduction? source)
-                     (let ([combined (tcompose ($eduction-xform source) xform)])
-                       (transduce-explicit combined reducer init ($eduction-source source)))]
-                    [else
-                     (let ([effective (apply-transducer xform reducer)])
-                       (finish-transduce effective
-                                         (run-source effective
-                                                     (if (eq? init default-init)
-                                                         (reducer-init effective)
-                                                         init)
-                                                     source)))]))))
+              (call-with-reduction-resources
+               reducer (lambda (reducer) (transduce-pass xform reducer init source))))))
 
   (define transduce-default
     (lambda (xform reducer source)
-      (pcheck ([transducer? xform] [reducer? reducer])
-              (transduce-explicit xform reducer default-init source))))
+      (transduce-explicit xform reducer default-init source)))
 
   (define list->bytevector
     (lambda (ls)
@@ -426,7 +476,8 @@
   #|proc:make-transducer
   The `make-transducer` procedure returns a transducer record named `name`.
   `proc` must accept a reducer and return a reducer. Unseeded terminals initialize that
-  transformed reducer; explicit seeds bypass its initializer.
+  transformed reducer; explicit seeds bypass its initializer. Mutable transformation
+  state must be created inside `proc` per application, not shared in the description.
   |#
   (define make-transducer
     (lambda (name proc)
@@ -444,6 +495,7 @@
   #|proc:tidentity
   The `tidentity` procedure returns a transducer that leaves a reducer
   unchanged.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tidentity
     (lambda ()
@@ -452,6 +504,7 @@
   #|proc:tcompose
   The `tcompose` procedure composes transducers in left-to-right pipeline
   order.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tcompose
     (lambda xform*
@@ -470,6 +523,7 @@
   #|proc:tchain
   The `tchain` procedure composes the transducers in `xform-list` in
   left-to-right pipeline order.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tchain
     (lambda (xform-list)
@@ -479,6 +533,7 @@
   #|proc:tmap
   The `tmap` procedure returns a transducer that emits `(proc x)` for each
   input value `x`.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tmap
     (lambda (proc)
@@ -497,6 +552,8 @@
   #|proc:tmap/i
   The `tmap/i` procedure returns a transducer that emits `(proc i x)` for each
   input value `x`, where `i` is the zero-based input index.
+  Kind: reusable stateful transducer constructor; each application stores
+  a zero-based input index. Resetting a sequence creates fresh state.
   |#
   (define tmap/i
     (lambda (proc)
@@ -519,6 +576,7 @@
   #|proc:tfilter
   The `tfilter` procedure returns a transducer that emits only values accepted
   by `pred`.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tfilter
     (lambda (pred)
@@ -539,6 +597,8 @@
   #|proc:tfilter/i
   The `tfilter/i` procedure returns a transducer that emits values accepted by
   `(pred i x)`, where `i` is the zero-based input index.
+  Kind: reusable stateful transducer constructor; each application stores
+  a zero-based input index. Resetting a sequence creates fresh state.
   |#
   (define tfilter/i
     (lambda (pred)
@@ -563,6 +623,7 @@
   #|proc:tremove
   The `tremove` procedure returns a transducer that emits only values rejected
   by `pred`.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tremove
     (lambda (pred)
@@ -572,6 +633,7 @@
   #|proc:tkeep
   The `tkeep` procedure emits `(proc x)` for each input value whose result is
   not `#f`.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tkeep
     (lambda (proc)
@@ -592,6 +654,8 @@
   #|proc:tkeep/i
   The `tkeep/i` procedure applies `(proc i x)` to each input and emits the
   result only when it is not `#f`.
+  Kind: reusable stateful transducer constructor; each application stores
+  a zero-based input index. Resetting a sequence creates fresh state.
   |#
   (define tkeep/i
     (lambda (proc)
@@ -614,6 +678,7 @@
   #|proc:treplace
   The `treplace` procedure returns a transducer that replaces input values
   according to association list `alist` using `equal?`.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define treplace
     (lambda (alist)
@@ -622,16 +687,17 @@
                       (let ([cell (assoc x alist)])
                         (if cell (cdr cell) x)))))))
 
-  ;; An eduction owns its transducer state, but must neither initialize nor
+  ;; An eduction has its own transducer state, but must neither initialize nor
   ;; complete the surrounding reduction. Remember downstream termination separately
   ;; from an inner eduction's own early termination.
   (define emit-eduction
     (lambda (reducer acc source)
       (let ([stopped? #f])
         (let ([result
-               (transduce
+               (transduce-pass
                 ($eduction-xform source)
-                (make-reducer
+                (reducer-with-context
+                 (make-reducer
                  'tcat
                  (case-lambda
                    [() acc]
@@ -642,7 +708,8 @@
                         (let ([next (reducer-step reducer result value)])
                           (when (reduced? next) (set! stopped? #t))
                           next))]))
-                ($eduction-source source))])
+                 ($reducer-context reducer))
+                default-init ($eduction-source source))])
           (if stopped? (ensure-reduced result) result)))))
 
   (define flatten-emit
@@ -676,10 +743,11 @@
   #|proc:tcat
   The `tcat` procedure returns a transducer that concatenates each transducible input collection
   into the output stream, including registered sources, iterators, and eductions.
-  Other inputs are emitted as scalar values. Generated iterators are finalized on completion,
-  early termination, errors, or reducer escapes. Source-level nonlocal exits require source
-  code to manage its resources. Caller-supplied iterators remain open. Inner eductions complete
-  their own state without completing the surrounding reduction.
+  Other inputs are emitted as scalar values. Each inner iterator starts at its current
+  position without implicit reset; repeated handles share that cursor. Inner exhaustion
+  keeps resources open until the outer terminal succeeds or its sequence is explicitly
+  finalized. Inner eductions complete their state without completing the outer reduction.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tcat
     (lambda ()
@@ -698,6 +766,7 @@
   The `tmapcat` procedure returns a transducer that applies unary `(proc value)` to each
   input and concatenates each produced transducible collection. Scalar results are emitted
   unchanged, following `tcat`.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tmapcat
     (lambda (proc)
@@ -705,8 +774,10 @@
               (tcompose (tmap proc) (tcat)))))
 
   #|proc:tflatten
-  The `tflatten` procedure recursively emits leaf values from nested supported
-  collections.
+  Construct a transducer recursively flattening proper lists and vectors. Bytevectors,
+  strings, fxvectors and flvectors emit their elements as leaves. Other values, including
+  iterator/eduction/map objects, are scalar leaves; their resources are not consumed or owned.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tflatten
     (lambda ()
@@ -724,6 +795,8 @@
   #|proc:ttake
   The `ttake` procedure returns a stateful transducer that emits at most `n`
   input values.
+  Kind: reusable stateful transducer constructor; each application stores
+  a remaining output allowance. Resetting a sequence creates fresh state.
   |#
   (define ttake
     (lambda (n)
@@ -751,6 +824,8 @@
   #|proc:tdrop
   The `tdrop` procedure returns a stateful transducer that skips the first `n`
   input values and emits the rest.
+  Kind: reusable stateful transducer constructor; each application stores
+  a remaining skip count. Resetting a sequence creates fresh state.
   |#
   (define tdrop
     (lambda (n)
@@ -773,6 +848,8 @@
   #|proc:ttake-while
   The `ttake-while` procedure emits input values while `pred` returns true,
   then requests early termination before emitting the first failing value.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
+  Predicate signature: `(pred value) -> boolean`; the first false value ends the prefix.
   |#
   (define ttake-while
     (lambda (pred)
@@ -794,6 +871,9 @@
   #|proc:tdrop-while
   The `tdrop-while` procedure skips input values while `pred` returns true,
   then emits the first failing value and all remaining values.
+  Kind: reusable stateful transducer constructor; each application stores
+  a dropping flag. Resetting a sequence creates fresh state.
+  Predicate signature: `(pred value) -> boolean`; the first false value ends the prefix.
   |#
   (define tdrop-while
     (lambda (pred)
@@ -818,6 +898,8 @@
   #|proc:ttake-nth
   The `ttake-nth` procedure emits every `n`th input value, starting with index
   zero.
+  Kind: reusable stateful transducer constructor; each application stores
+  a zero-based input index. Resetting a sequence creates fresh state.
   |#
   (define ttake-nth
     (lambda (n)
@@ -849,6 +931,8 @@
   #|proc:tslice
   The `tslice` procedure emits input values with indexes in `[start, stop)`.
   With three arguments, `step` selects indexes by positive stride.
+  Kind: reusable stateful transducer constructor; each application stores
+  a zero-based input index. Resetting a sequence creates fresh state.
   |#
   (define tslice
     (case-lambda
@@ -885,6 +969,8 @@
   #|proc:tpartition
   The `tpartition` procedure emits vectors of exactly `n` values and drops the
   trailing partial partition.
+  Kind: reusable stateful transducer constructor; each application stores
+  a count and partial partition buffer. Resetting a sequence creates fresh state.
   |#
   (define tpartition
     (lambda (n)
@@ -912,6 +998,8 @@
   #|proc:tpartition-all
   The `tpartition-all` procedure emits vectors of up to `n` values, including
   the trailing partial partition during completion.
+  Kind: reusable stateful transducer constructor; each application stores
+  a count and partial partition buffer. Resetting a sequence creates fresh state.
   |#
   (define tpartition-all
     (lambda (n)
@@ -943,6 +1031,9 @@
   #|proc:tpartition-by
   The `tpartition-by` procedure starts a new vector partition whenever
   `(proc x)` changes according to `equal?`.
+  Kind: reusable stateful transducer constructor; each application stores
+  the last key and partial partition buffer. Resetting a sequence creates fresh state.
+  Callback signature: `(proc value) -> comparison-key`. Captured mutable state is caller-owned.
   |#
   (define tpartition-by
     (lambda (proc)
@@ -983,6 +1074,8 @@
 
   #|proc:tdedupe
   The `tdedupe` procedure removes consecutive duplicate values using `equal?`.
+  Kind: reusable stateful transducer constructor; each application stores
+  the previous comparison key. Resetting a sequence creates fresh state.
   |#
   (define tdedupe
     (lambda ()
@@ -991,6 +1084,9 @@
   #|proc:tdedupe-by
   The `tdedupe-by` procedure removes consecutive values whose computed keys are
   `equal?`.
+  Kind: reusable stateful transducer constructor; each application stores
+  the previous comparison key. Resetting a sequence creates fresh state.
+  Callback signature: `(proc value) -> comparison-key`. Captured mutable state is caller-owned.
   |#
   (define tdedupe-by
     (lambda (proc)
@@ -1017,6 +1113,9 @@
   #|proc:tdistinct
   The `tdistinct` procedure emits only the first occurrence of each value using
   `equal?`.
+  Kind: reusable stateful transducer constructor; each application stores
+  an equal-hash table of seen keys. Resetting a sequence creates fresh state.
+  Retained keys must keep stable `equal?`/`equal-hash` behavior for the active pass.
   |#
   (define tdistinct
     (lambda ()
@@ -1025,6 +1124,10 @@
   #|proc:tdistinct-by
   The `tdistinct-by` procedure emits only the first occurrence of each computed
   key using `equal?`.
+  Kind: reusable stateful transducer constructor; each application stores
+  an equal-hash table of seen keys. Resetting a sequence creates fresh state.
+  Retained keys must keep stable `equal?`/`equal-hash` behavior for the active pass.
+  Callback signature: `(proc value) -> comparison-key`. Captured mutable state is caller-owned.
   |#
   (define tdistinct-by
     (lambda (proc)
@@ -1049,6 +1152,8 @@
 
   #|proc:tinterpose
   The `tinterpose` procedure emits `sep` between input values.
+  Kind: reusable stateful transducer constructor; each application stores
+  a first-item flag. Resetting a sequence creates fresh state.
   |#
   (define tinterpose
     (lambda (sep)
@@ -1074,6 +1179,7 @@
 
   #|proc:ttap
   The `ttap` procedure calls `(proc x)` for each input value, then emits `x`.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define ttap
     (lambda (proc)
@@ -1094,6 +1200,7 @@
   #|proc:tinspect
   The `tinspect` procedure calls `(proc who x)` for each input value, then
   emits `x`.
+  Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tinspect
     (lambda (who proc)
@@ -1116,9 +1223,10 @@
   record `reducer`. With three arguments, the transformed reducer supplies the initial
   accumulator; with four arguments, `init` supplies it and initialization is skipped.
   The result is the reducer's completion value after source exhaustion or an early `reduced`
-  result. Iterators created for source adapters are finalized on exhaustion, early termination,
-  errors, or reducer escapes. Nonlocal exits from source pulls require source code to manage
-  its resources. Caller-supplied iterators remain open.
+  result. Kind: consuming terminal. After successful reducer completion, finalize the entire
+  iterator resource chain, including supplied resource iterators, adapters, and nested tcat
+  sources. Resource-free cursors remain resettable. Errors/nonlocal exits leave chain state
+  undefined, including cleanup; source/reducer completion errors propagate to the caller.
   |#
   (define transduce
     (case-lambda
@@ -1156,181 +1264,72 @@
                  source)))))
 
   #|proc:sequence
-  The `sequence` procedure returns an iterator over the transformed values from
-  `source`. Values are pulled from `source` only as the returned iterator is
-  advanced. An iterator source starts at its current position and remains open at
-  exhaustion. Resetting the result resets an iterator source and the transducer state;
-  other sources receive a new traversal. Explicitly finalizing the result finalizes its
-  upstream iterator, including a caller-supplied iterator.
-  Initialization emissions are retained, and an initially reduced accumulator finishes without
-  pulling input. A failed pass releases an owned source and stays exhausted until reset.
-  An escape during construction, reset, or a reducer callback releases an owned source
-  and exhausts the pass. Source pulls may use continuations. A nonlocal exit from a source
-  exhausts the pass; reset or explicitly finalize the result to release its owned source.
-  Each input value's entire transformed expansion is buffered before returning its first value.
+  Return a lazy iterator applying transducer `xform` to transducible `source`.
+  Each pull buffers one input's complete expansion; initialization and completion may
+  also emit values. An iterator source starts at its current position. Exhaustion
+  does not finalize the chain. A terminal operation or explicit `iter-finalize!` releases
+  all reachable resources, including supplied iterators and nested `tcat` sources.
+  Reset restarts the source and creates fresh transducer counters/buffers while retaining
+  the pipeline. Resource-finalized sources cannot be reset. Errors or nonlocal exits leave
+  pass state undefined. Ordinary fiber suspension preserves the live pass.
   |#
   (define sequence
     (lambda (xform source)
       (pcheck ([transducer? xform] [transducible? source])
               (if (eduction? source)
-                  (sequence (tcompose ($eduction-xform source) xform)
-                            ($eduction-source source))
-                  ;; One input may emit zero, one, or many values. The linked queue
-                  ;; holds a complete step's expansion (and initialization/completion
-                  ;; emissions); next! drains it before pulling more source input.
-                  ;; `done?` stops further input but still permits completed queued output.
-                  ;; `source-incomplete?` marks an unfinished top-level or nested pull;
-                  ;; if it survives until another external advance, that pull escaped.
-                  (let ([upstream #f]
-                        [cleanup-attempted? #f]
-                        [effective #f]
-                        [acc #f]
-                        [done? #f]
-                        [source-incomplete? #f]
-                        [q-head '()]
-                        [q-tail '()])
+                  (sequence (tcompose ($eduction-xform source) xform) ($eduction-source source))
+                  (let ([upstream (source->iter source)]
+                        [context (make-resource-context)]
+                        [effective #f] [acc #f] [done? #f]
+                        [q-head '()] [q-tail '()])
                     (define enqueue!
-                      (lambda (x)
-                        (let ([cell (cons x '())])
-                          (if (null? q-head)
-                              (begin
-                                (set! q-head cell)
-                                (set! q-tail cell))
-                              (begin
-                                (set-cdr! q-tail cell)
-                                (set! q-tail cell))))))
+                      (lambda (value)
+                        (let ([cell (cons value '())])
+                          (if (null? q-head) (set! q-head cell) (set-cdr! q-tail cell))
+                          (set! q-tail cell))))
                     (define dequeue!
                       (lambda ()
-                        (let ([x (car q-head)])
+                        (let ([value (car q-head)])
                           (set! q-head (cdr q-head))
-                          (when (null? q-head)
-                            (set! q-tail '()))
-                          x)))
-                    (define queue-empty?
-                      (lambda ()
-                        (null? q-head)))
+                          (when (null? q-head) (set! q-tail '()))
+                          value)))
                     (define emit-reducer
-                      (make-reducer
-                       'sequence
-                       (case-lambda
-                         [() (void)]
-                         [(acc) acc]
-                         [(acc x) (enqueue! x) acc])))
-                    (define finalize-upstream!
+                      (reducer-with-context
+                       (make-reducer 'sequence
+                         (case-lambda
+                           [() (void)] [(acc) acc]
+                           [(acc value) (enqueue! value) acc]))
+                       context))
+                    (define initialize!
                       (lambda ()
-                        (when (and upstream (not (iter-finalized? upstream)))
-                          (set! cleanup-attempted? #t)
-                          (iter-finalize! upstream))))
-                    (define abandon-pass!
-                      (lambda ()
-                        (set! done? #t)
-                        (set! q-head '())
-                        (set! q-tail '())
-                        (unless (or (iter? source) cleanup-attempted?)
-                          (finalize-upstream!))))
-                    (define fail!
-                      (lambda (exn)
-                        (abandon-pass!)
-                        (raise exn)))
-                    (define reset-state!
-                      (lambda ()
-                        (let ([completed? #f])
-                          (dynamic-wind
-                            void
-                            (lambda ()
-                              (guard (exn [else (fail! exn)])
-                                (if (and upstream (iter? source))
-                                    (iter-reset! upstream)
-                                    (begin
-                                      (finalize-upstream!)
-                                      (set! upstream (source->iter source))))
-                                (set! cleanup-attempted? #f)
-                                (set! done? #f)
-                                (set! source-incomplete? #f)
-                                (set! q-head '())
-                                (set! q-tail '())
-                                (set! effective (apply-transducer xform emit-reducer))
-                                (set! acc (reducer-init effective))
-                                (set! completed? #t)))
-                            (lambda ()
-                              (unless completed?
-                                (abandon-pass!)))))))
-                    ;; Protect step/completion work with an escape-cleanup wind.
-                    ;; A wind runs its before/after thunks on dynamic entry/exit,
-                    ;; including continuation transfers. Source pulls inside a step
-                    ;; (for example tcat) must temporarily suppress escape cleanup.
-                    ;; They mark done?/source-incomplete? before calling the source,
-                    ;; restoring the previous values only on normal return. Saving
-                    ;; previous state, rather than setting it unconditionally to #f,
-                    ;; preserves nested pulls and completion's already-done state.
-                    ;; Source exceptions still reach next!'s guard and close the pass.
-                    (define protect-pass
-                      (lambda (thunk)
-                        (let ([completed? #f] [pulling? #f] [outer (current-iter-pull)])
-                          (dynamic-wind
-                            (lambda () (set! completed? #f) (set! pulling? #f))
-                            (lambda ()
-                              (let ([result
-                                     (parameterize
-                                      ([current-iter-pull
-                                        (lambda (pull)
-                                          (let ([previous-done? done?]
-                                                [previous-pull? pulling?]
-                                                [previous-incomplete? source-incomplete?])
-                                            (set! done? #t)
-                                            (set! pulling? #t)
-                                            (set! source-incomplete? #t)
-                                            (let ([value (if outer (outer pull) (pull))])
-                                              (set! done? previous-done?)
-                                              (set! pulling? previous-pull?)
-                                              (set! source-incomplete? previous-incomplete?)
-                                              value)))])
-                                       (thunk))])
-                                (set! completed? #t)
-                                result))
-                            (lambda ()
-                              (unless (or completed? pulling?) (abandon-pass!)))))))
+                        ($resource-context-source-mode-set! context (current-transducer-source-mode))
+                        (set! done? #f)
+                        (set! q-head '()) (set! q-tail '())
+                        (set! effective (apply-transducer xform emit-reducer))
+                        (set! acc (reducer-init effective))))
                     (define finish!
                       (lambda ()
                         (unless done?
-                          (protect-pass
-                           (lambda ()
-                             ;; Mark before completion so it runs at most once, even
-                             ;; when flushing buffered output raises or escapes.
-                             (set! done? #t)
-                             (set! acc (reducer-complete effective (unreduced acc)))
-                             (unless (iter? source)
-                               (finalize-upstream!)))))))
+                          (set! done? #t)
+                          (set! acc (reducer-complete effective (unreduced acc))))))
                     (define next!
                       (lambda ()
-                        ;; An escaped nested source can leave part of one expansion
-                        ;; buffered. Discard it only on a new external advance: normal
-                        ;; generator transfers finish the pull before returning here.
-                        (when source-incomplete?
-                          (set! q-head '())
-                          (set! q-tail '()))
-                        (guard (exn [else (fail! exn)])
-                          (let loop ()
-                            (cond [(not (queue-empty?)) (dequeue!)]
-                                  [done? iter-end]
-                                  [(reduced? acc) (finish!) (loop)]
-                                  [else
-                                   ;; A source-level nonlocal exit leaves this pass
-                                   ;; exhausted; reset/finalization retains cleanup ownership.
-                                   (set! done? #t)
-                                   (set! source-incomplete? #t)
-                                   (let ([value (iter-next! upstream)])
-                                     (set! done? #f)
-                                     (set! source-incomplete? #f)
-                                     (if (iter-end? value)
-                                         (finish!)
-                                         (protect-pass
-                                          (lambda ()
-                                            (set! acc (reducer-step effective acc value))
-                                            (when (reduced? acc) (finish!)))))
-                                     (loop))])))))
-                    (reset-state!)
-                    (make-iter next! reset-state! finalize-upstream!))))))
+                        (let loop ()
+                          (cond [(pair? q-head) (dequeue!)]
+                                [done? iter-end]
+                                [(reduced? acc) (finish!) (loop)]
+                                [else
+                                 (let ([value (iter-next! upstream)])
+                                   (if (iter-end? value)
+                                       (finish!)
+                                       (begin
+                                         (set! acc (reducer-step effective acc value))
+                                         (when (reduced? acc) (finish!))))
+                                   (loop))]))))
+                    (initialize!)
+                    (mk-$iter next!
+                              (lambda () (iter-reset! upstream) (initialize!))
+                              #f (lambda () (cons upstream (context-resources context)))))))))
 
   #|proc:into
   The `into` procedure transduces transducible `source` with transducer `xform` into the
@@ -1351,6 +1350,9 @@
   #|proc:list-transduce
   The `list-transduce` procedure transduces list `source` with direct pair
   traversal.
+  Kind: consuming terminal with typed source dispatch. `xform` is a transducer and
+  `reducer` is a reducer record; optional `init` bypasses reducer initialization. Return
+  the completed result and finalize all iterator resources acquired by the pass.
   |#
   (define list-transduce
     (case-lambda
@@ -1364,6 +1366,9 @@
   #|proc:vector-transduce
   The `vector-transduce` procedure transduces vector `source` with direct
   indexed traversal.
+  Kind: consuming terminal with typed source dispatch. `xform` is a transducer and
+  `reducer` is a reducer record; optional `init` bypasses reducer initialization. Return
+  the completed result and finalize all iterator resources acquired by the pass.
   |#
   (define vector-transduce
     (case-lambda
@@ -1377,6 +1382,9 @@
   #|proc:bytevector-transduce
   The `bytevector-transduce` procedure transduces bytevector `source` by
   reading unsigned bytes.
+  Kind: consuming terminal with typed source dispatch. `xform` is a transducer and
+  `reducer` is a reducer record; optional `init` bypasses reducer initialization. Return
+  the completed result and finalize all iterator resources acquired by the pass.
   |#
   (define bytevector-transduce
     (case-lambda
@@ -1390,6 +1398,9 @@
   #|proc:string-transduce
   The `string-transduce` procedure transduces string `source` by reading
   characters.
+  Kind: consuming terminal with typed source dispatch. `xform` is a transducer and
+  `reducer` is a reducer record; optional `init` bypasses reducer initialization. Return
+  the completed result and finalize all iterator resources acquired by the pass.
   |#
   (define string-transduce
     (case-lambda
@@ -1403,19 +1414,26 @@
   #|proc:iter-transduce
   The `iter-transduce` procedure transduces iterator `source` by repeatedly
   calling `iter-next!`.
+  Kind: consuming terminal with typed source dispatch. `xform` is a transducer and
+  `reducer` is a reducer record; optional `init` bypasses reducer initialization. Return
+  the completed result and finalize all iterator resources acquired by the pass.
+  Supplied resource-owning `source` is finalized on success, including early termination.
   |#
   (define iter-transduce
     (case-lambda
       [(xform reducer source)
        (pcheck ([iter? source])
-               (transduce-run 'iter-transduce xform reducer default-init source run-iter))]
+               (transduce-run 'iter-transduce xform reducer default-init source run-tracked-iter))]
       [(xform reducer init source)
        (pcheck ([iter? source])
-               (transduce-run 'iter-transduce xform reducer init source run-iter))]))
+               (transduce-run 'iter-transduce xform reducer init source run-tracked-iter))]))
 
   #|proc:fxvector-transduce
   The `fxvector-transduce` procedure transduces fxvector `source` with direct
   indexed traversal.
+  Kind: consuming terminal with typed source dispatch. `xform` is a transducer and
+  `reducer` is a reducer record; optional `init` bypasses reducer initialization. Return
+  the completed result and finalize all iterator resources acquired by the pass.
   |#
   (define fxvector-transduce
     (case-lambda
@@ -1429,6 +1447,9 @@
   #|proc:flvector-transduce
   The `flvector-transduce` procedure transduces flvector `source` with direct
   indexed traversal.
+  Kind: consuming terminal with typed source dispatch. `xform` is a transducer and
+  `reducer` is a reducer record; optional `init` bypasses reducer initialization. Return
+  the completed result and finalize all iterator resources acquired by the pass.
   |#
   (define flvector-transduce
     (case-lambda
@@ -1442,6 +1463,9 @@
   #|proc:hashtable-transduce
   The `hashtable-transduce` procedure transduces hashtable values with direct
   traversal over the hashtable values vector.
+  Kind: consuming terminal with typed source dispatch. `xform` is a transducer and
+  `reducer` is a reducer record; optional `init` bypasses reducer initialization. Return
+  the completed result and finalize all iterator resources acquired by the pass.
   |#
   (define hashtable-transduce
     (case-lambda
@@ -1455,6 +1479,9 @@
   #|proc:port-lines-transduce
   The `port-lines-transduce` procedure transduces lines from caller-owned
   textual input port `source`. It does not close `source`.
+  Kind: consuming terminal with typed source dispatch. `xform` is a transducer and
+  `reducer` is a reducer record; optional `init` bypasses reducer initialization. Return
+  the completed result and finalize all iterator resources acquired by the pass.
   |#
   (define port-lines-transduce
     (case-lambda
@@ -1468,6 +1495,9 @@
   #|proc:port-bytes-transduce
   The `port-bytes-transduce` procedure transduces bytes from caller-owned
   binary input port `source`. It does not close `source`.
+  Kind: consuming terminal with typed source dispatch. `xform` is a transducer and
+  `reducer` is a reducer record; optional `init` bypasses reducer initialization. Return
+  the completed result and finalize all iterator resources acquired by the pass.
   |#
   (define port-bytes-transduce
     (case-lambda
@@ -1519,6 +1549,8 @@
   #|proc:rflist
   The `rflist` procedure returns a reducer that accumulates values into a list
   in input order.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rflist
     (lambda ()
@@ -1527,6 +1559,8 @@
   #|proc:rfreverselist
   The `rfreverselist` procedure returns a reducer that accumulates values into
   a list in reverse input order.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rfreverselist
     (lambda ()
@@ -1535,6 +1569,8 @@
   #|proc:rfvector
   The `rfvector` procedure returns a reducer that accumulates values into a
   vector in input order.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rfvector
     (lambda ()
@@ -1543,6 +1579,8 @@
   #|proc:rfstring
   The `rfstring` procedure returns a reducer that accumulates characters into
   a string in input order.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rfstring
     (lambda ()
@@ -1551,6 +1589,8 @@
   #|proc:rfbytevector
   The `rfbytevector` procedure returns a reducer that accumulates exact byte
   values into a bytevector in input order.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rfbytevector
     (lambda ()
@@ -1558,6 +1598,8 @@
 
   #|proc:rfcount
   The `rfcount` procedure returns a reducer that counts transformed values.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rfcount
     (lambda ()
@@ -1571,6 +1613,8 @@
   #|proc:rfsum
   The `rfsum` procedure returns a reducer that sums transformed numeric values
   with `+`.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rfsum
     (lambda ()
@@ -1584,6 +1628,8 @@
   #|proc:rffxsum
   The `rffxsum` procedure returns a reducer that sums transformed fixnum values
   with `fx+`.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rffxsum
     (lambda ()
@@ -1597,6 +1643,8 @@
   #|proc:rfflsum
   The `rfflsum` procedure returns a reducer that sums transformed flonum values
   with `fl+`.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rfflsum
     (lambda ()
@@ -1610,6 +1658,8 @@
   #|proc:rfproduct
   The `rfproduct` procedure returns a reducer that multiplies transformed
   numeric values with `*`.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rfproduct
     (lambda ()
@@ -1638,6 +1688,8 @@
   The `rfmin` procedure returns a reducer that keeps the minimum value according to `(less? left
   right)`, a strict ordering predicate. Empty unseeded reductions raise an error; explicit
   accumulators and `transduce1` seeds participate in comparisons.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rfmin
     (lambda (less?)
@@ -1648,6 +1700,8 @@
   The `rfmax` procedure returns a reducer that keeps the maximum value according to `(less? left
   right)`, a strict ordering predicate. Empty unseeded reductions raise an error; explicit
   accumulators and `transduce1` seeds participate in comparisons.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rfmax
     (lambda (less?)
@@ -1658,6 +1712,8 @@
   The `rfany` procedure returns a reducer that applies unary predicate `(pred x)`. Reduction
   returns its first true result and terminates early, or `#f` if no value matches.
   A true incoming accumulator is retained without calling `pred` again.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rfany
     (lambda (pred)
@@ -1677,6 +1733,8 @@
   The `rfevery` procedure returns a reducer that applies unary predicate `(pred x)`. Reduction
   returns `#f` at the first false result and terminates early, or `#t` otherwise.
   A false incoming accumulator is retained without calling `pred` again.
+  Kind: reusable reducer constructor. Each initialization creates independent accumulation
+  state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
   (define rfevery
     (lambda (pred)
@@ -1692,9 +1750,11 @@
                       (reduced #f))])))))
 
   #|proc:eduction
-  The `eduction` procedure returns an eduction record containing `xform` and
-  `source`. Traversing the eduction applies `xform` before the terminal
-  operation's transducer.
+  Construct a deferred description retaining transducer `xform` and transducible `source`.
+  Traversal applies `xform` before the terminal's transducer with fresh per-pass state.
+  Construction consumes nothing and acquires no resources. An unchanged collection can
+  support independent traversals; a retained iterator remains one destructive cursor,
+  starts at its current position, and joins the consuming terminal's resource chain.
   |#
   (define eduction
     (lambda (xform source)
@@ -1702,9 +1762,10 @@
               (mk-$eduction xform source))))
 
   #|proc:source->iter
-  The `source->iter` procedure converts a supported Phase 2 transducer source
-  to an iterator for explicit interop or debug traversal. It wraps the lower-level
-  `iter-source->iter` conversion and additionally handles transducer eduction sources.
+  Convert transducible `source` to an iterator cursor. Existing iterators are returned
+  unchanged at their current positions; collections get fresh cursors and eductions get
+  a lazy sequence. Construction does not copy a destructive source or finalize resources.
+  Reset and terminal resource behavior follow the resulting cursor's documented kind.
   |#
   (define source->iter
     (lambda (source)
@@ -1714,7 +1775,7 @@
                   (iter-source->iter source)))))
 
   #|proc:transducible?
-  The `transducible?` procedure returns `#t` for Phase 1 sources accepted by
+  The `transducible?` predicate returns `#t` for sources accepted by
   `transduce`.
   |#
   (define transducible?

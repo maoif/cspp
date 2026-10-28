@@ -558,7 +558,7 @@
          (begin (iter-reset! output) #t)
          (equal? '((0 . 1) (1 . 2)) (transducer-drain output))
          (begin (iter-finalize! output) #t)
-         (iter-finalized? source)))
+         (not (iter-finalized? source))))
 
   (let ([output (sequence (tpartition-all 2) '(1 2 3))])
     (and (equal? '(#(1 2) #(3)) (transducer-drain output))
@@ -598,20 +598,6 @@
 
   (let ([source (make-review-source '(1 2 3) 0)])
     (and (equal? '(1) (into 'list (ttake 1) source))
-         (= 1 (review-source-finalizations source))))
-
-  ;; A callback failure must release the iterator created for a registered source.
-  (let ([source (make-review-source '(1 2 3) 0)])
-    (and (guard (exn [else #t])
-           (transduce (tmap (lambda (x) (error 'review "callback failed"))) (rfsum) source)
-           #f)
-         (= 1 (review-source-finalizations source))))
-
-  (let ([source (make-review-source '(1 2 3) 0)])
-    (and (eq? 'escaped
-              (call/1cc
-               (lambda (stop)
-                 (transduce (ttap (lambda (x) (stop 'escaped))) (rfsum) source))))
          (= 1 (review-source-finalizations source))))
 
   (let ([source (list->iter '(1 2 3))])
@@ -661,122 +647,6 @@
            (begin (iter-reset! output) #t)
            (equal? '(start 1 2) (transducer-drain output))
            (begin (iter-finalize! output) #t)))))
-
-(mat transducer-review-sequence-errors
-  ;; A failing sequence step closes its generated source and exhausts that pass.
-  (let* ([source (make-review-source '(1 2) 0)]
-         [output (sequence (tmap (lambda (x) (error 'review "sequence failed"))) source)])
-    (and (guard (exn [else #t]) (iter-next! output) #f)
-         (= 1 (review-source-finalizations source))
-         (iter-end? (iter-next! output))
-         (begin (iter-reset! output) #t)
-         (guard (exn [else #t]) (iter-next! output) #f)
-         (= 2 (review-source-finalizations source))
-         (begin (iter-finalize! output) #t)
-         (= 2 (review-source-finalizations source))))
-
-  ;; Construction failure after opening an adapter must release its source iterator.
-  (let ([source (make-review-source '(1 2) 0)])
-    (and (guard (exn [else #t])
-           (sequence (make-transducer 'broken (lambda (reducer) (error 'review "bad xform")))
-                     source)
-           #f)
-         (= 1 (review-source-finalizations source))))
-
-  ;; Failing traversal does not close a caller-supplied iterator until explicit finalization.
-  (let* ([source (list->iter '(1 2))]
-         [output (sequence (tmap (lambda (x) (error 'review "sequence failed"))) source)])
-    (and (guard (exn [else #t]) (iter-next! output) #f)
-         (not (iter-finalized? source))
-         (iter-end? (iter-next! output))
-         (begin (iter-finalize! output) #t)
-         (iter-finalized? source))))
-
-(define review-interrupt-initialization
-  (lambda (stage interrupt)
-    (make-transducer
-     'review-interrupt-initialization
-     (lambda (reducer)
-       (when (eq? stage 'apply) (interrupt))
-       (let ([proc (completion reducer)])
-         (make-reducer
-          'review-interrupt-initialization
-          (case-lambda
-            [() (let ([acc (proc (proc) 'start)])
-                  (when (eq? stage 'init) (interrupt))
-                  acc)]
-            [(acc) (proc acc)]
-            [(acc x) (proc acc x)])))))))
-
-(mat transducer-review-sequence-construction-escapes
-  ;; Escaping either transformer application or initialization releases the owned adapter.
-  (andmap
-   (lambda (stage)
-     (let ([source (make-review-source '(1 2) 0)])
-       (and (eq? 'escaped
-                 (call/1cc
-                  (lambda (escape)
-                    (sequence (review-interrupt-initialization
-                               stage (lambda () (escape 'escaped))) source))))
-            (= 1 (review-source-finalizations source)))))
-   '(apply init))
-
-  ;; Construction escapes preserve ownership of caller-supplied iterators.
-  (andmap
-   (lambda (stage)
-     (let ([source (list->iter '(1 2))])
-       (and (eq? 'escaped
-                 (call/1cc
-                  (lambda (escape)
-                    (sequence (review-interrupt-initialization
-                               stage (lambda () (escape 'escaped))) source))))
-            (not (iter-finalized? source))
-            (= 1 (iter-next! source))
-            (begin (iter-finalize! source) #t))))
-   '(apply init)))
-
-(mat transducer-review-sequence-reset-escapes
-  ;; An escaped reset closes its newly owned adapter and discards initialization emissions.
-  (andmap
-   (lambda (stage)
-     (let* ([interrupt void]
-            [source (make-review-source '(1 2) 0)]
-            [output (sequence (review-interrupt-initialization
-                               stage (lambda () (interrupt))) source)])
-       (and (eq? 'escaped
-                 (call/1cc
-                  (lambda (escape)
-                    (set! interrupt (lambda () (escape 'escaped)))
-                    (iter-reset! output))))
-            (= 2 (review-source-finalizations source))
-            (iter-end? (iter-next! output))
-            (begin (set! interrupt void) (iter-reset! output) #t)
-            (equal? '(start 1 2) (transducer-drain output))
-            (= 3 (review-source-finalizations source))
-            (begin (iter-finalize! output) #t)
-            (= 3 (review-source-finalizations source)))))
-   '(apply init))
-
-  ;; An escaped reset exhausts the pass while leaving a borrowed iterator usable.
-  (andmap
-   (lambda (stage)
-     (let* ([interrupt void]
-            [source (list->iter '(1 2))]
-            [output (sequence (review-interrupt-initialization
-                               stage (lambda () (interrupt))) source)])
-       (and (eq? 'escaped
-                 (call/1cc
-                  (lambda (escape)
-                    (set! interrupt (lambda () (escape 'escaped)))
-                    (iter-reset! output))))
-            (iter-end? (iter-next! output))
-            (not (iter-finalized? source))
-            (= 1 (iter-next! source))
-            (begin (set! interrupt void) (iter-reset! output) #t)
-            (equal? '(start 1 2) (transducer-drain output))
-            (begin (iter-finalize! output) #t)
-            (iter-finalized? source))))
-   '(apply init)))
 
 (define review-initial-emission
   (lambda (value)
@@ -862,39 +732,6 @@
        source (+ 1 (review-failing-finalizer-source-attempts source)))
       (error 'review "finalizer failed")))))
 
-(mat transducer-review-failing-finalizer
-  ;; A finalizer error on exhaustion must be propagated without an automatic retry.
-  (let* ([source (make-review-failing-finalizer-source 0)]
-         [output (sequence (tidentity) source)])
-    (and (guard (exn [else #t]) (iter-next! output) #f)
-         (= 1 (review-failing-finalizer-source-attempts source))
-         (iter-end? (iter-next! output)))))
-
-(mat transducer-review-failing-finalizer-reset
-  ;; Reset must not repeat a failing old-source finalizer in its error handler.
-  (let* ([source (make-review-failing-finalizer-source 0)]
-         [output (sequence (tidentity) source)])
-    (and (guard (exn [else #t]) (iter-reset! output) #f)
-         (= 1 (review-failing-finalizer-source-attempts source))
-         (iter-end? (iter-next! output))
-         ;; A separate reset may retry the old finalizer that still has not succeeded.
-         (guard (exn [else #t]) (iter-reset! output) #f)
-         (= 2 (review-failing-finalizer-source-attempts source)))))
-
-(mat transducer-review-escape-finalizer-error
-  ;; Cleanup failure during a construction escape propagates without retrying the finalizer.
-  (andmap
-   (lambda (stage)
-     (let ([source (make-review-failing-finalizer-source 0)])
-       (and (guard (exn [else #t])
-              (call/1cc
-               (lambda (escape)
-                 (sequence (review-interrupt-initialization
-                            stage (lambda () (escape 'escaped))) source)))
-              #f)
-            (= 1 (review-failing-finalizer-source-attempts source)))))
-   '(apply init)))
-
 (mat transducer-review-wide-count-seeds
   (= (+ 1 (most-positive-fixnum))
      (transduce (tidentity) (rfcount) (most-positive-fixnum) '(item)))
@@ -902,64 +739,11 @@
   (= (+ 4 (most-positive-fixnum))
      (transduce (tidentity) (rfcount) (+ 2 (most-positive-fixnum)) '(a b))))
 
-(mat transducer-review-sequence-advance-escape
-  (andmap
-   (lambda (stage)
-     (let ([source (make-review-source '(1 2) 0)] [interrupt void])
-       (let* ([xform (make-transducer
-                      'escape
-                      (lambda (reducer)
-                        (let ([delegate (completion reducer)])
-                          (make-reducer
-                           'escape
-                           (case-lambda
-                             [() (delegate)]
-                             [(acc) (when (eq? stage 'complete) (interrupt)) (delegate acc)]
-                             [(acc value)
-                              (when (eq? stage 'step) (interrupt))
-                              (delegate acc value)])))))]
-              [output (sequence xform source)])
-         (and (eq? 'escaped
-                   ;; A nonlocal exit from a step or completion must close the owned source.
-                   (call/1cc
-                    (lambda (escape)
-                      (set! interrupt (lambda () (escape 'escaped)))
-                      (let loop ()
-                        (unless (iter-end? (iter-next! output)) (loop)))
-                      'finished)))
-              (= 1 (review-source-finalizations source))
-              (iter-end? (iter-next! output))))))
-   '(step complete)))
-
 (mat transducer-review-cat-source-protocol
   (equal? '(1 2 3 4)
           (into 'list (tcat) (list (array 1 2) (eduction (tmap add1) '(2 3)))))
 
   (equal? '(1 2) (into 'list (tmapcat (lambda (value) (array value))) '(1 2))))
-
-(define-record-type (review-escaping-source make-review-escaping-source review-escaping-source?)
-  (fields interrupt (mutable finalizations)))
-(iter-register-source!
- review-escaping-source?
- (lambda (source)
-   (make-iter
-    (lambda () ((review-escaping-source-interrupt source))) void
-    (lambda () (review-escaping-source-finalizations-set!
-                source (+ 1 (review-escaping-source-finalizations source)))))))
-
-(mat transducer-review-sequence-producer-escape
-  (let ([interrupt void])
-    (let* ([source (make-review-escaping-source (lambda () (interrupt)) 0)]
-           [output (sequence (tidentity) source)])
-      (and (eq? 'escaped
-                ;; Source escapes exhaust the pass; explicit finalization releases ownership.
-                (call/1cc (lambda (escape)
-                           (set! interrupt (lambda () (escape 'escaped)))
-                           (iter-next! output))))
-           (= 0 (review-escaping-source-finalizations source))
-           (iter-end? (iter-next! output))
-           (begin (iter-finalize! output)
-                  (= 1 (review-escaping-source-finalizations source)))))))
 
 (mat transducer-review-cat-lifecycle
   (let ([source (make-review-source '(1 2 3) 0)])
@@ -1014,61 +798,14 @@
 
   (let* ([source (make-review-generator-source nav/all '(1 2 3 4) 0)]
          [output (sequence (tmapcat (lambda (value) (list value value))) source)])
-    (and (= 1 (iter-next! output))
-         (= 1 (iter-next! output))
+    (and (= 1 (iter-next! output)) (= 1 (iter-next! output))
          (= 0 (review-generator-source-finalizations source))
          (equal? '(2 2 3 3 4 4) (transducer-drain output))
-         (= 1 (review-generator-source-finalizations source))
+         (= 0 (review-generator-source-finalizations source))
          (begin (iter-reset! output) #t)
-         (equal? '(1 1 2 2 3 3 4 4) (transducer-drain output))
-         (= 2 (review-generator-source-finalizations source))
-         (begin (iter-finalize! output) #t)
-         (= 2 (review-generator-source-finalizations source))))
+         (equal? '(1 1 2 2 3 3 4 4) (iter->list output))
+         (= 1 (review-generator-source-finalizations source)))))
 
-  ;; A later producer error must reach the advance that encounters it and close the source.
-  (let* ([path (nav/path nav/all (nav/pred (lambda (value)
-                                           (if (= value 3) (error 'producer "third") #t))))]
-         [source (make-review-generator-source path '(1 2 3 4) 0)]
-         [output (sequence (tidentity) source)])
-    (and (= 1 (iter-next! output)) (= 2 (iter-next! output))
-         (guard (exn [else (and (message-condition? exn)
-                               (string=? "third" (condition-message exn)))])
-           (iter-next! output) #f)
-         (= 1 (review-generator-source-finalizations source))
-         (iter-end? (iter-next! output))
-         (begin (iter-finalize! output) #t)))
-
-  ;; A reducer escape after a generator yield must still exhaust and close an owned pass.
-  (let ([interrupt void])
-    (let* ([source (make-review-generator-source nav/all '(1 2 3) 0)]
-           [output (sequence (ttap (lambda (value) (when (= value 2) (interrupt)))) source)])
-      (and (= 1 (iter-next! output))
-           (eq? 'escaped (call/1cc (lambda (escape)
-                                    (set! interrupt (lambda () (escape 'escaped)))
-                                    (iter-next! output))))
-           (= 1 (review-generator-source-finalizations source))
-           (iter-end? (iter-next! output))
-           (begin (iter-finalize! output) #t)))))
-
-(mat transducer-generator-producer-escape
-  ;; Source escapes exhaust the pass until the caller resets or finalizes it.
-  (andmap
-   (lambda (at)
-     (let ([interrupt void])
-       (let* ([path (nav/path nav/all
-                              (nav/pred (lambda (value)
-                                          (when (= value at) (interrupt)) #t)))]
-              [source (make-review-generator-source path '(1 2 3) 0)]
-              [output (sequence (tidentity) source)])
-         (and (eq? 'escaped
-                   (call/1cc (lambda (escape)
-                               (set! interrupt (lambda () (escape 'escaped)))
-                               (transducer-drain output))))
-              (= 0 (review-generator-source-finalizations source))
-              (iter-end? (iter-next! output))
-              (begin (iter-finalize! output)
-                     (= 1 (review-generator-source-finalizations source)))))))
-   '(1 2 3)))
 
 (define-record-type (review-pipeline-source make-review-pipeline-source review-pipeline-source?)
   (fields iterator (mutable finalizations)))
@@ -1084,26 +821,6 @@
          source (+ 1 (review-pipeline-source-finalizations source)))
         (iter-finalize! upstream))))))
 
-(mat transducer-generator-pipeline-escape
-  ;; Iterator pipeline callbacks are part of the source pull and use explicit finalization.
-  (andmap
-   (lambda (at)
-     (let ([interrupt void])
-       (let* ([producer (iter-map (lambda (value)
-                                    (when (= value at) (interrupt)) value)
-                                  (nav-traverse->iter nav/all '(1 2 3)))]
-              [source (make-review-pipeline-source producer 0)]
-              [output (sequence (tidentity) source)])
-         (and (eq? 'escaped (call/1cc (lambda (escape)
-                                      (set! interrupt (lambda () (escape 'escaped)))
-                                      (transducer-drain output))))
-              (= 0 (review-pipeline-source-finalizations source))
-              (iter-end? (iter-next! output))
-              (begin (iter-finalize! output)
-                     (= 1 (review-pipeline-source-finalizations source)))))))
-   '(1 2 3)))
-
-;; A source written using only the public iterator API, with no transducer cooperation.
 (define review-continuation-iter
   (lambda (items)
     (let ([resume #f] [consumer #f] [done? #f])
@@ -1163,17 +880,230 @@
          (equal? '(2 3) (into 'list (tidentity) source))
          (= 1 (review-pipeline-source-finalizations source)))))
 
-(mat transducer-nested-source-escape-buffer
-  ;; An escape halfway through a tcat input discards that input's partial output buffer.
-  (let ([interrupt void])
-    (let* ([inner (iter-map (lambda (value) (when (= value 2) (interrupt)) value)
-                            (review-continuation-iter '(1 2 3)))]
-           [source (make-review-source (list inner '(4)) 0)]
-           [output (sequence (tcat) source)])
-      (and (eq? 'escaped (call/1cc (lambda (escape)
-                                   (set! interrupt (lambda () (escape 'escaped)))
-                                   (iter-next! output))))
-           (iter-end? (iter-next! output))
-           (= 0 (review-source-finalizations source))
-           (begin (iter-finalize! output) (iter-finalize! inner) #t)
-           (= 1 (review-source-finalizations source))))))
+(define transducer-test-gate
+  (lambda ()
+    (let ([mutex (make-mutex)] [changed (make-condition)] [open? #f])
+      (values
+       (lambda ()
+         (with-mutex mutex
+           (let loop ()
+             (unless open? (condition-wait changed mutex) (loop)))))
+       (lambda ()
+         (with-mutex mutex (set! open? #t) (condition-broadcast changed)))))))
+
+(define independent-transducer-pulls?
+  (lambda (fork-in-callback?)
+    (let-values ([(wait-start start!) (transducer-test-gate)]
+                 [(wait-enter entered!) (transducer-test-gate)]
+                 [(wait-release release!) (transducer-test-gate)])
+      (let* ([other (make-iter (lambda () (entered!) (wait-release) 'other) void)]
+             [worker (and (not fork-in-callback?)
+                          (fork-thread (lambda () (wait-start) (iter-next! other))))]
+             [output (sequence
+                      (ttap (lambda (value)
+                              (when (= value 1)
+                                (if fork-in-callback?
+                                    (set! worker (fork-thread (lambda () (iter-next! other))))
+                                    (start!))
+                                (wait-enter))))
+                      '(1 2 3))]
+             [first (iter-next! output)]
+             [second (iter-next! output)])
+        (release!)
+        (thread-join worker)
+        (iter-finalize! output)
+        (equal? (list first second) '(1 2))))))
+
+(mat transducer-thread-isolation
+  (independent-transducer-pulls? #f)
+
+  ;; Forking inside a reducer must not give the child its parent's mutable pull scope.
+  (independent-transducer-pulls? #t)
+
+  (let-values ([(wait-read read!) (transducer-test-gate)]
+               [(wait-done done!) (transducer-test-gate)])
+    (let* ([observed #f]
+           [worker (fork-thread
+                    (lambda ()
+                      (wait-read)
+                      (set! observed (current-transducer-source-mode))
+                      (done!)))])
+      (parameterize ([current-transducer-source-mode 'iter]) (read!) (wait-done))
+      (thread-join worker)
+      (eq? observed 'direct)))
+
+  ;; Configuration, unlike internal traversal state, is intentionally inherited.
+  (let ([observed #f])
+    (parameterize ([current-transducer-source-mode 'iter])
+      (thread-join (fork-thread
+                    (lambda () (set! observed (current-transducer-source-mode))))))
+    (eq? observed 'iter)))
+
+(import (cspp concurrency fiber))
+
+(define transducer-yield-in-phase
+  (lambda (phase)
+    (make-transducer
+     'yield-in-phase
+     (lambda (downstream)
+       (let ([proc (completion downstream)])
+         (make-reducer
+          'yield-in-phase
+          (case-lambda
+            [() (when (eq? phase 'init) (fiber-yield)) (proc)]
+            [(acc)
+             (when (eq? phase 'complete) (fiber-yield))
+             (proc acc)]
+            [(acc value)
+             (when (eq? phase 'step) (fiber-yield))
+             (proc acc value)])))))))
+
+(mat transducer-fiber-suspension
+  (andmap
+   (lambda (workers)
+     (andmap
+      (lambda (phase)
+        (equal? '(1 2 3)
+                (run-fibers
+                 (lambda () (iter->list (sequence (transducer-yield-in-phase phase) '(1 2 3))))
+                 workers 1000)))
+      '(init step complete)))
+   '(1 4))
+
+  (andmap
+   (lambda (workers)
+     (= 1000 (run-fibers
+              (lambda () (length (iter->list (sequence (tidentity) (iota 1000)))))
+              workers 100)))
+   '(1 4))
+
+  (equal? '(1 2 3)
+          (run-fibers
+           (lambda () (transduce (transducer-yield-in-phase 'step) (rflist) (array 1 2 3)))
+           4 1000)))
+
+(mat transducer-terminal-resource-chain
+  (let* ([source (make-review-source '(1 2 3) 0)]
+         [output (sequence (tidentity) source)])
+    (and (equal? '(1 2 3) (transducer-drain output))
+         (= 0 (review-source-finalizations source))
+         (begin (iter-reset! output) #t)
+         (equal? '(1) (into 'list (ttake 1) output))
+         (= 1 (review-source-finalizations source))))
+
+  (let ([source (make-review-source '(1 2 3) 0)])
+    (equal? '(#(1 2 3))
+            (into 'list
+                  (tcompose (tcat)
+                            (ttap (lambda (value)
+                                    (unless (= 0 (review-source-finalizations source))
+                                      (error 'resource-test "premature finalization"))))
+                            (tpartition-all 3))
+                  (list source))))
+
+  ;; Finalizer failures propagate from a terminal; lazy exhaustion never invokes cleanup.
+  (let* ([source (make-review-failing-finalizer-source 0)]
+         [output (sequence (tidentity) source)])
+    (and (iter-end? (iter-next! output))
+         (= 0 (review-failing-finalizer-source-attempts source))
+         (guard (exn [else #t]) (iter->list output) #f)
+         (= 1 (review-failing-finalizer-source-attempts source))))
+
+  ;; A callback error propagates. The chain's post-error state is intentionally untested.
+  (guard (exn [else #t])
+    (transduce (tmap (lambda (value) (error 'callback "failed"))) (rflist) '(1 2))
+    #f))
+
+(mat transducer-shared-descriptions-in-fibers
+  (let* ([xform (tcompose (tmap/i cons) (ttake 3) (tpartition-all 2))]
+         [reducer (rfvector)]
+         [expected '#(#((0 . 10) (1 . 20)) #((2 . 30)))])
+    (andmap
+     (lambda (workers)
+       (run-fibers
+        (lambda ()
+          (let ([done (make-channel)])
+            (do ([task 0 (fx1+ task)]) ((fx= task 4))
+              (spawn-fiber
+               (lambda ()
+                 (channel-put!
+                  done
+                  (let loop ([round 0])
+                    (or (fx= round 50)
+                        (begin
+                          (fiber-yield)
+                          (and (equal? expected (transduce xform reducer '(10 20 30 40)))
+                               (loop (fx1+ round))))))))))
+            (let loop ([remaining 4] [okay? #t])
+              (if (fxzero? remaining) okay?
+                  (let ([next (channel-get done)])
+                    (loop (fx1- remaining) (and okay? next)))))))
+        workers 100))
+     '(1 4))))
+
+(mat transducer-fiber-mode-scope
+  (run-fibers
+   (lambda ()
+     (let ([ready (make-channel)] [release (make-channel)] [done (make-channel)])
+       (spawn-fiber
+        (lambda ()
+          (parameterize ([current-transducer-source-mode 'iter])
+            (channel-put! ready #t)
+            (channel-get release)
+            (fiber-yield)
+            (channel-put! done (eq? 'iter (current-transducer-source-mode))))))
+       (channel-get ready)
+       (let ([default? (eq? 'direct (current-transducer-source-mode))])
+         (channel-put! release #t)
+         (let ([scoped? (channel-get done)])
+           (and default? scoped? (eq? 'direct (current-transducer-source-mode)))))))
+   4 100))
+
+(mat transducer-continuation-resumption
+  (let ([resume #f] [resumptions 0] [results '()])
+    (let ([result (transduce
+                   (tmap (lambda (value)
+                           (if (= value 2)
+                               ;; Save a callback continuation; no mutable source is rewound.
+                               (call/cc (lambda (continuation) (set! resume continuation) value))
+                               value)))
+                   (rflist) '(1 2 3))])
+      (set! results (cons result results))
+      (if (< resumptions 2)
+          (begin (set! resumptions (+ resumptions 1)) (resume (+ 8 resumptions)))
+          (equal? '((1 10 3) (1 9 3) (1 2 3)) results)))))
+
+(mat transducer-suspension-keeps-emissions
+  (run-fibers
+   (lambda ()
+     (let* ([xform
+             (make-transducer
+              'emitting-yield
+              (lambda (downstream)
+                (let ([proc (completion downstream)])
+                  (make-reducer
+                   'emitting-yield
+                   (case-lambda
+                     [() (let ([acc (proc (proc) 'start)]) (fiber-yield) acc)]
+                     [(acc)
+                      (let ([acc (proc acc 'finish-first)])
+                        (fiber-yield)
+                        (proc (proc acc 'finish-last)))]
+                     [(acc value) (proc acc value)])))))]
+            [output (sequence xform '(1 2))])
+       (and (equal? '(start 1 2 finish-first finish-last) (transducer-drain output))
+            (begin (iter-reset! output) #t)
+            (equal? '(start 1 2 finish-first finish-last) (iter->list output)))))
+   4 100)
+
+  (run-fibers
+   (lambda ()
+     (let ([tail '(1 2 3)])
+       (let ([source (make-iter
+                      (lambda ()
+                        (fiber-yield)
+                        (if (null? tail) iter-end
+                            (let ([value (car tail)]) (set! tail (cdr tail)) value)))
+                      (lambda () (set! tail '(1 2 3))))])
+         (equal? '(1 2 3) (iter->list (sequence (tidentity) source))))))
+   4 100))

@@ -7,7 +7,9 @@
   #|proc:nav/getter
   The `nav/getter` procedure creates a read-only navigator named by `name`.
   The `get-proc` procedure receives the parent value and returns the focused
-  child value.
+  child value; its signature is `(parent) -> child`. Selection is supported;
+  transformation and clearing are unsupported. The result is a reusable navigator.
+  Kind: Reusable custom step constructor.
   |#
   (define nav/getter
     (lambda (name get-proc)
@@ -26,9 +28,13 @@
                  (nav-error name "read-only custom navigator cannot clear!: ~s" value))))))
 
   #|proc:nav/getter-setter
-  The `nav/getter-setter` procedure creates a pure navigator named by `name`.
+  The `nav/getter-setter` procedure creates a persistent-update navigator named by `name`.
   The `get-proc` procedure extracts the child value, and `set-proc` receives
   the parent value and transformed child value and returns a rebuilt parent.
+  Their signatures are `(parent) -> child` and `(parent new-child) -> rebuilt-parent`.
+  The result supports selection and persistent transformation; mutation/clearing are unsupported.
+  Sharing it as a pure path requires pure callbacks and stable captured dependencies.
+  Kind: Reusable custom step constructor.
   |#
   (define nav/getter-setter
     (lambda (name get-proc set-proc)
@@ -53,6 +59,7 @@
   `(parent new-child) -> rebuilt-parent` and must leave the original parent unchanged.
   `set!-proc` has signature `(parent new-child) -> unspecified` and mutates the parent;
   navigator mutation returns that original parent. The result is a navigator.
+  Kind: Reusable custom step constructor.
   |#
   (define nav/getter-setter!
     (lambda (name get-proc set-proc set!-proc)

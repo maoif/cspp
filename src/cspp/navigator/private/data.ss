@@ -16,6 +16,26 @@
           (cspp utils)
           (cspp navigator private core))
 
+;;;;===----------------------------------------------------------------------===
+;;;; Container policies and mutation boundaries
+;;;;===----------------------------------------------------------------------===
+
+  ;; A key policy is a map's equivalence, hashing, and/or ordering relation; a set's
+  ;; membership policy has the same meaning for members. An index is the bucket or
+  ;; ordered-tree position derived from that policy. Dependencies include object
+  ;; contents, aliases, and mutable state captured by hash/comparison callbacks.
+  ;; These dependencies must remain stable while indexed, except during explicitly
+  ;; supported key/member operations that rebuild the traversed parent below.
+  ;; Identity hashing/equality can remain stable while object contents change.
+  ;;
+  ;; Reindexing reinserts retained keys/members under their current policy. It can
+  ;; merge newly equivalent items and does not undo mutations. Key/entry and set
+  ;; replacement operations repair only the parent they explicitly traverse.
+  ;; They do not discover other containers sharing a key, repair a key mutated
+  ;; through an unrelated value alias, or repair read-only ancestors. Such changes
+  ;; must preserve those other indexes or be managed by the caller. Exceptions and
+  ;; continuation resumption provide no transaction rollback of heap updates.
+
   (define-record-type ($indexed-protocol make-$indexed-protocol $indexed-protocol?)
     (fields (immutable predicate)
             (immutable length-proc)
@@ -46,9 +66,29 @@
             (immutable delete!-proc))
     (sealed #t))
 
-  (define indexed-protocols '())
-  (define keyed-protocols '())
-  (define set-protocols '())
+  ;; A registry snapshot is an immutable newest-first protocol list. Readers load
+  ;; once, acquire its publication, then invoke user predicates without locks.
+  ;; Publishers construct an immutable entry before a release/CAS retry loop; a
+  ;; competing publication cannot lose an accepted registration. CAS retries may
+  ;; allocate list cells but never rerun user callbacks.
+  (define indexed-protocols (box '()))
+  (define keyed-protocols (box '()))
+  (define set-protocols (box '()))
+
+  (define registry-snapshot
+    (lambda (registry)
+      (let ([snapshot (unbox registry)])
+        (memory-order-acquire)
+        snapshot)))
+
+  (define register-protocol!
+    (lambda (registry protocol)
+      (let retry ()
+        (let* ([snapshot (registry-snapshot registry)]
+               [replacement (cons protocol snapshot)])
+          (memory-order-release)
+          (unless (box-cas! registry snapshot replacement)
+            (retry))))))
 
   (define byte?
     (lambda (x)
@@ -72,18 +112,21 @@
   The `set-proc` procedure receives a container, index, and new value, and returns a rebuilt
   container. The `set!-proc` procedure receives a container, index, and new
   value, mutates the container, and returns a value. Registration returns an unspecified value.
+  Newer registrations are tried first. Concurrent publications are retained atomically;
+  one lookup uses one stable registry snapshot and runs callbacks outside synchronization.
+  Overlapping predicates are allowed; callbacks must obey the caller's data-sharing rules.
+  Kind: Adapter registration.
   |#
   (define nav-register-indexed!
     (lambda (predicate length-proc ref-proc set-proc set!-proc)
       (pcheck ([procedure? predicate length-proc ref-proc set-proc set!-proc])
-              (set! indexed-protocols
-                    (cons (make-$indexed-protocol
-                           (nav-protect-callback predicate)
-                           (nav-protect-callback length-proc)
-                           (nav-protect-callback ref-proc)
-                           (nav-protect-callback set-proc)
-                           (nav-protect-callback set!-proc))
-                          indexed-protocols))
+              (register-protocol! indexed-protocols
+                                  (make-$indexed-protocol
+                                   (nav-protect-callback predicate)
+                                   (nav-protect-callback length-proc)
+                                   (nav-protect-callback ref-proc)
+                                   (nav-protect-callback set-proc)
+                                   (nav-protect-callback set!-proc)))
               (void))))
 
   #|proc:nav-register-keyed!
@@ -105,12 +148,18 @@
   when absent. Without it, canonical lookup uses pure deletion and an entry scan.
   Optional `replace!-proc` has signature `(map entries) -> unspecified`; it replaces
   all membership from the supplied entry list and rebuilds indexes even if the old
-  keys have mutated. This supports clearing inside mutable keys without detaching them first.
+  keys have mutated. This supports clearing inside mutable keys of the writable traversed
+  parent without detaching them first. Read-only parents and other aliases are not repaired;
+  their keys/members must retain stable hash/equivalence/order dependencies.
   The key policy is the container's equivalence, hashing, and/or ordering rules. A canonical
   key is the stored object matching a lookup key under that policy. The replacement entry
   list is complete membership, not a list of edits; process it in order so later entries
   win equivalent-key collisions. Existing seven- and eight-argument registrations remain valid.
   Registration returns an unspecified value.
+  Newer registrations are tried first. Concurrent publications are retained atomically;
+  one lookup uses one stable registry snapshot and runs callbacks outside synchronization.
+  Overlapping predicates are allowed; callbacks must obey the caller's data-sharing rules.
+  Kind: Adapter registration.
   |#
   (define nav-register-keyed!
     (case-lambda
@@ -136,19 +185,18 @@
                (unless (or (not replace!-proc) (procedure? replace!-proc))
                  (nav-error 'nav-register-keyed!
                             "expected replacement procedure: ~s" replace!-proc))
-               (set! keyed-protocols
-                     (cons (make-$keyed-protocol
-                            (nav-protect-callback predicate)
-                            (nav-protect-callback ref-proc)
-                            (nav-protect-callback set-proc)
-                            (nav-protect-callback set!-proc)
-                            (nav-protect-callback delete-proc)
-                            (nav-protect-callback delete!-proc)
-                            (nav-protect-callback entries-proc)
-                            (and empty-proc (nav-protect-callback empty-proc))
-                            (and canonical-proc (nav-protect-callback canonical-proc))
-                            (and replace!-proc (nav-protect-callback replace!-proc)))
-                           keyed-protocols))
+               (register-protocol! keyed-protocols
+                                   (make-$keyed-protocol
+                                    (nav-protect-callback predicate)
+                                    (nav-protect-callback ref-proc)
+                                    (nav-protect-callback set-proc)
+                                    (nav-protect-callback set!-proc)
+                                    (nav-protect-callback delete-proc)
+                                    (nav-protect-callback delete!-proc)
+                                    (nav-protect-callback entries-proc)
+                                    (and empty-proc (nav-protect-callback empty-proc))
+                                    (and canonical-proc (nav-protect-callback canonical-proc))
+                                    (and replace!-proc (nav-protect-callback replace!-proc))))
                (void))]))
 
   #|proc:nav-register-set!
@@ -158,39 +206,45 @@
   receive a set and one member.
   Pure callbacks return rebuilt sets. Mutating callbacks mutate their set and may return
   any value; navigator mutation still returns the original set object.
+  Signatures are `(value) -> boolean`, `(set) -> member-list`,
+  `(set member-list) -> rebuilt-set` / unspecified, and `(set member) -> rebuilt-set` /
+  unspecified, respectively. Registration itself returns an unspecified value.
+  Newer registrations are tried first. Concurrent publications are retained atomically;
+  one lookup uses one stable registry snapshot and runs callbacks outside synchronization.
+  Overlapping predicates are allowed; callbacks must obey the caller's data-sharing rules.
+  Kind: Adapter registration.
   |#
   (define nav-register-set!
     (lambda (predicate values-proc replace-proc replace!-proc delete-proc delete!-proc)
       (pcheck ([procedure? predicate values-proc replace-proc replace!-proc
                            delete-proc delete!-proc])
-              (set! set-protocols
-                    (cons (make-$set-protocol
-                           (nav-protect-callback predicate)
-                           (nav-protect-callback values-proc)
-                           (nav-protect-callback replace-proc)
-                           (nav-protect-callback replace!-proc)
-                           (nav-protect-callback delete-proc)
-                           (nav-protect-callback delete!-proc))
-                          set-protocols))
+              (register-protocol! set-protocols
+                                  (make-$set-protocol
+                                   (nav-protect-callback predicate)
+                                   (nav-protect-callback values-proc)
+                                   (nav-protect-callback replace-proc)
+                                   (nav-protect-callback replace!-proc)
+                                   (nav-protect-callback delete-proc)
+                                   (nav-protect-callback delete!-proc)))
               (void))))
 
   (define find-indexed-protocol
     (lambda (value)
-      (let loop ([protocols indexed-protocols])
+      (let loop ([protocols (registry-snapshot indexed-protocols)])
         (cond [(null? protocols) #f]
               [(($indexed-protocol-predicate (car protocols)) value) (car protocols)]
               [else (loop (cdr protocols))]))))
 
   (define find-keyed-protocol
     (lambda (value)
-      (let loop ([protocols keyed-protocols])
+      (let loop ([protocols (registry-snapshot keyed-protocols)])
         (cond [(null? protocols) #f]
               [(($keyed-protocol-predicate (car protocols)) value) (car protocols)]
               [else (loop (cdr protocols))]))))
 
   (define find-set-protocol
     (lambda (value)
-      (let loop ([protocols set-protocols])
+      (let loop ([protocols (registry-snapshot set-protocols)])
         (cond [(null? protocols) #f]
               [(($set-protocol-predicate (car protocols)) value) (car protocols)]
               [else (loop (cdr protocols))]))))

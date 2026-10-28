@@ -41,8 +41,10 @@
   ;; update counter. Only a terminal invocation authorizes materializing a default.
   (define update-default-focus
     (lambda (default update absent present)
-      (let* ([before (nav-update-version)] [child (update default)])
-        (if (= before (nav-update-version)) (absent) (present child)))))
+      (let* ([counter (current-update-count)]
+             [before (if counter (car counter) 0)]
+             [child (update default)])
+        (if (= before (if counter (car counter) 0)) (absent) (present child)))))
 
   (define indexed-transform/default
     (lambda (value index default update)
@@ -395,6 +397,7 @@
 
   #|proc:nav/stay
   The `nav/stay` navigator focuses the current value unchanged.
+  Kind: Reusable step.
   |#
   (define nav/stay
     (make-basic-nav 'nav/stay 'nav/stay
@@ -406,6 +409,7 @@
 
   #|proc:nav/none
   The `nav/none` navigator selects no values from the current value.
+  Kind: Reusable step.
   |#
   (define nav/none
     (make-basic-nav 'nav/none 'nav/none
@@ -419,6 +423,7 @@
   The `nav/all` navigator focuses every value in a supported collection. Pure clearing
   removes selected list elements or map entries; fixed-size and mutable list elements
   must remain present, but may be rebuilt by later path steps.
+  Kind: Reusable step.
   |#
   (define nav/all
     (make-basic-nav 'nav/all 'nav/all
@@ -430,6 +435,7 @@
 
   #|proc:nav/values
   The `nav/values` navigator focuses collection values.
+  Kind: Reusable step.
   |#
   (define nav/values
     (make-basic-nav 'nav/values 'nav/values
@@ -488,7 +494,11 @@
   keys; alists retain duplicates. Sequence indexes are read-only: pure transforms return
   the sequence unchanged without invoking the callback, and mutation raises an error.
   Clearing traverses later path steps while retaining each key. Mutable clearing rebuilds
-  map indexes when retained key objects change. Mutable replacement and key removal are unsupported.
+  writable map indexes when retained key objects change. Read-only maps cannot be reindexed:
+  their keys must retain stable hash/equivalence dependencies, including changes through
+  aliases. Shared keys must also stay valid in every other parent; no alias repair is provided.
+  Mutable replacement and key removal are unsupported.
+  Kind: Reusable step.
   |#
   (define nav/keys
     (make-basic-nav
@@ -579,7 +589,11 @@
   An indexed collection's entry must retain its index, and its value replaces that element.
   For containers supporting both protocols, indexed entries take precedence, except alists.
   Clearing visits later path steps and retains each entry pair; removing an entry is unsupported.
-  Mutable clearing must retain map keys and indexes.
+  Mutable clearing must retain map keys and indexes. Writable map parents rebuild their
+  indexes after key clearing; read-only parents and other aliased parents are not repaired.
+  Keys in those parents must keep stable hash/equivalence/order dependencies. Mutating only
+  an entry value is supported when it does not change any aliased key's policy dependencies.
+  Kind: Reusable step.
   |#
   (define nav/entries
     (make-basic-nav
@@ -609,6 +623,7 @@
 
   #|proc:nav/nth
   The `nav/nth` procedure returns a navigator that focuses zero-based `index`.
+  Kind: Reusable step constructor.
   |#
   (define nav/nth
     (lambda (index)
@@ -645,6 +660,7 @@
   `index`, or `default` when the index is out of range. Clearing visits the default
   through later path steps but never inserts a missing location. Transforming inserts a
   missing location only if the full path reaches the update callback. The result is a navigator.
+  Kind: Reusable step constructor.
   |#
   (define nav/nth/default
     (lambda (index default)
@@ -679,16 +695,19 @@
 
   #|proc:nav/first
   The `nav/first` navigator focuses the first element of a supported sequence.
+  Kind: Reusable step.
   |#
   (define nav/first (nav/nth 0))
 
   #|proc:nav/second
   The `nav/second` navigator focuses the second element of a supported sequence.
+  Kind: Reusable step.
   |#
   (define nav/second (nav/nth 1))
 
   #|proc:nav/last
   The `nav/last` navigator focuses the last element of a non-empty sequence.
+  Kind: Reusable step.
   |#
   (define nav/last
     (make-basic-nav
@@ -725,6 +744,7 @@
   #|proc:nav/slice
   The `nav/slice` procedure returns a navigator that focuses indexes in
   `[start, stop)`, optionally stepping by positive `step`.
+  Kind: Reusable step constructor.
   |#
   (define nav/slice
     (case-lambda
@@ -781,6 +801,7 @@
   The `nav/key` procedure returns a navigator that focuses the value associated
   with key `key` in a hashtable or association list. For association lists,
   selection focuses each matching key in order.
+  Kind: Reusable step constructor.
   |#
   (define nav/key
     (lambda (key)
@@ -807,6 +828,7 @@
   entry in order, just like `nav/key`. Clearing visits a missing key's default through
   later path steps but never inserts that key. Transforming inserts it only if the full path
   reaches the update callback. The result is a navigator.
+  Kind: Reusable step constructor.
   |#
   (define nav/key/default
     (case-lambda
@@ -835,6 +857,7 @@
   each key in `keys`, preserving key order. Updates and clears apply paths sequentially
   to the result of preceding keys; repeated keys may revisit changed values or be absent
   after an earlier removal. The result is a navigator.
+  Kind: Reusable step constructor.
   |#
   (define nav/key-values
     (lambda keys
@@ -880,6 +903,7 @@
   keys. Pure transforms remove the selected membership and merge every entry
   of the replacement submap, including new keys. Replacement entries win collisions with
   unselected parent keys. The result is a navigator.
+  Kind: Reusable step constructor.
   |#
   (define nav/submap
     (lambda keys
@@ -906,6 +930,7 @@
 
   #|proc:nav/car
   The `nav/car` navigator focuses the `car` field of a pair.
+  Kind: Reusable step.
   |#
   (define nav/car
     (make-basic-nav
@@ -933,6 +958,7 @@
 
   #|proc:nav/cdr
   The `nav/cdr` navigator focuses the `cdr` field of a pair.
+  Kind: Reusable step.
   |#
   (define nav/cdr
     (make-basic-nav

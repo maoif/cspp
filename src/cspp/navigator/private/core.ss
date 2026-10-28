@@ -10,7 +10,7 @@
           nav? nav-path? nav/empty-path nav-empty-path?
           make-nav nav-name nav-coerce nav/path nav-compile-path nav/path-append
           make-nav-ref nav-ref? nav-missing nav-missing?
-          current-update-count nav-update-version nav-note-update!
+          make-nav-scope-parameter nav-with-scope current-update-count nav-update-version nav-note-update!
           current-optional-focus? nav-call-step
           nav-error nav-focus-error nav-focus-error? nav-absent-focus?
           nav-call-user nav-protect-callback nav-unsupported-error nav-required-error
@@ -49,6 +49,71 @@
     (sealed #t))
 
 ;;;;===----------------------------------------------------------------------===
+;;;; Reusable paths and invocation scope
+;;;;===----------------------------------------------------------------------===
+
+  ;; API kinds: a reusable step describes how to focus children; a path composes
+  ;; steps without storing traversal progress. A combinator constructs a step/path
+  ;; from other descriptions. A selector observes focuses; an eager traversal runs
+  ;; callbacks before returning. A persistent transform rebuilds affected ancestry
+  ;; and can share untouched data. A destructive transform mutates supplied data.
+  ;; A lazy iterator bridge exposes one mutable cursor over a deferred traversal.
+  ;; A recursive builder links stable lexical references before publishing a group.
+  ;; Adapter registration publishes container behavior for later protocol lookups.
+  ;; Descriptions need no reset/finalization; an active iterator needs reset to
+  ;; restart. Resource ownership means responsibility for finalizing an acquired
+  ;; resource (such as a file/port), not exclusive possession of a description.
+  ;;
+  ;; A pure path is a fully constructed path with stable configuration/captured
+  ;; dependencies, side-effect-free navigation callbacks, and no shared traversal
+  ;; progress. Such a path may be shared by independent threads and fibers.
+  ;; Independent operations have no conflicting mutable accesses requiring an order.
+  ;; Dependent operations share a mutated target, callback state, or active iterator;
+  ;; their caller must order or synchronize them, including across different roots
+  ;; that alias one mutable child. Paths do not serialize caller-owned mutations.
+  ;;
+  ;; Continuation resumption restores control/bindings, not snapshots of counters,
+  ;; builders, heap updates, callback effects, or destructive source consumption.
+  ;; Each public operation starts fresh scopes; delegated suffix callbacks retain
+  ;; the defining operation's scopes, even inside another public operation.
+  ;;
+  ;; A scope parameter is private dynamic context, installed only by parameterize.
+  ;; Chez thread parameters isolate simultaneous workers; parameterize's wind hooks
+  ;; reinstall bindings on ordinary fiber suspension/resumption and worker migration.
+  ;; The owner ID records the thread that installed a binding, NOT fiber identity.
+  ;; A newly forked thread inherits a value but not its scope: an owner mismatch
+  ;; reads the default, preventing inherited mutable counters or construction scopes.
+  #|proc:make-nav-scope-parameter
+  Return a private scope parameter with initial value `default`. Calling it without an
+  argument reads the active scope; calling it with one value installs a binding owned by
+  the current thread. Use `parameterize` or `nav-with-scope` for scoped installation.
+  |#
+  (define make-nav-scope-parameter
+    (lambda (default)
+      (let ([binding (make-thread-parameter #f)])
+        (case-lambda
+          [() (let ([entry (binding)])
+                (if (and entry (eqv? (car entry) (get-thread-id)))
+                    (cdr entry)
+                    default))]
+          [(value) (binding (cons (get-thread-id) value))]))))
+
+  ;; Native thread-parameter setters synchronize with thread creation in Chez.
+  ;; Avoid redundant installations while preserving wind hooks for real changes.
+  #|macro:nav-with-scope
+  Evaluate `body` with one `parameter` bound to `value`, avoiding redundant installation
+  when the existing value is identical. Actual changes use `parameterize` for dynamic
+  restoration across continuation resumption and fiber suspension.
+  |#
+  (define-syntax nav-with-scope
+    (syntax-rules ()
+      [(_ ([parameter value]) body ...)
+       (let ([new-value value])
+         (if (eq? (parameter) new-value)
+             (begin body ...)
+             (parameterize ([parameter new-value]) body ...)))]))
+
+;;;;===----------------------------------------------------------------------===
 ;;;; Focus, continuation, and absence terminology
 ;;;;===----------------------------------------------------------------------===
 
@@ -63,7 +128,7 @@
   ;; Its suffix can select nothing, so visiting the default alone must not insert it.
   ;; One shared mutable counter per public update records terminal invocations;
   ;; comparing its version before/after the suffix decides whether insertion occurs.
-  (define current-update-count (make-parameter #f))
+  (define current-update-count (make-nav-scope-parameter #f))
   (define nav-update-version
     (lambda () (let ([counter (current-update-count)]) (if counter (car counter) 0))))
   (define nav-note-update!
@@ -90,6 +155,7 @@
 
   #|proc:nav/empty-path
   The `nav/empty-path` value is the compiled empty path that focuses the root value.
+  Kind: Reusable path value; the empty composition focuses the input root.
   |#
   (define nav/empty-path (make-$path '()))
 
@@ -119,7 +185,7 @@
   ;; retaining successful siblings in the same collection walk. It does not suppress
   ;; all errors: a present location that cannot be removed raises an ordinary error,
   ;; and navigation errors raised by user callbacks are marked separately below.
-  (define current-optional-focus? (make-parameter #f))
+  (define current-optional-focus? (make-nav-scope-parameter #f))
   (define nav-call-step
     (lambda (proc value continue fallback)
       (if (current-optional-focus?)
@@ -178,6 +244,7 @@
   `transform!-proc` has signature `(parent update!) -> parent`; it mutates each focus
   using `(update! child)`, which returns the replacement child. The result is a navigator.
   Custom navigators created by this procedure do not support clearing.
+  Kind: Reusable custom step constructor; callbacks determine the supported update modes.
   |#
   (define make-nav
     (lambda (name select-proc transform-proc transform!-proc)
@@ -203,6 +270,7 @@
   The `make-nav-ref` procedure creates a symbolic recursive navigator reference
   named by the symbol `name`. It resolves within the defining environment of the active
   recursive group; fresh public operations start with no active bindings.
+  Kind: Recursive reference constructor; its symbolic name resolves during traversal.
   |#
   (define make-nav-ref
     (lambda (name)
@@ -252,6 +320,7 @@
   The `nav-coerce` procedure converts `x` into a navigator or path. Navigator
   and path values are returned in equivalent form, symbols become key
   navigators, and non-negative integer indexes become nth navigators.
+  Kind: Reusable description conversion; no traversal is started.
   |#
   (define nav-coerce
     (lambda (x)
@@ -267,6 +336,7 @@
   The `nav-compile-path` procedure converts path-like value `pathish` into a
   compiled path. Lists are treated as lists of path steps and nested paths are
   flattened.
+  Kind: Reusable path compiler; no traversal is started.
   |#
   (define nav-compile-path
     (lambda (pathish)
@@ -282,6 +352,7 @@
   The `nav/path` procedure creates a compiled path from the path-like values
   `args`. Navigator values, path values, recursive values, symbols, and
   non-negative integer indexes are accepted; nested paths are flattened.
+  Kind: Reusable path combinator; arguments are composed from left to right.
   |#
   (define nav/path
     (lambda args
@@ -290,6 +361,7 @@
   #|proc:nav/path-append
   The `nav/path-append` procedure concatenates each path-like value in `paths`
   and returns one compiled path.
+  Kind: Reusable path combinator; path arguments are concatenated in order.
   |#
   (define nav/path-append
     (lambda paths

@@ -5,7 +5,7 @@
           ;; but not auto-imported when importing (cspp)
           (cspp optional-library-check)
           (cspp rich private render)
-          (cspp private iter-scope)
+          (cspp private iter-state)
           (cspp concurrency fiber)
           (cspp concurrency fiber-net)
           (cspp parser combinator))
