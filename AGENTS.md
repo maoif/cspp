@@ -65,7 +65,8 @@ block of code (no indentation needed):
 ```
 
 You can use ChezScheme extensions, not just r6rs APIs.
-ChezScheme doc can be found [here](https://cisco.github.io/ChezScheme/csug/csug.html).
+ChezScheme doc can be found [here](https://cisco.github.io/ChezScheme/csug/csug.html),
+and in repo's ChezScheme submodule.
 
 Read existing code to get a basic understanding of the coding style.
 
@@ -166,12 +167,14 @@ Fixnum range can be obtained by `(most-positive-fixnum)` and `(most-negative-fix
 
 Prefer preallocating objects (string, vector, bytevector and others) than appending them sequentially.
 
-Prefer `make-list-builder` from `(cspp list)` to build up a list than `cons` and `reverse`.
+Prefer `make-list-builder` from `(cspp list)` to build up a list than `cons` and `reverse` to avoid allocations.
+But `cons` is usually faster.
 
 Use `call/cc` and continuation operations carefully, as it has performance overhead.
 Use `call/1cc` if possible.
 Always comment the use of `call/cc` using `;;`.
 
+Append benchmark numbers in commit message for performance optimization changes.
 
 ## About some files
 
