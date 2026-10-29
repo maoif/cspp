@@ -204,3 +204,20 @@
                  (guard (c [else #t]) (digest-output-size algorithm) #f)
                  (guard (c [else #t]) (digest-block-size algorithm) #f)))))
     '((openssl sha256) (blake3 blake3))))
+
+(mat digest-file-error-cleanup
+  (mat-requires (openssl)
+    ;; Error case: sysfs reports a 4096-byte file size but yields a short read. Premature
+    ;; EOF must raise and close the input port before returning to the caller.
+    (let ([path "/sys/kernel/uevent_seqnum"])
+      (if (and (file-exists? path) (file-directory? "/proc/self/fd"))
+          (begin
+            (collect)
+            (let* ([before (length (directory-list "/proc/self/fd"))]
+                   [raised? (guard (c [else (and (who-condition? c)
+                                                 (eq? (condition-who c) 'digest-file))])
+                              (digest-file 'sha256 path)
+                              #f)]
+                   [after (length (directory-list "/proc/self/fd"))])
+              (and raised? (= before after))))
+          #t))))
