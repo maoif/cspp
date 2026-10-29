@@ -101,6 +101,8 @@
   Parallel source expressions see the surrounding scope, not companion item bindings.
   Literal shorthand accepts quotation only through the Scheme `quote` binding, including renamed
   imports. A rebound `quote` is an application and requires an explicit iterator type.
+  Right-hand sides in explicit iterator and binding clauses are ordinary Scheme expressions;
+  their identifiers follow lexical scoping, including calls to a locally bound `quote` procedure.
   Item and source-index names must be distinct across parallel iterator clauses, as with `let`.
   A hashtable clause requires distinct key and value identifiers, including when filtered.
   Within one clause, its source index may shadow its item name. Later configuration bindings

@@ -49,6 +49,41 @@
 
      (equal? '(0 1) (for*/list ([quote '2]) quote)))
 
+(mat explicit-source-expression-lexical-scope
+     ;; A typed source evaluates a locally bound quote procedure exactly once.
+     (andmap
+      (lambda (kind)
+        (eval `(let ([calls 0] [visits 0])
+                 (let ([quote (lambda (value) (set! calls (+ calls 1)) 3)])
+                   (,kind ([x :iota (quote 99)]) (set! visits (+ visits 1))))
+                 (and (= calls 1) (= visits 3)))
+              (environment '(cspp))))
+      '(for for/fold for/list for/vector for* for*/fold for*/list for*/vector))
+
+     ;; Source and option expressions see outer quote, before binding their own item named quote.
+     (andmap
+      (lambda (kind)
+        (eval `(let ([source '#(a b c)] [calls 0] [visits 0])
+                 (let ([quote (lambda (value) (set! calls (+ calls 1)) value)])
+                   (,kind ([quote :vector (quote source) :from (quote 1)
+                                  :to (quote 3) :step (quote 1)])
+                     (set! visits (+ visits 1))))
+                 (and (= calls 4) (= visits 2)))
+              (environment '(cspp))))
+      '(for for/fold for/list for/vector for* for*/fold for*/list for*/vector))
+
+     ;; A nested source sees the quote procedure introduced by an earlier binding clause.
+     (andmap
+      (lambda (kind)
+        (eval `(let ([calls 0] [visits 0])
+                 (,kind ([outer 2]
+                         [:let quote (lambda (value) (set! calls (+ calls 1)) 3)]
+                         [x :iota (quote 99)])
+                   (set! visits (+ visits 1)))
+                 (and (= calls 2) (= visits 6)))
+              (environment '(cspp))))
+      '(for* for*/fold for*/list for*/vector)))
+
 (mat keyword-predicate-consistency
      (and (kw-for-config-clause? #':letrec*)
           (kw-for-config-clause? #':let*-values)
