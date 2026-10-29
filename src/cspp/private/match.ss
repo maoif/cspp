@@ -166,7 +166,22 @@
   ```
   The built-in heads `record`, `datatype`, `box`, `regex`, and `hash` cannot be overridden.
   Under repetition, only identifiers supplied in the caller's pattern can escape as captures.
-  Fresh identifiers introduced by the expander remain private, including within alternatives.
+  Private capture identifiers must be created with `generate-temporaries`; preserve identifiers
+  supplied in the caller's subpatterns. The callback is a procedure call and does not add a
+  separate macro hygiene boundary. An ordinary template capture such as `,if` is not fresh and
+  can shadow the matcher's conditional syntax, causing an attempt to call the captured value.
+  Fresh identifiers remain private, including within alternatives and repeated patterns.
+  For example, this expander ignores a pair's head and matches its tail without exposing its
+  private head capture:
+  ```scheme
+  (define-match-expander tail-expander
+    (lambda (process-pattern rho input pattern success failure)
+      (syntax-case pattern ()
+        [(_ subpattern)
+         (with-syntax ([(hidden) (generate-temporaries '(hidden))])
+           (process-pattern rho input #'(,hidden . subpattern) success failure))])))
+  (match '(ignored . 42) [,(tail ,x) x]) ; => 42
+  ```
   |#
   (define-syntax define-match-expander
     (lambda (stx)
