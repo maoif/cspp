@@ -11,7 +11,7 @@ SRCS_TEST := test.ss examples.ss benchmarks.ss record.ss datatype.ss match.ss fo
              hashset.ss treemap.ss treeset.ss rbtree-specialized.ss \
              bittree.ss bitvec.ss dset.ss \
              concurrency.ss fiber.ss \
-             cli.ss rich.ss logging.ss benchmark.ss hash.ss crypto.ss optional-openssl.ss \
+             cli.ss rich.ss logging.ss benchmark.ss hash.ss digest.ss crypto.ss optional-openssl.ss \
              optional-library.ss net-loader.ss uuid.ss \
              protobuf.ss protobuf-codegen.ss \
              $(NET_TESTS) \

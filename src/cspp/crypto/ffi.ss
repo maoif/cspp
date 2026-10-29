@@ -1,5 +1,13 @@
 (library (cspp crypto ffi)
-  (export ffi-openssl-load-error
+  (export ffi-blake3-bytevector
+          ffi-blake3-string
+          ffi-blake3-create
+          ffi-blake3-destroy
+          ffi-blake3-get
+          ffi-blake3-reset!
+          ffi-blake3-update-bytevector!
+          ffi-blake3-update-string!
+          ffi-openssl-load-error
           ffi-random-status
           ffi-random-bytevector
           ffi-random-fill!
@@ -807,4 +815,103 @@
         (pcheck ([natural? ptr-st])
                 (require-optional-library 'ffi-cert-verify-state-destroy 'openssl)
                 (native ptr-st)))))
+  #|proc:ffi-blake3-bytevector
+  The `ffi-blake3-bytevector` procedure returns the BLAKE3 digest of bytevector `bytes`
+  between byte indices `start` (inclusive) and `stop` (exclusive). The caller validates
+  slice bounds. It raises an error when BLAKE3 is unavailable.
+  |#
+  (define ffi-blake3-bytevector
+    (let ([native (foreign-procedure "crypto_blake3_bytevector"
+                                    (ptr unsigned-64 unsigned-64) ptr)])
+      (lambda (bytes start stop)
+        (pcheck ([bytevector? bytes] [natural? start stop])
+          (require-optional-library 'ffi-blake3-bytevector 'blake3)
+          (native bytes start stop)))))
+
+  #|proc:ffi-blake3-string
+  The `ffi-blake3-string` procedure returns the BLAKE3 digest of string `text` between
+  character indices `start` (inclusive) and `stop` (exclusive), using native-endian UTF-32
+  without a byte-order mark. The caller validates slice bounds. It raises an error when
+  BLAKE3 is unavailable.
+  |#
+  (define ffi-blake3-string
+    (let ([native (foreign-procedure "crypto_blake3_string"
+                                    (ptr unsigned-64 unsigned-64) ptr)])
+      (lambda (text start stop)
+        (pcheck ([string? text] [natural? start stop])
+          (require-optional-library 'ffi-blake3-string 'blake3)
+          (native text start stop)))))
+
+  #|proc:ffi-blake3-create
+  The `ffi-blake3-create` procedure returns a new native BLAKE3 context handle, or zero
+  if allocation fails. It raises an error when BLAKE3 is unavailable.
+  |#
+  (define ffi-blake3-create
+    (let ([native (foreign-procedure "crypto_blake3_create" () void*)])
+      (lambda ()
+        (pcheck ()
+          (require-optional-library 'ffi-blake3-create 'blake3)
+          (native)))))
+
+  #|proc:ffi-blake3-destroy
+  The `ffi-blake3-destroy` procedure releases the native BLAKE3 context `handle` and returns
+  unspecified values. A zero handle is ignored. It raises if BLAKE3 is unavailable.
+  |#
+  (define ffi-blake3-destroy
+    (let ([native (foreign-procedure "crypto_blake3_destroy" (void*) void)])
+      (lambda (handle)
+        (pcheck ([natural? handle])
+          (require-optional-library 'ffi-blake3-destroy 'blake3)
+          (native handle)))))
+
+  #|proc:ffi-blake3-get
+  The `ffi-blake3-get` procedure returns the current BLAKE3 digest bytevector of native
+  context `handle`, preserving the context, or `#f` for a zero handle. It raises an error
+  when BLAKE3 is unavailable.
+  |#
+  (define ffi-blake3-get
+    (let ([native (foreign-procedure "crypto_blake3_get" (void*) ptr)])
+      (lambda (handle)
+        (pcheck ([natural? handle])
+          (require-optional-library 'ffi-blake3-get 'blake3)
+          (native handle)))))
+
+  #|proc:ffi-blake3-reset!
+  The `ffi-blake3-reset!` procedure resets native BLAKE3 context `handle`, returning 1
+  on success or 0 for a zero handle. It raises an error when BLAKE3 is unavailable.
+  |#
+  (define ffi-blake3-reset!
+    (let ([native (foreign-procedure "crypto_blake3_reset" (void*) int)])
+      (lambda (handle)
+        (pcheck ([natural? handle])
+          (require-optional-library 'ffi-blake3-reset! 'blake3)
+          (native handle)))))
+
+  #|proc:ffi-blake3-update-bytevector!
+  The `ffi-blake3-update-bytevector!` procedure feeds bytevector `bytes` between byte
+  indices `start` (inclusive) and `stop` (exclusive) into native context `handle`.
+  The caller validates slice bounds. It returns 1 on success, or 0 for a zero handle,
+  and raises an error when BLAKE3 is unavailable.
+  |#
+  (define ffi-blake3-update-bytevector!
+    (let ([native (foreign-procedure "crypto_blake3_update_bytevector"
+                                    (void* ptr unsigned-64 unsigned-64) int)])
+      (lambda (handle bytes start stop)
+        (pcheck ([natural? handle start stop] [bytevector? bytes])
+          (require-optional-library 'ffi-blake3-update-bytevector! 'blake3)
+          (native handle bytes start stop)))))
+
+  #|proc:ffi-blake3-update-string!
+  The `ffi-blake3-update-string!` procedure feeds string `text` between character indices
+  `start` (inclusive) and `stop` (exclusive) into native context `handle`, using native-endian
+  UTF-32 without a byte-order mark. The caller validates slice bounds. It returns 1 on
+  success, or 0 for a zero handle, and raises an error when BLAKE3 is unavailable.
+  |#
+  (define ffi-blake3-update-string!
+    (let ([native (foreign-procedure "crypto_blake3_update_string"
+                                    (void* ptr unsigned-64 unsigned-64) int)])
+      (lambda (handle text start stop)
+        (pcheck ([natural? handle start stop] [string? text])
+          (require-optional-library 'ffi-blake3-update-string! 'blake3)
+          (native handle text start stop)))))
   )
