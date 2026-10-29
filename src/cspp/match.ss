@@ -714,6 +714,7 @@ Examples:
   The `mlet*` macro evaluates pattern bindings from left to right, making earlier captures
   available to later right-hand sides. For example, `(mlet* ([,x 10] [,y (+ x 20)]) y)` returns
   `30`.
+  Each pattern is isolated from generated clause syntax; a bare `else` matches the symbol `else`.
   Its body permits local definitions, evaluates expressions in order, and returns the final values.
   |#
   (define-syntax mlet*
@@ -724,11 +725,10 @@ Examples:
          (let loop ([pat* #'(pat* ...)] [rhs* #'(rhs* ...)])
            (if (null? pat*)
                #'(let () e0 e* ...)
-               #`(match #,(car rhs*)
-                   [#,(car pat*) #,(loop (cdr pat*) (cdr rhs*))]
-                   ;; TODO when k is not quoted, the error is "bad form" below,
-                   ;; which is not quite precise
-                   [else (errorf 'k "no match found")])))]
+               (with-syntax ([(whole) (generate-temporaries '(whole))])
+                 #`(match #,(car rhs*)
+                     [(#`whole #,(car pat*)) #,(loop (cdr pat*) (cdr rhs*))]
+                     [else (errorf 'k "no match found")]))))]
         [_ (syntax-error stx "bad form:")])))
 
 

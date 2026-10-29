@@ -463,6 +463,28 @@
      )
 
 
+(mat mlet*-independent-patterns
+     ;; A literal else remains pattern data rather than a generated fallback clause.
+     (guard (condition [else #f])
+       (= 42 (eval '(mlet* ([else 'else] [,x 42]) x) (environment '(cspp)))))
+
+     ;; A mismatched literal else fails at runtime, rather than during expansion.
+     (guard (condition [(syntax-violation? condition) #f] [else #t])
+       (eval '(mlet* ([else 'wrong]) 'accepted) (environment '(cspp)))
+       #f)
+
+     ;; Later right-hand sides see earlier captures and run exactly once.
+     (let ([calls 0])
+       (and (= 42 (mlet* ([else 'else]
+                          [,x (begin (set! calls (+ calls 1)) 40)]
+                          [,y (begin (set! calls (+ calls 1)) (+ x 2))]) y))
+            (= calls 2)))
+
+     ;; Captures may shadow syntax and the private alias's suggested name.
+     (equal? '(1 2 3 4)
+             (mlet* ([,whole 1] [,match 2] [,if 3] [,quasisyntax 4])
+               (list whole match if quasisyntax))))
+
 (mat regex
 
      (equal? '("ababab" "ab" "ab" "ab")
