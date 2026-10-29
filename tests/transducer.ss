@@ -1206,3 +1206,52 @@
            (= resets 0)
            (equal? '() (iter->list cursor))
            (= closed 1)))))
+
+(define-record-type review-unused-source (fields values))
+
+(mat transducer-empty-pass-skips-source-materialization
+  (let ([created 0])
+    (iter-register-source!
+     review-unused-source?
+     (lambda (source)
+       (set! created (+ created 1))
+       (list->iter (review-unused-source-values source))))
+    (let* ([source (make-review-unused-source '(1 2))]
+           [cursor (sequence (ttake 0) source)])
+      (and (equal? '() (into 'list (ttake 0) source))
+           (equal? '() (iter->list cursor))
+           (begin (iter-reset! cursor) #t)
+           (equal? '() (iter->list cursor))
+           (= created 0)))))
+
+(import (cspp private iter-state))
+
+(mat transducer-shared-cleanup-forest
+  ;; Child-link counts measure graph work, not wall-clock timing. Distinct zero-input
+  ;; roots share one resource; its finalizer must run exactly once.
+  (let ([visits 0] [closed 0])
+    (let loop ([depth 0]
+               [previous (make-iter (lambda () iter-end) void
+                                    (lambda () (set! closed (+ closed 1))))]
+               [roots '()])
+      (if (= depth 64)
+          (and (equal? '() (into 'list (tcat) roots))
+               (= closed 1) (< visits 256))
+          (let ([next (mk-$iter (lambda () iter-end) void #f
+                               (lambda () (set! visits (+ visits 1)) (list previous)))])
+            (loop (+ depth 1) next (cons next roots))))))
+
+  ;; A free wrapper is retained through its existing free child. A later input
+  ;; acquires a resource reachable only through that earlier wrapper at cleanup.
+  (let ([children (list (list->iter '()))] [closed 0])
+    (let* ([resource (make-iter (lambda () iter-end) void
+                                (lambda () (set! closed (+ closed 1))))]
+           [wrapper (mk-$iter (lambda () iter-end) void #f (lambda () children))]
+           [source (list wrapper 'acquire)]
+           [xform (tcompose
+                   (tmap (lambda (value)
+                           (if (eq? value 'acquire)
+                               (begin (set! children (list resource)) '())
+                               value)))
+                   (tcat))])
+      (and (equal? '() (into 'list xform source)) (= closed 1)))))

@@ -885,3 +885,65 @@
 
   ;; An empty limit must not permanently alter the shared exhaustion marker.
   (error? (iter-take 0 iter-end)))
+
+(mat iter-current-exhaustion-on-continuation-resumption
+  (let ([saved #f] [phase 0] [pulls 0])
+    (let ([cursor
+           (iter-take
+            2 (iter-map
+               (lambda (value)
+                 (if saved value
+                     ;; Resume upstream control while retaining the current take allowance.
+                     (call/cc (lambda (continuation) (set! saved continuation) value))))
+               (make-iter (lambda () (set! pulls (+ pulls 1)) pulls) void)))])
+      (let ([value (iter-next! cursor)])
+        (if (= phase 0)
+            (begin (set! phase 1) (iter-next! cursor) (saved 'resumed))
+            (and (iter-end? value) (iter-end? (iter-next! cursor)) (= pulls 2))))))
+
+  (let ([saved #f] [phase 0] [pulls 0])
+    (let ([cursor
+           (iter-interleave
+            (make-iter
+             (lambda ()
+               (set! pulls (+ pulls 1))
+               ;; Bound the old exhausted-ring polling defect instead of hanging the suite.
+               (when (> pulls 8) (error 'producer "read repeatedly after exhaustion"))
+               (if saved iter-end
+                   ;; Capture inside the first producer before its slot is removed.
+                   (call/cc (lambda (continuation) (set! saved continuation) 'first))))
+             void)
+            (list->iter '()))])
+      (guard (condition [else #f])
+        (let ([value (iter-next! cursor)])
+          (if (= phase 0)
+              (begin (set! phase 1) (iter-next! cursor) (saved iter-end))
+              (and (iter-end? value) (iter-end? (iter-next! cursor)) (= pulls 2))))))))
+
+(mat iter-textual-port-input-direction
+  ;; Reading constructors reject output-only ports immediately, without consuming anything.
+  (andmap
+   (lambda (constructor)
+     (call-with-port (open-output-string)
+       (lambda (port) (guard (condition [else #t]) (constructor port) #f))))
+   (list port->iter port-lines->iter port-chars->iter port-data->iter)))
+
+(mat iter-interleave-continuation-removed-slot
+  (let ([saved #f] [phase 0])
+    (let ([cursor
+           (iter-interleave
+            (make-iter
+             (lambda ()
+               (if saved iter-end
+                   ;; Replay this slot after it has been removed while another remains live.
+                   (call/cc (lambda (continuation) (set! saved continuation) 'a))))
+             void)
+            (list->iter '(b1 b2 b3)))])
+      (let ([value (iter-next! cursor)])
+        (if (= phase 0)
+            (begin
+              (set! phase 1)
+              (iter-next! cursor)
+              (iter-next! cursor)
+              (saved iter-end))
+            (and (eq? 'b3 value) (iter-end? (iter-next! cursor))))))))

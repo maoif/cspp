@@ -171,8 +171,13 @@
                                       [(filter) (if ((vector-ref op 1) value)
                                                     (apply-ops (cdr ops) value) (pull))]
                                       [(take)
-                                       (vector-set! op 3 (fx1- (vector-ref op 3)))
-                                       (apply-ops (cdr ops) value)]
+                                       ;; Resumed upstream callbacks observe the current allowance,
+                                       ;; which may already be exhausted. Never decrement past zero.
+                                       (if (fxzero? (vector-ref op 3))
+                                           iter-end
+                                           (begin
+                                             (vector-set! op 3 (fx1- (vector-ref op 3)))
+                                             (apply-ops (cdr ops) value)))]
                                       [(drop)
                                        (if (fxzero? (vector-ref op 3))
                                            (apply-ops (cdr ops) value)
@@ -445,15 +450,14 @@
   (define define-textual-port->iter
     (lambda (who get-proc)
       (lambda (port)
-        (pcheck-open-textual-port
-         (port)
-         (mk-$iter
-          (lambda () (let ([x (get-proc port)])
-                       (if (eof-object? x)
-                           iter-end
-                           x)))
-          (lambda () (set-port-position! port 0))
-          void)))))
+        (pcheck ([input-port? port])
+                (pcheck-open-textual-port
+                 (port)
+                 (mk-$iter
+                  (lambda () (let ([x (get-proc port)])
+                               (if (eof-object? x) iter-end x)))
+                  (lambda () (set-port-position! port 0))
+                  void))))))
   #|proc:port->iter
   Construct a cursor reading one line per pull from open textual input `port`.
   The caller retains port ownership: terminal completion does not close it. Reset seeks
@@ -624,6 +628,7 @@
   Add an operation that retains at most the first nonnegative fixnum `n` values
   reaching this pipeline stage, then return `iter`. Kind: in-place limiting stage.
   Once exhausted it stops before another producer pull; zero never pulls. Reset restores `n`.
+  Continuation resumption observes the current allowance and cannot make it negative.
   |#
   (define iter-take
     (lambda (n iter)
@@ -688,6 +693,7 @@
   exhausted sources until all have ended. Kind: lazy round-robin wrapper; reset resets
   all sources and its scheduling cursor. Exhausted slots leave the active scheduling ring;
   traversal costs O(values + source slots). Repeated handles share one producer position.
+  Continuation resumption retains the current ring; already removed slots stay removed.
   With one source return it directly. Terminal completion finalizes all source resources.
   |#
   (define iter-interleave
@@ -700,17 +706,22 @@
                                  [iterators (list->vector sources)]
                                  [length (vector-length iterators)]
                                  [next-slots (make-vector length)]
-                                 [active length] [index 0] [previous (fx1- length)])
-                            ;; Active slots form a circular singly linked list. Removing
-                            ;; an exhausted slot costs O(1); it is never polled again.
+                                 [previous-slots (make-vector length)]
+                                 [live-slots (make-vector length #t)]
+                                 [active length] [index 0])
+                            ;; A doubly linked active ring supports idempotent removal
+                            ;; after a callback resumes with an advanced current schedule.
+                            ;; All links/membership belong to this cursor's current pass.
                             (define reset-local!
                               (lambda ()
                                 (do ([slot 0 (fx1+ slot)]) ((fx= slot length))
                                   (vector-set! next-slots slot
-                                               (if (fx= slot (fx1- length)) 0 (fx1+ slot))))
+                                               (if (fx= slot (fx1- length)) 0 (fx1+ slot)))
+                                  (vector-set! previous-slots slot
+                                               (if (fxzero? slot) (fx1- length) (fx1- slot)))
+                                  (vector-set! live-slots slot #t))
                                 (set! active length)
-                                (set! index 0)
-                                (set! previous (fx1- length))))
+                                (set! index 0)))
                             (reset-local!)
                             (mk-$iter
                              (lambda ()
@@ -718,15 +729,23 @@
                                  (if (fxzero? active)
                                      iter-end
                                      (let* ([slot index]
-                                            [next (vector-ref next-slots slot)]
                                             [value (iter-next! (vector-ref iterators slot))])
-                                       (set! index next)
-                                       (if (iter-end? value)
-                                           (begin
-                                             (set! active (fx1- active))
-                                             (vector-set! next-slots previous next)
-                                             (loop))
-                                           (begin (set! previous slot) value))))))
+                                       ;; The callback may resume after later pulls. Read links
+                                       ;; now, and never unlink or decrement an old slot twice.
+                                       (cond [(fxzero? active) iter-end]
+                                             [(not (vector-ref live-slots slot)) (loop)]
+                                             [else
+                                              (let ([next (vector-ref next-slots slot)])
+                                                (set! index next)
+                                                (if (iter-end? value)
+                                                    (let ([previous
+                                                           (vector-ref previous-slots slot)])
+                                                      (vector-set! live-slots slot #f)
+                                                      (set! active (fx1- active))
+                                                      (vector-set! next-slots previous next)
+                                                      (vector-set! previous-slots next previous)
+                                                      (loop))
+                                                    value))])))))
                              reset-local!
                              #f (lambda () sources))))))))
   #|proc:iter-concat

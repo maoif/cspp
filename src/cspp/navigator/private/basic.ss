@@ -74,11 +74,8 @@
     (lambda (value emit)
       (cond [(list? value) (for-each emit value)]
             [(indexed-supported? value)
-             (let ([len (indexed-length value)])
-               (let loop ([i 0])
-                 (when (< i len)
-                   (emit (indexed-ref/missing value i))
-                   (loop (+ i 1)))))]
+             (indexed-walk value 0 (indexed-length value) 1
+                           (lambda (index child) (emit child)))]
             [(keyed-values value)
              => (lambda (values) (for-each emit values))]
             [(set-values value)
@@ -610,11 +607,8 @@
                   (emit (cons index (car items)))
                   (loop (cdr items) (fx+ index 1))))]
              [(indexed-supported? value)
-              (let ([len (indexed-length value)])
-                (let loop ([i 0])
-                  (when (< i len)
-                    (emit (cons i (indexed-ref/missing value i)))
-                    (loop (+ i 1)))))]
+              (indexed-walk value 0 (indexed-length value) 1
+                            (lambda (index child) (emit (cons index child))))]
              [(keyed-entries value)
               => (lambda (entries) (for-each emit entries))]
              [else (nav-focus-error 'nav/entries "unsupported collection: ~s" value)]))
@@ -766,20 +760,8 @@
                   (let ([len (indexed-length value)])
                     (unless len
                       (nav-focus-error 'nav/slice "unsupported collection: ~s" value))
-                    (let ([limit (min stop len)])
-                      (if (list? value)
-                          (when (< start limit)
-                            (let loop ([items value] [index 0] [next start])
-                              (when (< index limit)
-                                (if (= index next)
-                                    (begin
-                                      (emit (car items))
-                                      (loop (cdr items) (fx+ index 1) (+ next step)))
-                                    (loop (cdr items) (fx+ index 1) next)))))
-                          (let loop ([i start])
-                            (when (< i limit)
-                              (emit (indexed-ref/missing value i))
-                              (loop (+ i step))))))))
+                    (indexed-walk value start (min stop len) step
+                                  (lambda (index child) (emit child)))))
                 (lambda (value update)
                   (let ([len (indexed-length value)])
                     (unless len

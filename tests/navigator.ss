@@ -2694,3 +2694,100 @@
               #f)
             (eq? 'payload (hashtable-ref parent key #f)))))
    1))
+
+(mat navigator-specialized-array-families
+  (andmap
+   (lambda (source expected)
+     (let ([copy (nav-transform nav/all add1 source)])
+       (and (equal? expected (nav-select nav/all source))
+            (equal? (map add1 expected) (nav-select nav/all copy))
+            (equal? (list (cadr expected)) (nav-select (nav/slice 1 2) source))
+            (begin (nav-transform! nav/all add1 source) #t)
+            (equal? (map add1 expected) (nav-select nav/all source)))))
+   (list (fxarray 1 2) (flarray 1.0 2.0) (bytearray 1 2))
+   '((1 2) (1.0 2.0) (1 2)))
+
+  ;; Specialized bulk setters preserve the element type restrictions.
+  (error? (nav-transform nav/all (lambda (value) 'invalid) (fxarray 1)))
+
+  ;; Bytearray updates must remain within the byte domain.
+  (error? (nav-transform! nav/all (lambda (value) 256) (bytearray 1))))
+
+(define-record-type review-bulk-indexed (fields values))
+
+(mat navigator-indexed-bulk-hooks
+  (let ([walks 0] [copies 0] [mutations 0] [refs 0])
+    (define walk
+      (lambda (source start stop step visit)
+        (set! walks (+ walks 1))
+        (let loop ([index start])
+          (when (< index stop)
+            (visit index (vector-ref (review-bulk-indexed-values source) index))
+            (loop (+ index step))))))
+    (define mutate
+      (lambda (source indexes update)
+        (set! mutations (+ mutations 1))
+        (for-each (lambda (index)
+                    (let ([values (review-bulk-indexed-values source)])
+                      (vector-set! values index (update (vector-ref values index))))) indexes)
+        source))
+    (nav-register-indexed!
+     review-bulk-indexed?
+     (lambda (source) (vector-length (review-bulk-indexed-values source)))
+     (lambda (source index)
+       (set! refs (+ refs 1)) (vector-ref (review-bulk-indexed-values source) index))
+     (lambda (source index value) (error 'setter "bulk update used scalar copy"))
+     (lambda (source index value) (error 'setter "bulk mutation used scalar setter"))
+     walk
+     (lambda (source indexes update)
+       (set! copies (+ copies 1))
+       (mutate (make-review-bulk-indexed (vector-copy (review-bulk-indexed-values source)))
+               indexes update))
+     mutate)
+    (let* ([source (make-review-bulk-indexed (vector 1 2 3))]
+           [selected (nav-select nav/all source)]
+           [entries (nav-select nav/entries source)]
+           [sliced (nav-select (nav/slice 0 3 2) source)]
+           [copy (nav-transform nav/all add1 source)])
+      (and (equal? '(1 2 3) selected)
+           (equal? '((0 . 1) (1 . 2) (2 . 3)) entries)
+           (equal? '(1 3) sliced)
+           (equal? '#(2 3 4) (review-bulk-indexed-values copy))
+           (equal? '#(1 2 3) (review-bulk-indexed-values source))
+           (begin (nav-transform! nav/all add1 source) #t)
+           (equal? '#(2 3 4) (review-bulk-indexed-values source))
+           (= walks 3) (= copies 1) (= mutations 2) (= refs 0)))))
+
+(mat navigator-bulk-adapter-suspension
+  (andmap
+   (lambda (workers)
+     (run-fibers
+      (lambda ()
+        (let ([source (dlist 1 2 3 4)] [path (nav/slice 1 4 2)])
+          (let ([copy (nav-transform path
+                                     (lambda (value) (fiber-yield) (+ value 10)) source)])
+            (and (equal? '(1 2 3 4) (dlist->list source))
+                 (equal? '(1 12 3 14) (dlist->list copy))
+                 (equal? '(1 12 3 14)
+                         (nav-select (nav/path nav/all
+                                               (nav/pred (lambda (value) (fiber-yield) #t)))
+                                     copy))
+                 (begin (nav-transform! path (lambda (value) (fiber-yield) (* value 2)) source)
+                        #t)
+                 (equal? '(1 4 3 8) (dlist->list source))))))
+      workers))
+   '(1 4)))
+
+(mat navigator-bulk-hook-validation
+  ;; A non-procedure optional bulk hook is rejected before registry publication.
+  (error? (nav-register-indexed! review-bulk-indexed? void void void void 42)))
+
+(mat navigator-bulk-adapter-lazy-cursors
+  (andmap
+   (lambda (constructor)
+     (let ([cursor (nav-traverse->iter (nav/slice 1 5 2) (constructor 1 2 3 4 5))])
+       (and (equal? '(2 4) (iter->list cursor))
+            (not (iter-finalized? cursor))
+            (begin (iter-reset! cursor) #t)
+            (equal? '(2 4) (iter->list cursor)))))
+   (list array fxarray bytearray dlist)))

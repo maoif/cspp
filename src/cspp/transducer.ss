@@ -257,7 +257,7 @@
 
   (define run-hashtable
     (lambda (reducer acc ht)
-      (run-vector reducer acc (hashtable-values ht))))
+      (if (source-end? acc) acc (run-vector reducer acc (hashtable-values ht)))))
 
   (define run-iter
     (lambda (reducer acc iter)
@@ -270,9 +270,12 @@
                   (loop (reducer-step reducer acc x))))))))
 
   ;; A resource context is explicit per-pass state, never an ambient handler. It
-  ;; carries source dispatch and the actual resource cursors discovered by that pass.
-  ;; The identity set is allocated only when a resource is discovered. User callbacks
-  ;; cannot observe or share this context except through a dependent active cursor.
+  ;; carries source dispatch and cleanup candidates discovered by that pass. A candidate
+  ;; owns a resource or has upstream links; it need not itself have resources. Free leaf
+  ;; cursors are ignored. Shallow retention avoids repeatedly classifying shared graphs;
+  ;; one terminal forest walk discovers actual resources, including later lazy acquisitions.
+  ;; The identity set is allocated only for candidates. User callbacks cannot observe or
+  ;; share this context except through a dependent active cursor.
   (define-record-type ($resource-context mk-$resource-context $resource-context?)
     (fields (mutable source-mode) (immutable resources) (mutable seen)))
 
@@ -287,13 +290,14 @@
 
   (define remember-resource!
     (lambda (context iterator)
-      (when (and context (iter-resource? iterator))
+      (when (and context
+                 (not (and ($resource-context-seen context)
+                           (hashtable-contains? ($resource-context-seen context) iterator)))
+                 (or ($iter-fini-proc iterator) (pair? (($iter-children iterator)))))
         (unless ($resource-context-seen context)
           ($resource-context-seen-set! context (make-eq-hashtable)))
-        (let ([seen ($resource-context-seen context)])
-          (unless (hashtable-ref seen iterator #f)
-            (hashtable-set! seen iterator #t)
-            (($resource-context-resources context) iterator))))))
+        (hashtable-set! ($resource-context-seen context) iterator #t)
+        (($resource-context-resources context) iterator))))
 
   (define context-resources
     (lambda (context) (($resource-context-resources context))))
@@ -304,7 +308,7 @@
              [result (run (reducer-with-context reducer context))])
         ;; Only successful terminal completion finalizes a chain. Fiber suspension,
         ;; continuation transfers, exceptions and lazy exhaustion are not finalization.
-        (for-each iter-finalize! (context-resources context))
+        (finalize-iter-chains! (context-resources context))
         result)))
 
   (define run-tracked-iter
@@ -337,20 +341,25 @@
 
   (define run-source
     (lambda (reducer acc source)
-      (if (and (eq? (if ($reducer-context reducer)
+      (cond [(source-end? acc)
+             ;; Supplied cursors still participate in cleanup; unused collections
+             ;; need no adapter, snapshot or newly acquired resource.
+             (when (iter? source) (remember-resource! ($reducer-context reducer) source))
+             acc]
+            [(and (eq? (if ($reducer-context reducer)
                            ($resource-context-source-mode ($reducer-context reducer))
                            (current-transducer-source-mode)) 'iter)
-               (not (iter? source)))
-          (run-tracked-iter reducer acc (source->iter source))
-          (cond [(list? source) (run-list reducer acc source)]
-                [(vector? source) (run-vector reducer acc source)]
-                [(bytevector? source) (run-bytevector reducer acc source)]
-                [(string? source) (run-string reducer acc source)]
-                [(fxvector? source) (run-fxvector reducer acc source)]
-                [(flvector? source) (run-flvector reducer acc source)]
-                [(hashtable? source) (run-hashtable reducer acc source)]
-                [(iter? source) (run-tracked-iter reducer acc source)]
-                [else (run-tracked-iter reducer acc (iter-source->iter source))]))))
+                  (not (iter? source)))
+             (run-tracked-iter reducer acc (source->iter source))]
+            [(list? source) (run-list reducer acc source)]
+            [(vector? source) (run-vector reducer acc source)]
+            [(bytevector? source) (run-bytevector reducer acc source)]
+            [(string? source) (run-string reducer acc source)]
+            [(fxvector? source) (run-fxvector reducer acc source)]
+            [(flvector? source) (run-flvector reducer acc source)]
+            [(hashtable? source) (run-hashtable reducer acc source)]
+            [(iter? source) (run-tracked-iter reducer acc source)]
+            [else (run-tracked-iter reducer acc (iter-source->iter source))])))
 
   (define transduce-run
     (lambda (who xform reducer init source runner)
@@ -359,9 +368,8 @@
                reducer
                (lambda (reducer)
                  (let* ([effective (apply-transducer xform reducer)]
-                        [acc (runner effective
-                                     (reduction-seed effective init)
-                                     source)])
+                        [seed (reduction-seed effective init)]
+                        [acc (if (source-end? seed) seed (runner effective seed source))])
                    (when (iter? source)
                      (remember-resource! ($reducer-context effective) source))
                    (finish-transduce effective acc)))))))
@@ -1287,6 +1295,8 @@
 
   #|proc:sequence
   Return a lazy iterator applying transducer `xform` to transducible `source`.
+  Non-iterator source conversion is deferred until input is needed; a known-empty pass
+  creates no source adapter or snapshot. Supplied cursors remain cleanup dependencies.
   Each pull buffers one input's complete expansion; initialization and completion may
   also emit values. An iterator source starts at its current position. Exhaustion
   does not finalize the chain. A terminal operation or explicit `iter-finalize!` releases
@@ -1302,7 +1312,7 @@
       (pcheck ([transducer? xform] [transducible? source])
               (if (eduction? source)
                   (sequence (tcompose ($eduction-xform source) xform) ($eduction-source source))
-                  (let ([upstream (source->iter source)]
+                  (let ([upstream (and (iter? source) source)]
                         [context (make-resource-context)]
                         [effective #f] [acc #f] [done? #f]
                         [q-head '()] [q-tail '()])
@@ -1343,6 +1353,7 @@
                                 [done? iter-end]
                                 [(reduced? acc) (finish!) (loop)]
                                 [else
+                                 (unless upstream (set! upstream (source->iter source)))
                                  (let ([value (iter-next! upstream)])
                                    (if (iter-end? value)
                                        (finish!)
@@ -1353,8 +1364,10 @@
                     (initialize!)
                     (mk-$iter next!
                               initialize!
-                              #f (lambda () (cons upstream (context-resources context)))
-                              (lambda () (list upstream))))))))
+                              #f (lambda () (if upstream
+                                                (cons upstream (context-resources context))
+                                                (context-resources context)))
+                              (lambda () (if upstream (list upstream) '()))))))))
 
   #|proc:into
   The `into` procedure transduces transducible `source` with transducer `xform` into the

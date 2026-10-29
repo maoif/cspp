@@ -1,6 +1,6 @@
 (library (cspp navigator private data)
   (export byte? indexed-length indexed-ref/missing indexed-set indexed-set!
-          indexed-supported? indexed-transform indexed-transform!
+          indexed-supported? indexed-walk indexed-transform indexed-transform!
           indexed-clear-values indexed-clear-values! index-list
           keyed-update-values keyed-update-values! keyed-rebuild-entries
           keyed-canonical-key
@@ -41,7 +41,10 @@
             (immutable length-proc)
             (immutable ref-proc)
             (immutable set-proc)
-            (immutable set!-proc))
+            (immutable set!-proc)
+            (immutable walk-proc)
+            (immutable transform-proc)
+            (immutable transform!-proc))
     (sealed #t))
 
   (define-record-type ($keyed-protocol make-$keyed-protocol $keyed-protocol?)
@@ -111,23 +114,53 @@
   The `ref-proc` procedure receives a container and zero-based index and returns the indexed value.
   The `set-proc` procedure receives a container, index, and new value, and returns a rebuilt
   container. The `set!-proc` procedure receives a container, index, and new
-  value, mutates the container, and returns a value. Registration returns an unspecified value.
+  value, mutates the container, and returns a value.
+  Optional `walk-proc` has signature `(container start stop step visit) -> unspecified`.
+  It visits the half-open index range by positive stride, calling `(visit index value)`
+  synchronously in increasing order. Range bounds are clipped to the container length;
+  an empty range performs no callbacks. Selection need not allocate a list of all indexes.
+  Optional `transform-proc` / `transform!-proc` have signature `(container indexes update)`;
+  `update` accepts one value and returns its replacement. The pure hook returns a rebuilt
+  container without modifying the original; the mutating hook updates the original and its
+  return value is ignored. Hooks visit each selected index once, in order, and may suspend.
+  Update `indexes` are increasing valid exact indexes; walk bounds/stride are exact integers.
+  Bulk hooks preserve shape, element restrictions, callback order and shallow sharing of
+  unchanged children. Changing indexed length or structure inside callbacks is unspecified.
+  Allocate traversal state per invocation; never cache a shared mutable cursor in a hook.
+  Missing hooks (`#f`) use indexed access/pure setters as before. Bulk pure updates through
+  legacy setters may copy once per element. Existing five-argument registrations remain valid.
+  Registration returns an unspecified value.
   Newer registrations are tried first. Concurrent publications are retained atomically;
   one lookup uses one stable registry snapshot and runs callbacks outside synchronization.
   Overlapping predicates are allowed; callbacks must obey the caller's data-sharing rules.
   Kind: Adapter registration.
   |#
   (define nav-register-indexed!
-    (lambda (predicate length-proc ref-proc set-proc set!-proc)
-      (pcheck ([procedure? predicate length-proc ref-proc set-proc set!-proc])
-              (register-protocol! indexed-protocols
-                                  (make-$indexed-protocol
-                                   (nav-protect-callback predicate)
-                                   (nav-protect-callback length-proc)
-                                   (nav-protect-callback ref-proc)
-                                   (nav-protect-callback set-proc)
-                                   (nav-protect-callback set!-proc)))
-              (void))))
+    (case-lambda
+      [(predicate length-proc ref-proc set-proc set!-proc)
+       (nav-register-indexed! predicate length-proc ref-proc set-proc set!-proc #f #f #f)]
+      [(predicate length-proc ref-proc set-proc set!-proc walk-proc)
+       (nav-register-indexed! predicate length-proc ref-proc set-proc set!-proc walk-proc #f #f)]
+      [(predicate length-proc ref-proc set-proc set!-proc walk-proc transform-proc)
+       (nav-register-indexed! predicate length-proc ref-proc set-proc set!-proc
+                              walk-proc transform-proc #f)]
+      [(predicate length-proc ref-proc set-proc set!-proc walk-proc transform-proc transform!-proc)
+       (pcheck ([procedure? predicate length-proc ref-proc set-proc set!-proc])
+               (for-each (lambda (hook)
+                           (unless (or (not hook) (procedure? hook))
+                             (nav-error 'nav-register-indexed! "expected bulk hook or #f: ~s" hook)))
+                         (list walk-proc transform-proc transform!-proc))
+               (register-protocol! indexed-protocols
+                                   (make-$indexed-protocol
+                                    (nav-protect-callback predicate)
+                                    (nav-protect-callback length-proc)
+                                    (nav-protect-callback ref-proc)
+                                    (nav-protect-callback set-proc)
+                                    (nav-protect-callback set!-proc)
+                                    (and walk-proc (nav-protect-callback walk-proc))
+                                    (and transform-proc (nav-protect-callback transform-proc))
+                                    (and transform!-proc (nav-protect-callback transform!-proc))))
+               (void))]))
 
   #|proc:nav-register-keyed!
   The `nav-register-keyed!` procedure registers a key-value map type for keyed
@@ -235,6 +268,13 @@
               [(($indexed-protocol-predicate (car protocols)) value) (car protocols)]
               [else (loop (cdr protocols))]))))
 
+  ;; Native representations always keep precedence over registered adapters.
+  (define find-indexed-extension
+    (lambda (value)
+      (and (not (or (list? value) (vector? value) (fxvector? value) (flvector? value)
+                    (bytevector? value) (string? value)))
+           (find-indexed-protocol value))))
+
   (define find-keyed-protocol
     (lambda (value)
       (let loop ([protocols (registry-snapshot keyed-protocols)])
@@ -288,11 +328,8 @@
       (cond [(list? value) (for-each emit value)]
             [(pair? value) (void)]
             [(indexed-supported? value)
-             (let ([len (indexed-length value)])
-               (let loop ([i 0])
-                 (when (< i len)
-                   (emit (indexed-ref/missing value i))
-                   (loop (fx+ i 1)))))]
+             (indexed-walk value 0 (indexed-length value) 1
+                           (lambda (index child) (emit child)))]
             [(keyed-values value)
              => (lambda (values) (for-each emit values))]
             [else (void)])))
@@ -325,8 +362,50 @@
             (reverse indexes)
             (loop (fx+ i 1) (cons i indexes))))))
 
-  ;; Index lists are increasing. Walk a list spine once instead of seeking each index.
+  ;; Bulk selections use ranges so an early-stopping consumer need not allocate
+  ;; every index first. Lists/sequential adapters walk their spine once; callbacks
+  ;; retain invocation-local progress across ordinary suspension.
+  (define indexed-walk
+    (lambda (value start stop step visit)
+      (unless (>= start stop)
+        (if (list? value)
+            (let loop ([items value] [index 0] [next start])
+              (when (< index stop)
+                (if (= index next)
+                    (begin (visit index (car items))
+                           (loop (cdr items) (fx1+ index) (+ next step)))
+                    (loop (cdr items) (fx1+ index) next))))
+            (let* ([protocol (find-indexed-extension value)]
+                   [walk (and protocol ($indexed-protocol-walk-proc protocol))])
+              (if walk
+                  (walk value start stop step visit)
+                  (let loop ([index start])
+                    (when (< index stop)
+                      (visit index (indexed-ref/missing value index))
+                      (loop (+ index step))))))))))
+
+  ;; A registered bulk hook avoids repeatedly cloning or seeking through the
+  ;; same container. Native storage continues to use its specialized fallback.
+  (define indexed-transform
+    (lambda (value indexes update)
+      (if (null? indexes)
+          value
+          (let* ([protocol (find-indexed-extension value)]
+                 [transform (and protocol ($indexed-protocol-transform-proc protocol))])
+            (if transform (transform value indexes update)
+                (indexed-transform/fallback value indexes update))))))
+
   (define indexed-transform!
+    (lambda (value indexes update!)
+      (unless (null? indexes)
+        (let* ([protocol (find-indexed-extension value)]
+               [transform! (and protocol ($indexed-protocol-transform!-proc protocol))])
+          (if transform! (transform! value indexes update!)
+              (indexed-transform!/fallback value indexes update!))))
+      value))
+
+  ;; Index lists are increasing. Walk a list spine once instead of seeking each index.
+  (define indexed-transform!/fallback
     (lambda (value indexes update!)
       (if (list? value)
           (let loop ([items value] [indexes indexes] [index 0])
@@ -380,7 +459,7 @@
 
   ;; Built-in containers need one copy per pure update. Registered protocols retain
   ;; their pure setter contract because a generic container has no cloning operation.
-  (define indexed-transform
+  (define indexed-transform/fallback
     (lambda (value indexes update)
       (cond [(null? indexes) value]
             [(list? value)
