@@ -6,10 +6,26 @@
 
 (rich-register-renderer! example-lines? example-lines-lines)
 
+;; Application records can render directly in text, table cells, and nested panels.
+(define-record-type (package make-package package?)
+  (fields (immutable name package-name)
+          (immutable version package-version)
+          (immutable state package-state)))
+
+(rich-register-renderer!
+ package?
+ (lambda (package)
+   (list (list (rich-segment (package-name package) (rich-style 'bold 'cyan))
+               (rich-segment (string-append "@" (package-version package))
+                             (rich-style 'dim))
+               (rich-segment (string-append " " (package-state package))
+                             (rich-style (if (string=? (package-state package) "ready")
+                                             'green 'yellow)))))))
+
 (define section
   (lambda (console title)
     (rich-println console)
-    (let ([rule (make-rich-rule title 76 'heavy)])
+    (let ([rule (rich-rule :title title :style 'heavy)])
       (rich-print console (rich-style 'bold 'cyan) rule (reset-style) "\n"))))
 
 (define print-lines
@@ -19,32 +35,29 @@
 
 (define prompt-demo
   (lambda (console)
-    (let ([in (open-input-string "release\n\ns3cr3t\nyes\n")]
-          [out (open-output-string)])
-      (let ([prompt-console (make-rich-console)])
-        (rich-console-input-port-set! prompt-console in)
-        (rich-console-output-port-set! prompt-console out)
-        (rich-console-color-system-set! prompt-console 'none)
-      (let* ([mode (rich-prompt prompt-console "Mode" "debug" '("debug" "release"))]
-             [target (rich-prompt prompt-console "Target" "native")]
-             [password (rich-password prompt-console "Token")]
-             [confirmed? (rich-confirm prompt-console "Deploy?")])
-        (let ([prompt-table (make-rich-table)])
-          (rich-table-title-set! prompt-table "Prompt APIs")
-          (rich-table-box-set! prompt-table 'rounded)
-          (rich-table-add-column! prompt-table "API")
-          (rich-table-add-column! prompt-table "Result")
-          (rich-table-add-row! prompt-table "rich-prompt / choices" mode)
-          (rich-table-add-row! prompt-table "rich-prompt / default" target)
-          (rich-table-add-row! prompt-table "rich-password / string port" password)
-          (rich-table-add-row! prompt-table "rich-confirm" (if confirmed? "yes" "no"))
-          (rich-table-add-row! prompt-table "captured prompt text" (get-output-string out))
-          (rich-print console prompt-table "\n")))))))
+    (call-with-port (open-input-string "release\n\ns3cr3t\nyes\n")
+      (lambda (input)
+        (call-with-port (open-output-string)
+          (lambda (output)
+            (let* ([prompt-console (rich-console :input-port input :output-port output
+                                                :color-system 'none)]
+                   [mode (rich-prompt prompt-console "Mode" "debug" '("debug" "release"))]
+                   [target (rich-prompt prompt-console "Target" "native")]
+                   [password (rich-password prompt-console "Token")]
+                   [confirmed? (rich-confirm prompt-console "Deploy?")]
+                   [table (rich-table :title "Prompt APIs" :box 'rounded
+                                      :columns ("API" "Result"))])
+              (rich-table-add-row! table "rich-prompt / choices" mode)
+              (rich-table-add-row! table "rich-prompt / default" target)
+              (rich-table-add-row! table "rich-password / string port" password)
+              (rich-table-add-row! table "rich-confirm" (if confirmed? "yes" "no"))
+              (rich-table-add-row! table "captured prompt text" (get-output-string output))
+              (rich-print console table "\n"))))))))
 
 (define live-demo
   (lambda (console)
-    (let ([progress (make-rich-progress 18 (rich-progress-default-columns))])
-      (let ([compile-id (rich-progress-add-task! progress "compile" 5)]
+    (let ([progress (make-rich-progress)])
+      (let ([compile-id (rich-progress-add-task! progress "编译 compile" 5)]
             [test-id (rich-progress-add-task! progress "test" 4)])
         (let ([live (make-rich-live progress console 0 #f)])
           (let loop ([i 0])
@@ -54,12 +67,13 @@
               (rich-live-refresh! live)
               (milisleep 500)
               (loop (+ i 1))))
+          (rich-progress-complete! progress compile-id)
+          (rich-progress-complete! progress test-id)
+          (rich-live-refresh! live)
           (rich-live-stop! live)
           (rich-println console "\n"))))))
 
 (define console (make-rich-console))
-(rich-console-width-set! console 76)
-(rich-console-color-system-set! console 'standard)
 
 (define palette
   (rich-theme
@@ -94,9 +108,9 @@
             "reverse on truecolor background"
             (reset-style)
             "\n")
-(let ([text (rich-text "stream " (rich-theme-ref palette 'dim))])
-  (rich-text-append! text "compile " (rich-theme-ref palette 'hot))
-  (rich-text-append! text "ok" (rich-theme-ref palette 'ok))
+(let ([text (rich-text "stream " 'dim)])
+  (rich-text-append! text "compile " 'hot)
+  (rich-text-append! text "ok" 'ok)
   (rich-print console text "\n"))
 (rich-print console
             "Standard ANSI for "
@@ -104,18 +118,23 @@
             "truecolor cyan"
             (reset-style)
             ": "
-            (rich-export-ansi (rich-text "sample" (rich-style #x33ccff)))
+            (rich-text (rich-strip-ansi
+                        (rich-export-ansi (rich-text "sample" (rich-style #x33ccff))))
+                       (rich-style #x33ccff))
             "\n")
+(rich-print console (rich-style 'bold 'cyan)
+            "Inherited: " (rich-text "cyan, normal weight" (rich-style 'no-bold))
+            " / bold again" (reset-style) "\n")
 
 (section console "Segments, Wrapping, Cropping")
 (let* ([wrapped (rich-segment-wrap
                  (list (rich-segment "wrapped styled segments keep their style while flowing into a narrow column"
                                      (rich-style 'magenta)))
-                 24)]
+                 (rich-console-width console))]
        [cropped (rich-segment-crop
                  (list (rich-segment "cropped output remains styled"
                                      (rich-style 'green)))
-                 14)])
+                 (max 1 (quotient (rich-console-width console) 2)))])
   (print-lines console wrapped)
   (print-lines console (list cropped))
   (rich-print console
@@ -126,9 +145,33 @@
               (rich-strip-ansi "\033[31mred\033[0m")
               "\n"))
 
+(section console "Unicode Cells / 中文")
+;; CJK, combining accents, and a simple emoji align in scalar and grapheme terminals.
+;; Multi-code-point emoji are shown outside borders because terminal shaping differs.
+(let ([table (rich-table :box 'rounded :columns ("Text" "Cells"))])
+  (for-each
+   (lambda (text)
+     (rich-table-add-row! table
+                         (rich-text text (rich-style 'cyan))
+                         (number->string (rich-segment-width (rich-segment text)))))
+   '("中文" "café" "かな" "한글" "🚀"))
+  (rich-print console table "\n"))
+(rich-print console "Emoji sequences: 👩🏽‍💻  🇨🇳  ❤️\n")
+(print-lines console
+             (rich-segment-wrap
+              (list (rich-segment "中文 café 🚀 编程" (rich-style 'magenta)))
+              (rich-console-width console)))
+(rich-print console "Cropped: "
+            (make-example-lines (list (rich-segment-crop
+                                         (list (rich-segment "中文🚀 café"))
+                                         (max 1 (quotient (rich-console-width console) 2)))))
+            "\n")
+(rich-println console "Aligned:")
+(rich-print console (rich-align :body "中文 é 🚀" :align 'right) "\n")
+
 (section console "Rules, Padding, Alignment")
 (define centered-rule
-  (rich-rule :title "centered heavy rule" :width 50 :style 'heavy))
+  (rich-rule :title "centered heavy rule" :style 'heavy))
 (define padded
   (rich-padding
     :body (rich-text "padded body with styled text" (rich-style 'yellow))
@@ -136,9 +179,9 @@
     :right 4
     :bottom 1
     :left 4))
-(define left-align (rich-align :body "left aligned" :width 34 :align 'left))
-(define center-align (rich-align :body "center aligned" :width 34 :align 'center))
-(define right-align (rich-align :body "right aligned" :width 34 :align 'right))
+(define left-align (rich-align :body "left aligned" :align 'left))
+(define center-align (rich-align :body "center aligned" :align 'center))
+(define right-align (rich-align :body "right aligned" :align 'right))
 (rich-print console centered-rule "\n" padded "\n")
 (rich-print console left-align "\n" center-align "\n" right-align "\n")
 
@@ -165,8 +208,7 @@
     :box 'double))
 (define box-columns
   (rich-columns
-    :items (ascii-panel rounded-panel heavy-panel double-panel)
-    :width 76
+    :items (list ascii-panel rounded-panel heavy-panel double-panel)
     :gap 3))
 (rich-print console box-columns "\n")
 
@@ -183,6 +225,30 @@
            ("compile" (rich-text "warm" (rich-style 'yellow)) "whole-program optimization")
            ("test" (rich-text "pass" (rich-style 'bold 'green)) "rich, string, list"))))
 (rich-print console build-table "\n")
+
+(section console "Package Catalog")
+(define packages
+  (list (make-package "cspp-core" "1.0" "ready")
+        (make-package "cspp-net" "0.2" "testing")
+        (make-package "cspp-rich" "0.1" "ready")))
+(let ([catalog (rich-table :box 'rounded :columns ("Package" "Purpose"))])
+  (for-each
+   (lambda (package purpose)
+     (rich-table-add-row! catalog package purpose))
+   packages '("Base libraries" "HTTP and SSH" "Terminal reports"))
+  (rich-print console catalog "\n")
+  (rich-print console "Inline record: " (car packages) "\n"))
+
+;; Numeric columns use procedural construction to select right justification.
+(section console "Cache Budget")
+(define cache-budget (rich-table :box 'square :show-lines? #f))
+(rich-table-add-column! cache-budget "Artifact")
+(rich-table-add-column! cache-budget "KiB" 'right)
+(rich-table-add-column! cache-budget "Hits" 'right)
+(for-each
+ (lambda (row) (apply rich-table-add-row! cache-budget row))
+ '(("reader" 48 9821) ("compiler" 1024 742) ("runtime" 256 120)))
+(rich-print console cache-budget "\n")
 
 (section console "Tree And Pretty Printing")
 (define project-tree
@@ -223,6 +289,27 @@
     :padding 2))
 (rich-print console layout-panel "\n")
 
+(section console "Release Summary")
+;; Compose existing renderables; each child receives its parent's content width.
+(define release-checks (make-rich-tree (rich-text "Release checks" 'ok)))
+(rich-tree-add! release-checks "Unit tests passed")
+(rich-tree-add! release-checks "Documentation generated")
+(rich-tree-add! release-checks "Package signatures verified")
+(define release-report
+  (rich-panel
+    :title "Candidate 0.1"
+    :subtitle "Ready for review"
+    :box 'rounded
+    :body (rich-layout
+            :direction 'column
+            :items (list (rich-columns
+                           :gap 2
+                           :items (list (rich-panel :title "Artifacts" :body cache-budget)
+                                        (rich-panel :title "Validation" :body release-checks)))
+                         (rich-padding :top 1 :left 1
+                           :body (rich-text "Next: publish the signed archive." 'warn))))))
+(rich-print console release-report "\n")
+
 (section console "Live, Status, Progress")
 (let ([now 0])
   (parameterize ([rich-current-time (lambda () now)])
@@ -255,6 +342,7 @@
       :box 'rounded
       :columns ("Export" "Preview")
       :rows (("text length" (number->string (string-length plain)))
-             ("ansi value" ansi)
+             ("ansi value" (rich-text (rich-strip-ansi ansi) (rich-style 'bold 'green)))
+             ("record text" (rich-export-text (cadr packages)))
              ("renderer?" (if (rich-renderable? build-table) "registered" "plain")))))
   (rich-print console export-table "\n"))

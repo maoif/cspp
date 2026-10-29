@@ -50,6 +50,7 @@
                [$default? default]
                [$choices? choices])
               (rich-print console message ": ")
+              (flush-output-port (rich-console-output-port console))
               (let* ([line ($read-line (rich-console-input-port console))]
                      [value (if (and (string=? line "") default)
                                 default
@@ -84,20 +85,21 @@
        ($prompt-value 'rich-prompt console message default choices)]))
 
   #|proc:rich-confirm
-  The `rich-confirm` procedure prompts for a yes/no answer and returns a
-  boolean.
+  The `rich-confirm` procedure writes string `message` to `console`, reads a yes/no
+  answer case-insensitively, and returns a boolean. Optional boolean `default` supplies
+  the answer for empty input. Without a default, empty input raises an error, as do
+  answers other than `y`, `yes`, `n`, and `no` in any letter case.
   |#
   (define rich-confirm
     (case-lambda
       [(console message)
-       ($confirm-value (rich-prompt console message #f '("y" "yes" "n" "no")))]
+       ($confirm-value (rich-prompt console message))]
       [(console message default)
        (pcheck ([boolean? default])
                ($confirm-value
                 (rich-prompt console
                              message
-                             (if default "y" "n")
-                             '("y" "yes" "n" "no"))))]))
+                             (if default "y" "n"))))]))
 
   #|proc:rich-password
   The `rich-password` procedure prompts for a password. It reads normally from
@@ -113,7 +115,6 @@
                       (when (zero? ($terminal-echo-supported))
                         (errorf 'rich-password
                                 "terminal no-echo input is not supported"))
-                      (rich-print console message ": ")
                       (let ([password
                              (dynamic-wind
                                (lambda ()
@@ -122,6 +123,8 @@
                                   ($terminal-disable-echo)
                                   "cannot disable terminal echo"))
                                (lambda ()
+                                 (rich-print console message ": ")
+                                 (flush-output-port (rich-console-output-port console))
                                  ($read-line input))
                                (lambda ()
                                  ($check-terminal-status

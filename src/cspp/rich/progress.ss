@@ -22,7 +22,9 @@
           rich-progress-task-visible?-set!)
   (import (cspp chez)
           (cspp utils)
+          (only (cspp list) make-list-builder)
           (cspp rich private common)
+          (cspp rich private lines)
           (cspp rich segment)
           (cspp rich renderable)
           (cspp rich live))
@@ -31,7 +33,8 @@
     (fields (mutable next-id $rich-progress-next-id $rich-progress-next-id-set!)
             (mutable width $rich-progress-width $rich-progress-width-set!)
             (mutable columns $rich-progress-columns $rich-progress-columns-set!)
-            (mutable tasks $rich-progress-tasks $rich-progress-tasks-set!)
+            (immutable tasks $rich-progress-task-builder)
+            (immutable task-index $rich-progress-task-index)
             (mutable live $rich-progress-live $rich-progress-live-set!)))
 
   (define-record-type (rich-progress-task-record $make-rich-progress-task-record $rich-progress-task?)
@@ -52,28 +55,24 @@
 
   (define $nonnegative-real?
     (lambda (x)
-      (and (real? x) (not (negative? x)))))
+      (and (real? x) (finite? x) (>= x 0))))
 
   (define $columns?
     (lambda (x)
-      (list? x)))
+      (and (list? x)
+           (rich-list-every?
+            (lambda (column)
+              (and (memq column '(description bar percentage completed elapsed remaining speed
+                                  spinner)) #t))
+            x))))
 
-  (define $append-one
-    (lambda (ls value)
-      (let loop ([ls ls] [out '()])
-        (if (null? ls)
-            (rich-reverse-append out (list value))
-            (loop (cdr ls) (cons (car ls) out))))))
+  (define $rich-progress-tasks
+    (lambda (progress) (($rich-progress-task-builder progress))))
 
   (define $progress-task-ref
     (lambda (progress id who)
-      (let loop ([tasks ($rich-progress-tasks progress)])
-        (cond [(null? tasks)
-               (errorf who "unknown progress task id: ~a" id)]
-              [(= id ($rich-progress-task-id (car tasks)))
-               (car tasks)]
-              [else
-               (loop (cdr tasks))]))))
+      (or (hashtable-ref ($rich-progress-task-index progress) id #f)
+          (errorf who "unknown progress task id: ~a" id))))
 
   (define $string-repeat
     (lambda (text count)
@@ -91,7 +90,7 @@
 
   (define $percent
     (lambda (completed total)
-      (if (zero? total)
+      (if (>= completed total)
           100
           (min 100 ($rounded-exact (* 100 (/ completed total)))))))
 
@@ -100,32 +99,140 @@
       (let* ([total ($rich-progress-task-total task)]
              [completed ($rich-progress-task-completed task)]
              [filled (cond [(not total) 0]
-                           [(zero? total) width]
+                           [(>= completed total) width]
                            [else (min width ($rounded-exact (* width (/ completed total))))])])
         (string-append "["
                        ($string-repeat "#" filled)
                        ($string-repeat "-" (- width filled))
                        "]"))))
 
+  (define $duration-string
+    (lambda (seconds)
+      (let* ([seconds (inexact->exact (floor seconds))]
+             [hours (quotient seconds 3600)]
+             [minutes (quotient (remainder seconds 3600) 60)]
+             [seconds (remainder seconds 60)]
+             [two-digits (lambda (n)
+                           (string-append (if (< n 10) "0" "") (number->string n)))])
+        (string-append (two-digits hours) ":" (two-digits minutes) ":" (two-digits seconds)))))
+
+  ;; Format exact hundredths directly: even a finite speed can exceed flonum range.
+  (define $speed-string
+    (lambda (speed)
+      (let* ([hundredths (round (* speed 100))]
+             [fraction (remainder hundredths 100)]
+             [decimal (cond [(zero? fraction) "0"]
+                            [(zero? (remainder fraction 10))
+                             (number->string (quotient fraction 10))]
+                            [(< fraction 10) (string-append "0" (number->string fraction))]
+                            [else (number->string fraction)])])
+        (string-append (number->string (quotient hundredths 100)) "." decimal "/s"))))
+
+  (define $task-column
+    (lambda (task width column now)
+      (let* ([completed ($rich-progress-task-completed task)]
+             [total ($rich-progress-task-total task)]
+             [end-time (or ($rich-progress-task-stop-time task) now)]
+             [raw-elapsed (- end-time ($rich-progress-task-start-time task))]
+             ;; Preserve ordinary flonum rounding, but avoid converting an overflowed
+             ;; subtraction to exact infinity for finite clock endpoints.
+             [elapsed (max 0 (if (finite? raw-elapsed)
+                                 raw-elapsed
+                                 (- (inexact->exact end-time)
+                                    (inexact->exact ($rich-progress-task-start-time task)))))]
+             [speed (if (positive? elapsed)
+                        (/ (inexact->exact completed) (inexact->exact elapsed)) 0)])
+        (case column
+          [(description) (rich-single-line-text ($rich-progress-task-description task))]
+          [(bar) ($task-bar task width)]
+          [(percentage) (if total
+                            (string-append (number->string ($percent completed total)) "%")
+                            "?")]
+          [(completed) (if total
+                           (string-append (number->string completed) "/" (number->string total))
+                           (number->string completed))]
+          [(elapsed) ($duration-string elapsed)]
+          [(remaining) (cond [(and total (>= completed total)) "00:00:00"]
+                             [(and total (positive? speed))
+                              ($duration-string
+                               (ceiling (/ (- total (inexact->exact completed)) speed)))]
+                             [else "--:--:--"])]
+          [(speed) ($speed-string speed)]
+          [(spinner)
+           (let* ([ticks (* elapsed 10)]
+                  ;; Preserve ordinary flonum rounding; use exact ticks on overflow.
+                  [ticks (if (finite? ticks) ticks (* (inexact->exact elapsed) 10))])
+             (vector-ref '#("|" "/" "-" "\\")
+                         (modulo (inexact->exact (floor ticks)) 4)))]))))
+
   (define $task-line
-    (lambda (task width)
-      (let ([description ($rich-progress-task-description task)]
-            [completed ($rich-progress-task-completed task)]
-            [total ($rich-progress-task-total task)])
-        (if total
-            (string-append description
-                           " "
-                           ($task-bar task width)
-                           " "
-                           (number->string ($percent completed total))
-                           "%"
-                           " "
-                           (number->string completed)
-                           "/"
-                           (number->string total))
-            (string-append description
-                           " "
-                           (number->string completed))))))
+    (lambda (task width columns now)
+      (let loop ([columns columns] [out '()] [first? #t])
+        (if (null? columns)
+            (apply string-append (reverse out))
+            (loop (cdr columns)
+                  (cons ($task-column task width (car columns) now)
+                        (if first? out (cons " " out)))
+                  #f)))))
+
+  ;; Measure each column across all visible tasks before allocating flexible bars.
+  (define $automatic-task-lines
+    (lambda (tasks columns now)
+      (let* ([available (rich-render-width)]
+             [count (length columns)]
+             [names (list->vector columns)]
+             [widths (make-vector count 0)]
+             [rows (map (lambda (task)
+                          (list->vector
+                           (map (lambda (column) ($task-column task 0 column now)) columns)))
+                        tasks)])
+        (for-each
+         (lambda (row)
+           (do ([i 0 (+ i 1)]) ((= i count))
+             (vector-set! widths i (max (vector-ref widths i)
+                                       (rich-segment-width (rich-segment (vector-ref row i)))))))
+         rows)
+        (let* ([bars (length (filter (lambda (name) (eq? name 'bar)) columns))]
+               [used (+ (max 0 (- count 1)) (apply + (vector->list widths)))]
+               [excess (max 0 (- used available))])
+          ;; Bar interiors are already zero. Descriptions yield space next.
+          (do ([i 0 (+ i 1)]) ((= i count))
+            (when (eq? (vector-ref names i) 'description)
+              (let ([removed (min excess (vector-ref widths i))])
+                (vector-set! widths i (- (vector-ref widths i) removed))
+                (set! excess (- excess removed))
+                (set! used (- used removed)))))
+          (when (positive? bars)
+            (let ([left (max 0 (- available used))] [remaining bars])
+              (do ([i 0 (+ i 1)]) ((= i count))
+                (when (eq? (vector-ref names i) 'bar)
+                  (let ([extra (quotient left remaining)])
+                    (vector-set! widths i (+ 2 extra))
+                    (set! left (- left extra))
+                    (set! remaining (- remaining 1)))))))
+          (map
+           (lambda (task row)
+             (let ([line
+                    (let loop ([i 0] [out '()])
+                      (if (= i count)
+                          (apply string-append (reverse out))
+                          (let* ([name (vector-ref names i)]
+                                 [width (vector-ref widths i)]
+                                 [text (if (eq? name 'bar)
+                                           ($task-bar task (- width 2))
+                                           (rich-segments->plain
+                                            (rich-segment-crop
+                                             (list (rich-segment (vector-ref row i))) width)))]
+                                 [space (make-string
+                                         (max 0 (- width (rich-segment-width (rich-segment text))))
+                                         #\space)]
+                                 [padded (if (memq name '(percentage completed elapsed remaining speed))
+                                             (string-append space text)
+                                             (string-append text space))])
+                            (loop (+ i 1) (cons padded (if (zero? i) out (cons " " out)))))))])
+               ;; If fixed columns alone cannot fit, keep automatic output on one row.
+               (rich-segment-crop (list (rich-segment line)) available)))
+           tasks rows)))))
 
   (define $visible-tasks
     (lambda (progress)
@@ -224,19 +331,25 @@
 
   #|proc:make-rich-progress
   The `make-rich-progress` procedure constructs a progress display with a
-  default bar width and no tasks.
+  bar `width` and no tasks. The default `#f` fills available content width after
+  reserving space for other columns; a positive exact integer fixes the bar interior width.
+  The list `columns` selects output columns in order; its default is
+  `rich-progress-default-columns`. Supported
+  symbols are `description`, `bar`, `percentage`, `completed`, `elapsed`, `remaining`,
+  `speed`, and `spinner`. An empty list produces empty task lines. Returns the display.
   |#
   (define make-rich-progress
     (case-lambda
       [()
-       ($make-rich-progress-record 0 40 (rich-progress-default-columns) '() #f)]
+       ($make-rich-progress-record 0 #f (rich-progress-default-columns)
+                                   (make-list-builder) (make-eqv-hashtable) #f)]
       [(width columns)
-       (pcheck ([rich-positive-integer? width] [$columns? columns])
-               ($make-rich-progress-record 0 width columns '() #f))]))
+       (pcheck ([rich-optional-width? width] [$columns? columns])
+               ($make-rich-progress-record 0 width columns (make-list-builder) (make-eqv-hashtable) #f))]))
 
   (define $rich-progress-width-set!/checked
     (lambda (progress width)
-      (pcheck ([rich-progress? progress] [rich-positive-integer? width])
+      (pcheck ([rich-progress? progress] [rich-optional-width? width])
               ($rich-progress-width-set! progress width))))
 
   (define $rich-progress-columns-set!/checked
@@ -258,14 +371,13 @@
                      [task ($make-rich-progress-task-record
                             id description total 0 #t ((rich-current-time)) #f)])
                 ($rich-progress-next-id-set! progress (+ id 1))
-                ($rich-progress-tasks-set!
-                 progress
-                 ($append-one ($rich-progress-tasks progress) task))
+                (hashtable-set! ($rich-progress-task-index progress) id task)
+                (($rich-progress-task-builder progress) task)
                 id))))
 
   #|proc:rich-progress-update!
-  The `rich-progress-update!` procedure sets the completed count for a progress
-  task and returns `progress`.
+  The `rich-progress-update!` procedure sets the finite nonnegative completed count
+  `completed` for task `id` in `progress` and returns `progress`.
   |#
   (define rich-progress-update!
     (lambda (progress id completed)
@@ -277,8 +389,9 @@
                 progress))))
 
   #|proc:rich-progress-advance!
-  The `rich-progress-advance!` procedure increments the completed count for a
-  progress task and returns `progress`.
+  The `rich-progress-advance!` procedure increments task `id` in `progress` by finite
+  nonnegative `amount` (default one), returning `progress`. An overflow raises an error
+  before the stored count changes.
   |#
   (define rich-progress-advance!
     (case-lambda
@@ -289,9 +402,9 @@
                 [rich-nonnegative-integer? id]
                 [$nonnegative-real? amount])
                (let ([task ($progress-task-ref progress id 'rich-progress-advance!)])
-                 ($rich-progress-task-completed-set!
-                  task
-                  (+ ($rich-progress-task-completed task) amount))
+                 (let ([completed (+ ($rich-progress-task-completed task) amount)])
+                   (pcheck ([$nonnegative-real? completed])
+                     ($rich-progress-task-completed-set! task completed)))
                  progress))]))
 
   #|proc:rich-progress-complete!
@@ -350,15 +463,29 @@
 
   #|proc:rich-progress-render
   The `rich-progress-render` procedure renders visible progress tasks as segment
-  lines.
+  lines and returns them in task order using the configured columns of `progress`.
+  Elapsed and estimated remaining durations use `HH:MM:SS`; unavailable estimates
+  use `--:--:--`. Speed is the average completed units per second, rounded to two
+  decimal places. Unknown totals show `?` for percentage and a bare completed count.
+  Automatic sizing aligns columns across visible tasks. Bars receive leftover space;
+  descriptions are shortened when needed, then rows are cropped if fixed columns cannot fit.
+  Explicit bar widths retain their fixed layout. Timing uses `rich-current-time` and
+  freezes when the task is explicitly completed. Description tabs expand at eight-cell
+  stops and line endings fold to spaces so each task occupies one logical line.
+  Spinner frames cycle through `|`, `/`, `-`, and `\` every tenth of a second.
   |#
   (define rich-progress-render
     (lambda (progress)
       (pcheck ([rich-progress? progress])
-              (map (lambda (task)
-                     (list (rich-segment
-                            ($task-line task ($rich-progress-width progress)))))
-                   ($visible-tasks progress)))))
+              (let ([now ((rich-current-time))]
+                    [tasks ($visible-tasks progress)]
+                    [width ($rich-progress-width progress)]
+                    [columns ($rich-progress-columns progress)])
+                (if width
+                    (map (lambda (task)
+                           (list (rich-segment ($task-line task width columns now))))
+                         tasks)
+                    ($automatic-task-lines tasks columns now))))))
 
   #|macro:rich-progress
   The `rich-progress` macro constructs and returns a progress display.
@@ -414,4 +541,4 @@
                  tmp)))]
         [_ (syntax-error stx "invalid rich-progress form")])))
 
-  (rich-register-renderer! rich-progress? rich-progress-render))
+  (rich-register-container-renderer! rich-progress? rich-progress-render))

@@ -16,6 +16,7 @@
   (import (cspp chez)
           (cspp utils)
           (cspp rich private common)
+          (cspp rich private cells)
           (cspp rich style))
 
   (define-record-type (rich-segment-record $make-rich-segment $rich-segment?)
@@ -25,56 +26,64 @@
 
   (define $rich-segment-style?
     (lambda (x)
-      (or (not x) (rich-style? x) (rich-reset? x))))
+      (or (not x) (symbol? x) (rich-style? x) (rich-reset? x))))
 
   (define $rich-segment-list?
     (lambda (x)
       (and (list? x) (rich-list-every? rich-segment? x))))
-
-  (define $csi-open-char (integer->char 91))
-
-  (define $semicolon-char (integer->char 59))
-
-  (define $ansi-sgr-end
-    (lambda (text start)
-      (let ([len (string-length text)])
-        (and (char=? (string-ref text start) #\esc)
-             (< (+ start 2) len)
-             (char=? (string-ref text (+ start 1)) $csi-open-char)
-             (let scan ([i (+ start 2)])
-               (cond [(= i len) #f]
-                     [(char=? (string-ref text i) #\m) (+ i 1)]
-                     [(or (char-numeric? (string-ref text i))
-                          (char=? (string-ref text i) $semicolon-char))
-                      (scan (+ i 1))]
-                     [else #f]))))))
-
-  (define $substring-visible
-    (lambda (text start max-width)
-      (let ([len (string-length text)])
-        (let loop ([i start] [visible 0])
-          (cond [(= i len) (values len visible)]
-                [(= visible max-width) (values i visible)]
-                [($ansi-sgr-end text i) =>
-                 (lambda (end) (loop end visible))]
-                [else (loop (+ i 1) (+ visible 1))])))))
-
-  (define $split-text-visible
-    (lambda (text width)
-      (let ([len (string-length text)])
-        (let loop ([start 0] [out '()])
-          (if (= start len)
-              (reverse out)
-              (let-values ([(end visible) ($substring-visible text start width)])
-                (if (= end start)
-                    (loop (+ start 1) (cons (substring text start (+ start 1)) out))
-                    (loop end (cons (substring text start end) out)))))))))
 
   (define $segment-copy
     (lambda (segment text)
       (rich-segment text
                     (rich-segment-style segment)
                     (rich-segment-control? segment))))
+
+  ;; Measure and scan a continuous text stream so style boundaries cannot split clusters.
+  (define $visible-text
+    (lambda (segments)
+      (apply string-append
+             (map (lambda (segment)
+                    (if (rich-segment-control? segment) "" (rich-segment-text segment)))
+                  segments))))
+
+  ;; Return the consumed pieces and a cursor into the original segment stream.
+  ;; Keeping an offset avoids copying the entire remaining string at each line break.
+  (define $take-segment-chars
+    (lambda (segments offset count)
+      (let loop ([segments segments] [offset offset] [count count] [out '()])
+        (cond
+          [(null? segments) (values (reverse out) '() 0)]
+          [(rich-segment-control? (car segments))
+           (loop (cdr segments) 0 count (cons (car segments) out))]
+          [(zero? count) (values (reverse out) segments offset)]
+          [else
+           (let* ([segment (car segments)] [text (rich-segment-text segment)]
+                  [len (string-length text)] [available (fx- len offset)])
+             (if (<= available count)
+                 (loop (cdr segments) 0 (- count available)
+                       (cons (if (fxzero? offset) segment
+                                 ($segment-copy segment (substring text offset len))) out))
+                 (let ([end (+ offset count)])
+                   (values (reverse (cons ($segment-copy segment (substring text offset end)) out))
+                           segments end))))]))))
+
+  (define $remaining-segments
+    (lambda (segments offset)
+      (if (fxzero? offset)
+          segments
+          (let* ([segment (car segments)] [text (rich-segment-text segment)])
+            (cons ($segment-copy segment (substring text offset (string-length text)))
+                  (cdr segments))))))
+
+  (define $oversize-placeholder
+    (lambda (segments)
+      (let loop ([segments segments] [written? #f] [out '()])
+        (cond [(null? segments) (reverse out)]
+              [(rich-segment-control? (car segments))
+               (loop (cdr segments) written? (cons (car segments) out))]
+              [written? (loop (cdr segments) #t out)]
+              [else (loop (cdr segments) #t
+                          (cons ($segment-copy (car segments) " ") out))]))))
 
   #|proc:rich-segment?
   The `rich-segment?` procedure returns `#t` when its argument is a rich text
@@ -94,8 +103,8 @@
               ($rich-segment-text segment))))
 
   #|proc:rich-segment-style
-  The `rich-segment-style` procedure returns the style object, reset object, or
-  `#f` stored in `segment`.
+  The `rich-segment-style` procedure returns the style object, theme-name symbol,
+  reset object, or `#f` stored in `segment`.
   |#
   (define rich-segment-style
     (lambda (segment)
@@ -112,8 +121,9 @@
               ($rich-segment-control? segment))))
 
   #|proc:make-rich-segment
-  The `make-rich-segment` procedure constructs a text segment from `text`, an
-  optional style or reset object, and an optional control flag.
+  The `make-rich-segment` procedure returns a segment containing the string `text`.
+  Optional `style` is a style object, a theme-name symbol resolved by the console,
+  a reset object, or `#f`. Optional boolean `control?` makes the segment zero-width.
   |#
   (define make-rich-segment
     (case-lambda
@@ -126,7 +136,9 @@
                ($make-rich-segment text style control?))]))
 
   #|proc:rich-segment
-  The `rich-segment` procedure constructs a rich text segment.
+  The `rich-segment` procedure returns a segment from the string `text`, optional
+  `style`, and optional boolean `control?`, just like `make-rich-segment`. The style
+  may be a style object, theme-name symbol, reset object, or `#f`.
   |#
   (define rich-segment make-rich-segment)
 
@@ -137,49 +149,32 @@
   (define rich-strip-ansi
     (lambda (text)
       (pcheck ([string? text])
-              (let ([len (string-length text)])
-                (let loop ([i 0] [out '()])
-                  (cond [(= i len)
-                         (list->string (reverse out))]
-                        [(and (char=? (string-ref text i) #\esc)
-                              (< (+ i 2) len)
-                              (char=? (string-ref text (+ i 1)) $csi-open-char))
-                         (let scan ([j (+ i 2)])
-                           (cond [(= j len)
-                                  (loop (+ i 1) (cons (string-ref text i) out))]
-                                 [(char=? (string-ref text j) #\m)
-                                  (loop (+ j 1) out)]
-                                 [(or (char-numeric? (string-ref text j))
-                                      (char=? (string-ref text j) $semicolon-char))
-                                  (scan (+ j 1))]
-                                 [else
-                                  (loop (+ i 1) (cons (string-ref text i) out))]))]
-                        [else
-                         (loop (+ i 1) (cons (string-ref text i) out))]))))))
+        (let ([len (string-length text)])
+          (let loop ([index 0] [out '()])
+            (cond [(= index len) (list->string (reverse out))]
+                  [(rich-ansi-sgr-end text index) => (lambda (end) (loop end out))]
+                  [else (loop (+ index 1) (cons (string-ref text index) out))]))))))
 
   #|proc:rich-segment-width
   The `rich-segment-width` procedure returns the visible width of `segment`.
-  Control segments have width zero.
+  Control segments have width zero. CJK and wide emoji use two terminal cells;
+  combining marks use zero, and East Asian ambiguous characters use one.
   |#
   (define rich-segment-width
     (lambda (segment)
       (pcheck ([rich-segment? segment])
               (if (rich-segment-control? segment)
                   0
-                  (string-length (rich-strip-ansi (rich-segment-text segment)))))))
+                  (rich-cell-string-width (rich-segment-text segment))))))
 
   #|proc:rich-segments-width
-  The `rich-segments-width` procedure returns the sum of visible widths for
-  `segments`.
+  The `rich-segments-width` procedure returns the terminal cell width of `segments`
+  as one logical line. Grapheme clusters may cross style or control segment boundaries.
   |#
   (define rich-segments-width
     (lambda (segments)
       (pcheck ([$rich-segment-list? segments])
-              (let loop ([segments segments] [width 0])
-                (if (null? segments)
-                    width
-                    (loop (cdr segments)
-                          (+ width (rich-segment-width (car segments)))))))))
+              (rich-cell-string-width ($visible-text segments)))))
 
   #|proc:rich-segments->plain
   The `rich-segments->plain` procedure concatenates the source text of
@@ -192,76 +187,43 @@
 
   #|proc:rich-segment-wrap
   The `rich-segment-wrap` procedure wraps `segments` into a list of segment
-  lines that fit within positive visible `width`.
+  lines that fit within positive terminal cell `width`. Display units stay intact;
+  a glyph wider than the whole line is replaced by a single space.
   |#
   (define rich-segment-wrap
     (lambda (segments width)
       (pcheck ([$rich-segment-list? segments] [rich-positive-integer? width])
-              (let loop-segments ([segments segments]
-                                  [line '()]
-                                  [line-width 0]
-                                  [lines '()])
-                (cond
-                 [(null? segments)
-                  (reverse (cons (reverse line) lines))]
-                 [(rich-segment-control? (car segments))
-                  (loop-segments (cdr segments)
-                                 (cons (car segments) line)
-                                 line-width
-                                 lines)]
-                 [else
-                  (let loop-pieces ([pieces ($split-text-visible
-                                             (rich-segment-text (car segments))
-                                             width)]
-                                    [line line]
-                                    [line-width line-width]
-                                    [lines lines])
-                    (cond
-                     [(null? pieces)
-                      (loop-segments (cdr segments) line line-width lines)]
-                     [else
-                      (let* ([piece (car pieces)]
-                             [piece-width (string-length (rich-strip-ansi piece))]
-                             [next-width (+ line-width piece-width)]
-                             [piece-segment ($segment-copy (car segments) piece)])
-                        (cond
-                         [(= piece-width 0)
-                          (loop-pieces (cdr pieces)
-                                       (cons piece-segment line)
-                                       line-width
-                                       lines)]
-                         [(> next-width width)
-                          (loop-pieces pieces '() 0 (cons (reverse line) lines))]
-                         [else
-                          (loop-pieces (cdr pieces)
-                                       (cons piece-segment line)
-                                       next-width
-                                       lines)]))]))])))))
+        (let* ([text ($visible-text segments)] [len (string-length text)])
+          (let loop ([index 0] [start 0] [used 0] [segments segments] [offset 0] [lines '()])
+            (if (= index len)
+                (reverse (cons ($remaining-segments segments offset) lines))
+                (let-values ([(end cells) (rich-cell-next text index)])
+                  (cond
+                    [(<= (+ used cells) width)
+                     (loop end start (+ used cells) segments offset lines)]
+                    [(positive? used)
+                     (let-values ([(line rest offset)
+                                   ($take-segment-chars segments offset (- index start))])
+                       (loop index index 0 rest offset (cons line lines)))]
+                    [else
+                     ;; A two-cell glyph cannot fit a one-cell line. Consume it safely.
+                     (let-values ([(pieces rest offset)
+                                   ($take-segment-chars segments offset (- end start))])
+                       (let ([lines (cons ($oversize-placeholder pieces) lines)])
+                         (if (= end len)
+                             (reverse lines)
+                             (loop end end 0 rest offset lines))))]))))))))
 
   #|proc:rich-segment-crop
   The `rich-segment-crop` procedure crops `segments` to at most `width`
-  visible columns.
+  terminal cells without splitting grapheme clusters, including across style boundaries.
   |#
   (define rich-segment-crop
     (lambda (segments width)
       (pcheck ([$rich-segment-list? segments] [rich-nonnegative-integer? width])
-              (let loop ([segments segments] [left width] [out '()])
-                (cond [(null? segments) (reverse out)]
-                      [(rich-segment-control? (car segments))
-                       (loop (cdr segments) left (cons (car segments) out))]
-                      [(= left 0) (reverse out)]
-                      [else
-                       (let-values ([(end visible)
-                                     ($substring-visible
-                                      (rich-segment-text (car segments))
-                                      0
-                                      left)])
-                         (let ([text (substring (rich-segment-text (car segments)) 0 end)])
-                           (loop (cdr segments)
-                                 (- left visible)
-                                 (if (string=? text "")
-                                     out
-                                     (cons ($segment-copy (car segments) text) out)))))])))))
+        (let-values ([(end cells) (rich-cell-prefix ($visible-text segments) 0 width)])
+          (let-values ([(prefix rest offset) ($take-segment-chars segments 0 end)])
+            prefix)))))
 
   #|proc:rich-segment-pad-right
   The `rich-segment-pad-right` procedure appends spaces to `segments` until

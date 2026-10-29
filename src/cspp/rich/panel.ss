@@ -21,10 +21,11 @@
   (import (cspp chez)
           (cspp utils)
           (cspp rich private common)
+          (cspp rich private lines)
           (cspp rich box)
           (cspp rich segment)
           (cspp rich renderable)
-          (cspp rich pretty))
+          (cspp rich private render))
 
   (define-record-type (rich-panel-record $make-rich-panel-record $rich-panel?)
     (fields (mutable body $rich-panel-body $rich-panel-body-set!)
@@ -43,88 +44,10 @@
     (lambda (x)
       (or (not x) (rich-positive-integer? x))))
 
-  (define $rich-segment-list?
-    (lambda (x)
-      (and (list? x) (rich-list-every? rich-segment? x))))
-
-  (define $rich-segment-line-list?
-    (lambda (x)
-      (and (list? x) (rich-list-every? $rich-segment-list? x))))
-
-  (define $string-split-lines
-    (lambda (text)
-      (let ([len (string-length text)])
-        (let loop ([start 0] [i 0] [out '()])
-          (cond [(= i len)
-                 (reverse (cons (substring text start i) out))]
-                [(char=? (string-ref text i) #\newline)
-                 (loop (+ i 1) (+ i 1) (cons (substring text start i) out))]
-                [else
-                 (loop start (+ i 1) out)])))))
-
-  (define $string->segment-lines
-    (lambda (text)
-      (map (lambda (line) (list (rich-segment line)))
-           ($string-split-lines text))))
-
-  (define $segment-copy
-    (lambda (segment text)
-      (rich-segment text
-                    (rich-segment-style segment)
-                    (rich-segment-control? segment))))
-
-  (define $normalize-segment-line
-    (lambda (line)
-      (let loop-segments ([segments line] [line '()] [lines '()])
-        (if (null? segments)
-            (reverse (cons (reverse line) lines))
-            (let loop-pieces ([pieces ($string-split-lines
-                                       (rich-segment-text (car segments)))]
-                              [line line]
-                              [lines lines])
-              (cond [(null? pieces)
-                     (loop-segments (cdr segments) line lines)]
-                    [(null? (cdr pieces))
-                     (loop-segments (cdr segments)
-                                    (cons ($segment-copy (car segments)
-                                                         (car pieces))
-                                          line)
-                                    lines)]
-                    [else
-                     (loop-pieces (cdr pieces)
-                                  '()
-                                  (cons (reverse
-                                         (cons ($segment-copy (car segments)
-                                                              (car pieces))
-                                               line))
-                                        lines))]))))))
-
-  (define $normalize-segment-lines
-    (lambda (lines)
-      (apply append (map $normalize-segment-line lines))))
-
-  (define $rendered->segment-lines
-    (lambda (who value)
-      (cond [(string? value) ($string->segment-lines value)]
-            [($rich-segment-line-list? value) ($normalize-segment-lines value)]
-            [else (errorf who "renderer returned invalid value: ~a" value)])))
+  (define $string->segment-lines rich-string->lines)
 
   (define $value->segment-lines
-    (lambda (value)
-      (cond [(rich-renderer-for value) =>
-             (lambda (renderer)
-               ($rendered->segment-lines 'rich-panel-render (renderer value)))]
-            [(string? value)
-             ($string->segment-lines value)]
-            [(or (char? value) (number? value) (symbol? value))
-             ($string->segment-lines
-              (rich-string-output
-               (lambda (port)
-                 (if (char? value)
-                     (write-char value port)
-                     (display value port)))))]
-            [else
-             (rich-pretty-render value)])))
+    (lambda (value) (rich-value->lines 'rich-panel-render value)))
 
   (define $string-repeat
     (lambda (text count)
@@ -137,12 +60,7 @@
     (lambda (width)
       (rich-segment (make-string width #\space))))
 
-  (define $segment-lines-width
-    (lambda (lines)
-      (let loop ([lines lines] [width 0])
-        (if (null? lines)
-            width
-            (loop (cdr lines) (max width (rich-segments-width (car lines))))))))
+  (define $segment-lines-width rich-lines-width)
 
   (define $line-pad-right-to
     (lambda (line width)
@@ -180,10 +98,10 @@
   (define $panel-body-lines
     (lambda (panel)
       (append (if (rich-panel-title panel)
-                  (list (list (rich-segment (rich-panel-title panel))))
+                  ($string->segment-lines (rich-panel-title panel))
                   '())
               (if (rich-panel-subtitle panel)
-                  (list (list (rich-segment (rich-panel-subtitle panel))))
+                  ($string->segment-lines (rich-panel-subtitle panel))
                   '())
               ($value->segment-lines (rich-panel-body panel)))))
 
@@ -201,8 +119,11 @@
 
   #|proc:make-rich-panel
   The `make-rich-panel` procedure constructs a mutable panel around `body` with
-  ASCII box drawing, one space of horizontal padding, and no width or height
-  constraint.
+  ASCII borders and one space of horizontal padding. With `width` set to `#f` (default),
+  content fits naturally and wraps at the available parent or terminal width. Positive
+  `width` retains its minimum-width behavior. Optional positive `height` is a minimum.
+  The full form accepts optional string `title` and `subtitle`, box style `box`, and
+  nonnegative horizontal `padding`. Returns the panel.
   |#
   (define make-rich-panel
     (case-lambda
@@ -336,39 +257,59 @@
               ($rich-panel-height-set! panel height))))
 
   #|proc:rich-panel-render
-  The `rich-panel-render` procedure renders `panel` as bordered segment lines.
+  The `rich-panel-render` procedure returns bordered segment lines for `panel`. Default
+  sizing wraps long content and reduces padding to fit the available width. If borders
+  and complete content glyphs cannot fit together, content wraps without borders.
+  Tabs expand at eight-cell content stops; CRLF and CR become line breaks.
   |#
   (define rich-panel-render
     (lambda (panel)
       (pcheck ([rich-panel? panel])
-              (let* ([lines ($panel-body-lines panel)]
-                     [padding (rich-panel-padding panel)]
-                     [natural-content-width ($segment-lines-width lines)]
-                     [natural-total-width (+ natural-content-width (* padding 2) 2)]
-                     [total-width (if (rich-panel-width panel)
-                                      (max (rich-panel-width panel) natural-total-width)
-                                      natural-total-width)]
-                     [content-width (- total-width (* padding 2) 2)]
-                     [natural-total-height (+ (length lines) 2)]
-                     [total-height (if (rich-panel-height panel)
-                                       (max (rich-panel-height panel)
-                                            natural-total-height)
-                                       natural-total-height)]
-                     [content-height (- total-height 2)]
-                     [chars (rich-box-chars (rich-panel-box panel))]
-                     [inner-width (- total-width 2)]
-                     [extra-lines (- content-height (length lines))])
-                (append (list ($border-line chars
-                                            (vector-ref chars 0)
-                                            (vector-ref chars 1)
-                                            inner-width))
-                        (map (lambda (line)
-                               ($content-line chars line content-width padding))
-                             (append lines ($blank-lines extra-lines)))
-                        (list ($border-line chars
-                                            (vector-ref chars 2)
-                                            (vector-ref chars 3)
-                                            inner-width)))))))
+        (parameterize ([rich-layout-render-cache
+                        (or (rich-layout-render-cache) (make-eq-hashtable))])
+          (let* ([fixed (rich-panel-width panel)]
+                 [available (or fixed (rich-render-width))]
+                 [initial-padding (if fixed (rich-panel-padding panel)
+                                      (min (rich-panel-padding panel)
+                                           (max 0 (quotient (- available 3) 2))))]
+                 [initial-budget (max 1 (- available (* 2 initial-padding) 2))]
+                 [measure-width (max initial-budget (if fixed 2 (min 2 available)))]
+                 [raw (parameterize
+                       ([rich-render-width measure-width])
+                        ($panel-body-lines panel))]
+                 [minimum (rich-lines-min-width raw)]
+                 [padding (if fixed initial-padding
+                              (min initial-padding (max 0 (quotient (- available 2 minimum) 2))))]
+                 [budget (max 1 (- available (* 2 padding) 2))]
+                 [unboxed? (and (not fixed) (< available (+ 2 minimum)))]
+                 [child-width (cond [fixed (max budget minimum)]
+                                    [unboxed? available]
+                                    [else budget])]
+                 [raw (if (= child-width measure-width) raw
+                          (parameterize ([rich-render-width child-width])
+                            ($panel-body-lines panel)))]
+                 [lines (if fixed raw (rich-lines-wrap raw budget))]
+                 [natural-total-width (+ ($segment-lines-width lines) (* padding 2) 2)]
+                 [total-width (if fixed (max fixed natural-total-width)
+                                  (min available natural-total-width))]
+                 [content-width (max 0 (- total-width (* padding 2) 2))]
+                 [natural-total-height (+ (length lines) 2)]
+                 [total-height (if (rich-panel-height panel)
+                                   (max (rich-panel-height panel) natural-total-height)
+                                   natural-total-height)]
+                 [chars (rich-box-chars (rich-panel-box panel))])
+            (if unboxed?
+                (let ([lines (rich-lines-wrap raw available)])
+                  (append lines
+                          ($blank-lines (max 0 (- (or (rich-panel-height panel) 0)
+                                                  (length lines))))))
+                (append
+                 (list ($border-line chars (vector-ref chars 0) (vector-ref chars 1)
+                                     (- total-width 2)))
+                 (map (lambda (line) ($content-line chars line content-width padding))
+                      (append lines ($blank-lines (- total-height natural-total-height))))
+                 (list ($border-line chars (vector-ref chars 2) (vector-ref chars 3)
+                                     (- total-width 2))))))))))
 
   #|macro:rich-panel
   The `rich-panel` macro constructs and returns a panel. The `:body` field is
@@ -425,4 +366,4 @@
                    tmp))))]
         [_ (syntax-error stx "invalid rich-panel form")])))
 
-  (rich-register-renderer! rich-panel? rich-panel-render))
+  (rich-register-container-renderer! rich-panel? rich-panel-render))

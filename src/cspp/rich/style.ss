@@ -21,13 +21,17 @@
           make-rich-theme
           rich-theme?
           rich-theme-ref
-          rich-theme-set!)
+          rich-theme-set!
+          ;; Internal composition support, omitted from the rich facade.
+          rich-style-overlay
+          rich-style->ansi/context)
   (import (cspp chez)
           (cspp utils)
           (cspp rich private common))
 
   (define rich-ansi-reset "\033[0m")
 
+  ;; Attribute fields are #f (unspecified), #t (enabled), or off (explicitly disabled).
   (define-record-type (rich-style-record make-rich-style-record $rich-style?)
     (opaque #t)
     (fields (immutable fg $rich-style-fg)
@@ -99,21 +103,21 @@
     (lambda (opt fg bg bold? dim? italic? underline? blink? reverse? hidden? strike?)
       (case opt
         [(bold) (values fg bg #t dim? italic? underline? blink? reverse? hidden? strike?)]
-        [(no-bold) (values fg bg #f dim? italic? underline? blink? reverse? hidden? strike?)]
+        [(no-bold) (values fg bg 'off dim? italic? underline? blink? reverse? hidden? strike?)]
         [(dim) (values fg bg bold? #t italic? underline? blink? reverse? hidden? strike?)]
-        [(no-dim) (values fg bg bold? #f italic? underline? blink? reverse? hidden? strike?)]
+        [(no-dim) (values fg bg bold? 'off italic? underline? blink? reverse? hidden? strike?)]
         [(italic) (values fg bg bold? dim? #t underline? blink? reverse? hidden? strike?)]
-        [(no-italic) (values fg bg bold? dim? #f underline? blink? reverse? hidden? strike?)]
+        [(no-italic) (values fg bg bold? dim? 'off underline? blink? reverse? hidden? strike?)]
         [(underline) (values fg bg bold? dim? italic? #t blink? reverse? hidden? strike?)]
-        [(no-underline) (values fg bg bold? dim? italic? #f blink? reverse? hidden? strike?)]
+        [(no-underline) (values fg bg bold? dim? italic? 'off blink? reverse? hidden? strike?)]
         [(blink) (values fg bg bold? dim? italic? underline? #t reverse? hidden? strike?)]
-        [(no-blink) (values fg bg bold? dim? italic? underline? #f reverse? hidden? strike?)]
+        [(no-blink) (values fg bg bold? dim? italic? underline? 'off reverse? hidden? strike?)]
         [(reverse) (values fg bg bold? dim? italic? underline? blink? #t hidden? strike?)]
-        [(no-reverse) (values fg bg bold? dim? italic? underline? blink? #f hidden? strike?)]
+        [(no-reverse) (values fg bg bold? dim? italic? underline? blink? 'off hidden? strike?)]
         [(hidden) (values fg bg bold? dim? italic? underline? blink? reverse? #t strike?)]
-        [(no-hidden) (values fg bg bold? dim? italic? underline? blink? reverse? #f strike?)]
+        [(no-hidden) (values fg bg bold? dim? italic? underline? blink? reverse? 'off strike?)]
         [(strike) (values fg bg bold? dim? italic? underline? blink? reverse? hidden? #t)]
-        [(no-strike) (values fg bg bold? dim? italic? underline? blink? reverse? hidden? #f)]
+        [(no-strike) (values fg bg bold? dim? italic? underline? blink? reverse? hidden? 'off)]
         [else
          (let ([fg-code ($color-ref 'rich-style $named-fg opt)]
                [bg-code ($color-ref 'rich-style $named-bg opt)])
@@ -197,7 +201,7 @@
   (define rich-style-bold?
     (lambda (style)
       (pcheck ([rich-style? style])
-              ($rich-style-bold? style))))
+              (eq? ($rich-style-bold? style) #t))))
 
   #|proc:rich-style-dim?
   The `rich-style-dim?` procedure returns whether `style` enables dim text.
@@ -205,7 +209,7 @@
   (define rich-style-dim?
     (lambda (style)
       (pcheck ([rich-style? style])
-              ($rich-style-dim? style))))
+              (eq? ($rich-style-dim? style) #t))))
 
   #|proc:rich-style-italic?
   The `rich-style-italic?` procedure returns whether `style` enables italic
@@ -214,7 +218,7 @@
   (define rich-style-italic?
     (lambda (style)
       (pcheck ([rich-style? style])
-              ($rich-style-italic? style))))
+              (eq? ($rich-style-italic? style) #t))))
 
   #|proc:rich-style-underline?
   The `rich-style-underline?` procedure returns whether `style` enables
@@ -223,7 +227,7 @@
   (define rich-style-underline?
     (lambda (style)
       (pcheck ([rich-style? style])
-              ($rich-style-underline? style))))
+              (eq? ($rich-style-underline? style) #t))))
 
   #|proc:rich-style-blink?
   The `rich-style-blink?` procedure returns whether `style` enables blinking
@@ -232,7 +236,7 @@
   (define rich-style-blink?
     (lambda (style)
       (pcheck ([rich-style? style])
-              ($rich-style-blink? style))))
+              (eq? ($rich-style-blink? style) #t))))
 
   #|proc:rich-style-reverse?
   The `rich-style-reverse?` procedure returns whether `style` enables reversed
@@ -241,7 +245,7 @@
   (define rich-style-reverse?
     (lambda (style)
       (pcheck ([rich-style? style])
-              ($rich-style-reverse? style))))
+              (eq? ($rich-style-reverse? style) #t))))
 
   #|proc:rich-style-hidden?
   The `rich-style-hidden?` procedure returns whether `style` enables hidden
@@ -250,7 +254,7 @@
   (define rich-style-hidden?
     (lambda (style)
       (pcheck ([rich-style? style])
-              ($rich-style-hidden? style))))
+              (eq? ($rich-style-hidden? style) #t))))
 
   #|proc:rich-style-strike?
   The `rich-style-strike?` procedure returns whether `style` enables
@@ -259,7 +263,7 @@
   (define rich-style-strike?
     (lambda (style)
       (pcheck ([rich-style? style])
-              ($rich-style-strike? style))))
+              (eq? ($rich-style-strike? style) #t))))
 
   #|proc:reset-style
   The `reset-style` procedure returns an opaque object that resets the active
@@ -271,7 +275,9 @@
 
   #|proc:rich-style
   The `rich-style` procedure constructs an opaque rich style object from style
-  symbols and RGB color forms.
+  symbols and RGB color forms in `opts`, returning the new style. Attribute symbols
+  enable attributes; no-* symbols explicitly disable them. Later options override earlier
+  options. Attributes omitted from `opts` inherit the active style when printed.
   |#
   (define rich-style
     (lambda opts
@@ -299,30 +305,74 @@
                (if code ($sgr code) ""))]
             [else ""])))
 
+  #|proc:rich-style-overlay
+  The internal `rich-style-overlay` returns `incoming` overlaid on `active`, a style or
+  `#f`. Unspecified attributes inherit; explicit disabled attributes override active ones.
+  |#
+  (define rich-style-overlay
+    (lambda (active incoming)
+      (pcheck ([$rich-style-or-false? active] [rich-style? incoming])
+        (if (not active)
+            incoming
+            (make-rich-style-record
+             (or ($rich-style-fg incoming) ($rich-style-fg active))
+             (or ($rich-style-bg incoming) ($rich-style-bg active))
+             (or ($rich-style-bold? incoming) ($rich-style-bold? active))
+             (or ($rich-style-dim? incoming) ($rich-style-dim? active))
+             (or ($rich-style-italic? incoming) ($rich-style-italic? active))
+             (or ($rich-style-underline? incoming) ($rich-style-underline? active))
+             (or ($rich-style-blink? incoming) ($rich-style-blink? active))
+             (or ($rich-style-reverse? incoming) ($rich-style-reverse? active))
+             (or ($rich-style-hidden? incoming) ($rich-style-hidden? active))
+             (or ($rich-style-strike? incoming) ($rich-style-strike? active)))))))
+
+  (define $rich-style-or-false?
+    (lambda (value) (or (not value) (rich-style? value))))
+
+  #|proc:rich-style->ansi/context
+  The internal `rich-style->ansi/context` encodes `style` for `color-system` over the
+  current style `active` (or `#f`). It preserves bold or dim when disabling the other.
+  Returns an ANSI string; the none color system returns an empty string.
+  |#
+  (define rich-style->ansi/context
+    (lambda (color-system style active)
+      (pcheck ([$rich-color-system-option? color-system] [rich-style? style]
+               [$rich-style-or-false? active])
+        (if (eq? color-system 'none)
+            ""
+            (let* ([intensity-reset? (or (eq? ($rich-style-bold? style) 'off)
+                                         (eq? ($rich-style-dim? style) 'off))]
+                   [intensity (if intensity-reset? (rich-style-overlay active style) style)])
+              (string-append
+               (if intensity-reset? ($sgr 22) "")
+               (if (rich-style-bold? intensity) ($sgr 1) "")
+               (if (rich-style-dim? intensity) ($sgr 2) "")
+               (case ($rich-style-italic? style)
+                 [(#t) ($sgr 3)] [(off) ($sgr 23)] [else ""])
+               (case ($rich-style-underline? style)
+                 [(#t) ($sgr 4)] [(off) ($sgr 24)] [else ""])
+               (case ($rich-style-blink? style)
+                 [(#t) ($sgr 5)] [(off) ($sgr 25)] [else ""])
+               (case ($rich-style-reverse? style)
+                 [(#t) ($sgr 7)] [(off) ($sgr 27)] [else ""])
+               (case ($rich-style-hidden? style)
+                 [(#t) ($sgr 8)] [(off) ($sgr 28)] [else ""])
+               (case ($rich-style-strike? style)
+                 [(#t) ($sgr 9)] [(off) ($sgr 29)] [else ""])
+               (let ([fg (rich-style-fg style)])
+                 (if fg ($color->ansi #t fg) ""))
+               (let ([bg (rich-style-bg style)])
+                 (if bg ($color->ansi #f bg) ""))))))))
+
   #|proc:rich-style->ansi
-  The `rich-style->ansi` procedure renders a rich style object as ANSI SGR
-  escape sequences for `color-system`. The `'none` color system suppresses ANSI
-  output; other accepted systems currently emit the available SGR and truecolor
+  The `rich-style->ansi` procedure returns ANSI SGR sequences for `style` using
+  `color-system` (or `#f`). Explicit no-* attributes emit disabling sequences.
+  The none color system suppresses ANSI; other accepted systems emit SGR and truecolor
   sequences without RGB color downgrade.
   |#
   (define rich-style->ansi
     (lambda (color-system style)
-      (pcheck ([$rich-color-system-option? color-system] [rich-style? style])
-              (if (eq? color-system 'none)
-                  ""
-                  (string-append
-                   (if (rich-style-bold? style) ($sgr 1) "")
-                   (if (rich-style-dim? style) ($sgr 2) "")
-                   (if (rich-style-italic? style) ($sgr 3) "")
-                   (if (rich-style-underline? style) ($sgr 4) "")
-                   (if (rich-style-blink? style) ($sgr 5) "")
-                   (if (rich-style-reverse? style) ($sgr 7) "")
-                   (if (rich-style-hidden? style) ($sgr 8) "")
-                   (if (rich-style-strike? style) ($sgr 9) "")
-                   (let ([fg (rich-style-fg style)])
-                     (if fg ($color->ansi #t fg) ""))
-                   (let ([bg (rich-style-bg style)])
-                     (if bg ($color->ansi #f bg) "")))))))
+      (rich-style->ansi/context color-system style #f)))
 
   (define-record-type (rich-theme-record make-rich-theme-record $rich-theme?)
     (opaque #t)

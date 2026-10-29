@@ -55,10 +55,11 @@
   (import (cspp chez)
           (cspp utils)
           (cspp rich private common)
+          (cspp rich private lines)
           (cspp rich box)
           (cspp rich segment)
           (cspp rich renderable)
-          (cspp rich pretty))
+          (cspp rich private render))
 
   (define-record-type (rich-rule-record $make-rich-rule-record $rich-rule?)
     (fields (mutable title $rich-rule-title $rich-rule-title-set!)
@@ -98,52 +99,8 @@
     (lambda (x)
       (memq x '(row column))))
 
-  (define $rich-segment-list?
-    (lambda (x)
-      (and (list? x) (rich-list-every? rich-segment? x))))
-
-  (define $rich-segment-line-list?
-    (lambda (x)
-      (and (list? x) (rich-list-every? $rich-segment-list? x))))
-
-  (define $string-split-lines
-    (lambda (text)
-      (let ([len (string-length text)])
-        (let loop ([start 0] [i 0] [out '()])
-          (cond [(= i len)
-                 (reverse (cons (substring text start i) out))]
-                [(char=? (string-ref text i) #\newline)
-                 (loop (+ i 1) (+ i 1) (cons (substring text start i) out))]
-                [else
-                 (loop start (+ i 1) out)])))))
-
-  (define $string->segment-lines
-    (lambda (text)
-      (map (lambda (line) (list (rich-segment line)))
-           ($string-split-lines text))))
-
-  (define $rendered->segment-lines
-    (lambda (who value)
-      (cond [(string? value) ($string->segment-lines value)]
-            [($rich-segment-line-list? value) value]
-            [else (errorf who "renderer returned invalid value: ~a" value)])))
-
   (define $value->segment-lines
-    (lambda (value)
-      (cond [(string? value)
-             ($string->segment-lines value)]
-            [(or (char? value) (number? value) (symbol? value))
-             ($string->segment-lines
-              (rich-string-output
-               (lambda (port)
-                 (if (char? value)
-                     (write-char value port)
-                     (display value port)))))]
-            [(rich-renderer-for value) =>
-             (lambda (renderer)
-               ($rendered->segment-lines 'rich-basic-render (renderer value)))]
-            [else
-             (rich-pretty-render value)])))
+    (lambda (value) (rich-value->lines 'rich-basic-render value)))
 
   (define $make-space-segment
     (lambda (width)
@@ -169,12 +126,7 @@
             (apply string-append (reverse out))
             (loop (- count 1) (cons text out))))))
 
-  (define $segment-lines-width
-    (lambda (lines)
-      (let loop ([lines lines] [width 0])
-        (if (null? lines)
-            width
-            (loop (cdr lines) (max width (rich-segments-width (car lines))))))))
+  (define $segment-lines-width rich-lines-width)
 
   (define $line-pad-right-to
     (lambda (line width)
@@ -185,10 +137,13 @@
 
   (define $columns-render-row
     (lambda (blocks gap)
-      (let ([height (let loop ([blocks blocks] [height 0])
+      ;; Convert line lists once so each output row uses constant-time indexing.
+      (let* ([blocks (map (lambda (block) (cons (list->vector (car block)) (cdr block)))
+                          blocks)]
+             [height (let loop ([blocks blocks] [height 0])
                       (if (null? blocks)
                           height
-                          (loop (cdr blocks) (max height (length (caar blocks))))))]
+                          (loop (cdr blocks) (max height (vector-length (caar blocks))))))]
             [gap-text (make-string gap #\space)])
         (let loop-lines ([i 0] [out '()])
           (if (= i height)
@@ -199,7 +154,7 @@
                                 (cons (apply append (reverse pieces)) out))
                     (let* ([lines (caar blocks)]
                            [width (cdar blocks)]
-                           [line (if (< i (length lines)) (list-ref lines i) '())]
+                           [line (if (< i (vector-length lines)) (vector-ref lines i) '())]
                            [last? (null? (cdr blocks))]
                            [padded (if last? line ($line-pad-right-to line width))])
                       (loop-blocks (cdr blocks)
@@ -212,7 +167,7 @@
 
   (define $column-block
     (lambda (item)
-      (let ([lines ($value->segment-lines item)])
+      (let ([lines (rich-lines-wrap ($value->segment-lines item) (rich-render-width))])
         (cons lines ($segment-lines-width lines)))))
 
   (define $pack-column-blocks
@@ -260,19 +215,21 @@
 
   #|proc:make-rich-rule
   The `make-rich-rule` procedure constructs a horizontal rule with an optional
-  `title`, positive `width`, and box `style`.
+  string `title` (or `#f`), optional `width`, and box `style`, and returns the rule.
+  The default `width` is `#f`, which fills the available content width at render time.
+  A positive exact integer keeps a fixed width, including when nested in a container.
   |#
   (define make-rich-rule
     (case-lambda
       [()
-       (make-rich-rule #f 80 'ascii)]
+       (make-rich-rule #f #f 'ascii)]
       [(title)
-       (make-rich-rule title 80 'ascii)]
+       (make-rich-rule title #f 'ascii)]
       [(title width)
        (make-rich-rule title width 'ascii)]
       [(title width style)
        (pcheck ([$rich-rule-title? title]
-                [rich-positive-integer? width]
+                [rich-optional-width? width]
                 [rich-box-style? style])
                ($make-rich-rule-record title width style))]))
 
@@ -293,7 +250,8 @@
               ($rich-rule-title-set! rule title))))
 
   #|proc:rich-rule-width
-  The `rich-rule-width` procedure returns the configured width for `rule`.
+  The `rich-rule-width` procedure returns the configured width for `rule`: `#f` for
+  automatic sizing or a positive exact integer for a fixed width.
   |#
   (define rich-rule-width
     (lambda (rule)
@@ -301,11 +259,12 @@
               ($rich-rule-width rule))))
 
   #|proc:rich-rule-width-set!
-  The `rich-rule-width-set!` procedure sets the positive width for `rule`.
+  The `rich-rule-width-set!` procedure sets `rule` to positive exact integer `width`,
+  or `#f` to fill the available content width. Returns an unspecified value.
   |#
   (define rich-rule-width-set!
     (lambda (rule width)
-      (pcheck ([rich-rule? rule] [rich-positive-integer? width])
+      (pcheck ([rich-rule? rule] [rich-optional-width? width])
               ($rich-rule-width-set! rule width))))
 
   #|proc:rich-rule-style
@@ -324,8 +283,24 @@
       (pcheck ([rich-rule? rule] [rich-box-style? style])
               ($rich-rule-style-set! rule style))))
 
+  ;; Rule titles occupy one physical line. Treat line endings and tabs as spaces.
+  (define $rule-title-text
+    (lambda (title)
+      (rich-string-output
+       (lambda (port)
+         (let loop ([index 0])
+           (unless (= index (string-length title))
+             (let ([character (string-ref title index)])
+               (write-char (if (memv character '(#\return #\newline #\tab))
+                               #\space character) port)
+               (loop (if (and (char=? character #\return)
+                              (< (+ index 1) (string-length title))
+                              (char=? (string-ref title (+ index 1)) #\newline))
+                         (+ index 2) (+ index 1))))))))))
+
   #|proc:rich-rule-render
-  The `rich-rule-render` procedure renders `rule` as one segment line.
+  The `rich-rule-render` procedure renders `rule` as one segment line. Line endings
+  and tabs in its title become spaces; a CRLF pair becomes one space.
   |#
   (define rich-rule-render
     (lambda (rule)
@@ -333,12 +308,15 @@
               (let* ([chars (rich-box-chars (rich-rule-style rule))]
                      [h (vector-ref chars 4)]
                      [title (rich-rule-title rule)]
-                     [width (rich-rule-width rule)]
+                     [width (or (rich-rule-width rule) (rich-render-width))]
                      [text (if (and title (not (string=? title "")))
-                               (let* ([title-text (string-append " " title " ")]
-                                      [title-width (string-length title-text)])
+                               (let* ([title-text (string-append " " ($rule-title-text title) " ")]
+                                      [title-width (rich-segment-width (rich-segment title-text))])
                                  (if (>= title-width width)
-                                     (substring title-text 0 width)
+                                     (rich-segments->plain
+                                      (rich-segment-pad-right
+                                       (rich-segment-crop (list (rich-segment title-text)) width)
+                                       width))
                                      (let* ([space (- width title-width)]
                                             [left (quotient space 2)]
                                             [right (- space left)])
@@ -493,18 +471,32 @@
               ($rich-padding-left-set! padding left))))
 
   #|proc:rich-padding-render
-  The `rich-padding-render` procedure renders `padding` as segment lines.
+  The `rich-padding-render` procedure returns segment lines for `padding`, wrapping its
+  body to the available width. Horizontal padding shrinks to leave room for complete glyphs.
   |#
   (define rich-padding-render
     (lambda (padding)
       (pcheck ([rich-padding? padding])
-              (append ($blank-lines (rich-padding-top padding))
-                      (map (lambda (line)
-                             ($pad-line line
-                                        (rich-padding-left padding)
-                                        (rich-padding-right padding)))
-                           ($value->segment-lines (rich-padding-body padding)))
-                      ($blank-lines (rich-padding-bottom padding))))))
+        (parameterize ([rich-layout-render-cache
+                        (or (rich-layout-render-cache) (make-eq-hashtable))])
+          (let* ([available (rich-render-width)]
+                 [left (min (rich-padding-left padding) (- available 1))]
+                 [right (min (rich-padding-right padding) (- available left 1))]
+                 [width (- available left right)]
+                 [measure-width (max width (min 2 available))]
+                 [raw (parameterize ([rich-render-width measure-width])
+                        ($value->segment-lines (rich-padding-body padding)))]
+                 [minimum (min available (rich-lines-min-width raw))]
+                 [left (min left (- available minimum))]
+                 [right (min right (- available left minimum))]
+                 [child-width (- available left right)]
+                 [raw (if (= child-width measure-width) raw
+                          (parameterize ([rich-render-width child-width])
+                            ($value->segment-lines (rich-padding-body padding))))]
+                 [lines (rich-lines-wrap raw child-width)])
+            (append ($blank-lines (rich-padding-top padding))
+                    (map (lambda (line) ($pad-line line left right)) lines)
+                    ($blank-lines (rich-padding-bottom padding))))))))
 
   #|macro:rich-padding
   The `rich-padding` macro constructs and returns a padding renderable.
@@ -558,18 +550,18 @@
       ($rich-align? x)))
 
   #|proc:make-rich-align
-  The `make-rich-align` procedure constructs an alignment renderable around
-  `body` with a positive `width` and an alignment of `left`, `center`, or
-  `right`.
+  The `make-rich-align` procedure returns a renderable around `body`. Optional `width`
+  is a positive cell count or `#f` (default) to use the available content width.
+  The `align` mode is `left` (default), `center`, or `right`.
   |#
   (define make-rich-align
     (case-lambda
       [()
-       (make-rich-align "" 80 'left)]
+       (make-rich-align "" #f 'left)]
       [(body)
-       (make-rich-align body 80 'left)]
+       (make-rich-align body #f 'left)]
       [(body width align)
-       (pcheck ([rich-positive-integer? width] [$rich-align-value? align])
+       (pcheck ([rich-optional-width? width] [$rich-align-value? align])
                ($make-rich-align-record body width align))]))
 
   #|proc:rich-align-body
@@ -589,7 +581,8 @@
               ($rich-align-body-set! align body))))
 
   #|proc:rich-align-width
-  The `rich-align-width` procedure returns the target width for `align`.
+  The `rich-align-width` procedure returns the configured width for `align`: `#f` for
+  automatic sizing or a positive cell count.
   |#
   (define rich-align-width
     (lambda (align)
@@ -597,12 +590,12 @@
               ($rich-align-width align))))
 
   #|proc:rich-align-width-set!
-  The `rich-align-width-set!` procedure sets the positive target width for
-  `align`.
+  The `rich-align-width-set!` procedure sets `align` to positive cell count `width`,
+  or `#f` to use the available content width. Returns an unspecified value.
   |#
   (define rich-align-width-set!
     (lambda (align width)
-      (pcheck ([rich-align? align] [rich-positive-integer? width])
+      (pcheck ([rich-align? align] [rich-optional-width? width])
               ($rich-align-width-set! align width))))
 
   #|proc:rich-align-align
@@ -622,12 +615,13 @@
               ($rich-align-align-set! align align-value))))
 
   #|proc:rich-align-render
-  The `rich-align-render` procedure renders `align` as segment lines.
+  The `rich-align-render` procedure returns segment lines for `align`, wrapping long
+  content within its configured or available width before applying alignment.
   |#
   (define rich-align-render
     (lambda (align)
       (pcheck ([rich-align? align])
-              (let ([width (rich-align-width align)]
+              (let ([width (or (rich-align-width align) (rich-render-width))]
                     [align-value (rich-align-align align)])
                 (map (lambda (line)
                        (let ([current (rich-segments-width line)])
@@ -640,7 +634,8 @@
                                  [(center)
                                   (let ([left (quotient space 2)])
                                     ($pad-line line left (- space left)))])))))
-                     ($value->segment-lines (rich-align-body align)))))))
+                     (parameterize ([rich-render-width width])
+                       (rich-lines-wrap ($value->segment-lines (rich-align-body align)) width)))))))
 
   #|macro:rich-align
   The `rich-align` macro constructs and returns an alignment renderable.
@@ -692,18 +687,19 @@
       ($rich-columns? x)))
 
   #|proc:make-rich-columns
-  The `make-rich-columns` procedure constructs a column flow renderable from a
-  list of `items`, positive `width`, and non-negative `gap`.
+  The `make-rich-columns` procedure returns a column flow renderable from list `items`.
+  Optional `width` is a positive cell count or `#f` (default) for the available width.
+  The nonnegative cell count `gap` separates adjacent items and defaults to two.
   |#
   (define make-rich-columns
     (case-lambda
       [()
-       (make-rich-columns '() 80 2)]
+       (make-rich-columns '() #f 2)]
       [(items)
-       (make-rich-columns items 80 2)]
+       (make-rich-columns items #f 2)]
       [(items width gap)
        (pcheck ([list? items]
-                [rich-positive-integer? width]
+                [rich-optional-width? width]
                 [rich-nonnegative-integer? gap])
                ($make-rich-columns-record items width gap))]))
 
@@ -724,7 +720,8 @@
               ($rich-columns-items-set! columns items))))
 
   #|proc:rich-columns-width
-  The `rich-columns-width` procedure returns the flow width for `columns`.
+  The `rich-columns-width` procedure returns the configured flow width for `columns`:
+  `#f` for automatic sizing or a positive cell count.
   |#
   (define rich-columns-width
     (lambda (columns)
@@ -732,12 +729,12 @@
               ($rich-columns-width columns))))
 
   #|proc:rich-columns-width-set!
-  The `rich-columns-width-set!` procedure sets the positive flow width for
-  `columns`.
+  The `rich-columns-width-set!` procedure sets `columns` to positive cell count `width`,
+  or `#f` to use the available content width. Returns an unspecified value.
   |#
   (define rich-columns-width-set!
     (lambda (columns width)
-      (pcheck ([rich-columns? columns] [rich-positive-integer? width])
+      (pcheck ([rich-columns? columns] [rich-optional-width? width])
               ($rich-columns-width-set! columns width))))
 
   #|proc:rich-columns-gap
@@ -758,23 +755,27 @@
               ($rich-columns-gap-set! columns gap))))
 
   #|proc:rich-columns-render
-  The `rich-columns-render` procedure renders `columns` as wrapped column rows.
+  The `rich-columns-render` procedure returns packed column rows for `columns`, wrapping
+  oversized items within the configured or available width.
   |#
   (define rich-columns-render
     (lambda (columns)
       (pcheck ([rich-columns? columns])
-              (apply append
-                     (map (lambda (row)
-                            ($columns-render-row row (rich-columns-gap columns)))
-                          ($pack-column-blocks
-                           ($items->blocks (rich-columns-items columns))
-                           (rich-columns-width columns)
-                           (rich-columns-gap columns)))))))
+        (let ([width (or (rich-columns-width columns) (rich-render-width))])
+          (apply append
+                 (map (lambda (row)
+                        ($columns-render-row row (rich-columns-gap columns)))
+                      ($pack-column-blocks
+                       (parameterize ([rich-render-width (min (rich-render-width) width)])
+                         ($items->blocks (rich-columns-items columns)))
+                       width
+                       (rich-columns-gap columns))))))))
 
   #|macro:rich-columns
   The `rich-columns` macro constructs and returns a columns renderable. The
-  `:items` field accepts either an expression or a parenthesized literal item
-  list such as `("a" "b")`.
+  `:items` field accepts an expression or a parenthesized literal item list such as
+  `("a" "b")`. A form beginning with an identifier is evaluated as an expression;
+  use `(list first second)` to collect item variables. Returns the new renderable.
   |#
   (define-syntax rich-columns
     (lambda (stx)
@@ -793,8 +794,7 @@
                 [() #''()]
                 [(head item ...)
                  (let ([head-datum (syntax->datum #'head)])
-                   (if (and (symbol? head-datum)
-                            (memq head-datum '(list quote quasiquote cons append)))
+                   (if (symbol? head-datum)
                        value
                        (with-syntax ([first-item #'head])
                          #'(list first-item item ...))))]
@@ -882,23 +882,43 @@
               ($rich-layout-items-set! layout items))))
 
   #|proc:rich-layout-render
-  The `rich-layout-render` procedure renders `layout` as row or column segment
-  lines.
+  The `rich-layout-render` procedure returns segment lines for `layout`. Row children
+  share the available width; long content wraps within each share. If complete glyphs
+  and gaps cannot fit within those shares, children stack vertically. Column layouts wrap children
+  within the whole available width.
   |#
   (define rich-layout-render
     (lambda (layout)
       (pcheck ([rich-layout? layout])
-              (case (rich-layout-direction layout)
-                [(row)
-                 ($render-horizontal-blocks ($items->blocks (rich-layout-items layout)) 1)]
-                [(column)
-                 (apply append
-                        (map $value->segment-lines (rich-layout-items layout)))]))))
+        (parameterize ([rich-layout-render-cache
+                        (or (rich-layout-render-cache) (make-eq-hashtable))])
+          (let* ([items (rich-layout-items layout)] [count (length items)]
+                 [available (rich-render-width)]
+                 [row? (and (eq? (rich-layout-direction layout) 'row)
+                            (>= available (- (* 2 count) 1)))]
+                 [width (if (and row? (positive? count))
+                            (max 1 (quotient (- available (- count 1)) count)) available)]
+                 [measure-width (max width (min 2 available))]
+                 [raw (parameterize ([rich-render-width measure-width])
+                        (map $value->segment-lines items))]
+                 [row? (and row? (andmap (lambda (lines) (<= (rich-lines-min-width lines) width))
+                                        raw))]
+                 [child-width (if row? width available)]
+                 [raw (if (= child-width measure-width) raw
+                          (parameterize ([rich-render-width child-width])
+                            (map $value->segment-lines items)))])
+            (if row?
+                ($render-horizontal-blocks
+                 (map (lambda (lines)
+                        (let ([lines (rich-lines-wrap lines width)])
+                          (cons lines ($segment-lines-width lines)))) raw) 1)
+                (apply append (map (lambda (lines) (rich-lines-wrap lines available)) raw))))))))
 
   #|macro:rich-layout
   The `rich-layout` macro constructs and returns a layout renderable. The
-  `:items` field accepts either an expression or a parenthesized literal item
-  list such as `("a" "b")`.
+  `:items` field accepts an expression or a parenthesized literal item list such as
+  `("a" "b")`. A form beginning with an identifier is evaluated as an expression;
+  use `(list first second)` to collect item variables. Returns the new renderable.
   |#
   (define-syntax rich-layout
     (lambda (stx)
@@ -916,8 +936,7 @@
                 [() #''()]
                 [(head item ...)
                  (let ([head-datum (syntax->datum #'head)])
-                   (if (and (symbol? head-datum)
-                            (memq head-datum '(list quote quasiquote cons append)))
+                   (if (symbol? head-datum)
                        value
                        (with-syntax ([first-item #'head])
                          #'(list first-item item ...))))]
@@ -948,8 +967,8 @@
                  tmp)))]
         [_ (syntax-error stx "invalid rich-layout form")])))
 
-  (rich-register-renderer! rich-rule? rich-rule-render)
-  (rich-register-renderer! rich-padding? rich-padding-render)
-  (rich-register-renderer! rich-align? rich-align-render)
-  (rich-register-renderer! rich-columns? rich-columns-render)
-  (rich-register-renderer! rich-layout? rich-layout-render))
+  (rich-register-container-renderer! rich-rule? rich-rule-render)
+  (rich-register-container-renderer! rich-padding? rich-padding-render)
+  (rich-register-container-renderer! rich-align? rich-align-render)
+  (rich-register-container-renderer! rich-columns? rich-columns-render)
+  (rich-register-container-renderer! rich-layout? rich-layout-render))

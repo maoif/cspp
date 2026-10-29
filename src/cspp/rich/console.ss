@@ -1,6 +1,8 @@
 #!chezscheme
 (library (cspp rich console)
-  (export make-rich-console
+  (export rich-console-frame
+          rich-console-output-width
+          make-rich-console
           rich-console
           rich-console?
           rich-console-output-port
@@ -30,11 +32,13 @@
           rich-export-ansi)
   (import (cspp chez)
           (cspp utils)
+          (only (cspp list) make-list-builder)
+          (cspp rich private lines)
+          (cspp rich private render)
           (cspp rich private common)
           (cspp rich style)
           (cspp rich segment)
           (cspp rich renderable)
-          (cspp rich text)
           (cspp rich pretty)
           (cspp rich tree))
 
@@ -57,7 +61,7 @@
 
   #|proc:make-rich-console
   The `make-rich-console` procedure constructs a console using current ports and
-  conservative terminal defaults.
+  automatic terminal detection. ANSI is suppressed on nonterminal output ports.
   |#
   (define make-rich-console
     (case-lambda
@@ -65,8 +69,8 @@
        (make-rich-console-record (current-output-port)
                                  (current-error-port)
                                  (current-input-port)
-                                 80
-                                 'standard
+                                 #f
+                                 'auto
                                  #f
                                  #f
                                  #f
@@ -75,6 +79,56 @@
   (define $rich-console-theme?
     (lambda (x)
       (or (not x) (rich-theme? x))))
+
+  ;; Chez may wrap its original console ports in thread-safe custom ports.
+  (define $stdout-port (console-output-port))
+  (define $stderr-port (console-error-port))
+
+  (define $terminal-output?
+    (foreign-procedure "cspp_rich_terminal_output_supported" (int) boolean))
+
+  (define $terminal-width
+    (foreign-procedure "cspp_rich_terminal_width" (int) int))
+
+  (define $output-descriptor
+    (lambda (port)
+      (cond [(file-port? port) (port-file-descriptor port)]
+            [(eq? port $stdout-port) 1]
+            [(eq? port $stderr-port) 2]
+            [else #f])))
+
+  #|proc:rich-console-output-width
+  The private `rich-console-output-width` procedure returns the physical destination
+  width for `console`, falling back to its effective render width when size is unknown.
+  |#
+  (define rich-console-output-width
+    (lambda (console)
+      (pcheck ([rich-console? console])
+              (let* ([fd ($output-descriptor (rich-console-output-port console))]
+                     [width (and fd ($terminal-width fd))])
+                (if (and width (positive? width)) width (rich-console-width console))))))
+
+  (define $console-color-system
+    (lambda (console)
+      (let ([system (rich-console-color-system console)]
+            [port (rich-console-output-port console)])
+        (if (eq? system 'auto)
+            (if (or (rich-console-force-terminal? console)
+                    (let ([fd ($output-descriptor port)])
+                      (and fd ($terminal-output? fd))))
+                'standard
+                'none)
+            system))))
+
+  (define $resolve-segment-style
+    (lambda (console style)
+      (if (symbol? style)
+          (if (eq? ($console-color-system console) 'none)
+              #f
+              (let* ([theme (rich-console-theme console)]
+                     [resolved (and theme (rich-theme-ref theme style))])
+                (or resolved (errorf 'rich-print "unknown theme style: ~s" style))))
+          style)))
 
   #|proc:rich-console-output-port
   The `rich-console-output-port` procedure returns the output port used by
@@ -131,19 +185,26 @@
               ($rich-console-input-port-set! console port))))
 
   #|proc:rich-console-width
-  The `rich-console-width` procedure returns the render width for `console`.
+  The `rich-console-width` procedure returns the effective positive render width for
+  `console`: its explicit width, the destination terminal width, or 80 if unavailable.
+  Automatic widths are queried on each call so terminal resizing takes effect.
   |#
   (define rich-console-width
     (lambda (console)
       (pcheck ([rich-console? console])
-              ($rich-console-width console))))
+              (or ($rich-console-width console)
+                  (let* ([fd ($output-descriptor (rich-console-output-port console))]
+                         [width (and fd ($terminal-width fd))])
+                    (if (and width (positive? width)) width 80))))))
 
   #|proc:rich-console-width-set!
-  The `rich-console-width-set!` procedure sets the render width for `console`.
+  The `rich-console-width-set!` procedure sets `console` to positive integer `width`.
+  Passing `#f` restores automatic terminal width detection (the default). Returns an
+  unspecified value.
   |#
   (define rich-console-width-set!
     (lambda (console width)
-      (pcheck ([rich-console? console] [rich-positive-integer? width])
+      (pcheck ([rich-console? console] [rich-optional-width? width])
               ($rich-console-width-set! console width))))
 
   #|proc:rich-console-color-system
@@ -156,8 +217,10 @@
               ($rich-console-color-system console))))
 
   #|proc:rich-console-color-system-set!
-  The `rich-console-color-system-set!` procedure sets the ANSI color system for
-  `console`.
+  The `rich-console-color-system-set!` procedure sets `console` to `color-system` and
+  returns an unspecified value. The default `'auto` detects terminal output; `'none`
+  suppresses ANSI. Explicit `'standard`, `'256`, and `'truecolor` enable ANSI even on
+  nonterminal ports. RGB colors currently use truecolor sequences in each enabled mode.
   |#
   (define rich-console-color-system-set!
     (lambda (console color-system)
@@ -174,8 +237,10 @@
               ($rich-console-force-terminal? console))))
 
   #|proc:rich-console-force-terminal?-set!
-  The `rich-console-force-terminal?-set!` procedure sets whether `console`
-  forces terminal output behavior.
+  The `rich-console-force-terminal?-set!` procedure sets whether `console` treats its
+  output port as a terminal in automatic color mode. The boolean `force-terminal?`
+  enables this override when true; explicit color modes take precedence. Returns an
+  unspecified value.
   |#
   (define rich-console-force-terminal?-set!
     (lambda (console force-terminal?)
@@ -183,8 +248,8 @@
               ($rich-console-force-terminal?-set! console force-terminal?))))
 
   #|proc:rich-console-soft-wrap?
-  The `rich-console-soft-wrap?` procedure returns whether `console` soft-wraps
-  output.
+  The `rich-console-soft-wrap?` procedure returns whether `console` leaves line wrapping
+  to the destination terminal. False (default) inserts line breaks at the console width.
   |#
   (define rich-console-soft-wrap?
     (lambda (console)
@@ -192,8 +257,9 @@
               ($rich-console-soft-wrap? console))))
 
   #|proc:rich-console-soft-wrap?-set!
-  The `rich-console-soft-wrap?-set!` procedure sets whether `console`
-  soft-wraps output.
+  The `rich-console-soft-wrap?-set!` procedure sets boolean `soft-wrap?` for `console`.
+  True leaves wrapping to the terminal; false inserts breaks at its configured width.
+  Returns unspecified. Styles and control segments are preserved across inserted breaks.
   |#
   (define rich-console-soft-wrap?-set!
     (lambda (console soft-wrap?)
@@ -210,7 +276,10 @@
               ($rich-console-theme console))))
 
   #|proc:rich-console-theme-set!
-  The `rich-console-theme-set!` procedure sets the theme for `console`.
+  The `rich-console-theme-set!` procedure sets the theme for `console` to `theme`, a
+  rich theme or `#f`, and returns an unspecified value. Symbol styles in segments and
+  text spans are looked up in this theme each time they are printed. An unbound style
+  raises an error when ANSI is enabled; plain output ignores styles.
   |#
   (define rich-console-theme-set!
     (lambda (console theme)
@@ -291,14 +360,6 @@
           (rich-console-output-port target)
           target)))
 
-  (define $rich-segment-list?
-    (lambda (x)
-      (and (list? x) (rich-list-every? rich-segment? x))))
-
-  (define $rich-segment-line-list?
-    (lambda (x)
-      (and (list? x) (rich-list-every? $rich-segment-list? x))))
-
   (define $rich-direct-value?
     (lambda (value)
       (or (string? value)
@@ -317,43 +378,66 @@
                   (write-char value port)
                   (display value port))))))))
 
+  ;; A hard-wrap pass captures encoded pieces while retaining zero-width controls.
+  (define $output-pieces (make-thread-parameter '()))
+
+  (define $emit
+    (lambda (port text control?)
+      (let ([capture (assq port ($output-pieces))])
+        (if capture
+            ((cdr capture) (rich-segment text #f control?))
+            (display text port)))))
+
   (define $write-segment-line
     (lambda (port line)
-      (display (rich-segments->plain line) port)))
+      (for-each (lambda (segment)
+                  ($emit port (rich-segment-text segment) (rich-segment-control? segment))) line)))
 
   (define $write-segment-lines
     (lambda (port lines)
       (let loop ([lines lines] [first? #t])
         (unless (null? lines)
-          (unless first? (newline port))
+          (unless first? ($emit port "\n" #f))
           ($write-segment-line port (car lines))
           (loop (cdr lines) #f)))))
 
   (define $write-style-ansi
-    (lambda (port color-system style)
+    (lambda (port color-system style active-style)
       (if (eq? color-system 'none)
           #f
-          (let ([ansi (rich-style->ansi color-system style)])
+          (let ([ansi (rich-style->ansi/context color-system style active-style)])
             (and (not (string=? ansi ""))
                  (begin
-                   (display ansi port)
+                   ($emit port ansi #t)
                    #t))))))
-
-  (define $valid-rendered-value?
-    (lambda (value)
-      (or (string? value) ($rich-segment-line-list? value))))
-
-  (define $check-rendered-value
-    (lambda (who value)
-      (if ($valid-rendered-value? value)
-          value
-          (errorf who "renderer returned invalid value: ~a" value))))
 
   (define $write-rendered-value
     (lambda (port value)
-      (let ([value ($check-rendered-value 'rich-print value)])
-        (cond [(string? value) (display value port)]
+      (let ([value (rich-check-rendered-value 'rich-print value)])
+        (cond [(string? value) ($emit port value #f)]
               [else ($write-segment-lines port value)]))))
+
+  (define $write-segment-line/plain
+    (lambda (port line)
+      (for-each (lambda (segment)
+                  (unless (rich-segment-control? segment)
+                    (display (rich-segment-text segment) port)))
+                line)))
+
+  (define $write-segment-lines/plain
+    (lambda (port lines)
+      (let loop ([lines lines] [first? #t])
+        (unless (null? lines)
+          (unless first? (display "\n" port))
+          ($write-segment-line/plain port (car lines))
+          (loop (cdr lines) #f)))))
+
+  (define $write-rendered-value/plain
+    (lambda (port value)
+      (let ([value (rich-check-rendered-value 'rich-export-text value)])
+        (if (string? value)
+            (display value port)
+            ($write-segment-lines/plain port value)))))
 
   (define $style->ansi
     (lambda (color-system style)
@@ -365,60 +449,60 @@
     (lambda (port color-system active-style)
       (let ([ansi (and active-style ($style->ansi color-system active-style))])
         (unless (or (not ansi) (string=? ansi ""))
-          (display ansi port)))))
+          ($emit port ansi #t)))))
 
   (define $write-segment-line/ansi
-    (lambda (port color-system active-style style-emitted? line)
+    (lambda (console port color-system active-style style-emitted? line)
       (let loop ([segments line] [style-emitted? style-emitted?])
         (if (null? segments)
             style-emitted?
             (let* ([segment (car segments)]
-                   [style (rich-segment-style segment)]
+                   [style ($resolve-segment-style console (rich-segment-style segment))]
                    [segment-style-emitted?
                     (and (rich-style? style)
-                         ($write-style-ansi port color-system style))]
+                         ($write-style-ansi port color-system style active-style))]
                    [segment-reset-emitted?
                     (and (rich-reset? style)
                          style-emitted?
                          (not (eq? color-system 'none))
                          (begin
-                           (display rich-ansi-reset port)
+                           ($emit port rich-ansi-reset #t)
                            #t))]
                    [style-emitted?
                     (and (not segment-reset-emitted?)
                          (or segment-style-emitted? style-emitted?))])
-              (display (rich-segment-text segment) port)
+              ($emit port (rich-segment-text segment) (rich-segment-control? segment))
               (let ([style-emitted?
                      (if (and (or segment-style-emitted? segment-reset-emitted?)
                               (not (eq? color-system 'none)))
                          (begin
                            (when segment-style-emitted?
-                             (display rich-ansi-reset port))
+                             ($emit port rich-ansi-reset #t))
                            ($restore-active-style port color-system active-style)
                            (and active-style #t))
                          style-emitted?)])
                 (loop (cdr segments) style-emitted?)))))))
 
   (define $write-segment-lines/ansi
-    (lambda (port color-system active-style lines style-emitted?)
+    (lambda (console port color-system active-style lines style-emitted?)
       (let loop ([lines lines] [first? #t] [style-emitted? style-emitted?])
         (if (null? lines)
             style-emitted?
             (begin
-              (unless first? (newline port))
+              (unless first? ($emit port "\n" #f))
               (loop (cdr lines)
                     #f
-                    ($write-segment-line/ansi port color-system active-style
+                    ($write-segment-line/ansi console port color-system active-style
                                              style-emitted? (car lines))))))))
 
   (define $write-rendered-value/ansi
-    (lambda (port color-system active-style value style-emitted?)
-      (let ([value ($check-rendered-value 'rich-print value)])
+    (lambda (console port color-system active-style value style-emitted?)
+      (let ([value (rich-check-rendered-value 'rich-print value)])
         (cond [(string? value)
-               (display value port)
+               ($emit port value #f)
               style-emitted?]
               [else
-               ($write-segment-lines/ansi port color-system active-style value
+               ($write-segment-lines/ansi console port color-system active-style value
                                           style-emitted?)]))))
 
   (define $write-rich-value/plain
@@ -442,7 +526,7 @@
   (define $write-rich-values/console
     (lambda (console values)
       (let ([port (rich-console-output-port console)]
-            [color-system (rich-console-color-system console)])
+            [color-system ($console-color-system console)])
         (let loop ([values values] [active-style #f] [style-emitted? #f])
           (unless (null? values)
             (let ([value (car values)])
@@ -450,26 +534,20 @@
                      (if (eq? color-system 'none)
                          (loop (cdr values) #f style-emitted?)
                          (loop (cdr values)
-                               value
-                               (or ($write-style-ansi port color-system value)
+                               (rich-style-overlay active-style value)
+                               (or ($write-style-ansi port color-system value active-style)
                                    style-emitted?)))]
                     [(rich-reset? value)
                      (when (and style-emitted? (not (eq? color-system 'none)))
-                       (display rich-ansi-reset port))
+                       ($emit port rich-ansi-reset #t))
                      (loop (cdr values) #f #f)]
                     [else
                      (let ([renderer (rich-renderer-for value)])
                        (loop (cdr values)
                              active-style
-                             (cond [(and (rich-tree? value)
-                                         (rich-console-ascii-only? console))
+                             (cond [renderer
                                     ($write-rendered-value/ansi
-                                     port color-system active-style
-                                     (rich-tree-render/ascii value)
-                                     style-emitted?)]
-                                   [renderer
-                                    ($write-rendered-value/ansi
-                                     port color-system active-style (renderer value)
+                                     console port color-system active-style (renderer value)
                                      style-emitted?)]
                                    [($rich-direct-value? value)
                                     ($write-segment-line port
@@ -477,15 +555,28 @@
                                     style-emitted?]
                                    [else
                                     ($write-rendered-value/ansi
-                                     port color-system active-style
+                                     console port color-system active-style
                                      (rich-pretty-render value)
                                      style-emitted?)])))])))))))
 
   (define $write-rich-values
     (lambda (target port values)
       (if (rich-console? target)
-          ($write-rich-values/console target values)
-          ($write-rich-values/plain port values))))
+          (parameterize ([rich-render-width (rich-console-width target)]
+                         [rich-render-ascii-only? (rich-console-ascii-only? target)])
+            (if (rich-console-soft-wrap? target)
+                ($write-rich-values/console target values)
+                (let* ([pieces (make-list-builder)]
+                       [encoded (parameterize ([$output-pieces (cons (cons port pieces) ($output-pieces))])
+                                  ($write-rich-values/console target values)
+                                  (pieces))])
+                  ($write-segment-lines
+                   port (rich-lines-wrap (list encoded) (rich-render-width))))))
+          (let ([console (make-rich-console)])
+            (rich-console-output-port-set! console port)
+            (parameterize ([rich-render-width (rich-console-width console)]
+                           [rich-render-ascii-only? (rich-console-ascii-only? console)])
+              ($write-rich-values/plain port values))))))
 
   #|proc:rich-print
   The `rich-print` procedure prints values to a rich console, an output port, or
@@ -507,7 +598,7 @@
         (let ([port ($target-port target)])
           (pcheck ([output-port? port])
                   ($write-rich-values target port values)
-                  (newline port))))))
+                  ($emit port "\n" #f))))))
 
   #|proc:rich-fprint
   The `rich-fprint` procedure prints values to the given output port.
@@ -532,20 +623,18 @@
   (define rich-render
     (lambda (console value)
       (pcheck ([rich-console? console])
-              (let ([renderer (rich-renderer-for value)])
-                (cond [(and (rich-tree? value)
-                            (rich-console-ascii-only? console))
-                       ($check-rendered-value 'rich-render
-                                             (rich-tree-render/ascii value))]
-                      [renderer
-                       ($check-rendered-value 'rich-render (renderer value))]
+              (parameterize ([rich-render-width (rich-console-width console)]
+                             [rich-render-ascii-only? (rich-console-ascii-only? console)])
+                (let ([renderer (rich-renderer-for value)])
+                  (cond [renderer
+                       (rich-check-rendered-value 'rich-render (renderer value))]
                       [(or (rich-style? value)
                            (rich-reset? value)
                            ($rich-direct-value? value))
                        value]
                       [else
-                       ($check-rendered-value 'rich-render
-                                             (rich-pretty-render value))])))))
+                       (rich-check-rendered-value 'rich-render
+                                             (rich-pretty-render value))]))))))
 
   #|proc:rich-export-text
   The `rich-export-text` procedure renders a value to plain text and returns the
@@ -557,11 +646,11 @@
        (lambda (port)
          (let ([renderer (rich-renderer-for value)])
            (cond [renderer
-                  ($write-rendered-value port (renderer value))]
+                  ($write-rendered-value/plain port (renderer value))]
                  [(or (rich-style? value) (rich-reset? value))
                   (void)]
                  [else
-                  ($write-rendered-value port (rich-pretty-render value))]))))))
+                  ($write-rendered-value/plain port (rich-pretty-render value))]))))))
 
   #|proc:rich-export-ansi
   The `rich-export-ansi` procedure renders a value to ANSI text and returns the
@@ -576,4 +665,25 @@
            (rich-console-color-system-set! console 'standard)
            (rich-print console value))))))
 
-  (rich-register-renderer! rich-text? rich-text-render))
+  #|proc:rich-console-frame
+  The private `rich-console-frame` procedure renders `value` once using `console`'s
+  current width, theme, ASCII, and color policy. Returns the encoded frame string.
+  The destination console and its ports are left unchanged.
+  |#
+  (define rich-console-frame
+    (lambda (console value)
+      (pcheck ([rich-console? console])
+              (let ([width (rich-console-width console)]
+                    [colors ($console-color-system console)])
+                (rich-string-output
+                 (lambda (port)
+                   (let ([capture (make-rich-console-record
+                                   port (rich-console-error-port console)
+                                   (rich-console-input-port console) width colors
+                                   (rich-console-force-terminal? console)
+                                   (rich-console-soft-wrap? console)
+                                   (rich-console-theme console)
+                                   (rich-console-ascii-only? console))])
+                     (rich-print capture value))))))))
+
+)

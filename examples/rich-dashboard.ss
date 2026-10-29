@@ -9,7 +9,7 @@
 (define section
   (lambda (console title)
     (rich-println console)
-    (let ([rule (make-rich-rule title 82 'double)])
+    (let ([rule (rich-rule :title title :style 'double)])
       (rich-print console (rich-style 'bold #x66ddff) rule (reset-style) "\n"))))
 
 (define print-lines
@@ -19,53 +19,84 @@
 
 (define run-prompt-demo
   (lambda (console)
-    (let ([in (open-input-string "us-east\nblue\nrobot-token\nn\n")]
-          [out (open-output-string)])
-      (let ([prompt-console (make-rich-console)])
-        (rich-console-input-port-set! prompt-console in)
-        (rich-console-output-port-set! prompt-console out)
-        (rich-console-color-system-set! prompt-console 'none)
-      (let* ([region (rich-prompt prompt-console "Region" "local" '("us-east" "eu-west" "local"))]
-             [ring (rich-prompt prompt-console "Ring" "green" '("blue" "green"))]
-             [secret (rich-password prompt-console "Robot token")]
-             [approved? (rich-confirm prompt-console "Open traffic?")])
-        (let ([prompt-table (make-rich-table)])
-          (rich-table-title-set! prompt-table "Automated Prompt Session")
-          (rich-table-box-set! prompt-table 'square)
-          (rich-table-add-column! prompt-table "Field")
-          (rich-table-add-column! prompt-table "Value")
-          (rich-table-add-row! prompt-table "region" region)
-          (rich-table-add-row! prompt-table "ring" ring)
-          (rich-table-add-row! prompt-table "token" secret)
-          (rich-table-add-row! prompt-table "approved" (if approved? "true" "false"))
-          (rich-table-add-row! prompt-table "prompt transcript" (get-output-string out))
-          (rich-print console prompt-table "\n")))))))
+    (call-with-port (open-input-string "us-east\nblue\nrobot-token\nn\n")
+      (lambda (input)
+        (call-with-port (open-output-string)
+          (lambda (output)
+            (let* ([prompt-console (rich-console :input-port input :output-port output
+                                                :color-system 'none)]
+                   [region (rich-prompt prompt-console "Region" "local"
+                                        '("us-east" "eu-west" "local"))]
+                   [ring (rich-prompt prompt-console "Ring" "green" '("blue" "green"))]
+                   [secret (rich-password prompt-console "Robot token")]
+                   [approved? (rich-confirm prompt-console "Open traffic?")]
+                   [table (rich-table :title "Automated Prompt Session" :box 'square
+                                      :columns ("Field" "Value"))])
+              (rich-table-add-row! table "region" region)
+              (rich-table-add-row! table "ring" ring)
+              (rich-table-add-row! table "token" secret)
+              (rich-table-add-row! table "approved" (if approved? "true" "false"))
+              (rich-table-add-row! table "prompt transcript" (get-output-string output))
+              (rich-print console table "\n"))))))))
 
 (define run-progress-demo
   (lambda (console)
-    (let ([deploy (make-rich-progress 24 (rich-progress-default-columns))])
-      (let ([assets (rich-progress-add-task! deploy "assets" 8)]
-            [migrate (rich-progress-add-task! deploy "migrations" 5)]
-            [workers (rich-progress-add-task! deploy "workers" #f)])
-        (let ([live (make-rich-live deploy console 0 #f)])
-          (let loop ([i 0])
-            (when (<= i 8)
-              (rich-progress-update! deploy assets i)
-              (rich-progress-update! deploy migrate (min i 5))
-              (rich-progress-advance! deploy workers 1)
-              (rich-live-refresh! live)
-              (milisleep 500)
-              (loop (+ i 1))))
-          (rich-progress-complete! deploy assets)
-          (rich-progress-complete! deploy migrate)
-          (rich-live-refresh! live)
-          (rich-live-stop! live)
-          (rich-println console "\n"))))))
+    ;; A manual clock makes speed and elapsed time reproducible in captured output.
+    (let ([now 0])
+      (parameterize ([rich-current-time (lambda () now)])
+        (let* ([deploy (make-rich-progress)]
+               [assets (rich-progress-add-task! deploy "资源 assets" 8)]
+               [migrate (rich-progress-add-task! deploy "迁移 migrations" 5)]
+               [workers (rich-progress-add-task! deploy "workers" #f)]
+               [smoke (rich-progress-add-task! deploy "Smoke checks" 3)])
+          (define deployment-frame
+            (lambda (step)
+              (let ([health (rich-table :show-lines? #f :columns ("Service" "Readiness"))]
+                    [ready (min 3 (quotient step 2))])
+                (rich-table-add-row! health "api"
+                  (rich-text (format "ready: ~a/3" ready) (if (= ready 3) 'good 'busy)))
+                (rich-table-add-row! health "database"
+                  (rich-text (if (>= step 5) "migrated" "migrating")
+                             (if (>= step 5) 'good 'busy)))
+                (rich-table-add-row! health "Smoke checks"
+                  (if (= step 8) "passed" (if (>= step 5) "running" "waiting")))
+                (rich-panel
+                  :title "Deployment Control"
+                  :box 'rounded
+                  :body (rich-layout :direction 'column
+                          :items (list health
+                                       (rich-padding :top 1 :bottom 1 :body deploy)
+                                       (rich-text (if (= step 8) "Traffic opened"
+                                                      "Traffic held until checks pass")
+                                                  (if (= step 8) 'good 'busy))))))))
+          (rich-progress-task-visible?-set! deploy smoke #f)
+          (let ([live (make-rich-live (deployment-frame 0) console 0 #f)])
+            (dynamic-wind
+              (lambda () (rich-live-start! live))
+              (lambda ()
+                (do ([step 1 (+ step 1)]) ((> step 8))
+                  (milisleep 500)
+                  (set! now (/ step 2))
+                  (rich-progress-update! deploy assets step)
+                  (when (<= step 5) (rich-progress-advance! deploy migrate))
+                  (rich-progress-advance! deploy workers)
+                  ;; Discovery resolves an unknown total; later phases replace old tasks.
+                  (when (= step 3) (rich-progress-task-total-set! deploy workers 8))
+                  (when (= step 5)
+                    (rich-progress-complete! deploy migrate)
+                    (rich-progress-task-visible?-set! deploy smoke #t))
+                  (when (> step 5) (rich-progress-advance! deploy smoke))
+                  (when (= step 8)
+                    (for-each (lambda (id) (rich-progress-complete! deploy id))
+                              (list assets workers smoke))
+                    (rich-progress-task-visible?-set! deploy workers #f))
+                  ;; Replace the entire composed frame on the same live display.
+                  (rich-live-renderable-set! live (deployment-frame step))
+                  (rich-live-refresh! live)))
+              (lambda () (rich-live-stop! live)))
+            (rich-println console "\n")))))))
 
 (define console (make-rich-console))
-(rich-console-width-set! console 82)
-(rich-console-color-system-set! console 'standard)
-(rich-console-force-terminal?-set! console #t)
 
 (define dashboard-theme
   (rich-theme
@@ -88,11 +119,11 @@
             "\n")
 
 (section console "Styled Signals")
-(define status-text (rich-text "api " (rich-theme-ref dashboard-theme 'muted)))
-(rich-text-append! status-text "healthy " (rich-theme-ref dashboard-theme 'good))
-(rich-text-append! status-text "queue " (rich-theme-ref dashboard-theme 'muted))
-(rich-text-append! status-text "busy " (rich-theme-ref dashboard-theme 'busy))
-(rich-text-append! status-text "cache " (rich-theme-ref dashboard-theme 'muted))
+(define status-text (rich-text "api " 'muted))
+(rich-text-append! status-text "healthy " 'good)
+(rich-text-append! status-text "queue " 'muted)
+(rich-text-append! status-text "busy " 'busy)
+(rich-text-append! status-text "cache " 'muted)
 (rich-text-append! status-text "warm" (rich-style 'underline 'cyan))
 (rich-print console status-text "\n")
 (rich-print console
@@ -107,11 +138,12 @@
 
 (section console "Wrapping And Cropping")
 (let* ([story "the deployment note wraps across several short lines while preserving magenta styling"]
-       [wrapped (rich-segment-wrap (list (rich-segment story (rich-style 'magenta))) 22)]
+       [wrapped (rich-segment-wrap (list (rich-segment story (rich-style 'magenta)))
+                                   (rich-console-width console))]
        [cropped (rich-segment-crop
                  (list (rich-segment "incident-2026-05-02/very-long-service-name"
                                      (rich-style 'yellow)))
-                 26)])
+                 (max 1 (quotient (rich-console-width console) 2)))])
   (print-lines console wrapped)
   (print-lines console (list cropped))
   (rich-print console "visible width check: "
@@ -119,12 +151,36 @@
                                          (rich-segment "\033[1m" #f #t)))
               "\n"))
 
+(section console "Unicode Cells / 中文")
+;; CJK, combining accents, and a simple emoji align in scalar and grapheme terminals.
+;; Multi-code-point emoji are shown outside borders because terminal shaping differs.
+(let ([table (rich-table :box 'rounded :columns ("Text" "Cells"))])
+  (for-each
+   (lambda (text)
+     (rich-table-add-row! table
+                         (rich-text text (rich-style 'cyan))
+                         (number->string (rich-segment-width (rich-segment text)))))
+   '("中文" "café" "かな" "한글" "🚀"))
+  (rich-print console table "\n"))
+(rich-print console "Emoji sequences: 👩🏽‍💻  🇨🇳  ❤️\n")
+(print-lines console
+             (rich-segment-wrap
+              (list (rich-segment "中文 café 🚀 编程" (rich-style 'magenta)))
+              (rich-console-width console)))
+(rich-print console "Cropped: "
+            (make-dashboard-lines (list (rich-segment-crop
+                                         (list (rich-segment "中文🚀 café"))
+                                         (max 1 (quotient (rich-console-width console) 2)))))
+            "\n")
+(rich-println console "Aligned:")
+(rich-print console (rich-align :body "中文 é 🚀" :align 'right) "\n")
+
 (section console "Rules, Alignment, Padding")
 (define deploy-rule
-  (rich-rule :title "release train" :width 58 :style 'rounded))
-(define left (rich-align :body "left: logs" :width 38 :align 'left))
-(define center (rich-align :body "center: service map" :width 38 :align 'center))
-(define right (rich-align :body "right: alerts" :width 38 :align 'right))
+  (rich-rule :title "release train" :style 'rounded))
+(define left (rich-align :body "left: logs" :align 'left))
+(define center (rich-align :body "center: service map" :align 'center))
+(define right (rich-align :body "right: alerts" :align 'right))
 (define spacer
   (rich-padding
     :body (rich-text "padded command output" (rich-style 'green))
@@ -162,8 +218,7 @@
     :box 'heavy))
 (define service-cards
   (rich-columns
-    :items (api-panel queue-panel cache-panel deploy-panel alert-panel)
-    :width 82
+    :items (list api-panel queue-panel cache-panel deploy-panel alert-panel)
     :gap 2))
 (rich-print console service-cards "\n")
 
@@ -176,9 +231,9 @@
     :show-header? #t
     :show-lines? #t
     :columns ("Service" "State" "Detail")
-    :rows (("api" (rich-text "green" (rich-theme-ref dashboard-theme 'good)) "p95 82ms")
-           ("queue" (rich-text "yellow" (rich-theme-ref dashboard-theme 'busy)) "142 jobs\n18 workers")
-           ("edge" (rich-text "green" (rich-theme-ref dashboard-theme 'good)) "2 regions"))))
+    :rows (("api" (rich-text "green" 'good) "p95 82ms")
+           ("queue" (rich-text "yellow" 'busy) "142 jobs\n18 workers")
+           ("edge" (rich-text "green" 'good) "2 regions"))))
 (rich-print console service-table "\n")
 
 (section console "Tree, Layout, Pretty")
@@ -246,7 +301,7 @@
       :box 'rounded
       :columns ("Capability" "Value")
       :rows (("text export length" (number->string (string-length plain)))
-             ("ansi export" ansi)
+             ("ansi export" (rich-text (rich-strip-ansi ansi) (rich-style 'bold 'green)))
              ("registered renderer" (if (rich-renderable? service-table) "yes" "no"))
              ("color system" (if (rich-color-system? 'standard) "standard" "unknown")))))
   (rich-print console export-table "\n"))

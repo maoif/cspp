@@ -33,6 +33,8 @@
   (import (cspp chez)
           (cspp utils)
           (cspp rich private common)
+          (cspp rich private lines)
+          (cspp rich private cells)
           (cspp rich style)
           (cspp rich segment)
           (cspp rich renderable)
@@ -44,9 +46,14 @@
             (mutable refresh-rate $rich-live-refresh-rate $rich-live-refresh-rate-set!)
             (mutable transient? $rich-live-transient? $rich-live-transient?-set!)
             (mutable started? $rich-live-started? $rich-live-started?-set!)
-            (mutable previous-line-count $rich-live-previous-line-count $rich-live-previous-line-count-set!)
+            (mutable previous-frame $rich-live-previous-frame $rich-live-previous-frame-set!)
+            (mutable previous-port $rich-live-previous-port $rich-live-previous-port-set!)
             (mutable thread $rich-live-thread $rich-live-thread-set!)
-            (mutable stop? $rich-live-stop? $rich-live-stop?-set!)))
+            (mutable stop? $rich-live-stop? $rich-live-stop?-set!)
+            (mutable failure $rich-live-failure $rich-live-failure-set!)
+            (mutable refreshes $rich-live-refreshes $rich-live-refreshes-set!)
+            (immutable wake-lock $rich-live-wake-lock)
+            (immutable wake-condition $rich-live-wake-condition)))
 
   (define-record-type (rich-status-record $make-rich-status-record $rich-status?)
     (fields (mutable message $rich-status-message $rich-status-message-set!)
@@ -56,16 +63,30 @@
             (mutable start-time $rich-status-start-time $rich-status-start-time-set!)
             (mutable live $rich-status-live $rich-status-live-set!)))
 
+  ;; Contexts record live displays, active lifetimes, and stop requests. Children inherit
+  ;; the chain so a nested renderer can stop any active ancestor without joining it.
+  (define $worker-contexts (make-thread-parameter '()))
+
+  ;; Call under the target display's wake lock, which protects each context's lifetime.
+  (define $live-context
+    (lambda (live)
+      (let loop ([contexts ($worker-contexts)])
+        (and (pair? contexts)
+             (let ([context (car contexts)])
+               (if (and (eq? live (vector-ref context 0)) (vector-ref context 1))
+                   context
+                   (loop (cdr contexts))))))))
+
   (define $default-status-frames
     '("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏"))
 
   (define $real-nonnegative?
     (lambda (x)
-      (and (real? x) (not (negative? x)))))
+      (and (real? x) (finite? x) (>= x 0))))
 
   (define $real-positive?
     (lambda (x)
-      (and (real? x) (positive? x))))
+      (and (real? x) (finite? x) (positive? x))))
 
   (define $status-message?
     (lambda (x)
@@ -89,27 +110,87 @@
             rounded
             (inexact->exact rounded)))))
 
-  (define $default-sleep
+  (define $sleep-duration
     (lambda (seconds)
-      ($sleep
-       (let* ([milliseconds (max 0 ($round->exact (* seconds 1000)))]
-              [sec (quotient milliseconds 1000)]
-              [nsec (* 1000000 (remainder milliseconds 1000))])
-         (make-time 'time-duration nsec sec)))))
+      (let* ([milliseconds (max (if (positive? seconds) 1 0)
+                                ($round->exact (* (inexact->exact seconds) 1000)))]
+             [sec (quotient milliseconds 1000)]
+             [nsec (* 1000000 (remainder milliseconds 1000))])
+        (make-time 'time-duration nsec sec))))
 
-  (define $string-line-count
-    (lambda (text)
-      (let ([len (string-length text)])
-        (let loop ([i 0] [n 1])
-          (cond [(= i len) n]
-                [(char=? (string-ref text i) #\newline)
-                 (loop (+ i 1) (+ n 1))]
-                [else
-                 (loop (+ i 1) n)])))))
+  (define $default-sleep
+    (lambda (seconds) ($sleep ($sleep-duration seconds))))
 
-  (define $rendered-line-count
-    (lambda (value)
-      ($string-line-count (rich-export-text value))))
+  ;; Return true on expiry, false when a setter or shutdown wakes the worker.
+  ;; Custom sleep hooks remain responsible for returning promptly themselves.
+  (define $wait-live
+    (lambda (live)
+      (if (eq? (rich-sleep) $default-sleep)
+          (with-mutex ($rich-live-wake-lock live)
+            (and (not ($rich-live-stop? live))
+                 (let ([rate (rich-live-refresh-rate live)])
+                   (if (zero? rate)
+                       (begin
+                         (condition-wait ($rich-live-wake-condition live) ($rich-live-wake-lock live))
+                         #f)
+                       ;; Keep native timeouts bounded without refreshing before a long
+                       ;; interval expires. Setters and shutdown interrupt any chunk.
+                       (let wait ([remaining (/ 1 (inexact->exact rate))])
+                         (let ([chunk (min 86400 remaining)])
+                           (if (condition-wait ($rich-live-wake-condition live)
+                                               ($rich-live-wake-lock live)
+                                               ($sleep-duration chunk))
+                               #f
+                               (if (> remaining chunk)
+                                   (wait (- remaining chunk))
+                                   #t))))))))
+          (let ([rate (rich-live-refresh-rate live)])
+            ((rich-sleep) (if (positive? rate) (/ 1 (inexact->exact rate)) 0.05))
+            #t))))
+
+  (define $frame-line-count
+    (lambda (frame width)
+      (if (or (not frame) (string=? frame ""))
+          0
+          (let ([len (string-length frame)])
+            (let loop ([i 0] [column 0] [rows 1])
+              ;; column=width denotes the terminal's pending wrap at the right edge.
+              (if (= i len)
+                  rows
+                  (let ([ch (string-ref frame i)])
+                    (cond
+                     [(char=? ch #\esc)
+                      ;; SGR/erase sequences and OSC metadata do not occupy cells.
+                      (cond
+                       [(and (< (+ i 1) len) (char=? (string-ref frame (+ i 1)) #\[))
+                        (let scan ([j (+ i 2)])
+                          (cond [(= j len) (loop len column rows)]
+                                [(<= #x40 (char->integer (string-ref frame j)) #x7e)
+                                 (loop (+ j 1) column rows)]
+                                [else (scan (+ j 1))]))]
+                       [(and (< (+ i 1) len) (char=? (string-ref frame (+ i 1)) #\]))
+                        (let scan ([j (+ i 2)])
+                          (cond [(= j len) (loop len column rows)]
+                                [(char=? (string-ref frame j) #\bel)
+                                 (loop (+ j 1) column rows)]
+                                [(and (char=? (string-ref frame j) #\esc)
+                                      (< (+ j 1) len)
+                                      (char=? (string-ref frame (+ j 1)) #\\))
+                                 (loop (+ j 2) column rows)]
+                                [else (scan (+ j 1))]))]
+                       [else (loop (min len (+ i 2)) column rows)])]
+                     [(char=? ch #\newline) (loop (+ i 1) 0 (+ rows 1))]
+                     [(char=? ch #\return) (loop (+ i 1) 0 rows)]
+                     [(char=? ch #\backspace)
+                      (loop (+ i 1) (max 0 (- column (if (= column width) 2 1))) rows)]
+                     [(char=? ch #\tab)
+                      (loop (+ i 1) (min (- width 1) (* 8 (+ 1 (quotient column 8)))) rows)]
+                     [(< (char->integer ch) 32) (loop (+ i 1) column rows)]
+                     [else
+                      (let-values ([(end cells) (rich-cell-next frame i)])
+                        (cond [(zero? cells) (loop end column rows)]
+                              [(> (+ column cells) width) (loop end cells (+ rows 1))]
+                              [else (loop end (+ column cells) rows)]))]))))))))
 
   (define $clear-live-output
     (lambda (port line-count)
@@ -125,20 +206,25 @@
   ;;;;===----------------------------------------------------------------------===
 
   #|proc:rich-current-time
-  The `rich-current-time` parameter returns the current time in seconds for
-  live display and status rendering.
+  The `rich-current-time` parameter holds a clock procedure for live, status, and progress.
+  The clock takes no arguments and returns finite real seconds. Optional procedure `clock`
+  replaces the hook and returns unspecified; with no argument, returns the current hook.
   |#
   (define rich-current-time
     (make-parameter
      (lambda ()
-       ($time->seconds (current-time)))))
+       ($time->seconds (current-time)))
+     (lambda (clock) (pcheck ([procedure? clock]) clock))))
 
   #|proc:rich-sleep
-  The `rich-sleep` parameter returns the procedure used by live refresh threads
-  to sleep for a number of seconds.
+  The `rich-sleep` parameter holds a procedure accepting nonnegative real seconds and
+  blocking for that duration; its return value is ignored. Optional procedure `sleeper`
+  replaces the hook and returns unspecified; with no argument, returns the current hook.
+  Custom hooks must return promptly enough for live shutdown; only the default wait is signaled.
   |#
   (define rich-sleep
-    (make-parameter $default-sleep))
+    (make-parameter $default-sleep
+      (lambda (sleeper) (pcheck ([procedure? sleeper]) sleeper))))
 
   ;;;;===----------------------------------------------------------------------===
   ;;;; Live
@@ -159,13 +245,15 @@
   (define make-rich-live
     (case-lambda
       [(renderable)
-       ($make-rich-live-record renderable (make-rich-console) 4 #f #f 0 #f #f)]
+       ($make-rich-live-record renderable (make-rich-console) 4 #f #f #f #f #f #f #f
+                               0 (make-mutex) (make-condition))]
       [(renderable console refresh-rate transient?)
        (pcheck ([rich-console? console]
                 [$real-nonnegative? refresh-rate]
                 [boolean? transient?])
                ($make-rich-live-record renderable console refresh-rate
-                                       transient? #f 0 #f #f))]))
+                                       transient? #f #f #f #f #f #f
+                                       0 (make-mutex) (make-condition)))]))
 
   #|proc:rich-live-renderable
   The `rich-live-renderable` procedure returns the renderable for `live`.
@@ -209,13 +297,17 @@
               ($rich-live-refresh-rate live))))
 
   #|proc:rich-live-refresh-rate-set!
-  The `rich-live-refresh-rate-set!` procedure sets refreshes per second for
-  `live`.
+  The `rich-live-refresh-rate-set!` procedure sets nonnegative refreshes per second
+  `refresh-rate` for `live` and returns unspecified. Zero pauses an existing worker;
+  a positive rate resumes it. A display started at zero has no automatic worker.
+  The default worker waits at least one millisecond between frames.
   |#
   (define rich-live-refresh-rate-set!
     (lambda (live refresh-rate)
       (pcheck ([rich-live? live] [$real-nonnegative? refresh-rate])
-              ($rich-live-refresh-rate-set! live refresh-rate))))
+              (with-mutex ($rich-live-wake-lock live)
+                ($rich-live-refresh-rate-set! live refresh-rate)
+                (condition-signal ($rich-live-wake-condition live))))))
 
   #|proc:rich-live-transient?
   The `rich-live-transient?` procedure returns whether `live` clears output on
@@ -235,64 +327,162 @@
       (pcheck ([rich-live? live] [boolean? transient?])
               ($rich-live-transient?-set! live transient?))))
 
+  ;; Reuse worker/parent refresh contexts so renderer children never join their parent.
+  (define $call-with-live-context
+    (lambda (live refresh)
+      (let ([context (with-mutex ($rich-live-wake-lock live) ($live-context live))])
+        (if context
+            (refresh)
+            (let ([context (vector live #t #f)])
+              (dynamic-wind
+                (lambda ()
+                  (with-mutex ($rich-live-wake-lock live)
+                    (vector-set! context 1 #t)
+                    ($rich-live-refreshes-set! live (+ ($rich-live-refreshes live) 1))))
+                (lambda ()
+                  (parameterize ([$worker-contexts (cons context ($worker-contexts))])
+                    (refresh)
+                    (when (with-mutex ($rich-live-wake-lock live)
+                            (if (vector-ref context 2)
+                                #t
+                                (begin (vector-set! context 1 #f) #f)))
+                      ($finish-live-stop! live))))
+                (lambda ()
+                  (with-mutex ($rich-live-wake-lock live)
+                    (vector-set! context 1 #f)
+                    ($rich-live-refreshes-set! live (- ($rich-live-refreshes live) 1))
+                    (condition-broadcast ($rich-live-wake-condition live))))))))))
+
   #|proc:rich-live-refresh!
   The `rich-live-refresh!` procedure clears the previous live output and writes
-  the current renderable to the live console.
+  the current renderable to the live console and returns `live`. Each frame is rendered
+  once at the current available width. Clearing counts wrapped physical terminal rows,
+  including after resize, without counting a pending wrap at the right edge twice.
+  Renderer stop requests finish this frame before clearing transient output.
   |#
   (define rich-live-refresh!
     (lambda (live)
       (pcheck ([rich-live? live])
-              (let* ([console (rich-live-console live)]
-                     [port (rich-console-output-port console)])
-                ($clear-live-output port ($rich-live-previous-line-count live))
-                (rich-print console (rich-live-renderable live))
-                (flush-output-port port)
-                ($rich-live-previous-line-count-set!
-                 live
-                 ($rendered-line-count (rich-live-renderable live)))
-                live))))
+              ($call-with-live-context live
+                (lambda ()
+                  (let* ([console (rich-live-console live)]
+                         [port (rich-console-output-port console)]
+                         [frame (rich-console-frame console (rich-live-renderable live))]
+                         [width (rich-console-output-width console)])
+                    (when (eq? port ($rich-live-previous-port live))
+                      ($clear-live-output port ($frame-line-count ($rich-live-previous-frame live) width)))
+                    (display frame port)
+                    (flush-output-port port)
+                    ($rich-live-previous-frame-set! live frame)
+                    ($rich-live-previous-port-set! live port)
+                    live)))
+              live)))
 
   #|proc:rich-live-start!
   The `rich-live-start!` procedure starts refreshing `live` and returns `live`.
+  If the first refresh fails, the error is raised and `live` remains ready to retry.
+  A later worker failure stops refreshing and allows restart after its cause is repaired.
+  Stopping a failed display raises its saved failure after cleanup.
   |#
   (define rich-live-start!
     (lambda (live)
       (pcheck ([rich-live? live])
               (unless ($rich-live-started? live)
-                ($rich-live-started?-set! live #t)
-                ($rich-live-stop?-set! live #f)
-                (rich-live-refresh! live)
-                (when (positive? (rich-live-refresh-rate live))
-                  (let ([thread
-                         (fork-thread
-                          (lambda ()
-                            (let loop ()
-                              (unless ($rich-live-stop? live)
-                                ((rich-sleep) (/ 1 (rich-live-refresh-rate live)))
-                                (unless ($rich-live-stop? live)
-                                  (rich-live-refresh! live)
-                                  (loop))))))])
-                    ($rich-live-thread-set! live thread))))
+                (when ($rich-live-thread live)
+                  (thread-join ($rich-live-thread live))
+                  ($rich-live-thread-set! live #f))
+                ($rich-live-failure-set! live #f)
+                (guard (condition
+                        [else
+                         ($rich-live-stop?-set! live #t)
+                         ($rich-live-started?-set! live #f)
+                         (raise condition)])
+                  ($rich-live-started?-set! live #t)
+                  ($rich-live-stop?-set! live #f)
+                  (rich-live-refresh! live)
+                  (when (and (not ($rich-live-stop? live))
+                             (positive? (rich-live-refresh-rate live)))
+                    (let ([thread
+                           (fork-thread
+                            (lambda ()
+                              (let ([context (vector live #t #f)])
+                                (parameterize ([$worker-contexts (cons context ($worker-contexts))])
+                                  (guard (condition
+                                          [else
+                                           ($rich-live-failure-set! live (list condition))
+                                           ($rich-live-stop?-set! live #t)
+                                           ($rich-live-started?-set! live #f)])
+                                    (let loop ()
+                                      (unless ($rich-live-stop? live)
+                                        (let ([expired? ($wait-live live)])
+                                          (unless ($rich-live-stop? live)
+                                            (when (and expired?
+                                                       (positive? (rich-live-refresh-rate live)))
+                                              (rich-live-refresh! live))
+                                            (loop)))))
+                                    (when (with-mutex ($rich-live-wake-lock live)
+                                            ;; Keep cleanup callbacks in this worker context.
+                                            ;; Otherwise retire before a child can request stop.
+                                            (if (vector-ref context 2)
+                                                #t
+                                                (begin (vector-set! context 1 #f) #f)))
+                                      ($finish-live-stop! live)))
+                                ;; Retire failed workers too; descendants may outlive them.
+                                (with-mutex ($rich-live-wake-lock live)
+                                  (vector-set! context 1 #f))))))])
+                      ($rich-live-thread-set! live thread)))))
               live)))
+
+  ;; A worker that stops itself finishes the current frame before cleaning it up.
+  (define $finish-live-stop!
+    (lambda (live)
+      (let ([frame ($rich-live-previous-frame live)]
+            [previous-port ($rich-live-previous-port live)]
+            [failure ($rich-live-failure live)]
+            [transient? (rich-live-transient? live)])
+        ;; Complete bookkeeping before touching a port that may already be closed.
+        ($rich-live-started?-set! live #f)
+        ($rich-live-failure-set! live #f)
+        (when transient?
+          ($rich-live-previous-frame-set! live #f)
+          ($rich-live-previous-port-set! live #f))
+        (guard (condition [else (unless failure (set! failure (list condition)))])
+          (when (and transient? frame)
+            (let* ([console (rich-live-console live)]
+                   [port (rich-console-output-port console)])
+              (when (eq? port previous-port)
+                ($clear-live-output port ($frame-line-count frame (rich-console-output-width console)))
+                (flush-output-port port)))))
+        (when failure (raise (car failure))))))
 
   #|proc:rich-live-stop!
   The `rich-live-stop!` procedure stops refreshing `live` and returns `live`.
+  The default wait is interrupted immediately; custom `rich-sleep` hooks must return
+  themselves. Calls from its refresh callbacks, worker, or renderer child threads request
+  shutdown after the current frame finishes; other callers wait for shutdown.
+  If its worker failed, cleanup finishes before its condition is raised once.
   |#
   (define rich-live-stop!
     (lambda (live)
       (pcheck ([rich-live? live])
-              (when ($rich-live-started? live)
-                ($rich-live-stop?-set! live #t)
-                (when ($rich-live-thread live)
-                  (thread-join ($rich-live-thread live))
-                  ($rich-live-thread-set! live #f))
-                (when (rich-live-transient? live)
-                  (let ([port (rich-console-output-port (rich-live-console live))])
-                    ($clear-live-output port ($rich-live-previous-line-count live))
-                    (flush-output-port port)
-                    ($rich-live-previous-line-count-set! live 0)))
-                ($rich-live-started?-set! live #f))
-              live)))
+        (let ([deferred?
+               (with-mutex ($rich-live-wake-lock live)
+                 ($rich-live-stop?-set! live #t)
+                 (condition-signal ($rich-live-wake-condition live))
+                 (let ([context ($live-context live)])
+                   (and context (begin (vector-set! context 2 #t) #t))))])
+          (unless deferred?
+            (when ($rich-live-thread live)
+              (thread-join ($rich-live-thread live))
+              ($rich-live-thread-set! live #f))
+            ;; Synchronous initial/manual frames have no worker thread to join.
+            (with-mutex ($rich-live-wake-lock live)
+              (let wait ()
+                (unless (zero? ($rich-live-refreshes live))
+                  (condition-wait ($rich-live-wake-condition live) ($rich-live-wake-lock live))
+                  (wait))))
+            ($finish-live-stop! live)))
+        live)))
 
   #|macro:rich-live
   The `rich-live` macro constructs and returns a live display. The
@@ -404,12 +594,15 @@
               ($rich-status-console status))))
 
   #|proc:rich-status-console-set!
-  The `rich-status-console-set!` procedure sets the console for `status`.
+  The `rich-status-console-set!` procedure sets `console` for `status` and its active
+  live display, if any. Returns unspecified.
   |#
   (define rich-status-console-set!
     (lambda (status console)
       (pcheck ([rich-status? status] [rich-console? console])
-              ($rich-status-console-set! status console))))
+              ($rich-status-console-set! status console)
+              (when ($rich-status-live status)
+                (rich-live-console-set! ($rich-status-live status) console)))))
 
   #|proc:rich-status-frames
   The `rich-status-frames` procedure returns the spinner frames for `status`.
@@ -437,35 +630,38 @@
               ($rich-status-interval status))))
 
   #|proc:rich-status-interval-set!
-  The `rich-status-interval-set!` procedure sets the spinner frame interval for
-  `status`.
+  The `rich-status-interval-set!` procedure sets finite positive `interval` in seconds
+  for `status`, also changing its active refresh rate. Returns unspecified.
   |#
   (define rich-status-interval-set!
     (lambda (status interval)
       (pcheck ([rich-status? status] [$real-positive? interval])
-              ($rich-status-interval-set! status interval))))
+              ($rich-status-interval-set! status interval)
+              (when ($rich-status-live status)
+                (rich-live-refresh-rate-set! ($rich-status-live status) (/ 1 (inexact->exact interval)))))))
 
   #|proc:rich-status-render
-  The `rich-status-render` procedure renders `status` as one segment line.
+  The `rich-status-render` procedure renders `status` as one segment line. Frame and
+  message tabs expand at eight-cell stops; line endings fold to spaces.
   |#
   (define rich-status-render
     (lambda (status)
       (pcheck ([rich-status? status])
               (let* ([frames (rich-status-frames status)]
-                     [elapsed (max 0 (- ((rich-current-time))
-                                        ($rich-status-start-time status)))]
-                     [index (modulo (inexact->exact
-                                     (floor (/ elapsed
-                                               (rich-status-interval status))))
+                     [elapsed (max 0 (- (inexact->exact ((rich-current-time)))
+                                        (inexact->exact ($rich-status-start-time status))))]
+                     [index (modulo (floor (/ elapsed
+                                              (inexact->exact (rich-status-interval status))))
                                     (length frames))]
                      [frame (list-ref frames index)])
-                (list (list (rich-segment frame)
+                (list (list (rich-segment (rich-single-line-text frame))
                             (rich-segment " ")
-                            (rich-segment (rich-status-message status))))))))
+                            (rich-segment (rich-single-line-text (rich-status-message status)))))))))
 
   #|proc:rich-status-start!
   The `rich-status-start!` procedure starts a live display for `status` so its
-  frame is refreshed at the status interval.
+  frame is refreshed at the status interval and returns `status`. If startup fails,
+  the error is raised and the status can be started again after its cause is repaired.
   |#
   (define rich-status-start!
     (lambda (status)
@@ -474,10 +670,16 @@
                 ($rich-status-start-time-set! status ((rich-current-time)))
                 (let ([live (make-rich-live status
                                             (rich-status-console status)
-                                            (/ 1 (rich-status-interval status))
+                                            (/ 1 (inexact->exact (rich-status-interval status)))
                                             #f)])
+                  ;; Initial renderers must be able to stop or update this live display.
                   ($rich-status-live-set! status live)
-                  (rich-live-start! live)))
+                  (guard (condition
+                          [else
+                           (when (eq? live ($rich-status-live status))
+                             ($rich-status-live-set! status #f))
+                           (raise condition)])
+                    (rich-live-start! live))))
               status)))
 
   #|proc:rich-status-stop!
@@ -486,9 +688,10 @@
   (define rich-status-stop!
     (lambda (status)
       (pcheck ([rich-status? status])
-              (when ($rich-status-live status)
-                (rich-live-stop! ($rich-status-live status))
-                ($rich-status-live-set! status #f))
+              (let ([live ($rich-status-live status)])
+                (when live
+                  ($rich-status-live-set! status #f)
+                  (rich-live-stop! live)))
               status)))
 
   #|macro:rich-status

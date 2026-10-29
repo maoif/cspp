@@ -1,6 +1,9 @@
 #!chezscheme
 (library (cspp rich private common)
-  (export rich-nonnegative-integer?
+  (export rich-render-width
+          rich-render-ascii-only?
+          rich-optional-width?
+          rich-nonnegative-integer?
           rich-positive-integer?
           rich-rgb-integer?
           rich-output-target?
@@ -10,6 +13,28 @@
           rich-reverse-append)
   (import (cspp chez)
           (cspp utils))
+
+  #|proc:rich-render-width
+  The private `rich-render-width` parameter holds the positive available content width.
+  It defaults to 80; console rendering binds it and containers narrow it for children.
+  |#
+  (define rich-render-width (make-thread-parameter 80))
+
+  #|proc:rich-render-ascii-only?
+  The private `rich-render-ascii-only?` parameter returns whether automatic renderers use
+  ASCII decoration. Optional boolean `ascii-only?` sets the policy and returns unspecified.
+  It defaults to `#f`; console rendering binds it for all nested containers.
+  |#
+  (define rich-render-ascii-only?
+    (make-thread-parameter #f (lambda (ascii-only?) (pcheck ([boolean? ascii-only?]) ascii-only?))))
+
+  #|proc:rich-optional-width?
+  The private `rich-optional-width?` procedure returns whether `width` is `#f` (automatic)
+  or a positive exact integer.
+  |#
+  (define rich-optional-width?
+    (lambda (width)
+      (or (not width) (rich-positive-integer? width))))
 
   #|proc:rich-nonnegative-integer?
   The `rich-nonnegative-integer?` procedure returns `#t` when its argument is

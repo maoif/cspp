@@ -1,6 +1,7 @@
 #!chezscheme
 (import (cspp)
-        (cspp rich private common))
+        (cspp rich private common)
+        (only (cspp rich renderable) rich-register-container-renderer! rich-layout-render-cache))
 
 (mat rich-import
 
@@ -26,6 +27,23 @@
 
      )
 
+(mat rich-export-text-controls
+
+     ;; Plain export must omit renderer control segments while retaining text.
+     (let ([value (vector 'export-controls)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (rich-register-renderer!
+            (lambda (candidate) (eq? candidate value))
+            (lambda (_) (list (list (make-rich-segment "\033[?25l" #f #t)
+                                    (make-rich-segment "hello" #f #f)
+                                    (make-rich-segment "\033[?25h" #f #t)))))
+           (string=? "hello" (rich-export-text value)))
+         void))
+
+     )
+
 (mat rich-style
 
      (rich-style? (rich-style 'bold 'red))
@@ -45,7 +63,7 @@
              (rich-style->ansi #f (rich-style 'red 'blue)))
 
      ;; Later attributes override earlier conflicting attributes.
-     (equal? ""
+     (equal? "\033[24m"
              (rich-style->ansi #f (rich-style 'underline 'no-underline)))
 
      (equal? "\033[38;2;255;170;0m"
@@ -501,11 +519,11 @@
      )
 
 (mat rich-progress-empty-task
-     (let ([progress (make-rich-progress 4 (rich-progress-default-columns))])
+     (let ([progress (make-rich-progress 4 '(description bar percentage completed))])
        (rich-progress-add-task! progress "empty" 0)
        (string=? "empty [####] 100% 0/0" (rich-export-text progress)))
 
-     (let* ([progress (make-rich-progress 4 (rich-progress-default-columns))]
+     (let* ([progress (make-rich-progress 4 '(description bar percentage completed))]
             [id (rich-progress-add-task! progress "empty" #f)])
        (rich-progress-task-total-set! progress id 0)
        (rich-progress-complete! progress id)
@@ -782,5 +800,1749 @@
 
      ;; Console color system must be supported.
      (error? (rich-console :color-system 'unsupported))
+
+     )
+
+(mat rich-console-auto-color
+
+     (equal? "x"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port)
+                            (rich-text "x" (rich-style 'red))))))
+
+     (equal? "x"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'auto)
+                            (rich-style 'red) "x" (reset-style)))))
+
+     (equal? "\033[31mx\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :force-terminal? #t)
+                            (rich-text "x" (rich-style 'red))))))
+
+     (equal? "x"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'none
+                                          :force-terminal? #t)
+                            (rich-text "x" (rich-style 'red))))))
+
+     )
+
+(mat rich-console-theme-styles
+
+     (let* ([theme (rich-theme :accent (rich-style 'red))]
+            [text (rich-text "x" 'accent)]
+            [render (lambda ()
+                      (rich-string-output
+                       (lambda (port)
+                         (rich-print (rich-console :output-port port :theme theme
+                                                   :color-system 'standard)
+                                     (rich-panel :body text)))))])
+       (let ([first (render)])
+         (rich-theme-set! theme 'accent (rich-style 'blue))
+         (and (equal? "+---+\n| \033[31mx\033[0m |\n+---+" first)
+              (equal? "+---+\n| \033[34mx\033[0m |\n+---+" (render)))))
+
+     (equal? "x"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'none)
+                            (rich-text "x" 'accent)))))
+
+     (equal? "x" (rich-export-text (rich-text "x" 'accent)))
+
+     (equal? "\033[31mA\033[34mS\033[0m\033[31mB\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard
+                                          :theme (rich-theme :accent (rich-style 'blue)))
+                            (rich-style 'red) "A" (rich-text "S" 'accent)
+                            "B" (reset-style)))))
+
+     ;; Error case: a named style needs a binding when ANSI output is enabled.
+     (error? (rich-export-ansi (rich-text "x" 'missing)))
+
+     )
+
+(mat rich-progress-selected-columns
+
+     (let ([progress (make-rich-progress 4 '(completed description percentage bar))])
+       (let ([id (rich-progress-add-task! progress "build" 8)])
+         (rich-progress-update! progress id 2)
+         (equal? "2/8 build 25% [#---]" (rich-export-text progress))))
+
+     (let ([progress (rich-progress :width 4 :columns '(description))])
+       (rich-progress-add-task! progress "build" #f)
+       (equal? "build" (rich-export-text progress)))
+
+     (let ([progress (make-rich-progress 4 '())])
+       (rich-progress-add-task! progress "build" 8)
+       (equal? "" (rich-export-text progress)))
+
+     (parameterize ([rich-current-time (lambda () 0)])
+       (let ([progress (make-rich-progress 4 '(percentage completed remaining speed))])
+         (rich-progress-add-task! progress "unknown" #f)
+         (equal? "? 0 --:--:-- 0.0/s" (rich-export-text progress))))
+
+     (let ([now 0])
+       (parameterize ([rich-current-time (lambda () now)])
+         (let ([progress (make-rich-progress 4 '(spinner))])
+           (rich-progress-add-task! progress "spin" #f)
+           (set! now 1/10)
+           (equal? "/" (rich-export-text progress)))))
+
+     (let ([now 0])
+       (parameterize ([rich-current-time (lambda () now)])
+         (let* ([progress (make-rich-progress 4 '(elapsed remaining speed spinner))]
+                [id (rich-progress-add-task! progress "build" 8)])
+           (set! now 2)
+           (rich-progress-update! progress id 4)
+           (let ([running (rich-export-text progress)])
+             (rich-progress-complete! progress id)
+             (set! now 10)
+             (and (equal? "00:00:02 00:00:02 2.0/s |" running)
+                  (equal? "00:00:02 00:00:00 4.0/s |"
+                          (rich-export-text progress)))))))
+
+     ;; Error case: column descriptors must be supported names.
+     (error? (make-rich-progress 4 '(unknown)))
+
+     )
+
+(mat rich-render-width-context
+
+     (begin
+       (rich-register-renderer!
+        (lambda (value) (eq? value 'width-context-test))
+        (lambda (value) (make-string (rich-render-width) #\-)))
+       (let ([console (rich-console :width 17)])
+         (and (equal? (make-string 17 #\-) (rich-render console 'width-context-test))
+              (equal? (make-string 17 #\-)
+                      (rich-string-output
+                       (lambda (port)
+                         (rich-console-output-port-set! console port)
+                         (rich-print console 'width-context-test)))))))
+
+     (let ([console (make-rich-console)])
+       (rich-console-width-set! console 17)
+       (rich-console-width-set! console #f)
+       (rich-string-output
+        (lambda (port)
+          (rich-console-output-port-set! console port)
+          (unless (= 80 (rich-console-width console))
+            (error 'width-context-test "wrong fallback width"))))
+       (= 80 (rich-console-width console)))
+
+     (= 80 (string-length (rich-export-text 'width-context-test)))
+
+     )
+
+(mat rich-rule-auto-width
+
+     (equal? (make-string 80 #\-) (rich-export-text (make-rich-rule)))
+
+     (equal? (make-string 23 #\-)
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 23) (make-rich-rule)))))
+
+     (equal? (make-string 7 #\-)
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 23)
+                            (rich-rule :width 7)))))
+
+     (let ([rule (rich-rule :width 7)])
+       (rich-rule-width-set! rule #f)
+       (equal? (make-string 80 #\-) (rich-export-text rule)))
+
+     (equal? "  ---------------   "
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 20)
+                            (rich-padding :body (make-rich-rule) :left 2 :right 3)))))
+
+     (equal? "+----------+\n| -------- |\n+----------+"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 12)
+                            (rich-panel :body (make-rich-rule))))))
+
+     (equal? "------"
+             (rich-export-text (rich-align :body (make-rich-rule) :width 6)))
+
+     (equal? "+-------+\n|-------|\n+-------+"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 30)
+                            (rich-panel :body (make-rich-rule) :width 9 :padding 0)))))
+
+     )
+
+(mat rich-rule-container-width
+
+     (equal? "------- -------"
+             (parameterize ([rich-render-width 15])
+               (rich-export-text (make-rich-layout 'row
+                                                   (list (make-rich-rule) (make-rich-rule))))))
+
+     (equal? "root\n└── ------"
+             (parameterize ([rich-render-width 10])
+               (let ([tree (make-rich-tree "root")])
+                 (rich-tree-add! tree (make-rich-rule))
+                 (rich-export-text tree))))
+
+     (equal? "+-----+-----+\n| --- | --- |\n+-----+-----+"
+             (parameterize ([rich-render-width 13])
+               (let ([table (rich-table :show-header? #f :columns ("a" "b"))])
+                 (rich-table-add-row! table (make-rich-rule) (make-rich-rule #f 3))
+                 (rich-export-text table))))
+
+     )
+
+(mat rich-progress-auto-width
+
+     (parameterize ([rich-render-width 30] [rich-current-time (lambda () 0)])
+       (let ([progress (make-rich-progress #f '(description bar percentage completed))])
+         (let ([id (rich-progress-add-task! progress "a" 10)])
+           (rich-progress-update! progress id 5))
+         (rich-progress-add-task! progress "long" 10)
+         (equal? "a    [#######-------] 50% 5/10\nlong [--------------]  0% 0/10"
+                 (rich-export-text progress))))
+
+     (parameterize ([rich-render-width 10])
+       (let ([progress (make-rich-progress #f '(description bar percentage))])
+         (rich-progress-add-task! progress "long-description" 10)
+         (equal? "long [] 0%" (rich-export-text progress))))
+
+     (parameterize ([rich-render-width 3])
+       (let ([progress (make-rich-progress #f '(description bar percentage))])
+         (rich-progress-add-task! progress "long-description" 10)
+         (= 3 (string-length (rich-export-text progress)))))
+
+     (parameterize ([rich-render-width 15])
+       (let ([progress (make-rich-progress #f '(bar bar))])
+         (rich-progress-add-task! progress "x" 10)
+         (equal? "[-----] [-----]" (rich-export-text progress))))
+
+     (parameterize ([rich-render-width 30])
+       (let ([progress (make-rich-progress 4 '(description bar))])
+         (rich-progress-add-task! progress "x" 10)
+         (equal? "x [----]" (rich-export-text progress))))
+
+     (let ([progress (rich-progress :columns '(bar))])
+       (rich-progress-add-task! progress "x" 10)
+       (= 80 (string-length (rich-export-text progress))))
+
+     )
+
+(mat rich-live-single-frame
+
+     (let ([calls 0])
+       (rich-register-renderer!
+        (lambda (value) (eq? value 'live-single-frame-test))
+        (lambda (value)
+          (set! calls (+ calls 1))
+          (if (odd? calls) "abcdefghij" "x")))
+       (let ([output
+              (rich-string-output
+               (lambda (port)
+                 (let ([live (make-rich-live 'live-single-frame-test
+                                            (rich-console :output-port port :soft-wrap? #t :width 5) 0 #f)])
+                   (rich-live-refresh! live)
+                   (rich-live-refresh! live))))])
+         (and (= calls 2)
+              (equal? "abcdefghij\r\033[2K\033[1A\r\033[2Kx" output))))
+
+     (equal? "abcde\r\033[2Kx"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "abcde"
+                                           (rich-console :output-port port :soft-wrap? #t :width 5) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "x")
+                  (rich-live-refresh! live)))))
+
+     )
+
+(mat rich-live-lifecycle
+
+     (= 0 (system "cd .. && python3 tests/integration/rich-live.py"))
+
+     )
+
+(mat rich-terminal-sizing
+
+     (or (eq? (system-platform) 'windows)
+         (= 0 (system "cd .. && python3 tests/integration/rich-terminal.py")))
+
+     )
+
+(mat rich-live-control-width
+
+     (equal? "abcde\rx\r\033[2Ky"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "abcde\rx"
+                                           (rich-console :output-port port :soft-wrap? #t :width 5) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "y")
+                  (rich-live-refresh! live)))))
+
+     (equal? "a\tbc\r\033[2K\033[1A\r\033[2Ky"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "a\tbc"
+                                           (rich-console :output-port port :soft-wrap? #t :width 8) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "y")
+                  (rich-live-refresh! live)))))
+
+     (equal? "abcd\bbx\r\033[2Ky"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "abcd\bbx"
+                                           (rich-console :output-port port :soft-wrap? #t :width 5) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "y")
+                  (rich-live-refresh! live)))))
+
+     )
+
+(mat rich-unicode-cells
+
+     (= 9 (rich-segment-width (rich-segment "中文 café")))
+
+     (= 2 (rich-segment-width (rich-segment "\033[31m界\033[0m")))
+
+     (= 2 (rich-segment-width (rich-segment "👩🏽‍💻")))
+
+     (= 2 (rich-segment-width (rich-segment "🇨🇳")))
+
+     (= 2 (rich-segment-width (rich-segment "❤️")))
+
+     (= 1 (rich-segment-width (rich-segment "·")))
+
+     (equal? '("中文" "测试")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "中文测试")) 4)))
+
+     (equal? '("aé" "界" "b")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "aé界b")) 2)))
+
+     (equal? '("a界" "b")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "a界b")) 3)))
+
+     ;; A glyph wider than the whole line becomes a space, rather than looping forever.
+     (equal? '(" " "x")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "界x")) 1)))
+
+     (equal? "a" (rich-segments->plain
+                   (rich-segment-crop (list (rich-segment "a界b")) 2)))
+
+     (equal? "é" (rich-segments->plain
+                   (rich-segment-crop (list (rich-segment "éx")) 1)))
+
+     (equal? "👩🏽‍💻" (rich-segments->plain
+                        (rich-segment-crop (list (rich-segment "👩🏽‍💻x")) 2)))
+
+     (equal? "界  " (rich-segments->plain
+                     (rich-segment-pad-right (list (rich-segment "界")) 4)))
+
+     (equal? "  界" (rich-export-text (rich-align :body "界" :width 4 :align 'right)))
+
+     (= 10 (rich-segment-width
+            (rich-segment (rich-export-text (rich-rule :title "中文" :width 10))))))
+
+(mat rich-unicode-live
+
+     (equal? "a界界é\r\033[2K\033[1A\r\033[2Kx"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "a界界é"
+                                           (rich-console :output-port port :soft-wrap? #t :width 4) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "x")
+                  (rich-live-refresh! live)))))
+
+     (equal? "界界́\r\033[2Kx"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "界界́"
+                                           (rich-console :output-port port :soft-wrap? #t :width 4) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "x")
+                  (rich-live-refresh! live)))))
+
+     )
+
+(mat rich-unicode-styled-boundaries
+
+     (= 2 (rich-segments-width (list (rich-segment "👩" (rich-style 'red))
+                                    (rich-segment "‍💻" (rich-style 'green)))))
+
+     (equal? '("é" "x")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "e" (rich-style 'red))
+                                           (rich-segment "́x" (rich-style 'green))) 1)))
+
+     (equal? "é" (rich-segments->plain
+                   (rich-segment-crop (list (rich-segment "e" (rich-style 'red))
+                                            (rich-segment "́x" (rich-style 'green))) 1)))
+
+     (equal? '("👩‍💻" "x")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "👩" (rich-style 'red))
+                                           (rich-segment "‍💻x" (rich-style 'green))) 2)))
+
+     (equal? "" (rich-segments->plain
+                 (rich-segment-crop (list (rich-segment "界") (rich-segment "x")) 1)))
+
+     )
+
+(mat rich-unicode-containers
+
+     (equal? "+--+\n|界|\n+--+"
+             (rich-export-text (rich-panel :body "界" :padding 0 :box 'ascii)))
+
+     (equal? '(10 10 10 10 10)
+             (map rich-segments-width
+                  (rich-table-render (rich-table :box 'ascii :columns ("A" "B")
+                                                 :rows (("界" "é"))))))
+
+     (equal? "  " (rich-export-text (rich-rule :title "界" :width 2)))
+
+     (let ([progress (make-rich-progress #f '(description bar percentage))])
+       (rich-progress-add-task! progress "编译 👩🏽‍💻" 10)
+       (rich-progress-add-task! progress "café" 10)
+       (equal? '(30 30)
+               (parameterize ([rich-render-width 30])
+                 (map rich-segments-width (rich-progress-render progress)))))
+
+     ;; Combining text following a full-width line must not trigger an extra wrap.
+     (equal? "界界́界\r\033[2K\033[1A\r\033[2Kx"
+             (rich-string-output
+              (lambda (port)
+                (let ([live (make-rich-live "界界́界"
+                                           (rich-console :output-port port :soft-wrap? #t :width 4) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "x")
+                  (rich-live-refresh! live)))))
+
+     )
+
+(mat rich-unicode-regional-indicators
+
+     (= 2 (rich-segment-width (rich-segment "🇨")))
+
+     (= 4 (rich-segment-width (rich-segment "🇨🇳🇺")))
+
+     (equal? '("🇨🇳" "🇺")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "🇨🇳🇺")) 2)))
+
+     )
+
+(mat rich-unicode-text-presentation
+
+     (= 1 (rich-segment-width (rich-segment "⌚︎")))
+
+     (= 2 (rich-segment-width (rich-segment "⌚️")))
+
+     (= 2 (rich-segment-width (rich-segment "界︎")))
+
+     (equal? "⌚︎"
+             (rich-segments->plain
+              (rich-segment-crop (list (rich-segment "⌚" (rich-style 'red))
+                                       (rich-segment "︎x" (rich-style 'green))) 1)))
+
+     )
+
+(mat rich-automatic-align-and-columns
+
+     (let ([align (rich-align :body "界" :align 'right)])
+       (and (equal? "   界" (parameterize ([rich-render-width 5])
+                               (rich-export-text align)))
+            (equal? " 界" (parameterize ([rich-render-width 3])
+                             (rich-export-text align)))))
+
+     (let ([columns (rich-columns :items ("aaaa" "bbbb") :gap 1)])
+       (and (equal? "aaaa bbbb" (parameterize ([rich-render-width 9])
+                                   (rich-export-text columns)))
+            (equal? "aaaa\nbbbb" (parameterize ([rich-render-width 8])
+                                     (rich-export-text columns)))))
+
+     (let ([align (rich-align :body "x" :width 3 :align 'right)])
+       (rich-align-width-set! align #f)
+       (equal? "    x" (parameterize ([rich-render-width 5])
+                          (rich-export-text align))))
+
+     (let ([columns (rich-columns :items ("aaaa" "bbbb") :width 9 :gap 1)])
+       (rich-columns-width-set! columns #f)
+       (equal? "aaaa\nbbbb" (parameterize ([rich-render-width 8])
+                                (rich-export-text columns))))
+
+     (equal? "  x" (parameterize ([rich-render-width 5])
+                       (rich-export-text (rich-align :body "x" :width 3 :align 'right))))
+
+     )
+
+(define rich-test-render-text
+  (lambda (console value)
+    (rich-string-output
+     (lambda (port)
+       (rich-console-output-port-set! console port)
+       (rich-print console value)))))
+
+(mat rich-table-default-width
+
+     (equal? (string-append "+----+-------------+\n"
+                            "| ID | Description |\n"
+                            "+----+-------------+\n"
+                            "| 7  | abcdefghijk |\n"
+                            "|    | lmnop       |\n"
+                            "+----+-------------+")
+             (rich-test-render-text (rich-console :width 20)
+                          (rich-table :columns ("ID" "Description")
+                                      :rows (("7" "abcdefghijklmnop")))))
+
+     (equal? "+-----+\n| abc |\n+-----+"
+             (rich-test-render-text (rich-console :width 30)
+                          (rich-table :show-header? #f :columns ("A") :rows (("abc")))))
+
+     (equal? "+----+\n| 界 |\n| 界 |\n+----+"
+             (rich-test-render-text (rich-console :width 6)
+                          (rich-table :show-header? #f :columns ("A") :rows (("界界")))))
+
+     (equal? "+---+\n| a |\n| b |\n+---+"
+             (rich-test-render-text (rich-console :width 8)
+                          (rich-table :show-header? #f :columns ("A")
+                                      :rows (((rich-text "a\nb" (rich-style 'red)))))))
+
+     (let ([table (rich-table :title "Long title" :caption "Long caption"
+                             :columns ("A" "B") :rows (("one" "two")))])
+       (andmap
+        (lambda (width)
+          (parameterize ([rich-render-width width])
+            (andmap (lambda (line) (<= (rich-segments-width line) width))
+                    (rich-table-render table))))
+        '(1 2 3 4 5 6 7 8 9 10)))
+
+     (let ([calls 0])
+       (rich-register-renderer!
+        (lambda (value) (eq? value 'table-auto-single-render))
+        (lambda (value) (set! calls (+ calls 1)) "abcdefghijklmnop"))
+       (let ([lines (parameterize ([rich-render-width 8])
+                      (rich-table-render
+                       (rich-table :show-header? #f :columns ("A")
+                                   :rows (list (list 'table-auto-single-render)))))])
+         (and (= calls 1)
+              (andmap (lambda (line) (<= (rich-segments-width line) 8)) lines))))
+
+     )
+
+(mat rich-panel-default-width
+
+     (equal? "+------+\n| abcd |\n| efgh |\n| i    |\n+------+"
+             (rich-test-render-text (rich-console :width 8) (rich-panel :body "abcdefghi")))
+
+     (equal? "+---+\n| x |\n+---+"
+             (rich-test-render-text (rich-console :width 30) (rich-panel :body "x")))
+
+     (let ([panel (rich-panel :title "Long title" :subtitle "Long subtitle"
+                             :body "abcdefghi")])
+       (andmap
+        (lambda (width)
+          (parameterize ([rich-render-width width])
+            (andmap (lambda (line) (<= (rich-segments-width line) width))
+                    (rich-panel-render panel))))
+        '(1 2 3 4 5 6 7 8 9 10)))
+
+     (equal? "+-----------+\n| abcdefghi |\n+-----------+"
+             (rich-test-render-text (rich-console :width 8 :soft-wrap? #t)
+                          (rich-panel :body "abcdefghi" :width 7)))
+
+     )
+
+(mat rich-other-container-default-width
+
+     (equal? "  abcd \n  ef "
+             (rich-test-render-text (rich-console :width 7)
+                                    (rich-padding :body "abcdef" :left 2 :right 1)))
+
+     (equal? "abcd\n  ef"
+             (rich-test-render-text (rich-console :width 4)
+                                    (rich-align :body "abcdef" :align 'right)))
+
+     (equal? "abcd\nef\nXYZ"
+             (rich-test-render-text (rich-console :width 4)
+                                    (rich-columns :items ("abcdef" "XYZ") :gap 1)))
+
+     (equal? "abcd UVWX\nef   YZ"
+             (rich-test-render-text (rich-console :width 9)
+                                    (rich-layout :direction 'row
+                                                 :items ("abcdef" "UVWXYZ"))))
+
+     (equal? "abcd\nef\nUVWX\nYZ"
+             (rich-test-render-text (rich-console :width 4)
+                                    (rich-layout :direction 'column
+                                                 :items ("abcdef" "UVWXYZ"))))
+
+     (let ([tree (rich-tree :label "root123456")])
+       (rich-tree-add! tree "child12345")
+       (equal? "root1234\n56\n└── chil\n    d123\n    45"
+               (rich-test-render-text (rich-console :width 8) tree)))
+
+     (let* ([tree (rich-tree :label "root123456")]
+            [child (rich-tree-add! tree "child12345")])
+       (rich-tree-add! child "leaf12345")
+       (andmap
+        (lambda (width)
+          (parameterize ([rich-render-width width])
+            (andmap (lambda (line) (<= (rich-segments-width line) width))
+                    (rich-tree-render tree))))
+        '(1 2 3 4 5 6 7 8)))
+
+     (let ([containers
+            (list (rich-padding :body "abcdef" :left 9 :right 9)
+                  (rich-align :body "abcdef")
+                  (rich-columns :items ("abcdef" "uvwxyz"))
+                  (rich-layout :direction 'row :items ("abc" "def" "ghi")))])
+       (andmap
+        (lambda (width)
+          (andmap (lambda (value)
+                    (andmap (lambda (line) (<= (rich-segments-width line) width))
+                            (rich-render (rich-console :width width) value)))
+                  containers))
+        '(1 2 3 4 5)))
+
+     )
+
+(mat rich-container-complete-glyphs
+
+     (equal? "+--+\n|界|\n|界|\n+--+"
+             (rich-test-render-text (rich-console :width 5) (rich-panel :body "界界")))
+
+     (equal? "+--+\n|界|\n|界|\n+--+"
+             (rich-test-render-text (rich-console :width 5)
+                                    (rich-table :show-header? #f :columns ("A")
+                                                :rows (("界界")))))
+
+     (equal? " 界\n 界"
+             (rich-test-render-text (rich-console :width 3)
+                                    (rich-padding :body "界界" :left 2)))
+
+     (equal? "界\n界"
+             (rich-test-render-text (rich-console :width 3)
+                                    (rich-layout :direction 'row :items ("界" "界"))))
+
+     (let ([tree (rich-tree :label "root")])
+       (rich-tree-add! tree "界界")
+       (equal? "root\n└──界\n   界"
+               (rich-test-render-text (rich-console :width 5) tree)))
+
+     )
+
+(mat rich-table-nested-natural-width
+
+     (let ([lines (rich-render
+                   (rich-console :width 30)
+                   (rich-table :columns ("ID" "Details")
+                               :rows (list (list "7" (rich-panel :body "abcdefghijklmnop")))))])
+       (and (= 29 (rich-segments-width (car lines)))
+            (ormap (lambda (line)
+                     (string-contains? (rich-segments->plain line) "abcdefghijklmnop")) lines)))
+
+     (let ([calls 0])
+       (rich-register-renderer!
+        (lambda (value) (eq? value 'nested-table-once))
+        (lambda (value) (set! calls (+ calls 1)) "abcdefghijklmnop"))
+       (let ([lines (rich-render
+                     (rich-console :width 16)
+                     (rich-table :columns ("ID" "Details")
+                                 :rows (list (list "7" (rich-panel :body 'nested-table-once)))))])
+         (and (= calls 1)
+              (andmap (lambda (line) (<= (rich-segments-width line) 16)) lines))))
+
+     )
+
+(mat rich-container-unboxed-fallback
+
+     (equal? "界\n界"
+             (rich-test-render-text (rich-console :width 3) (rich-panel :body "界界")))
+
+     (let ([table (rich-table :show-header? #f :columns ("A" "B")
+                             :rows (list (list (rich-panel :body "界") "界")))])
+       (equal? "界\n界" (rich-test-render-text (rich-console :width 3) table)))
+
+     (let ([lines (rich-render (rich-console :width 1) (make-rich-table))])
+       (andmap (lambda (line) (<= (rich-segments-width line) 1)) lines))
+
+     )
+
+(mat rich-nested-container-glyphs
+
+     (equal? "界\n界"
+             (rich-test-render-text (rich-console :width 2)
+                                    (rich-panel :body (rich-panel :body "界界"))))
+
+     (equal? "界\n界"
+             (rich-test-render-text (rich-console :width 3)
+                                    (rich-panel :body (rich-panel :body "界界"))))
+
+     (let ([calls 0] [text (rich-text "abcdefghijklmnop" (rich-style 'red))])
+       (rich-register-renderer!
+        (lambda (value) (eq? value 'table-cache-lifetime))
+        (lambda (value) (set! calls (+ calls 1)) (rich-text-render text)))
+       (let ([table (rich-table :show-header? #f :columns ("A")
+                               :rows (list (list (rich-panel :body 'table-cache-lifetime))))])
+         (rich-test-render-text (rich-console :width 10) table)
+         (rich-test-render-text (rich-console :width 20) table)
+         (= calls 2)))
+
+     (let* ([style (rich-style 'red)]
+            [lines (rich-render (rich-console :width 8)
+                                (rich-table :show-header? #f :columns ("A")
+                                            :rows (list (list (rich-text "界界界" style)))))]
+            [styled (filter (lambda (segment) (eq? style (rich-segment-style segment)))
+                            (apply append lines))])
+       (and (equal? "界界界" (rich-segments->plain styled))
+            (andmap (lambda (line) (<= (rich-segments-width line) 8)) lines)))
+
+     )
+
+(mat rich-table-reflow-complexity
+
+     (let ([calls 0])
+       (rich-register-container-renderer!
+        rich-table?
+        (lambda (table) (set! calls (+ calls 1)) (rich-table-render table)))
+       (let* ([table (let nest ([depth 8] [body "x"])
+                       (if (zero? depth) body
+                           (nest (- depth 1)
+                                 (rich-table :show-header? #f :columns ("A")
+                                             :rows (list (list body))))))]
+              [output (rich-test-render-text (rich-console :width 1000) table)])
+         (rich-register-container-renderer! rich-table? rich-table-render)
+         (and (< calls 100) (string-contains? output "x"))))
+
+     )
+
+(mat rich-explicit-panel-nested-glyphs
+
+     (equal? "+----+\n| 界 |\n+----+"
+             (rich-test-render-text
+              (rich-console :width 80)
+              (rich-panel :width 3 :body (rich-align :body "界"))))
+
+     (equal? "+----+\n| 界 |\n+----+"
+             (rich-test-render-text
+              (rich-console :width 80)
+              (rich-panel :width 3 :body (rich-panel :body "界"))))
+
+     (equal? "+-+\n|-|\n+-+"
+             (rich-test-render-text
+              (rich-console :width 80)
+              (rich-panel :width 3 :padding 0 :body (make-rich-rule))))
+
+     (equal? "+-+\n|x|\n+-+"
+             (rich-test-render-text
+              (rich-console :width 80)
+              (rich-panel :width 3 :padding 0 :body (rich-align :body "x"))))
+
+     )
+
+(mat rich-container-final-child-width
+
+     (equal? "+-+\n|-|\n+-+"
+             (rich-test-render-text (rich-console :width 3)
+                                    (rich-panel :body (make-rich-rule))))
+
+     (equal? "  -"
+             (rich-test-render-text (rich-console :width 3)
+                                    (rich-padding :left 2 :body (make-rich-rule))))
+
+     (let ([tree (make-rich-tree "a")])
+       (rich-tree-add! tree (make-rich-rule))
+       (equal? "a\n└── -" (rich-test-render-text (rich-console :width 5) tree)))
+
+     (equal? "- -"
+             (rich-test-render-text
+              (rich-console :width 3)
+              (make-rich-layout 'row (list (make-rich-rule) (make-rich-rule)))))
+
+     (let ([calls 0] [value (vector 'final-child-width-once)])
+       (rich-register-renderer!
+        (lambda (candidate) (eq? candidate value))
+        (lambda (value) (set! calls (+ calls 1)) "ab"))
+       (let ([panel (rich-panel :body value)]
+             [padding (rich-padding :left 2 :body value)]
+             [tree (make-rich-tree "a")]
+             [layout (make-rich-layout 'row (list value "x"))])
+         (rich-tree-add! tree value)
+         (andmap
+          (lambda (value width expected)
+            (set! calls 0)
+            (and (equal? expected (rich-test-render-text (rich-console :width width) value))
+                 (= calls 1)))
+          (list panel padding tree layout)
+          '(3 3 5 3)
+          '("+-+\n|a|\n|b|\n+-+" "  a\n  b" "a\n└── a\n    b" "a x\nb "))))
+
+     )
+
+(mat rich-layout-stacked-child-width
+
+     (equal? "---\n界"
+             (rich-test-render-text
+              (rich-console :width 3)
+              (make-rich-layout 'row (list (make-rich-rule) "界"))))
+
+     (equal? "+-+\n|a|\n|b|\n|c|\n+-+\n界"
+             (rich-test-render-text
+              (rich-console :width 3)
+              (make-rich-layout 'row (list (rich-panel :body "abc") "界"))))
+
+     (let ([calls 0] [value (vector 'stacked-child-width-once)])
+       (rich-register-renderer!
+        (lambda (candidate) (eq? candidate value))
+        (lambda (value) (set! calls (+ calls 1)) "abc"))
+       (and (equal? "abc\n界"
+                    (rich-test-render-text
+                     (rich-console :width 3)
+                     (make-rich-layout 'row (list value "界"))))
+            (= calls 1)))
+
+     )
+
+(mat rich-nested-ascii-tree
+
+     (let ([tree (make-rich-tree "root")])
+       (rich-tree-add! tree "child")
+       (let ([console (rich-console :width 40 :ascii-only? #t)])
+         (equal? "+-----------+\n| root      |\n| `-- child |\n+-----------+"
+                 (rich-test-render-text console (rich-panel :body tree)))))
+
+     (let ([tree (make-rich-tree "root")])
+       (rich-tree-add! tree "child")
+       (let* ([nested (rich-padding :left 1 :body tree)]
+              [console (rich-console :width 40 :ascii-only? #t)]
+              [ascii (rich-test-render-text console nested)])
+         (rich-console-ascii-only?-set! console #f)
+         (and (equal? " root\n `-- child" ascii)
+              (equal? " root\n └── child" (rich-test-render-text console nested)))))
+
+     (let ([tree (make-rich-tree "root")])
+       (rich-tree-add! tree "child")
+       (andmap
+        (lambda (value)
+          (let ([text (rich-test-render-text (rich-console :width 40 :ascii-only? #t) value)])
+            (and (string-contains? text "`-- child")
+                 (not (string-contains? text "└──")))))
+        (list (rich-table :show-header? #f :columns ("A") :rows (list (list tree)))
+              (make-rich-columns (list tree))
+              (make-rich-layout 'column (list tree)))))
+
+     (let ([tree (make-rich-tree "root")])
+       (rich-tree-add! tree "child")
+       (let ([panel (rich-panel :body tree)]
+             [ascii (rich-console :width 40 :ascii-only? #t)]
+             [unicode (rich-console :width 40)])
+         (parameterize ([rich-layout-render-cache (make-eq-hashtable)])
+           (let* ([ascii-lines (map rich-segments->plain (rich-render ascii panel))]
+                  [unicode-lines (map rich-segments->plain (rich-render unicode panel))])
+             (and (member "| `-- child |" ascii-lines)
+                  (member "| └── child |" unicode-lines)
+                  #t)))))
+
+     )
+
+(mat rich-live-start-recovery
+
+     ;; A renderer error during the first frame must leave the display ready to retry.
+     (let ([value (vector 'live-start-recovery)] [fail? #t] [calls 0])
+       (rich-register-renderer!
+        (lambda (candidate) (eq? candidate value))
+        (lambda (value)
+          (set! calls (+ calls 1))
+          (if fail? (error 'live-start-recovery "first frame failed") "working")))
+       (equal? "working"
+               (rich-string-output
+                (lambda (port)
+                  (let ([live (make-rich-live value (rich-console :output-port port) 0 #f)])
+                    (unless (guard (condition [else #t]) (rich-live-start! live) #f)
+                      (error 'live-start-recovery "missing renderer error"))
+                    (set! fail? #f)
+                    (rich-live-start! live)
+                    (rich-live-start! live)
+                    (rich-live-stop! live)
+                    (unless (= calls 2)
+                      (error 'live-start-recovery "startup was not retried exactly once")))))))
+
+     ;; Failed status output must allow retry after its console destination is repaired.
+     (let ([closed (open-output-string)])
+       (close-port closed)
+       (string-contains?
+        (rich-string-output
+         (lambda (port)
+           (let* ([console (rich-console :output-port closed)]
+                  [status (make-rich-status "Working" console '("*") 0.001)])
+             (unless (guard (condition [else #t]) (rich-status-start! status) #f)
+               (error 'status-start-recovery "missing output error"))
+             (rich-console-output-port-set! console port)
+             (dynamic-wind
+               (lambda () (rich-status-start! status))
+               void
+               (lambda () (rich-status-stop! status))))))
+        "* Working"))
+
+     )
+
+(define rich-test-confirm
+  (lambda (answer default)
+    (let ([input (open-input-string answer)])
+      (dynamic-wind
+        void
+        (lambda ()
+          (let ([result #f])
+            (rich-string-output
+             (lambda (port)
+               (let ([console (rich-console :input-port input :output-port port)])
+                 (set! result
+                       (if (boolean? default) (rich-confirm console "Continue?" default)
+                           (rich-confirm console "Continue?"))))))
+            result))
+        (lambda () (close-port input))))))
+
+(mat rich-confirm-case-insensitive
+
+     (andmap (lambda (answer) (rich-test-confirm answer 'no-default))
+             '("y\n" "Y\n" "yes\n" "YES\n" "YeS\n"))
+
+     (andmap (lambda (answer) (not (rich-test-confirm answer 'no-default)))
+             '("n\n" "N\n" "no\n" "NO\n" "nO\n"))
+
+     (rich-test-confirm "YES\n" #f)
+
+     (not (rich-test-confirm "NO\n" #t))
+
+     (rich-test-confirm "\n" #t)
+
+     (not (rich-test-confirm "\n" #f))
+
+     ;; An empty answer without a default is not a confirmation.
+     (error? (rich-test-confirm "\n" 'no-default))
+
+     ;; Case normalization must not accept an invalid answer.
+     (error? (rich-test-confirm "MAYBE\n" #t))
+
+     )
+
+(mat rich-prompt-flush
+
+     (let* ([chunks (make-list-builder)]
+            [output (make-custom-textual-output-port
+                     "rich-prompt-flush"
+                     (lambda (text start count)
+                       (chunks (substring text start (+ start count))) count)
+                     #f #f #f)]
+            [input (open-input-string "Bob\n")])
+       (dynamic-wind
+         void
+         (lambda ()
+           (and (equal? "Bob" (rich-prompt
+                              (rich-console :output-port output :input-port input) "Name"))
+                (equal? '("Name: ") (chunks))))
+         (lambda () (close-port input) (close-port output))))
+
+     )
+
+(mat rich-live-destination
+
+     (let ([first (open-output-string)] [second (open-output-string)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (let ([live (make-rich-live "old\nframe" (rich-console :output-port first) 0 #f)])
+             (rich-live-refresh! live)
+             (display "unrelated\n" second)
+             (rich-live-console-set! live (rich-console :output-port second))
+             (rich-live-renderable-set! live "new")
+             (rich-live-refresh! live)
+             (and (equal? "old\nframe" (get-output-string first))
+                  (equal? "unrelated\nnew" (get-output-string second)))))
+         (lambda () (close-port first) (close-port second))))
+
+     (let ([first (open-output-string)] [second (open-output-string)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (let* ([console (rich-console :output-port first)]
+                  [live (make-rich-live "old" console 0 #f)])
+             (rich-live-refresh! live)
+             (rich-console-output-port-set! console second)
+             (rich-live-renderable-set! live "new")
+             (rich-live-refresh! live)
+             (equal? "new" (get-output-string second))))
+         (lambda () (close-port first) (close-port second))))
+
+     (let ([first (open-output-string)] [second (open-output-string)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (let* ([console (rich-console :output-port first)]
+                  [live (make-rich-live "old" console 0 #t)])
+             (rich-live-start! live)
+             (rich-console-output-port-set! console second)
+             (display "unrelated" second)
+             (rich-live-stop! live)
+             (equal? "unrelated" (get-output-string second))))
+         (lambda () (close-port first) (close-port second))))
+
+     )
+
+(mat rich-panel-multiline-fixed-headings
+
+     (equal? "+------+\n| A    |\n| B    |\n| x    |\n+------+"
+             (rich-export-text (rich-panel :title "A\nB" :width 8 :body "x")))
+
+     (equal? "+------+\n| A    |\n| B    |\n| x    |\n+------+"
+             (rich-export-text (rich-panel :subtitle "A\nB" :width 8 :body "x")))
+
+     )
+
+(mat rich-container-primitive-renderers
+
+     (andmap
+      (lambda (value)
+        (rich-register-renderer! (lambda (candidate) (eqv? candidate value))
+                                 (lambda (value) "CUSTOM"))
+        (andmap
+         (lambda (container)
+           (string-contains? (rich-test-render-text (rich-console :width 30) container) "CUSTOM"))
+         (list value (rich-panel :body value) (rich-padding :body value)
+               (rich-align :body value) (make-rich-columns (list value))
+               (make-rich-layout 'row (list value)) (make-rich-layout 'column (list value))
+               (rich-table :columns ("A") :rows (list (list value)))
+               (make-rich-tree value))))
+      (list (string-copy "primitive-renderer") 'primitive-renderer 617289 #\λ))
+
+     )
+
+(mat rich-container-items-expressions
+
+     (equal? '("b" "a")
+             (rich-columns-items (rich-columns :items (reverse '("a" "b")))))
+
+     (equal? '("b" "a")
+             (rich-layout-items (rich-layout :items (reverse '("a" "b")))))
+
+     (equal? '("a!" "b!")
+             (rich-columns-items
+              (rich-columns :items (map (lambda (item) (string-append item "!")) '("a" "b")))))
+
+     (equal? '("a" "b")
+             (rich-layout-items (rich-layout :items (let ([first "a"]) (list first "b")))))
+
+     (let ([first "a"] [second "b"])
+       (equal? '("a" "b") (rich-columns-items (rich-columns :items (list first second)))))
+
+     (equal? '("a" "b") (rich-layout-items (rich-layout :items ("a" "b"))))
+
+     )
+
+(mat rich-colon-sgr
+
+     (equal? "X" (rich-strip-ansi "\033[38:2::255:0:0mX\033[0m"))
+
+     (= 1 (rich-segment-width (rich-segment "\033[38:2::255:0:0mX\033[0m")))
+
+     (= 2 (rich-segment-width (rich-segment "\033[4:3m界\033[0m")))
+
+     (equal? '("\033[38:2::255:0:0mX" "Y\033[0m")
+             (map rich-segments->plain
+                  (rich-segment-wrap (list (rich-segment "\033[38:2::255:0:0mXY\033[0m")) 1)))
+
+     (equal? "\033[38:2::255:0:0m界"
+             (rich-segments->plain
+              (rich-segment-crop (list (rich-segment "\033[38:2::255:0:0m界X")) 2)))
+
+     )
+
+(mat rich-wrap-linear-allocation
+
+     ;; Wrapping one long source span must not repeatedly copy the unconsumed suffix.
+     (let* ([size 20000] [source (make-string size #\x)]
+            [segments (list (rich-segment source))])
+       (collect)
+       (let* ([before (statistics)] [lines (rich-segment-wrap segments 80)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and (= 250 (length lines))
+              (equal? source (apply string-append (map rich-segments->plain lines)))
+              (< allocated (* 128 size)))))
+
+     )
+
+(mat rich-table-row-insertion-allocation
+
+     ;; Appending rows must allocate in proportion to new rows, not all prior rows.
+     (let ([table (rich-table :show-header? #f :show-lines? #f :columns ("A"))]
+           [size 2000])
+       (collect)
+       (let ([before (statistics)])
+         (do ([index 0 (+ index 1)]) ((= index size))
+           (rich-table-add-row! table (number->string index)))
+         (let* ([allocated (sstats-bytes (sstats-difference (statistics) before))]
+                [lines (map rich-segments->plain (rich-table-render table))])
+           (and (< allocated (* size 2048))
+                (= (+ size 2) (length lines))
+                (equal? "| 0    |" (cadr lines))
+                (equal? "| 1999 |" (list-ref lines size))))))
+
+     )
+
+(mat rich-tall-container-rows
+
+     (let ([style (rich-style 'green)] [body (rich-text "a\nb\nc" (rich-style 'red))])
+       (equal? '("a x" "b y" "c ")
+               (map rich-segments->plain
+                    (rich-render (rich-console :width 9)
+                                 (make-rich-layout 'row (list body (rich-text "x\ny" style)))))))
+
+     (equal? '("a x" "b y" "c ")
+             (map rich-segments->plain
+                  (rich-render (rich-console :width 9)
+                               (make-rich-columns (list "a\nb\nc" "x\ny") #f 1))))
+
+     (equal? '("+---+---+" "| a | x |" "| b | y |" "| c |   |" "+---+---+")
+             (map rich-segments->plain
+                  (rich-table-render
+                   (rich-table :show-header? #f :columns ("A" "B")
+                               :rows (("a\nb\nc" "x\ny"))))))
+
+     )
+
+(mat rich-box-string-isolation
+
+     (let* ([chars (rich-box-chars 'ascii)] [horizontal (vector-ref chars 4)]
+            [saved (string-copy horizontal)])
+       (dynamic-wind
+         (lambda () (string-set! horizontal 0 #\x))
+         (lambda ()
+           (and (equal? "-" (vector-ref (rich-box-chars 'ascii) 4))
+                (equal? "-----" (rich-export-text (rich-rule :width 5)))))
+         (lambda () (string-copy! saved 0 horizontal 0 (string-length saved)))))
+
+     )
+
+(mat rich-rule-single-line-title
+
+     (equal? "-- A B ---" (rich-export-text (rich-rule :title "A\nB" :width 10)))
+
+     (equal? "-- A B ---" (rich-export-text (rich-rule :title "A\r\nB" :width 10)))
+
+     (equal? "-- A B ---" (rich-export-text (rich-rule :title "A\tB" :width 10)))
+
+     )
+
+(mat rich-progress-finite-counts
+
+     ;; Non-finite updates must fail before they corrupt task state.
+     (error? (let* ([progress (make-rich-progress)]
+                   [id (rich-progress-add-task! progress "build" 10)])
+               (rich-progress-update! progress id +nan.0)))
+
+     ;; Infinite counts cannot be represented by progress bars or percentages.
+     (error? (let* ([progress (make-rich-progress)]
+                   [id (rich-progress-add-task! progress "build" 10)])
+               (rich-progress-update! progress id +inf.0)))
+
+     ;; Advancing by an infinite amount must fail at the API boundary.
+     (error? (let* ([progress (make-rich-progress)]
+                   [id (rich-progress-add-task! progress "build" 10)])
+               (rich-progress-advance! progress id +inf.0)))
+
+     ;; Two finite amounts must not overflow the stored count to infinity.
+     (error? (let* ([progress (make-rich-progress)]
+                   [id (rich-progress-add-task! progress "build" 10)])
+               (rich-progress-update! progress id 1e308)
+               (rich-progress-advance! progress id 1e308)))
+
+     )
+
+(mat rich-empty-live-frame
+
+     (equal? "unrelatednext"
+             (rich-string-output
+              (lambda (port)
+                (display "unrelated" port)
+                (let ([live (make-rich-live "" (rich-console :output-port port) 0 #f)])
+                  (rich-live-refresh! live)
+                  (rich-live-renderable-set! live "next")
+                  (rich-live-refresh! live)))))
+
+     (equal? "unrelated"
+             (rich-string-output
+              (lambda (port)
+                (display "unrelated" port)
+                (let ([live (make-rich-live "" (rich-console :output-port port) 0 #t)])
+                  (rich-live-start! live)
+                  (rich-live-stop! live)))))
+
+     )
+
+(mat rich-transient-stop-idempotent
+
+     (let* ([port (open-output-string)]
+            [live (make-rich-live "x" (rich-console :output-port port) 0 #t)])
+       (close-port port)
+       (eq? live (rich-live-stop! live)))
+
+     (let* ([port (open-output-string)]
+            [live (make-rich-live "x" (rich-console :output-port port) 0 #t)])
+       (rich-live-start! live)
+       (rich-live-stop! live)
+       (close-port port)
+       (eq? live (rich-live-stop! live)))
+
+     )
+
+(mat rich-progress-large-finite-counts
+
+     (let* ([progress (make-rich-progress 4 '(bar percentage))]
+            [id (rich-progress-add-task! progress "build" 1)])
+       (rich-progress-update! progress id 1e308)
+       (equal? "[####] 100%" (rich-export-text progress)))
+
+     (let ([now 0])
+       (parameterize ([rich-current-time (lambda () now)])
+         (let* ([progress (make-rich-progress 4 '(bar percentage speed remaining))]
+                [id (rich-progress-add-task! progress "build" 1)])
+           (set! now 0.001)
+           (rich-progress-update! progress id 1e308)
+           (string-contains? (rich-export-text progress) "[####] 100%" "00:00:00"))))
+
+     )
+
+(mat rich-progress-finite-speed-formatting
+
+     ;; Finite exact speeds must not overflow while converting the display to decimal.
+     (parameterize ([rich-current-time (lambda () 0)])
+       (let* ([progress (make-rich-progress 4 '(speed))]
+              [id (rich-progress-add-task! progress "build" #f)])
+         (rich-progress-update! progress id (expt 10 1000))
+         (parameterize ([rich-current-time (lambda () (/ 1 (expt 10 300)))])
+           (string=? (string-append "1" (make-string 1300 #\0) ".0/s")
+                     (rich-export-text progress)))))
+
+     ;; The same overflow also occurs with ordinary finite flonum counts and times.
+     (parameterize ([rich-current-time (lambda () 0)])
+       (let* ([progress (make-rich-progress 4 '(speed))]
+              [id (rich-progress-add-task! progress "build" #f)])
+         (rich-progress-update! progress id 1e308)
+         (parameterize ([rich-current-time (lambda () 0.001)])
+           (let* ([text (rich-export-text progress)]
+                  [speed (string->number
+                          (string-append "#e" (substring text 0 (- (string-length text) 2))))])
+             (and speed (finite? speed) (> speed (expt 10 310)))))))
+
+     ;; Preserve the existing decimal spelling and round ties to an even hundredth.
+     (andmap
+      (lambda (case)
+        (parameterize ([rich-current-time (lambda () 0)])
+          (let* ([progress (make-rich-progress 4 '(speed))]
+                 [id (rich-progress-add-task! progress "build" #f)])
+            (rich-progress-update! progress id (car case))
+            (parameterize ([rich-current-time (lambda () 1)])
+              (string=? (cadr case) (rich-export-text progress))))))
+      '((0 "0.0/s") (1/200 "0.0/s") (3/200 "0.02/s") (1/10 "0.1/s")
+        (1/100 "0.01/s") (5/4 "1.25/s") (199/200 "1.0/s") (9999/1000 "10.0/s")))
+
+     )
+
+(mat rich-progress-finite-spinner-times
+
+     ;; Finite elapsed times must not overflow while selecting a spinner frame.
+     (andmap
+      (lambda (width)
+        (let ([now 0])
+          (parameterize ([rich-current-time (lambda () now)])
+            (let* ([progress (make-rich-progress width '(spinner))]
+                   [id (rich-progress-add-task! progress "spin" #f)])
+              (set! now 1e308)
+              (and (equal? "|" (rich-export-text progress))
+                   (begin
+                     (rich-progress-complete! progress id)
+                     (set! now 0)
+                     (equal? "|" (rich-export-text progress))))))))
+      '(#f 4))
+
+     ;; Preserve the existing flonum rounding at ordinary tenth-second transitions.
+     (let ([now 0])
+       (parameterize ([rich-current-time (lambda () now)])
+         (let ([progress (make-rich-progress 4 '(spinner))])
+           (rich-progress-add-task! progress "spin" #f)
+           (andmap (lambda (time expected)
+                     (set! now time)
+                     (equal? expected (rich-export-text progress)))
+                   '(0 9/100 1/10 1/5 0.3 2/5 0.6 -1)
+                   '("|" "|" "/" "-" "\\" "|" "-" "|")))))
+
+     )
+
+(mat rich-accumulated-style-restoration
+
+     (equal? "\033[1m\033[31mA\033[34mB\033[32mS\033[0m\033[1m\033[34mC\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard)
+                            (rich-style 'bold 'red) "A" (rich-style 'blue) "B"
+                            (rich-text "S" (rich-style 'green)) "C" (reset-style)))))
+
+     (equal? "\033[41mA\033[4mB\033[32mS\033[0m\033[4m\033[41mC\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard)
+                            (rich-style 'on-red) "A" (rich-style 'underline) "B"
+                            (rich-text "S" (rich-style 'green)) "C" (reset-style)))))
+
+     )
+
+(mat rich-console-wrap-policy
+
+     (equal? "abc\ndef"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 3) "ab" "cdef"))))
+
+     (equal? "abcdef"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 3 :soft-wrap? #t)
+                            "abcdef"))))
+
+     (equal? "\033[31mabc\ndef\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 3 :color-system 'standard)
+                            (rich-text "abcdef" (rich-style 'red))))))
+
+     (equal? "中文\n测试"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :width 4) "中文测试"))))
+
+     )
+
+(mat rich-wrap-side-output
+
+     (let ([side (open-output-string)] [value (vector 'side-output)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (rich-register-renderer! (lambda (candidate) (eq? candidate value))
+                                    (lambda (value) (rich-fprint side "AUDIT") "X"))
+           (and (equal? "X" (rich-string-output
+                             (lambda (port)
+                               (rich-print (rich-console :output-port port) value))))
+                (equal? "AUDIT" (get-output-string side))))
+         (lambda () (close-port side))))
+
+     )
+
+(mat rich-tree-insertion-allocation
+
+     ;; New children must not repeatedly copy all existing siblings.
+     (let ([tree (make-rich-tree "root")] [size 2000])
+       (collect)
+       (let ([before (statistics)])
+         (do ([index 0 (+ index 1)]) ((= index size)) (rich-tree-add! tree index))
+         (let ([allocated (sstats-bytes (sstats-difference (statistics) before))]
+               [children (rich-tree-children tree)])
+           (and (< allocated (* size 2048)) (= size (length children))
+                (= 0 (rich-tree-label (car children)))
+                (= (- size 1) (rich-tree-label (list-ref children (- size 1))))))))
+
+     (let* ([tree (make-rich-tree "root")] [first (rich-tree-add! tree "first")]
+            [children (rich-tree-children tree)])
+       (rich-tree-add! tree "second")
+       (equal? (list first) children))
+
+     )
+
+(mat rich-progress-insertion-allocation
+
+     ;; Task creation must not repeatedly copy the existing task list.
+     (let ([progress (make-rich-progress #f '(description))] [size 2000])
+       (collect)
+       (let ([before (statistics)])
+         (do ([index 0 (+ index 1)]) ((= index size))
+           (rich-progress-add-task! progress (number->string index) 10))
+         (let* ([allocated (sstats-bytes (sstats-difference (statistics) before))]
+                [lines (map rich-segments->plain (rich-progress-render progress))])
+           (and (< allocated (* size 4096)) (= size (length lines))
+                (equal? "0   " (car lines))
+                (equal? "1999" (list-ref lines (- size 1)))))))
+
+     )
+
+(mat rich-wrap-nested-destinations
+
+     (let ([main (open-output-string)] [side (open-output-string)]
+           [outer (vector 'outer)] [inner (vector 'inner)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (rich-register-renderer!
+            (lambda (value) (eq? value inner))
+            (lambda (value) (rich-fprint main "B") "S"))
+           (rich-register-renderer!
+            (lambda (value) (eq? value outer))
+            (lambda (value) (rich-print (rich-console :output-port side) inner) "C"))
+           (rich-print (rich-console :output-port main) "A" outer)
+           (and (equal? "ABC" (get-output-string main))
+                (equal? "S" (get-output-string side))))
+         (lambda () (close-port main) (close-port side))))
+
+     )
+
+(mat rich-deep-tree-allocation
+
+     ;; At a bounded width, each deeper node must not copy every descendant line.
+     (let* ([depth 500]
+            [tree (let loop ([left depth] [tree (make-rich-tree "x")])
+                    (if (zero? left) tree
+                        (loop (- left 1) (make-rich-tree "x" (list tree)))))]
+            [console (rich-console :width 10)])
+       (collect)
+       (let* ([before (statistics)] [lines (rich-render console tree)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and (< allocated (* depth 8192)) (= (+ depth 1) (length lines))
+              (andmap (lambda (line)
+                        (and (<= (rich-segments-width line) 10)
+                             (string-contains? (rich-segments->plain line) "x"))) lines))))
+
+     )
+
+(mat rich-transient-cleanup-failure-retry
+
+     ;; A closed destination may fail cleanup, but must leave shutdown complete.
+     (call-with-port (open-output-string)
+       (lambda (second)
+         (let* ([first (open-output-string)]
+                [live (make-rich-live "hello" (rich-console :output-port first) 0 #t)])
+           (rich-live-start! live)
+           (close-port first)
+           (let ([failed? (guard (condition [else #t]) (rich-live-stop! live) #f)])
+             (rich-live-console-set! live (rich-console :output-port second))
+             (rich-live-start! live)
+             (let ([result (get-output-string second)])
+               (rich-live-stop! live)
+               (rich-live-stop! live)
+               (and failed? (string=? result "hello")))))))
+
+     )
+
+(mat rich-container-control-normalization
+
+     ;; Tabs must occupy measured spaces, and CRLF must produce one line break.
+     (equal? '("+-----------+" "| a       b |" "+-----------+")
+             (map rich-segments->plain (rich-panel-render (rich-panel :body "a\tb"))))
+
+     (equal? '("+---+" "| a |" "| b |" "+---+")
+             (map rich-segments->plain (rich-panel-render (rich-panel :body "a\r\nb"))))
+
+     (equal? '("+-----------+" "| A         |" "+-----------+" "| a       b |"
+               "+-----------+")
+             (map rich-segments->plain
+                  (rich-table-render (rich-table :columns ("A") :rows (("a\tb"))))))
+
+     (equal? '("+---+" "| A |" "+---+" "| a |" "| b |" "+---+")
+             (map rich-segments->plain
+                  (rich-table-render (rich-table :columns ("A") :rows (("a\r\nb"))))))
+
+     ;; Tab stops use cells and span style boundaries. CRLF may also span styles.
+     (let* ([text (rich-text "界" (rich-style 'red))]
+            [unused (rich-text-append! text "\tb\r" (rich-style 'green))]
+            [unused (rich-text-append! text "\nc" (rich-style 'blue))])
+       (equal? '("+-----------+" "| 界      b |" "| c         |" "+-----------+")
+               (map rich-segments->plain (rich-panel-render (rich-panel :body text)))))
+
+     (equal? '("x       y" "z")
+             (map rich-segments->plain
+                  (rich-render (rich-console :width 20)
+                               (rich-layout :direction 'column :items ("x\ty\rz")))))
+
+     )
+
+(mat rich-progress-finite-clock-range
+
+     ;; Finite clock endpoints must not overflow before elapsed-time conversion.
+     (let ([now -1e308])
+       (parameterize ([rich-current-time (lambda () now)])
+         (let ([progress (make-rich-progress #f '(description))])
+           (rich-progress-add-task! progress "build" #f)
+           (set! now 1e308)
+           (string=? "build" (rich-export-text progress)))))
+
+     )
+
+(mat rich-progress-huge-remaining
+
+     ;; A finite inexact completed count must not overflow subtraction from an exact total.
+     (parameterize ([rich-current-time (lambda () 0)])
+       (let* ([progress (make-rich-progress 4 '(remaining))]
+              [id (rich-progress-add-task! progress "build" (expt 10 1000))])
+         (rich-progress-update! progress id 1.0)
+         (parameterize ([rich-current-time (lambda () 1)])
+           (let ([result (rich-export-text progress)])
+             (and (> (string-length result) 990)
+                  (string=? (substring result (- (string-length result) 6)
+                                       (string-length result)) ":46:39"))))))
+
+     )
+
+(mat rich-time-hook-validation
+
+     ;; Hook parameters reject nonprocedures at assignment, before an API invokes them.
+     (error? (rich-current-time #f))
+
+     ;; A bad sleep hook must never reach the worker as a nonprocedure.
+     (error? (rich-sleep 123))
+
+     (let ([clock (rich-current-time)] [sleeper (rich-sleep)])
+       (parameterize ([rich-current-time (lambda () 42)] [rich-sleep (lambda (seconds) seconds)])
+         (and (= ((rich-current-time)) 42) (= ((rich-sleep) 1/2) 1/2)))
+       (and (eq? clock (rich-current-time)) (eq? sleeper (rich-sleep))))
+
+     )
+
+(mat rich-extreme-status-interval
+
+     ;; Accepted finite intervals must not overflow the spinner's elapsed/interval ratio.
+     (parameterize ([rich-current-time (lambda () 0)])
+       (let ([status (make-rich-status "test" (make-rich-console) '("A") 1e-320)])
+         (parameterize ([rich-current-time (lambda () 1)])
+           (string=? "A test" (rich-export-text status)))))
+
+     )
+
+(mat rich-progress-many-task-updates
+
+     ;; IDs remain stable through index growth and rendering retains insertion order.
+     (let ([progress (make-rich-progress 4 '(description completed))])
+       (do ([id 0 (+ id 1)]) ((= id 300))
+         (rich-progress-add-task! progress (number->string id) 10))
+       (do ([id 299 (- id 1)]) ((negative? id))
+         (rich-progress-update! progress id 2)
+         (rich-progress-advance! progress id 1))
+       (rich-progress-task-visible?-set! progress 1 #f)
+       (rich-progress-task-description-set! progress 150 "middle")
+       (rich-progress-task-total-set! progress 150 4)
+       (rich-progress-complete! progress 299)
+       (let ([lines (map rich-segments->plain (rich-progress-render progress))])
+         (and (= (length lines) 299)
+              (string=? (car lines) "0 3/10")
+              (string=? (cadr lines) "2 3/10")
+              (string=? (list-ref lines 149) "middle 3/4")
+              (string=? (list-ref lines 298) "299 10/10"))))
+
+     ;; An absent bignum ID must be rejected by the index without changing valid tasks.
+     (error? (let ([progress (make-rich-progress)])
+               (rich-progress-add-task! progress "build" 10)
+               (rich-progress-update! progress (expt 10 30) 2)))
+
+     )
+
+(mat rich-single-line-display-controls
+
+     ;; Progress must allocate its bar after expanding description tabs.
+     (let ([progress (make-rich-progress #f '(description bar percentage))])
+       (rich-progress-add-task! progress "a\tb" 10)
+       (parameterize ([rich-render-width 20])
+         (equal? '("a       b [-----] 0%")
+                 (map rich-segments->plain (rich-progress-render progress)))))
+
+     ;; Single-line displays fold line endings so their row count stays predictable.
+     (let ([progress (make-rich-progress 2 '(description))])
+       (rich-progress-add-task! progress "a\r\nb\rc\nd" 10)
+       (equal? '("a b c d") (map rich-segments->plain (rich-progress-render progress))))
+
+     (parameterize ([rich-current-time (lambda () 0)])
+       (let ([status (make-rich-status "a\tb\r\nc" (make-rich-console) '("*\n*") 1)])
+         (equal? '("* * a       b c") (map rich-segments->plain (rich-status-render status)))))
+
+     )
+
+(mat rich-style-disable-stream
+
+     ;; Explicit disabling must work for standalone styles and temporary span styles.
+     (andmap
+      (lambda (entry)
+        (let ([on (car entry)] [off (cadr entry)]
+              [enable (caddr entry)] [disable (cadddr entry)])
+          (and
+           (eq? #f ((case on
+                        [(bold) rich-style-bold?] [(dim) rich-style-dim?]
+                        [(italic) rich-style-italic?] [(underline) rich-style-underline?]
+                        [(blink) rich-style-blink?] [(reverse) rich-style-reverse?]
+                        [(hidden) rich-style-hidden?] [(strike) rich-style-strike?])
+                      (rich-style off)))
+           (equal? (string-append enable "A" disable "B\033[0m")
+                   (rich-string-output
+                    (lambda (port)
+                      (rich-print (rich-console :output-port port :color-system 'standard)
+                                  (rich-style on) "A" (rich-style off) "B" (reset-style)))))
+           (equal? (string-append enable "A" disable "B\033[0m" enable "C\033[0m")
+                   (rich-string-output
+                    (lambda (port)
+                      (rich-print (rich-console :output-port port :color-system 'standard)
+                                  (rich-style on) "A" (rich-text "B" (rich-style off))
+                                  "C" (reset-style))))))))
+      '((bold no-bold "\033[1m" "\033[22m")
+        (dim no-dim "\033[2m" "\033[22m")
+        (italic no-italic "\033[3m" "\033[23m")
+        (underline no-underline "\033[4m" "\033[24m")
+        (blink no-blink "\033[5m" "\033[25m")
+        (reverse no-reverse "\033[7m" "\033[27m")
+        (hidden no-hidden "\033[8m" "\033[28m")
+        (strike no-strike "\033[9m" "\033[29m")))
+
+     ;; SGR 22 clears both bold and dim; restore the attribute that was not disabled.
+     (equal? "\033[1m\033[2mA\033[22m\033[2mB\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard)
+                            (rich-style 'bold 'dim) "A" (rich-style 'no-bold) "B"
+                            (reset-style)))))
+
+     (equal? "\033[1m\033[2mA\033[22m\033[1mB\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard)
+                            (rich-style 'bold 'dim) "A" (rich-style 'no-dim) "B"
+                            (reset-style)))))
+
+     ;; Option order and boolean accessors still distinguish enabled and disabled styles.
+     (and (eq? #f (rich-style-bold? (rich-style)))
+          (eq? #f (rich-style-bold? (rich-style 'bold 'no-bold)))
+          (eq? #t (rich-style-bold? (rich-style 'no-bold 'bold)))
+          (string=? "\033[1m" (rich-style->ansi 'standard (rich-style 'no-bold 'bold)))
+          (string=? "" (rich-style->ansi 'none (rich-style 'no-bold 'no-hidden))))
+
+     ;; Theme styles use the same disabling and restoration behavior as direct styles.
+     (equal? "\033[4mA\033[24mB\033[0m\033[4mC\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard
+                                          :theme (rich-theme :plain (rich-style 'no-underline)))
+                            (rich-style 'underline) "A" (rich-text "B" 'plain)
+                            "C" (reset-style)))))
+
+     ;; A temporary colored span must not resurrect an explicitly disabled attribute.
+     (equal? "\033[1mA\033[22mB\033[31mC\033[0m\033[22mD\033[0m"
+             (rich-string-output
+              (lambda (port)
+                (rich-print (rich-console :output-port port :color-system 'standard)
+                            (rich-style 'bold) "A" (rich-style 'no-bold) "B"
+                            (rich-text "C" (rich-style 'red)) "D" (reset-style)))))
+
+     )
+
+(mat rich-table-header-only
+
+     ;; With no data rows, the bottom border also closes the header.
+     (equal? "+---+\n| A |\n+---+"
+             (rich-export-text (rich-table :columns ("A"))))
+
+     ;; Unicode boxes must use bottom corners, without an extra middle separator.
+     (equal? "┌───┬───┐\n│ A │ B │\n└───┴───┘"
+             (rich-export-text (rich-table :box 'square :columns ("A" "B"))))
+
+     ;; Disabling row separators must preserve the same header-only result.
+     (equal? "+---+\n| A |\n+---+"
+             (rich-export-text (rich-table :show-lines? #f :columns ("A"))))
+
+     ;; Data rows still need the header separator and separators between rows.
+     (equal? "┌───┐\n│ A │\n├───┤\n│ x │\n├───┤\n│ y │\n└───┘"
+             (rich-export-text (rich-table :box 'square :columns ("A")
+                                           :rows (("x") ("y")))))
+
+     )
+
+(mat rich-standalone-modules
+
+     (= 0 (system "cd .. && python3 tests/integration/rich-modules.py"))
+
+     )
+
+(mat rich-panel-minimum-height
+
+     (andmap
+      (lambda (width)
+        (let* ([panel (rich-panel :body "x" :height 5)]
+               [lines (rich-render (rich-console :width width) panel)])
+          (and (= (length lines) 5)
+               (andmap (lambda (line) (<= (rich-segments-width line) width)) lines))))
+      '(1 2 3 5))
+
+     (let* ([panel (rich-panel :body "x" :height 5)] [console (rich-console :width 2)]
+            [first (rich-render console panel)])
+       (rich-panel-height-set! panel 7)
+       (let ([second (rich-render console panel)])
+         (rich-panel-height-set! panel #f)
+         (and (equal? (map rich-segments->plain first) '("x" "" "" "" ""))
+              (= (length second) 7)
+              (equal? (map rich-segments->plain (rich-render console panel)) '("x")))))
+
+     (equal? '("a" "b" "c" "d" "e" "f")
+             (map rich-segments->plain
+                  (rich-render (rich-console :width 1)
+                               (rich-panel :body "a\nb\nc\nd\ne\nf" :height 5))))
+
+     ;; A minimum height must be positive when supplied.
+     (error? (rich-panel-height-set! (make-rich-panel "x") 0))
+
+     ;; A nonnumeric height is invalid too.
+     (error? (rich-panel-height-set! (make-rich-panel "x") 'tall))
+
+     )
+
+(mat rich-container-renderer-contract
+
+     ;; Invalid renderer results must be rejected at every container boundary.
+     (let ([value (vector 'invalid-container-renderer)])
+       (rich-register-renderer! (lambda (candidate) (eq? candidate value))
+                                (lambda (_) (list (list "not-a-segment"))))
+       (andmap
+        (lambda (container)
+          (guard (condition [(error? condition) #t])
+            (rich-render (make-rich-console) container)
+            #f))
+        (list (make-rich-padding value) (make-rich-panel value) (make-rich-tree value)
+              (rich-table :columns ("A") :rows (list (list value))))))
+
+     (let ([value (vector 'renderer-precedence)])
+       (rich-register-renderer! (lambda (candidate) (eq? candidate value))
+                                (lambda (_) "old"))
+       (rich-register-renderer! (lambda (candidate) (eq? candidate value))
+                                (lambda (_) "new"))
+       (and (string=? (rich-export-text value) "new")
+            (string-contains? (rich-export-text (make-rich-panel value)) "new")))
+
+     (let ([value (vector 'normalized-renderer)] [style (rich-style 'red)])
+       (rich-register-renderer! (lambda (candidate) (eq? candidate value))
+         (lambda (_) (list (list (rich-segment "a\tb\r\nc" style)))))
+       (let* ([lines (rich-render (rich-console :width 20) (make-rich-padding value))]
+              [segments (apply append lines)])
+         (and (equal? (map rich-segments->plain lines) '("a       b" "c"))
+              (andmap (lambda (segment) (eq? style (rich-segment-style segment))) segments))))
 
      )

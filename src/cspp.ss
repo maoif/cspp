@@ -4,6 +4,7 @@
           ;; add libs here if you want them auto-compiled when compiling this file,
           ;; but not auto-imported when importing (cspp)
           (cspp optional-library-check)
+          (cspp rich private render)
           (cspp concurrency fiber)
           (cspp concurrency fiber-net)
           (cspp parser combinator))
