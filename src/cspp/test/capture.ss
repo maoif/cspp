@@ -32,6 +32,8 @@
   returns three values: the thunk values as a list, captured stdout, and captured
   stderr. Combined capture preserves output order in stdout and returns empty stderr.
   Only selected capture ports are opened, and they are closed before returning.
+  Call from the controlling thread, outside fibers. Join workers using inherited ports before
+  returning; concurrent writers need caller synchronization. Continuation reentry is undefined.
   |#
   (define test-capture-ports
     (lambda (mode thunk)

@@ -58,6 +58,18 @@
           (cspp internal)
           (cspp rich))
 
+  #|doc
+  Execution requirements are documented in `docs/test-and-benchmark.md`. Coordinate definitions,
+  registries, runners, reporting, and persistence synchronously from one controlling OS thread,
+  outside fibers. Concurrent coordinator calls, reentrant reporting, and continuation reentry
+  are undefined. Benchmark state, counters, and timing controls belong to the controlling thread.
+  Record predicates and read-only descriptor/config/result/sample/comparison accessors support
+  workers when their payloads remain stable. Numeric difference helpers and optimization barriers
+  also support independent worker calls. Bodies must join their workers before returning.
+  Measurements use controlling-thread CPU time, elapsed wall time, and process-wide allocation
+  and garbage-collection statistics. Worker CPU time is not aggregated.
+  |#
+
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; records and low-level helpers
@@ -1052,6 +1064,7 @@ Unknown options and invalid hooks/configuration values are rejected at construct
 Singleton options cannot repeat; argument tables and ranges may repeat with distinct names.
 Setup has signature `(lambda (state) value)`; teardown has signature
 `(lambda (state value) unspecified)` and runs after the body, even without setup.
+When setup raises, it must release its own partial resources; sample teardown is not called.
 Without setup, teardown receives `#f` and the body receives no extra argument.
 A fixture supplies both hooks; combining it with non-false descriptor hooks is an error.
 `unit`, `complexity`, and `throughput` are descriptive metadata; they do not change
@@ -1948,6 +1961,7 @@ The `define-benchmark-fixture` macro defines a reusable fixture descriptor named
 by `name`. Its setup hook receives state and its teardown hook receives state
 and the setup value. Only `:setup` and `:teardown` options are accepted, and each
 supplied hook must be a procedure.
+Setup must clean up partial resources if it raises; teardown runs only after successful setup.
 |#
   (define-syntax define-benchmark-fixture
     (syntax-rules ()

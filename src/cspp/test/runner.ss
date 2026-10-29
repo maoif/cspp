@@ -493,6 +493,9 @@ association-list filters as `test-select`.
   `xpass` otherwise; only `failed` and `errored` stop a stop-on-failure run.
   Descriptor domains are validated first; concrete rows are then produced incrementally,
   allowing stop-on-failure to avoid allocating later Cartesian combinations.
+  Call from the controlling OS thread, outside fibers. Bodies may join worker assertions,
+  but must propagate their failures before returning. Worker callbacks must not call runners,
+  registries, capture, or reporting APIs. See `docs/test-and-benchmark.md` for the requirements.
   |#
   (define test-run
     (lambda (tests config)

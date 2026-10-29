@@ -10,6 +10,16 @@
           (cspp utils)
           (cspp test private common))
 
+  #|doc
+  Every exported procedure in this library supports independent concurrent calls from OS threads
+  and fibers, including during an active test run. Assertions return `#t` on success and raise
+  in their caller on failure; `test-fail` always raises. They do not record runner results.
+  Callers must synchronize shared mutable arguments and callbacks, join workers, and propagate
+  worker failures to the controlling test body. See `docs/test-and-benchmark.md` for an example.
+  General continuation replay is not guaranteed; ordinary callback return, exceptions, and fiber
+  suspension are supported. Failure values retain their original operands without copying them.
+  |#
+
   (define-condition-type &test-failure &error
     %make-test-failure
     $test-failure?
@@ -96,6 +106,7 @@ The `test-assert-equal` procedure compares `expected` and `actual` with
 `same?`. `same?` is a two-argument predicate with signature
 `(lambda (expected actual) ...)`. `message` is recorded if the comparison
 fails.
+Concurrent callers must supply a comparison and operands safe for concurrent use.
 |#
   (define test-assert-equal
     (lambda (same? expected actual message)
@@ -186,6 +197,8 @@ and raises a framework assertion failure otherwise.
   #|proc:test-=
 The `test-=` procedure succeeds when numbers `expected` and `actual` are `=`
 and raises a framework assertion failure otherwise.
+It returns `#t` on success and may be called from any thread or fiber. A worker's failure
+must be propagated to the controlling body; this procedure does not update runner state.
 |#
   (define test-=
     (lambda (expected actual)
@@ -196,6 +209,7 @@ and raises a framework assertion failure otherwise.
 The `test-pred` procedure succeeds when unary predicate `predicate` accepts
 `actual` and raises a framework assertion failure otherwise. `predicate` has
 signature `(lambda (actual) ...)`.
+Concurrent callers must supply a predicate and argument safe for concurrent use.
 |#
   (define test-pred
     (lambda (predicate actual)

@@ -1,4 +1,11 @@
 #!chezscheme
+#|doc
+Usage requirements are documented in `docs/test-and-benchmark.md`.
+Standalone assertions and failure-value APIs may run in any thread or fiber. Assertions raise
+in their caller; worker failures must be propagated to the controlling test body after joining.
+Read-only record access requires stable payloads. Coordination APIs require synchronous execution
+in one controlling OS thread, outside fibers; concurrent use and continuation reentry are undefined.
+|#
 (library (cspp test)
   (export chez-version
           chez-version<? chez-version<=? chez-version=? chez-version>=? chez-version>?
