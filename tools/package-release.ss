@@ -120,8 +120,7 @@
         (error 'package-release "packaging requires glibc" glibc))
       (pkg-object "baseline" baseline
                   "host_requirements"
-                  (vector "Linux" (string-append "glibc >= " (substring glibc 6 (string-length glibc)))
-                          "architecture-matching ELF loader")))))
+                  (vector "Linux" (string-append "glibc >= " (substring glibc 6 (string-length glibc))))))))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Recursive native dependency collection
