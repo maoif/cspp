@@ -2662,3 +2662,35 @@
      (check (lambda (predicate)
               (nav-register-set! predicate void void void void void))
             (lambda () (guard (exn [else (void)]) (nav-select nav/all 'unknown)))))))
+
+
+(mat navigator-review-key-repair-suspension
+  (andmap
+   (lambda (workers)
+     (eq? 'payload
+          (run-fibers
+           (lambda ()
+             (let ([parent (make-hashtable (lambda (key) (fiber-yield) 0) eq?)])
+               (hashtable-set! parent 'key 'payload)
+               (nav-clearval! (nav/path nav/keys
+                                       (nav/pred (lambda (key) (fiber-yield) #f))) parent)
+               (hashtable-ref parent 'key #f)))
+           workers)))
+   '(1 4))
+
+  ;; A suffix exception still repairs a mutated key; the repair hash may suspend.
+  (run-fibers
+   (lambda ()
+     (let* ([key (vector 1)]
+            [parent (make-hashtable (lambda (key) (fiber-yield) (vector-ref key 0)) eq?)])
+       (hashtable-set! parent key 'payload)
+       (and (guard (exn [else #t])
+              (nav-clearval!
+               (nav/path nav/keys
+                         (nav/pred (lambda (key)
+                                     (vector-set! key 0 2)
+                                     (fiber-yield)
+                                     (error 'key "suffix failed")))) parent)
+              #f)
+            (eq? 'payload (hashtable-ref parent key #f)))))
+   1))

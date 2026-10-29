@@ -85,9 +85,16 @@
   (define-record-type ($reducer mk-$reducer $reducer?)
     (fields (immutable name)
             (immutable proc)
-            (immutable context))
+            (immutable context)
+            (immutable initially-stopped?))
     (opaque #t)
-    (sealed #t))
+    (sealed #t)
+    (protocol
+     (lambda (make)
+       (case-lambda
+         [(name proc context) (make name proc context #f)]
+         [(name proc context initially-stopped?)
+          (make name proc context initially-stopped?)]))))
 
   (define-record-type ($transducer mk-$transducer $transducer?)
     (fields (immutable name)
@@ -178,10 +185,23 @@
     (lambda (xform reducer)
       (let ([next (($transducer-reducer-proc xform) reducer)])
         (if (reducer? next)
-            (reducer-with-context next ($reducer-context reducer))
+            (mk-$reducer ($reducer-name next) ($reducer-proc next)
+                         ($reducer-context reducer)
+                         (or ($reducer-initially-stopped? next)
+                             ($reducer-initially-stopped? reducer)))
             (errorf 'transduce "transducer ~a returned a non-reducer: ~a"
                     ($transducer-name xform)
                     next)))))
+
+  ;; Initial stop is immutable metadata on an applied reducer: no source input
+  ;; is needed (ttake 0 or an empty tslice). Application propagates it outward even
+  ;; through buffering/custom wrappers, without calling their step procedures.
+  ;; This is separate from initialization because explicit seeds bypass initializers.
+  ;; Drivers still complete normally and finalize supplied resources without a pull.
+  (define reduction-seed
+    (lambda (reducer init)
+      (let ([acc (if (eq? init default-init) (reducer-init reducer) init)])
+        (if ($reducer-initially-stopped? reducer) (ensure-reduced acc) acc))))
 
   (define run-list
     (lambda (reducer acc ls)
@@ -262,7 +282,8 @@
 
   (define reducer-with-context
     (lambda (reducer context)
-      (mk-$reducer ($reducer-name reducer) ($reducer-proc reducer) context)))
+      (mk-$reducer ($reducer-name reducer) ($reducer-proc reducer) context
+                   ($reducer-initially-stopped? reducer))))
 
   (define remember-resource!
     (lambda (context iterator)
@@ -339,8 +360,7 @@
                (lambda (reducer)
                  (let* ([effective (apply-transducer xform reducer)]
                         [acc (runner effective
-                                     (if (eq? init default-init)
-                                         (reducer-init effective) init)
+                                     (reduction-seed effective init)
                                      source)])
                    (when (iter? source)
                      (remember-resource! ($reducer-context effective) source))
@@ -360,8 +380,7 @@
           (let ([effective (apply-transducer xform reducer)])
             (finish-transduce effective
                               (run-source effective
-                                          (if (eq? init default-init)
-                                              (reducer-init effective) init)
+                                          (reduction-seed effective init)
                                           source))))))
 
   (define transduce-explicit
@@ -794,7 +813,9 @@
 
   #|proc:ttake
   The `ttake` procedure returns a stateful transducer that emits at most `n`
-  input values.
+  input values. When `n` is zero, drivers request no source input, including when
+  earlier stages buffer or suppress outputs. Initialization/completion still run;
+  explicit seeds bypass initialization as usual.
   Kind: reusable stateful transducer constructor; each application stores
   a remaining output allowance. Resetting a sequence creates fresh state.
   |#
@@ -819,7 +840,7 @@
                                (if (or (zero? left) (reduced? next))
                                    (ensure-reduced next)
                                    next))))])
-                    #f)))))))
+                    #f (zero? n))))))))
 
   #|proc:tdrop
   The `tdrop` procedure returns a stateful transducer that skips the first `n`
@@ -930,7 +951,8 @@
 
   #|proc:tslice
   The `tslice` procedure emits input values with indexes in `[start, stop)`.
-  With three arguments, `step` selects indexes by positive stride.
+  With three arguments, `step` selects indexes by positive stride. Equal `start` and
+  `stop` describe an empty slice: drivers request no input, even through buffering stages.
   Kind: reusable stateful transducer constructor; each application stores
   a zero-based input index. Resetting a sequence creates fresh state.
   |#
@@ -960,7 +982,7 @@
                                next))]
                         [(>= i stop) (reduced acc)]
                         [else acc]))])
-             #f))))]))
+             #f (= start stop)))))]))
 
   (define list-builder->vector
     (lambda (builder)
@@ -1269,9 +1291,11 @@
   also emit values. An iterator source starts at its current position. Exhaustion
   does not finalize the chain. A terminal operation or explicit `iter-finalize!` releases
   all reachable resources, including supplied iterators and nested `tcat` sources.
-  Reset restarts the source and creates fresh transducer counters/buffers while retaining
-  the pipeline. Resource-finalized sources cannot be reset. Errors or nonlocal exits leave
-  pass state undefined. Ordinary fiber suspension preserves the live pass.
+  Reset restarts the upstream source and creates fresh transducer counters/buffers while
+  retaining the pipeline. Previously acquired nested resources remain reachable for cleanup;
+  reset does not implicitly rewind those nested sources. Resource-finalized sources cannot
+  be reset. Errors or nonlocal exits leave pass state undefined. Ordinary fiber suspension
+  preserves the live pass.
   |#
   (define sequence
     (lambda (xform source)
@@ -1306,7 +1330,7 @@
                         (set! done? #f)
                         (set! q-head '()) (set! q-tail '())
                         (set! effective (apply-transducer xform emit-reducer))
-                        (set! acc (reducer-init effective))))
+                        (set! acc (reduction-seed effective default-init))))
                     (define finish!
                       (lambda ()
                         (unless done?
@@ -1328,8 +1352,9 @@
                                    (loop))]))))
                     (initialize!)
                     (mk-$iter next!
-                              (lambda () (iter-reset! upstream) (initialize!))
-                              #f (lambda () (cons upstream (context-resources context)))))))))
+                              initialize!
+                              #f (lambda () (cons upstream (context-resources context)))
+                              (lambda () (list upstream))))))))
 
   #|proc:into
   The `into` procedure transduces transducible `source` with transducer `xform` into the

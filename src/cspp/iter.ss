@@ -42,6 +42,9 @@
   ;; Resource-free cursors need neither ownership nor finalization. A wrapper's child
   ;; links describe its upstream iterators; they keep finalization responsibility until
   ;; a terminal succeeds or iter-finalize! is called. Shared handles are finalized once.
+  ;; A restart dependency is an upstream cursor that must reset before the wrapper's
+  ;; local state. Reset visits each reachable dependency once per identity. Cleanup
+  ;; links may also retain historical nested resources that need no implicit restart.
   ;;
   ;; Independent operations have no conflicting mutable accesses requiring ordering:
   ;; separate cursors over unchanged data are independent, even in threads/fibers.
@@ -68,9 +71,11 @@
     (lambda (iterator) (pcheck ([$iter? iterator]) ($iter-finalized? iterator))))
 
   #|value:iter-end
-  The unique iterator exhaustion sentinel; it is not an ordinary element value.
+  The unique iterator exhaustion sentinel; it is also a permanently empty, resource-free
+  cursor. It is not an ordinary element value. Pulling always returns itself; reset and
+  finalization are no-ops. Adding pipeline stages to this shared marker is an error.
   |#
-  (define iter-end (mk-$iter void void))
+  (define iter-end (mk-$iter (lambda () iter-end) void))
   #|proc:iter-end?
   Return whether `value` is the unique iterator exhaustion sentinel.
   |#
@@ -121,7 +126,9 @@
   Optional `fini-proc`, with signature `() -> unspecified`, declares resource ownership
   and releases that resource at terminal completion or explicit finalization. Omit it,
   or pass `void`, for a resource-free cursor. A custom wrapper must include cleanup of
-  its upstream resources in this finalizer. All three callbacks may suspend in fibers.
+  its upstream resources in this finalizer, and its reset callback manages any opaque
+  upstream state. Built-in graph deduplication cannot discover such hidden dependencies.
+  All three callbacks may suspend in fibers.
   Kind: cursor constructor; each call creates independent producer state.
   |#
   (define make-iter
@@ -175,16 +182,13 @@
 
   #|proc:iter-reset!
   Reset `iter` and its per-pass pipeline counters, retaining its map/filter/take/drop
-  configuration. Reset does not reopen finalized resources. Return an unspecified value.
+  configuration. Each reachable restart dependency is reset once per identity before its
+  wrapper's local state. Reset does not reopen finalized resources. Return an unspecified value.
   |#
   (define iter-reset!
     (lambda (iter)
       (pcheck ([$iter? iter])
-              (when ($iter-finalized? iter)
-                (errorf 'iter-reset! "finalized iterator cannot be reset!"))
-              (($iter-reset!-proc iter))
-              (for-each (lambda (op) (vector-set! op 3 (vector-ref op 2)))
-                        (($iter-ops iter))))))
+              (reset-iter-chain! iter))))
 
   #|proc:iter-finalize!
   Release each resource reachable from `iter` once, including resources in upstream
@@ -196,7 +200,10 @@
       (pcheck ([$iter? iter]) (finalize-iter-chain! iter))))
 
   (define iter-ops-add!
-    (lambda (iter op) (($iter-ops iter) op)))
+    (lambda (iter op)
+      (when (iter-end? iter)
+        (errorf 'iter "cannot configure the shared exhaustion sentinel"))
+      (($iter-ops iter) op)))
 
   #|proc:make-indexed-iter
   The `make-indexed-iter` procedure returns an indexed iterator constructor named by
@@ -281,7 +288,9 @@
   The `list->iter` procedure returns a forward iterator over `source`. The optional integer
   `start` and `stop` parameters select a half-open range, and positive `step` selects the
   distance between values. The iterator returns each selected value until it reaches its end.
-  Kind: cursor constructor; each call creates independent producer state.
+  Reset resolves the selected start from the current source again, so changes between
+  passes are visible. Mutation during a pass is unspecified.
+  Kind: resource-free cursor constructor; each call creates independent producer state.
   |#
   (define-who list->iter
     (case-lambda
@@ -304,29 +313,29 @@
        (pcheck ([list? source] [integer? start stop step])
                (when (<= step 0)
                  (errorf who "step must be positive"))
-               ;; run to the start first
-               (let ([initial-tail
-                      (let loop ([remaining source] [count start])
-                        (cond [(null? remaining) '()]
-                              [(= count 0) remaining]
-                              [else (loop (cdr remaining) (sub1 count))]))])
-                 (let ([index start] [remaining initial-tail])
-                   (mk-$iter
-                    (lambda ()
-                      (if (or (null? remaining) (>= index stop))
-                          iter-end
-                          (let ([value (car remaining)])
-                            (let loop ([tail remaining] [count step])
-                              (cond [(null? tail)
-                                     (set! remaining '())]
-                                    [(= count 0)
-                                     (set! index (+ index step))
-                                     (set! remaining tail)]
-                                    [else (loop (cdr tail) (sub1 count))]))
-                            value)))
-                    (lambda ()
-                      (set! index start)
-                      (set! remaining initial-tail))))))]))
+               (let ([index start] [remaining '()])
+                 (define reset!
+                   (lambda ()
+                     (set! index start)
+                     (set! remaining
+                           (let loop ([tail source] [count start])
+                             (cond [(null? tail) '()]
+                                   [(= count 0) tail]
+                                   [else (loop (cdr tail) (sub1 count))])))))
+                 (reset!)
+                 (mk-$iter
+                  (lambda ()
+                    (if (or (null? remaining) (>= index stop))
+                        iter-end
+                        (let ([value (car remaining)])
+                          (let loop ([tail remaining] [count step])
+                            (cond [(null? tail) (set! remaining '())]
+                                  [(= count 0)
+                                   (set! index (+ index step))
+                                   (set! remaining tail)]
+                                  [else (loop (cdr tail) (sub1 count))]))
+                          value)))
+                  reset!)))]))
 
   #|proc:vector->iter
   The `vector->iter` procedure returns an iterator over `source`. The optional integer
@@ -650,7 +659,8 @@
   #|proc:iter-zip
   Return an iterator of lists containing corresponding values from `iter` and
   `iter*`. Kind: lazy lockstep wrapper; traversal stops when any source ends, possibly
-  consuming one value from other sources on its last pull. Reset resets all sources.
+  consuming one value from other sources on its last pull. Further pulls stay exhausted
+  without reading sources until reset. Reset resets all sources and clears that stop flag.
   Repeating a handle consumes successive values from that cursor; it does not clone it.
   With one source return it directly. Terminal completion finalizes all source resources.
   |#
@@ -660,20 +670,24 @@
               (if (null? iter*)
                   iter
                   (pcheck ([all-iters? iter*])
-                          (let ([iter* (cons iter iter*)])
+                          (let ([iter* (cons iter iter*)] [done? #f])
                             (mk-$iter
-                             (lambda () (let ([v* (map iter-next! iter*)])
-                                          (if (memq iter-end v*)
-                                              iter-end
-                                              v*)))
-                             (lambda () (for-each iter-reset! iter*))
+                             (lambda ()
+                               (if done?
+                                   iter-end
+                                   (let ([values (map iter-next! iter*)])
+                                     (if (memq iter-end values)
+                                         (begin (set! done? #t) iter-end)
+                                         values))))
+                             (lambda () (set! done? #f))
                              #f (lambda () iter*))))))))
   ;; (iter-interleave (a0 a1 ...) (b0 b1 ...)) ->
   ;; (a0 b0 a1 b1 ...)
   #|proc:iter-interleave
   Return an iterator that alternates values from `iter` and `iter*`, skipping
   exhausted sources until all have ended. Kind: lazy round-robin wrapper; reset resets
-  all sources and its scheduling cursor. Repeated handles share one producer position.
+  all sources and its scheduling cursor. Exhausted slots leave the active scheduling ring;
+  traversal costs O(values + source slots). Repeated handles share one producer position.
   With one source return it directly. Terminal completion finalizes all source resources.
   |#
   (define iter-interleave
@@ -682,31 +696,39 @@
               (if (null? iter*)
                   iter
                   (pcheck ([all-iters? iter*])
-                          (let* ([iter* (cons iter iter*)]
-                                 [itvec (list->vector iter*)]
-                                 [len (length iter*)]
-                                 [idx 0])
+                          (let* ([sources (cons iter iter*)]
+                                 [iterators (list->vector sources)]
+                                 [length (vector-length iterators)]
+                                 [next-slots (make-vector length)]
+                                 [active length] [index 0] [previous (fx1- length)])
+                            ;; Active slots form a circular singly linked list. Removing
+                            ;; an exhausted slot costs O(1); it is never polled again.
+                            (define reset-local!
+                              (lambda ()
+                                (do ([slot 0 (fx1+ slot)]) ((fx= slot length))
+                                  (vector-set! next-slots slot
+                                               (if (fx= slot (fx1- length)) 0 (fx1+ slot))))
+                                (set! active length)
+                                (set! index 0)
+                                (set! previous (fx1- length))))
+                            (reset-local!)
                             (mk-$iter
                              (lambda ()
-                               (let loop ([i idx])
-                                 (if (vandmap iter-end? itvec)
+                               (let loop ()
+                                 (if (fxzero? active)
                                      iter-end
-                                     (if (fx>= i len)
-                                         (loop 0)
-                                         (let ([it (vector-ref itvec i)])
-                                           (if (iter-end? it)
-                                               (loop (add1 i))
-                                               (let ([x (iter-next! it)])
-                                                 (if (eq? x iter-end)
-                                                     (begin (vector-set! itvec i iter-end)
-                                                            (loop (add1 i)))
-                                                     (begin (set! idx (add1 i))
-                                                            x)))))))))
-                             (lambda ()
-                               (for-each iter-reset! iter*)
-                               (set! itvec (list->vector iter*))
-                               (set! idx 0))
-                             #f (lambda () iter*))))))))
+                                     (let* ([slot index]
+                                            [next (vector-ref next-slots slot)]
+                                            [value (iter-next! (vector-ref iterators slot))])
+                                       (set! index next)
+                                       (if (iter-end? value)
+                                           (begin
+                                             (set! active (fx1- active))
+                                             (vector-set! next-slots previous next)
+                                             (loop))
+                                           (begin (set! previous slot) value))))))
+                             reset-local!
+                             #f (lambda () sources))))))))
   #|proc:iter-concat
   Return a lazy sequential wrapper over `iter` and all iterators in `iter*`.
   A first occurrence starts at its current position; before a later occurrence of the
@@ -737,13 +759,6 @@
                                  (loop))
                                x)))))
                  (lambda ()
-                   (hashtable-clear! seen)
-                   (for-each
-                    (lambda (source)
-                      (unless (hashtable-ref seen source #f)
-                        (hashtable-set! seen source #t)
-                        (iter-reset! source)))
-                    sources)
                    (set! remaining sources)
                    (hashtable-clear! seen)
                    (hashtable-set! seen iter #t))
@@ -767,12 +782,14 @@
                            (if (exists (lambda (y) (equal? y x)) seen)
                                (loop)
                                (begin (set! seen (cons x seen)) x))))))
-                 (lambda () (iter-reset! iter) (set! seen '()))
+                 (lambda () (set! seen '()))
                  #f (lambda () (list iter)))))))
   #|proc:iter-sorted
   Consume `iter` immediately, sort its values with `(<? left right) -> boolean`, and
   return a cursor over that snapshot. Kind: eager buffering wrapper requiring finite input.
-  Reset resets the source and rebuilds the snapshot. Construction and rebuilding leave
+  Reset resets the source and rebuilds the snapshot. Within a shared graph, each upstream
+  cursor resets once; eager rebuilds consume that shared position in dependency order.
+  Use distinct source cursors for independent snapshots. Construction and rebuilding leave
   resources open; a successful terminal or explicit finalization closes the chain.
   |#
   (define iter-sorted
@@ -796,7 +813,7 @@
                                 iter-end
                                 (let ([x (vector-ref snapshot index)])
                                   (set! index (fx1+ index)) x)))
-                 (lambda () (iter-reset! iter) (rebuild!))
+                 rebuild!
                  #f (lambda () (list iter)))))))
 
 ;;; terminal ops
@@ -830,24 +847,39 @@
                       (begin (iter-finalize! iter) acc)
                       (iter-loop (proc acc x))))))))
 
+  ;; A separate sentinel allows #f to participate as ordinary comparison data.
+  (define extrema-empty (gensym "extrema-empty"))
+  (define iter-extreme
+    (lambda (precedes? iterator)
+      (let ([result (iter-fold
+                     (lambda (best value)
+                       (if (or (eq? best extrema-empty) (precedes? value best)) value best))
+                     extrema-empty iterator)])
+        (if (eq? result extrema-empty) #f result))))
+
   #|proc:iter-max
-  Return the maximal value from `iter`, or `#f` when empty, and finalize the
-  iterator. Optional comparator `f` accepts two values and returns their ordering.
+  Return the maximal value from `iterator`, or `#f` when empty, and finalize its chain.
+  Optional `greater?` has signature `(candidate current-best) -> boolean`; true selects
+  the candidate. It defaults to `>`. A stored `#f` is valid comparison data.
   Kind: consuming terminal; successful completion finalizes the resource chain.
   |#
   (define iter-max
     (case-lambda
-      [(iter) (iter-max > iter)]
-      [(f iter) (iter-fold (lambda (acc x) (if acc (if (f x acc) x acc) x)) #f iter)]))
+      [(iterator) (iter-max > iterator)]
+      [(greater? iterator)
+       (pcheck ([procedure? greater?] [$iter? iterator]) (iter-extreme greater? iterator))]))
+
   #|proc:iter-min
-  Return the minimal value from `iter`, or `#f` when empty, and finalize the
-  iterator. Optional comparator `f` accepts two values and returns their ordering.
+  Return the minimal value from `iterator`, or `#f` when empty, and finalize its chain.
+  Optional `less?` has signature `(candidate current-best) -> boolean`; true selects
+  the candidate. It defaults to `<`. A stored `#f` is valid comparison data.
   Kind: consuming terminal; successful completion finalizes the resource chain.
   |#
   (define iter-min
     (case-lambda
-      [(iter) (iter-min < iter)]
-      [(f iter) (iter-fold (lambda (acc x) (if acc (if (f x acc) x acc) x)) #f iter)]))
+      [(iterator) (iter-min < iterator)]
+      [(less? iterator)
+       (pcheck ([procedure? less?] [$iter? iterator]) (iter-extreme less? iterator))]))
   #|proc:iter-avg
   Return the arithmetic mean of numeric values from `iter`, or `#f` when empty.
   Kind: consuming terminal; successful completion finalizes the resource chain.

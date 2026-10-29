@@ -494,7 +494,9 @@
   keys; alists retain duplicates. Sequence indexes are read-only: pure transforms return
   the sequence unchanged without invoking the callback, and mutation raises an error.
   Clearing traverses later path steps while retaining each key. Mutable clearing rebuilds
-  writable map indexes when retained key objects change. Read-only maps cannot be reindexed:
+  writable map indexes after suffix completion, or before propagating a suffix exception,
+  even when retained key objects change. Fiber suspension does not trigger rebuilding;
+  a nonlocal exit leaves partial state undefined. Read-only maps cannot be reindexed:
   their keys must retain stable hash/equivalence dependencies, including changes through
   aliases. Shared keys must also stay valid in every other parent; no alias repair is provided.
   Mutable replacement and key removal are unsupported.
@@ -590,7 +592,9 @@
   For containers supporting both protocols, indexed entries take precedence, except alists.
   Clearing visits later path steps and retains each entry pair; removing an entry is unsupported.
   Mutable clearing must retain map keys and indexes. Writable map parents rebuild their
-  indexes after key clearing; read-only parents and other aliased parents are not repaired.
+  indexes after suffix completion or a suffix exception, including when callbacks suspend.
+  A nonlocal exit leaves partial state undefined. Read-only and other aliased parents are
+  not repaired.
   Keys in those parents must keep stable hash/equivalence/order dependencies. Mutating only
   an entry value is supported when it does not change any aliased key's policy dependencies.
   Kind: Reusable step.

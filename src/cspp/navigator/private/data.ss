@@ -732,12 +732,15 @@
       value))
 
   ;; Entry/key suffixes may mutate hash or ordering fields in a retained key.
-  ;; Work from a snapshot and rebuild membership even if a suffix raises or escapes.
+  ;; Work from a snapshot and rebuild membership after completion or a suffix exception.
+  ;; A nonlocal exit leaves state undefined. Ordinary suspension is not completion:
+  ;; never rebuild in a dynamic-wind after-thunk, which runs during fiber suspension
+  ;; and can itself invoke a yielding hash/comparison callback while unwinding.
   ;; Legacy adapters detach first because their delete callback needs the old index.
   ;; Reindexing means inserting retained keys using their current hash/order; eq?
   ;; identity alone cannot prove an old bucket or tree position is still correct.
   ;; Snapshot pairs are copied, but keys/values are shared so nested mutation works.
-  ;; The after-thunk repairs membership, not a transaction rollback: earlier changes
+  ;; Rebuilding repairs membership, not a transaction rollback: earlier changes
   ;; remain, and current key equivalence can collapse formerly distinct entries.
   ;; Read-only hashtable ancestors bypass rebuilding; keyed-set! permits retained
   ;; identical values and rejects a replacement write. Alist entries are restored
@@ -753,29 +756,31 @@
              [readonly? (and (hashtable? value) (not (hashtable-mutable? value)))])
         (unless (or (hashtable? value) (alist? value) replace!)
           (for-each (lambda (entry) (keyed-delete! value (car entry))) entries))
-        (dynamic-wind
-          void
-          (lambda ()
-            (for-each
-             (lambda (old)
-               (let* ([key (car old)] [entry (update! (cons key (cdr old)))])
-                 (unless (and (not (nav-missing? entry)) (pair? entry)
-                              (eq? key (car entry)))
-                   (nav-error 'nav-clearval! "mutable clearing must retain entry key"))
-                 (when readonly? (keyed-set! value key (cdr entry)))
-                 (set-cdr! old (cdr entry))))
-             entries))
-          (lambda ()
-            (cond [readonly? (void)]
-                  [(alist? value)
-                   (for-each (lambda (old entry)
-                               (set-car! old (car entry)) (set-cdr! old (cdr entry)))
-                             value entries)]
-                  [replace! (replace! value entries)]
-                  [else
-                   (when (hashtable? value) (hashtable-clear! value))
-                   (for-each (lambda (entry)
-                               (keyed-set! value (car entry) (cdr entry))) entries)])))
+        (let ([reraise
+               ;; Return from the exception handler before rebuilding: repair callbacks
+               ;; may suspend too. The thunk preserves even non-condition raised values.
+               (guard (condition [else (lambda () (raise condition))])
+                 (for-each
+                  (lambda (old)
+                    (let* ([key (car old)] [entry (update! (cons key (cdr old)))])
+                      (unless (and (not (nav-missing? entry)) (pair? entry)
+                                   (eq? key (car entry)))
+                        (nav-error 'nav-clearval! "mutable clearing must retain entry key"))
+                      (when readonly? (keyed-set! value key (cdr entry)))
+                      (set-cdr! old (cdr entry))))
+                  entries)
+                 #f)])
+          (cond [readonly? (void)]
+                [(alist? value)
+                 (for-each (lambda (old entry)
+                             (set-car! old (car entry)) (set-cdr! old (cdr entry)))
+                           value entries)]
+                [replace! (replace! value entries)]
+                [else
+                 (when (hashtable? value) (hashtable-clear! value))
+                 (for-each (lambda (entry)
+                             (keyed-set! value (car entry) (cdr entry))) entries)])
+          (when reraise (reraise)))
         value)))
 
   (define keyed-keys

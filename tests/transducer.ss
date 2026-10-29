@@ -1107,3 +1107,102 @@
                       (lambda () (set! tail '(1 2 3))))])
          (equal? '(1 2 3) (iter->list (sequence (tidentity) source))))))
    4 100))
+
+
+(mat transducer-review-empty-limits
+  ;; No producer read or preceding callback is needed for a known-empty limit.
+  (andmap
+   (lambda (xform)
+     (andmap
+      (lambda (mode)
+        (parameterize ([current-transducer-source-mode mode])
+          (andmap
+           (lambda (run)
+             (let ([pulls 0] [closed 0])
+               (let ([source (make-iter
+                              (lambda () (set! pulls (+ pulls 1)) 'unexpected)
+                              void (lambda () (set! closed (+ closed 1))))])
+                 (and (equal? '() (run xform source))
+                      (= pulls 0) (= closed 1)))))
+           (list (lambda (xform source) (transduce xform (rflist) source))
+                 (lambda (xform source) (transduce xform (rflist) '() source))
+                 (lambda (xform source) (iter-transduce xform (rflist) source))
+                 (lambda (xform source) (iter-transduce xform (rflist) '() source))
+                 (lambda (xform source) (iter->list (sequence xform source)))))))
+      '(direct iter)))
+   (list (ttake 0) (tslice 0 0) (tslice 5 5)))
+
+  ;; A buffering stage must not wait for a batch upstream of an empty limit.
+  (let ([pulls 0])
+    (let ([source (make-iter
+                   (lambda ()
+                     (set! pulls (+ pulls 1))
+                     (when (> pulls 8) (error 'producer "unexpected input read"))
+                     pulls) void)])
+      (and (equal? '() (into 'list (tcompose (tpartition 1000) (ttake 0)) source))
+           (= pulls 0))))
+
+  (let ([effects 0])
+    (and (equal? '() (into 'list
+                           (tcompose (ttap (lambda (value) (set! effects (+ effects 1))))
+                                     (tslice 3 3))
+                           '(1 2 3 4)))
+         (= effects 0)))
+
+  ;; Lazy reset must recreate the stop flag as well as ordinary reducer counters.
+  (let ([pulls 0])
+    (let ([cursor (sequence (tcompose (tpartition-all 3) (ttake 0))
+                            (make-iter (lambda () (set! pulls (+ pulls 1)) pulls) void))])
+      (and (equal? '() (iter->list cursor))
+           (begin (iter-reset! cursor) #t)
+           (equal? '() (iter->list cursor))
+           (= pulls 0))))
+
+  (iter-end? (iter-next! (sequence (tidentity) iter-end))))
+
+(mat transducer-review-empty-limit-lifecycle
+  ;; Initializers still run for unseeded reductions; explicit seeds bypass them.
+  (let ([initialized 0] [completed 0] [stepped 0])
+    (let ([reducer (make-reducer
+                    'empty-limit
+                    (case-lambda
+                      [() (set! initialized (+ initialized 1)) 10]
+                      [(acc) (set! completed (+ completed 1)) (+ acc 1)]
+                      [(acc value) (set! stepped (+ stepped 1)) (+ acc value)]))])
+      (and (= 11 (transduce (ttake 0) reducer '(1 2)))
+           (= 21 (transduce (ttake 0) reducer 20 '(1 2)))
+           (= initialized 1) (= completed 2) (= stepped 0))))
+
+  (call-with-port
+   (open-string-input-port "first\nsecond\n")
+   (lambda (port)
+     (and (equal? '() (port-lines-transduce (tslice 5 5) (rflist) port))
+          (string=? "first" (get-line port)))))
+
+  (call-with-port
+   (open-bytevector-input-port #vu8(1 2))
+   (lambda (port)
+     (and (equal? '() (port-bytes-transduce (ttake 0) (rflist) '() port))
+          (= 1 (get-u8 port))))))
+
+(mat transducer-review-reset-nested-cleanup
+  ;; Reset rewinds the outer source, while tcat retains the inner destructive position.
+  ;; Historical inner resources still belong to successful terminal cleanup.
+  (let ([remaining '(1)] [resets 0] [closed 0])
+    (let* ([inner (make-iter
+                   (lambda ()
+                     (if (null? remaining) iter-end
+                         (let ([value (car remaining)])
+                           (set! remaining (cdr remaining)) value)))
+                   (lambda () (set! resets (+ resets 1)) (set! remaining '(1)))
+                   (lambda () (set! closed (+ closed 1))))]
+           [cursor (sequence (tcat) (list inner))])
+      (and (equal? '(1) (let collect ([values '()])
+                         (let ([value (iter-next! cursor)])
+                           (if (iter-end? value) (reverse values)
+                               (collect (cons value values))))))
+           (= closed 0)
+           (begin (iter-reset! cursor) #t)
+           (= resets 0)
+           (equal? '() (iter->list cursor))
+           (= closed 1)))))

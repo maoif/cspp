@@ -799,3 +799,89 @@
          (terminal source)
          (= closed 1))))
    (list iter-flsum iter-flproduct iter-flavg)))
+
+
+(mat iter-review-reset-current-list-slice
+  (let* ([data (list 1 2 3)] [cursor (list->iter data 1 3)])
+    (and (equal? '(2 3) (iter->list cursor))
+         (begin
+           (set-cdr! data (list 20 30))
+           (iter-reset! cursor)
+           (equal? '(20 30) (iter->list cursor))))))
+
+(mat iter-review-false-extrema
+  (not (iter-max (lambda (left right) (and (not left) right))
+                 (list->iter '(#f #t))))
+
+  (not (iter-min (lambda (left right) (and (not left) right))
+                 (list->iter '(#f #t))))
+
+  (eq? #t (iter-max (lambda (left right) (and left (not right)))
+                    (list->iter '(#f #t))))
+
+  ;; Comparator validation must not depend on source cardinality.
+  (error? (iter-max 42 (list->iter '())))
+
+  ;; Even a singleton requires a procedure comparator.
+  (error? (iter-min 42 (list->iter '(1))))
+
+  ;; Extrema require iterator input before starting a terminal operation.
+  (error? (iter-max > '(1 2))))
+
+(mat iter-review-zip-exhaustion
+  (let ([pulls 0] [position 0])
+    (let ([cursor (iter-zip
+                   (list->iter '(a))
+                   (make-iter (lambda ()
+                                (set! pulls (+ pulls 1))
+                                (set! position (+ position 1)) position)
+                              (lambda () (set! position 0))))])
+      (and (equal? '(a 1) (iter-next! cursor))
+           (iter-end? (iter-next! cursor))
+           (let ([at-end pulls])
+             (and (iter-end? (iter-next! cursor))
+                  (iter-end? (iter-next! cursor))
+                  (= at-end pulls)))
+           (begin (iter-reset! cursor) #t)
+           (equal? '(a 1) (iter-next! cursor))))))
+
+(mat iter-review-shared-reset-graph
+  (let ([resets 0])
+    (let loop ([depth 0]
+               [left (make-iter (lambda () iter-end)
+                                (lambda () (set! resets (+ resets 1))))]
+               [right (list->iter '())])
+      (if (= depth 16)
+          (begin (iter-reset! left) (= resets 1))
+          (loop (+ depth 1) (iter-concat left right) (iter-concat left right)))))
+
+  ;; Wrapper-local reset must preserve stage counters and refresh buffered sorting.
+  (let* ([data (list 3 1 2)]
+         [sorted (iter-sorted < (iter-take 2 (list->iter data)))]
+         [cursor (iter-distinct = (iter-concat sorted sorted))])
+    (and (equal? '(1 3) (iter->list cursor))
+         (begin
+           (set-car! data 0)
+           (iter-reset! cursor)
+           (equal? '(0 1) (iter->list cursor))))))
+
+(mat iter-review-interleave-reset
+  (let* ([source (list->iter '(1 2))]
+         [cursor (iter-interleave (list->iter '()) source source (list->iter '(3)))])
+    (and (equal? '(1 2 3) (iter->list cursor))
+         (iter-end? (iter-next! cursor))
+         (begin (iter-reset! cursor) #t)
+         (equal? '(1 2 3) (iter->list cursor)))))
+
+(mat iter-review-end-cursor
+  (and (iter? iter-end) (iterable? iter-end)
+       (iter-end? (iter-next! iter-end))
+       (begin (iter-reset! iter-end) #t)
+       (iter-end? (iter-next! iter-end))
+       (equal? '() (iter->list iter-end)))
+
+  ;; The process-wide exhaustion marker cannot carry caller pipeline configuration.
+  (error? (iter-map values iter-end))
+
+  ;; An empty limit must not permanently alter the shared exhaustion marker.
+  (error? (iter-take 0 iter-end)))
