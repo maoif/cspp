@@ -99,6 +99,8 @@
   Iterator sources and traversal-option expressions use `let` semantics: their evaluation
   order is unspecified, and all are evaluated before validating sources or binding items.
   Parallel source expressions see the surrounding scope, not companion item bindings.
+  Literal shorthand accepts quotation only through the Scheme `quote` binding, including renamed
+  imports. A rebound `quote` is an application and requires an explicit iterator type.
   Item and source-index names must be distinct across parallel iterator clauses, as with `let`.
   A hashtable clause requires distinct key and value identifiers, including when filtered.
   Within one clause, its source index may shadow its item name. Later configuration bindings

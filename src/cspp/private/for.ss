@@ -1,5 +1,5 @@
 (library (cspp private for)
-  (export literal? ->literal
+  (export literal? ->literal $for/check-quoted-literal
           valid-iter-ty? kw-iter-clause?
           kw-for-config-clause? kw-for*-config-clause?
           kw:init?
@@ -32,20 +32,40 @@
           (cspp iter))
 
 
-  (define (literal? lit)
-    (let* ([x (syntax->datum lit)]
-           [x (if (and (pair? x) (= 2 (length x)) (eq? 'quote (car x)))
-                  (cadr x)
-                  x)])
+  #|proc:->literal
+  The `->literal` helper returns the datum represented by `literal-syntax`, removing one
+  quotation only when its head has the Scheme `quote` binding. For example, `#''3` returns `3`;
+  a locally bound procedure named `quote` leaves `(quote 3)` intact as application data.
+  |#
+  (define (->literal literal-syntax)
+    (syntax-case literal-syntax (quote)
+      [(quote value) (syntax->datum #'value)]
+      [_ (syntax->datum literal-syntax)]))
+
+  #|proc:literal?
+  The `literal?` helper reports whether `literal-syntax` denotes supported source shorthand:
+  an exact natural number, string, or vector, optionally quoted with the Scheme `quote` binding.
+  For example, `#''#(a b)` returns `#t`; an application to a rebound `quote` returns `#f`.
+  |#
+  (define (literal? literal-syntax)
+    (let ([x (->literal literal-syntax)])
       (or (and (natural? x) (exact? x))
           (string? x)
           (vector? x))))
 
-  (define (->literal lit)
-    (let ([x (syntax->datum lit)])
-      (if (and (pair? x) (= 2 (length x)) (eq? 'quote (car x)))
-          (cadr x)
-          x)))
+  #|macro:$for/check-quoted-literal
+  The `$for/check-quoted-literal` helper verifies quotation in the generated source scope.
+  Earlier nested iterator or configuration bindings may hide `quote` after initial parsing.
+  For example, `(quote 3)` is rejected below a nested item binding named `quote`.
+  A valid quotation expands to an unspecified value without runtime validation.
+  |#
+  (define-syntax $for/check-quoted-literal
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ expression)
+         (syntax-case #'expression (quote)
+           [(quote value) #'(void)]
+           [_ (syntax-error #'expression "for: expected quoted literal source:")])])))
 
   (define (valid-iter-ty? ty)
     (let ([ty (syntax->datum ty)])
@@ -1133,11 +1153,17 @@
        (fragment-raw-termination fragment) (fragment-filter fragment) (fragment-visit fragment)))
     (syntax-case cl ()
       [(v lit)
-       (decorate-fragment
-        (if (natural? (->literal #'lit))
-            (numeric-fragment #'v #t (lambda (state) (process-literal-iter-clause state (datum lit))))
-            (process-literal-iter-clause #'v (datum lit)))
-        (list #'v) #f #f)]
+       (with-evaluations
+        (syntax-case #'lit (quote)
+          [(quote value)
+           (with-syntax ([(checked) (generate-temporaries '(checked))])
+             #'([checked ($for/check-quoted-literal lit)]))]
+          [_ '()])
+        (decorate-fragment
+         (if (natural? (->literal #'lit))
+             (numeric-fragment #'v #t (lambda (state) (process-literal-iter-clause state #'lit)))
+             (process-literal-iter-clause #'v #'lit))
+         (list #'v) #f #f))]
       [((v* ...) iter-ty op* ...)
        (let-values ([(arguments predicate index evaluations)
                      (split-common-options (datum iter-ty) #'(op* ...))])

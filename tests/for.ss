@@ -1,5 +1,54 @@
 (import (cspp) (cspp private for))
 
+(mat literal-source-quotation-scope
+     ;; A lexically rebound quote is an application, not valid literal shorthand.
+     (andmap
+      (lambda (kind)
+        (andmap
+         (lambda (source)
+           (guard (condition [else #t])
+             (eval `(let ([quote (lambda (value) 0)])
+                      (,kind ([x (quote ,source)]) x))
+                   (environment '(cspp)))
+             #f))
+         '(3 "ab" #(a b))))
+      '(for for/fold for/list for/vector for* for*/fold for*/list for*/vector))
+
+     ;; Renaming the real quote binding preserves literal shorthand in every form.
+     (andmap
+      (lambda (kind)
+        (andmap
+         (lambda (source)
+           (guard (condition [else #f])
+             (= (if (number? source) source 2)
+                (eval `(let ([visits 0])
+                         (,kind ([x (literal-quote ,source)])
+                           (set! visits (+ visits 1)))
+                         visits)
+                      (environment '(cspp)
+                                   '(rename (only (chezscheme) quote) (quote literal-quote)))))))
+         '(3 "ab" #(a b))))
+      '(for for/fold for/list for/vector for* for*/fold for*/list for*/vector))
+
+     ;; Earlier nested item and configuration bindings also hide quote syntax.
+     (andmap
+      (lambda (kind)
+        (andmap
+         (lambda (prefix)
+           (guard (condition [else #t])
+             (eval `(,kind (,@prefix [x (quote 2)]) x) (environment '(cspp)))
+             #f))
+         '(([quote 1])
+           ([outer 1] [:let quote (lambda (value) 0)])
+           ([outer 1] [:let-values (quote) (values (lambda (value) 0))])
+           ([outer 1] [:index quote]))))
+      '(for* for*/fold for*/list for*/vector))
+
+     ;; Parallel sources and a clause's own source use the surrounding quote binding.
+     (equal? '((0 0) (1 1)) (for/list ([quote 2] [x '2]) (list quote x)))
+
+     (equal? '(0 1) (for*/list ([quote '2]) quote)))
+
 (mat keyword-predicate-consistency
      (and (kw-for-config-clause? #':letrec*)
           (kw-for-config-clause? #':let*-values)
