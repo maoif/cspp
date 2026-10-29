@@ -100,6 +100,7 @@
   order is unspecified, and all are evaluated before validating sources or binding items.
   Parallel source expressions see the surrounding scope, not companion item bindings.
   Item and source-index names must be distinct across parallel iterator clauses, as with `let`.
+  A hashtable clause requires distinct key and value identifiers, including when filtered.
   Within one clause, its source index may shadow its item name. Later configuration bindings
   may shadow iterator names; nested `for*` levels allow repeated names, as with `let*`.
   Guards run during traversal, after their own item and optional source index are bound.

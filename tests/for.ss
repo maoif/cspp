@@ -2759,3 +2759,52 @@
                                              [supplied :vector '#(c d)])
                                     (list x supplied))]))])
                (collect x))))
+
+(mat hashtable-tuple-distinct-bindings
+     ;; Tuple names must be distinct with or without filtering in every loop form.
+     (andmap
+      (lambda (kind)
+        (andmap
+         (lambda (filtered?)
+           (guard (condition [(syntax-violation? condition) #t] [else #f])
+             (eval `(,kind ([(x x) :hashtable (make-eq-hashtable)
+                                   ,@(if filtered? '(:guard #t) '())]
+                            [other 1])
+                      x)
+                   (environment '(cspp)))
+             #f))
+         '(#f #t)))
+      '(for for/fold for/list for/vector for* for*/fold for*/list for*/vector))
+
+     ;; A real filtered source must not silently discard its key binding.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(let ([table (make-eq-hashtable)])
+                (hashtable-set! table 'key 42)
+                (for/list ([(x x) :hashtable table :guard #t] [other 1]) x))
+             (environment '(cspp)))
+       #f)
+
+     ;; A source index may still shadow either distinct tuple binding.
+     (let ([table (make-eq-hashtable)])
+       (hashtable-set! table 'key 42)
+       (and (equal? '((0 42))
+                    (for/list ([(key value) :hashtable table :index key :guard #t]
+                               [other 1])
+                      (list key value)))
+            (equal? '((key 0))
+                    (for/list ([(key value) :hashtable table :index value :guard #t]
+                               [other 1])
+                      (list key value)))))
+
+     ;; Macro-introduced and caller-supplied tuple names can share a spelling.
+     (let ([table (make-eq-hashtable)])
+       (hashtable-set! table 'key 42)
+       (equal? '((key 42))
+               (let-syntax ([collect
+                             (lambda (stx)
+                               (syntax-case stx ()
+                                 [(_ source supplied)
+                                  #'(for/list ([(x supplied) :hashtable source :guard #t]
+                                               [other 1])
+                                      (list x supplied))]))])
+                 (collect table x)))))

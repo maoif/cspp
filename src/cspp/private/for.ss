@@ -1141,6 +1141,11 @@
       [((v* ...) iter-ty op* ...)
        (let-values ([(arguments predicate index evaluations)
                      (split-common-options (datum iter-ty) #'(op* ...))])
+         ;; Check caller identifiers before a parallel filter replaces them with private ones.
+         (let ([variables #'(v* ...)])
+           (when (and (= 2 (length variables))
+                      (bound-identifier=? (car variables) (cadr variables)))
+             (syntax-error cl "for: duplicate hashtable tuple binding:")))
          (with-evaluations evaluations
           (if (and predicate (not direct-filter?))
              (parallel-filter-fragment
