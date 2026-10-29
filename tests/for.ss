@@ -1,5 +1,21 @@
 (import (cspp) (cspp private for))
 
+(mat loop-body-required
+     ;; Every loop variant diagnoses a missing body even if its sources would be empty.
+     (andmap
+      (lambda (kind)
+        (andmap
+         (lambda (size)
+           (guard (condition
+                   [(syntax-violation? condition)
+                    (and (message-condition? condition)
+                         (string-contains? (condition-message condition) "body") #t)]
+                   [else #f])
+             (eval `(,kind ([x ,size])) (environment '(cspp)))
+             #f))
+         '(0 2)))
+      '(for for/fold for/list for/vector for* for*/fold for*/list for*/vector)))
+
 (mat loop-body-definition-context
      ;; Guards, accumulation, and collection must not change the body's definition context.
      (andmap

@@ -92,7 +92,8 @@
   #|macro:for/fold
   The `for/fold` macro iterates its source clauses in parallel and evaluates the body.
   `:init` binds an accumulator updated from the body result; `:finish` supplies the final value.
-  The body permits local definitions followed by expressions, with the last supplying its result.
+  The body requires at least one expression and permits preceding local definitions.
+  Its last expression supplies the body result.
   Binding clauses scope their variables over subsequent clauses and the body. Each binding clause
   uses its corresponding Scheme binding form with one binding. An indexed guard binds a zero-based
   index counting passes through that guard, including passes rejected by a later guard.
@@ -196,6 +197,8 @@
          `(config config ,handle-config)
          `(config end    epsilon)))
       (syntax-case stx ()
+        [(_ folding? counter clauses)
+         (syntax-error stx "for: expected at least one body expression:")]
         [(_ folding? counter (cl* ...) body* ...)
          (let* ([fragments (handler (make-eq-hashtable) #'(cl* ...))]
                 [frag-init   (hashtable-ref fragments 'init #f)]
@@ -401,7 +404,8 @@
   expressions use `let` semantics in the surrounding scope and are evaluated before validation.
   Their evaluation order is unspecified. No expression sees its own clause's item bindings.
   `:init` binds an accumulator updated from the body result; `:finish` supplies the final value.
-  The body permits local definitions followed by expressions, with the last supplying its result.
+  The body requires at least one expression and permits preceding local definitions.
+  Its last expression supplies the body result.
   Binding clauses use the corresponding Scheme binding form and scope over subsequent clauses.
   Indexed guards count passes starting at zero and reset on every entry to their loop level.
   A standalone `[:index name]` after an iterator binds a zero-based counter of visits reaching
@@ -473,6 +477,8 @@
          `(e5 iter ,handle-iter/config-iter)
          `(e5 end  epsilon)))
       (syntax-case stx ()
+        [(_ folding? counter clauses)
+         (syntax-error stx "for*: expected at least one body expression:")]
         [(_ folding? counter (cl* ...) body* ...)
          (let* ([fragments (handler (make-eq-hashtable) #'(cl* ...))]
                 [frag-init        (hashtable-ref fragments 'init #f)]
@@ -837,6 +843,8 @@
                             #,storage)
                         storage)))))))
       (syntax-case stx ()
+        [(_ loop vector? who clauses)
+         (syntax-error stx "for: expected at least one body expression:")]
         [(_ loop vector? who (clause ...) body ...)
          (generate #'loop (datum vector?) #'who #'(clause ...) #'(body ...))])))
 
