@@ -1163,8 +1163,38 @@
   (define (process-iter-clause clause)
     (process-iter-clause/direct clause #f))
 
-  (define (process-iter-clauses cl*)
-    (map (lambda (clause) (process-iter-clause/direct clause (null? (cdr cl*)))) cl*))
+  #|proc:process-iter-clauses
+  The `process-iter-clauses` helper compiles parallel iterator syntax `clauses` into fragments.
+  Item and source-index identifiers must be distinct across clauses under `bound-identifier=?`.
+  For example, `([x 2] [x 3])` is rejected, while hygienically distinct identifiers spelled
+  `x` are allowed. An index may still shadow an item within its own clause.
+  A table groups identifiers by spelling before comparing their scopes.
+  |#
+  (define (process-iter-clauses clauses)
+    (pcheck ([list? clauses])
+      (let ([fragments
+             (map (lambda (clause)
+                    (process-iter-clause/direct clause (null? (cdr clauses))))
+                  clauses)]
+            [seen (make-eq-hashtable)])
+        (for-each
+         (lambda (fragment)
+           (let ([names (fragment-exposed fragment)])
+             ;; Check the whole clause before recording its same-clause aliases.
+             (for-each
+              (lambda (name)
+                (when (exists (lambda (previous) (bound-identifier=? name previous))
+                              (hashtable-ref seen (syntax->datum name) '()))
+                  (syntax-error name "for: duplicate parallel iterator binding:")))
+              names)
+             (for-each
+              (lambda (name)
+                (let ([spelling (syntax->datum name)])
+                  (hashtable-set! seen spelling
+                                  (cons name (hashtable-ref seen spelling '())))))
+              names)))
+         fragments)
+        fragments)))
 
 
   )

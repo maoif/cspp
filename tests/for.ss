@@ -2707,3 +2707,55 @@
      (let ([calls 0])
        (and (null? (for*/list ([x 0] [y :list (begin (set! calls (+ calls 1)) '(a))]) y))
             (= calls 0))))
+
+(mat parallel-iterator-duplicate-bindings
+     ;; Every parallel form must reject duplicate item names, even for empty sources.
+     (andmap
+      (lambda (kind)
+        (guard (condition [(syntax-violation? condition) #t] [else #f])
+          (eval `(,kind ([x :vector '#()] [x :vector '#()]) x)
+                (environment '(cspp)))
+          #f))
+      '(for for/fold for/list for/vector))
+
+     ;; Filtered sources must enforce the same rule as unfiltered sources.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(for/list ([x :fxiota 2 :guard #t] [x :list '(a b) :guard #t]) x)
+             (environment '(cspp)))
+       #f)
+
+     ;; An index cannot hide an item binding from a different parallel source.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(for/list ([x 2] [y :fxiota 2 :index x]) (list x y))
+             (environment '(cspp)))
+       #f)
+
+     ;; Two source-local index bindings cannot use the same name either.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(for/vector ([x :fxiota 2 :index i] [y :fxiota 2 :index i]) i)
+             (environment '(cspp)))
+       #f)
+
+     ;; Tuple bindings also participate in duplicate checks across sources.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (eval '(for/list ([(key value) :hashtable (make-eq-hashtable)] [value 0]) value)
+             (environment '(cspp)))
+       #f)
+
+     ;; Nested levels retain ordinary let* shadowing.
+     (equal? '(10 20 10 20)
+             (for*/list ([x :fxiota 2] [x :vector '#(10 20)]) x))
+
+     ;; Later configuration bindings may still shadow iterator names.
+     (equal? '(99 99) (for/list ([x 2] [y 2] [:let x 99]) x))
+
+     ;; Equal spelling with distinct macro scopes is not a duplicate binding.
+     (equal? '((a c) (b d))
+             (let-syntax ([collect
+                           (lambda (stx)
+                             (syntax-case stx ()
+                               [(_ supplied)
+                                #'(for/list ([x :vector '#(a b)]
+                                             [supplied :vector '#(c d)])
+                                    (list x supplied))]))])
+               (collect x))))
