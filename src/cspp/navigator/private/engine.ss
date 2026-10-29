@@ -31,6 +31,9 @@
   ;; can invoke it inside nav-transform/nav-traverse, whose fresh public scope must
   ;; not erase the outer path's bindings, optional handling, or update counter.
   ;; The equality fast path avoids parameterization when no scope changed.
+  ;; Checkpoints belong inside the restored scope so delegated custom operations
+  ;; cannot reset a different public operation's terminal evidence. Pass the
+  ;; already captured counter to avoid another dynamic lookup on every child.
   (define bind-continuation
     (lambda (continue)
       (let ([env (current-recursive-env)]
@@ -42,12 +45,12 @@
                    (eq? optional? (current-optional-focus?))
                    (eq? counter (current-update-count))
                    (eq? terminal? (current-selection-terminal?)))
-              (continue value)
+              (nav-with-update-checkpoint counter (lambda () (continue value)))
               (parameterize ([current-recursive-env env]
                              [current-optional-focus? optional?]
                              [current-update-count counter]
                              [current-selection-terminal? terminal?])
-                (continue value)))))))
+                (nav-with-update-checkpoint counter (lambda () (continue value)))))))))
 
   (define emit-descendant-children
     (lambda (value emit)
@@ -184,7 +187,10 @@
 
   (define transform-path
     (lambda (path proc data)
-      (run-transform (nav-path-steps (nav-compile-path path)) '() data proc)))
+      (nav-with-update-checkpoint
+       (current-update-count)
+       (lambda ()
+         (run-transform (nav-path-steps (nav-compile-path path)) '() data proc)))))
 
   (define run-transform!
     (lambda (steps tails value update!)
@@ -282,7 +288,10 @@
 
   (define transform-path!
     (lambda (path proc data)
-      (run-transform! (nav-path-steps (nav-compile-path path)) '() data proc)))
+      (nav-with-update-checkpoint
+       (current-update-count)
+       (lambda ()
+         (run-transform! (nav-path-steps (nav-compile-path path)) '() data proc)))))
 
   (define clear-path
     (lambda (path proc data)
@@ -520,9 +529,15 @@
   (define nav-transform
     (lambda (path proc data)
       (pcheck ([procedure? proc])
-              (parameterize ([current-update-count (list 0)]
+              (parameterize ([current-update-count (cons 0 0)]
                              [current-recursive-env '()] [current-optional-focus? #f])
-                (transform-path path (lambda (value) (nav-note-update!) (proc value)) data)))))
+                (transform-path
+                 path
+                 (lambda (value)
+                   (let ([result (proc value)])
+                     (nav-note-update!)
+                     result))
+                 data)))))
 
   #|proc:nav-transform/i
   The `nav-transform/i` procedure is like `nav-transform`, but `proc` receives
@@ -552,11 +567,14 @@
   (define nav-transform!
     (lambda (path proc data)
       (pcheck ([procedure? proc])
-              (let ([result (parameterize ([current-update-count (list 0)]
+              (let ([result (parameterize ([current-update-count (cons 0 0)]
                                            [current-recursive-env '()]
                                            [current-optional-focus? #f])
                               (transform-path! path
-                                               (lambda (value) (nav-note-update!) (proc value))
+                                               (lambda (value)
+                                                 (let ([result (proc value)])
+                                                   (nav-note-update!)
+                                                   result))
                                                data))])
                 (if (eq? result data)
                     data

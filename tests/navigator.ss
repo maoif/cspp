@@ -2856,3 +2856,133 @@
             (equal? '() (nav-select (nav/slice 5 5 100) source))
             (equal? '(4) (nav-select (nav/slice 4 5 100) source)))))
    (list list dlist)))
+
+(mat navigator-default-false-resumption
+  (andmap
+   (lambda (step data)
+     (let ([saved #f] [phase 0] [calls 0])
+       (let ([result
+              (nav-transform
+               (nav/path step
+                         (nav/pred
+                          (lambda (value)
+                            (if saved #t
+                                ;; Resume before the suffix decides whether it reaches an update.
+                                (call/cc (lambda (resume) (set! saved resume) #t))))))
+               (lambda (value) (set! calls (+ calls 1)) (+ value 1)) data)])
+         (if (= phase 0)
+             (begin (set! phase 1) (saved #f))
+             (and (equal? result data) (= calls 1))))))
+   (list (nav/key/default 'x 0) (nav/nth/default 2 0))
+   (list '() (vector 9))))
+
+(mat navigator-hashtable-rebuild-hash-policy
+  (andmap
+   (lambda (equivalent?)
+     (let* ([hash (lambda (key) 0)] [source (make-hashtable hash equivalent?)])
+       (hashtable-set! source 'a 1)
+       (hashtable-set! source 'b 2)
+       (andmap
+        (lambda (result)
+          (and (eq? hash (hashtable-hash-function result))
+               (eq? equivalent? (hashtable-equivalence-function result))
+               (= 1 (hashtable-ref result 'a 0))))
+        (list (nav-select-one (nav/submap 'a) source)
+              (nav-transform nav/keys (lambda (key) key) source)
+              (nav-transform nav/entries (lambda (entry) entry) source)))))
+   (list eq? eqv?)))
+
+(mat navigator-default-resumption-retains-sibling-evidence
+  (let ([saved #f] [phase 0])
+    (let ([result
+           (nav-transform
+            (nav/path (nav/key/default 'x '(1 2)) nav/all
+                      (nav/pred
+                       (lambda (value)
+                         (if (or saved (= value 1)) #t
+                             ;; The first sibling has already reached the terminal callback.
+                             (call/cc (lambda (resume) (set! saved resume) #t))))))
+            add1 '())])
+      (if (= phase 0)
+          (begin (set! phase 1) (saved #f))
+          (equal? '((x 2 2)) result)))))
+
+(mat navigator-default-terminal-resumption
+  (let ([saved #f] [phase 0])
+    (let ([result
+           (nav-transform
+            (nav/key/default 'x 0)
+            (lambda (value)
+              ;; A resumed terminal return still authorizes inserting this missing key.
+              (call/cc (lambda (resume) (set! saved resume) 1)))
+            '())])
+      (if (= phase 0)
+          (begin (set! phase 1) (saved 9))
+          (equal? '((x . 9)) result)))))
+
+(mat navigator-default-live-fiber-evidence
+  (andmap
+   (lambda (workers)
+     (let ([done (make-channel)]
+           [step (make-nav
+                  'yield-after-update
+                  (lambda (value emit) (emit value))
+                  (lambda (value update)
+                    (let ([result (update value)]) (fiber-yield) result))
+                  (lambda (value update!)
+                    (let ([result (update! value)]) (fiber-yield) result)))])
+       (run-fibers
+        (lambda ()
+          (do ([task 0 (+ task 1)]) ((= task 8))
+            (spawn-fiber
+             (lambda ()
+               (channel-put!
+                done
+                (equal? '((x . 1))
+                        (nav-transform (nav/path (nav/key/default 'x 0) step)
+                                       (lambda (value) (fiber-yield) (add1 value)) '()))))))
+          (let collect ([remaining 8] [correct? #t])
+            (if (= remaining 0) correct?
+                (let ([result (channel-get done)])
+                  (collect (- remaining 1) (and correct? result))))))
+        workers)))
+   '(1 4)))
+
+(mat navigator-default-resumption-with-fiber-suspension
+  (andmap
+   (lambda (workers)
+     (run-fibers
+      (lambda ()
+        (let ([saved #f] [phase 0])
+          (let ([result
+                 (nav-transform
+                  (nav/path (nav/key/default 'x '(1 2)) nav/all
+                            (nav/pred
+                             (lambda (value)
+                               (fiber-yield)
+                               (if (or saved (= value 1)) #t
+                                   ;; Later terminal callbacks suspend before this predicate replays.
+                                   (call/cc (lambda (resume) (set! saved resume) #t))))))
+                  (lambda (value) (fiber-yield) (add1 value)) '())])
+            (if (= phase 0)
+                (begin (set! phase 1) (fiber-yield) (saved #f))
+                (equal? '((x 2 2)) result)))))
+      workers))
+   '(1 4)))
+
+(mat navigator-default-repeated-predicate-resumption
+  (let ([saved #f] [phase 0] [calls 0])
+    (let ([result
+           (nav-transform
+            (nav/path (nav/key/default 'x 0)
+                      (nav/pred
+                       (lambda (value)
+                         ;; Reuse one captured predicate continuation with different decisions.
+                         (call/cc (lambda (resume) (set! saved resume) #t)))))
+            (lambda (value) (set! calls (+ calls 1)) (add1 value)) '())])
+      (case phase
+        [(0) (and (equal? '((x . 1)) result)
+                  (begin (set! phase 1) (saved #f)))]
+        [(1) (and (null? result) (= calls 1)
+                  (begin (set! phase 2) (saved #t)))]
+        [else (and (equal? '((x . 1)) result) (= calls 2))]))))

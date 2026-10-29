@@ -748,7 +748,11 @@
     (lambda (value entries)
       (cond [(hashtable? value)
              (let* ([equivalent? (hashtable-equivalence-function value)]
-                    [result (cond [(eq? equivalent? eq?) (make-eq-hashtable)]
+                    [hash (hashtable-hash-function value)]
+                    ;; eq?/eqv? equivalence does not imply native hashing: callers
+                    ;; may pair either with a custom hash policy, which must survive.
+                    [result (cond [hash (make-hashtable hash equivalent?)]
+                                  [(eq? equivalent? eq?) (make-eq-hashtable)]
                                   [(eq? equivalent? eqv?) (make-eqv-hashtable)]
                                   [else (make-hashtable (hashtable-hash-function value)
                                                         equivalent?)])])

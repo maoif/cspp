@@ -10,7 +10,8 @@
           nav? nav-path? nav/empty-path nav-empty-path?
           make-nav nav-name nav-coerce nav/path nav-compile-path nav/path-append
           make-nav-ref nav-ref? nav-missing nav-missing?
-          make-nav-scope-parameter nav-with-scope current-update-count nav-update-version nav-note-update!
+          make-nav-scope-parameter nav-with-scope current-update-count
+          nav-with-update-checkpoint nav-note-update!
           current-optional-focus? nav-call-step
           nav-error nav-focus-error nav-focus-error? nav-absent-focus?
           nav-call-user nav-protect-callback nav-unsupported-error nav-required-error
@@ -126,11 +127,53 @@
   ;; The terminal callback runs only after the full path reaches a focus. A virtual
   ;; default focus supplies a fallback for an absent location without creating it.
   ;; Its suffix can select nothing, so visiting the default alone must not insert it.
-  ;; One shared mutable counter per public update records terminal invocations;
-  ;; comparing its version before/after the suffix decides whether insertion occurs.
+  ;; Terminal evidence is a per-operation count of successful terminal returns.
+  ;; Its private pair stores (count . active-default-depth). Checkpoints are needed
+  ;; only inside virtual-default suffixes; ordinary transforms keep the fast path.
+  ;; A checkpoint records its lexical prefix before a step/suffix runs. Resuming
+  ;; an already completed checkpoint restores that prefix; nested checkpoints then
+  ;; restore their own later prefixes, retaining earlier sibling evidence. Live
+  ;; fiber suspension does not rewind evidence: only normal return marks completion.
+  ;; This restores bookkeeping, not targets, callback effects, or mutable builders.
+  ;; Captures inside custom traversal/adapter or hash/equivalence/comparison callbacks
+  ;; after earlier suffix calls are unsupported for default materialization: their progress
+  ;; cannot be reconstructed. Backward resumption within a step/suffix that has not
+  ;; returned normally is unsupported for this evidence. Overlapping branches of
+  ;; one operation are dependent; their caller must order them.
   (define current-update-count (make-nav-scope-parameter #f))
-  (define nav-update-version
-    (lambda () (let ([counter (current-update-count)]) (if counter (car counter) 0))))
+
+  #|proc:nav-with-update-checkpoint
+  Run thunk `run`, with signature `() -> values`, and return its values unchanged.
+  `counter` is the defining operation's private evidence pair, or `#f` outside updates.
+  Inside a virtual-default suffix, retain the current terminal-evidence prefix in a
+  checkpoint. Continuation resumption across a completed checkpoint restores that prefix;
+  suspending an active checkpoint preserves its live evidence. Outside defaults, call
+  `run` directly. Kind: private execution helper; no heap or callback rollback.
+  |#
+  (define nav-with-update-checkpoint
+    (lambda (counter run)
+      (if (or (not counter) (zero? (cdr counter)))
+          (run)
+          (let ([prefix (car counter)] [completed? #f])
+            (call-with-values
+              (lambda ()
+                (dynamic-wind
+                  (lambda ()
+                    (when completed?
+                      (set-car! counter prefix)
+                      (set! completed? #f)))
+                  run
+                  void))
+              (lambda results
+                ;; Set this only after leaving the winder. A timer can suspend
+                ;; between any two instructions while its body is still live.
+                (set! completed? #t)
+                (apply values results)))))))
+
+  #|proc:nav-note-update!
+  Record one successful terminal callback return in the active operation, if any.
+  Return an unspecified value. Kind: private evidence update; it owns no resources.
+  |#
   (define nav-note-update!
     (lambda ()
       (let ([counter (current-update-count)])
@@ -243,7 +286,10 @@
   `(parent update) -> rebuilt-parent`; it replaces each child with `(update child)`.
   `transform!-proc` has signature `(parent update!) -> parent`; it mutates each focus
   using `(update! child)`, which returns the replacement child. The result is a navigator.
-  Custom navigators created by this procedure do not support clearing.
+  Custom navigators created by this procedure do not support clearing. Callbacks may suspend
+  in fibers. For virtual-default materialization, capturing a continuation inside a traversal
+  callback after earlier `update` calls is unsupported: resumption cannot restore its opaque
+  progress. Completed engine suffixes have their own terminal-evidence checkpoints.
   Kind: Reusable custom step constructor; callbacks determine the supported update modes.
   |#
   (define make-nav

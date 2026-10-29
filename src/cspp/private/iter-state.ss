@@ -27,9 +27,10 @@
   With a fourth argument, `fini-proc` is a finalizer or `#f`, and `children` is either a
   fixed iterator list or `() -> iterator-list` for dynamic cleanup/restart dependencies.
   A fixed list must stay unchanged and permits permanent resource-free classification.
-  The five-argument form takes separate dynamic cleanup `children` and `reset-children`
-  callbacks, both `() -> iterator-list`. Dynamic graphs remain resource-capable even
-  when currently empty. Return a cursor; callbacks may suspend, and each cursor owns
+  The five-argument form accepts the same cleanup `children` plus a separate dynamic
+  `reset-children` callback, `() -> iterator-list`. Fixed cleanup links can prove freedom
+  while restart links follow a deferred free source. Dynamic cleanup graphs remain capable
+  even when currently empty. Return a cursor; callbacks may suspend, and each cursor owns
   its own pipeline state. Kind: private state constructor.
   |#
   (define-record-type ($iter mk-$iter $iter?)
@@ -55,8 +56,12 @@
                        (p next!-proc reset!-proc fini-proc children children
                           (make-list-builder) #f #t))]
                   [(next!-proc reset!-proc fini-proc children reset-children)
-                   (p next!-proc reset!-proc fini-proc children reset-children
-                      (make-list-builder) #f #t)]
+                   (if (list? children)
+                       (p next!-proc reset!-proc fini-proc (lambda () children) reset-children
+                          (make-list-builder) #f
+                          (or (bool fini-proc) (bool (exists $iter-resource-capable? children))))
+                       (p next!-proc reset!-proc fini-proc children reset-children
+                          (make-list-builder) #f #t))]
                   [(next!-proc reset!-proc)
                    (pcheck ([procedure? next!-proc reset!-proc])
                            (p next!-proc reset!-proc #f (lambda () '()) (lambda () '())

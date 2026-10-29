@@ -1297,3 +1297,90 @@
          (lambda (source) (iter-interleave source (range 0)))
          (lambda (source) (iter-distinct = source))
          (lambda (source) (iter-sorted < source)))))
+
+(mat transduce1-seed-resumption
+  (let ([saved #f] [phase 0])
+    (guard (condition [else #f])
+      (let ([result
+             (transduce1
+              (tmap (lambda (value)
+                      (if saved value
+                          ;; Capture before the first transformed value seeds the reduction.
+                          (call/cc (lambda (resume) (set! saved resume) value)))))
+              (rfsum) '(1 2 3))])
+        (if (= phase 0)
+            (begin (set! phase 1) (saved 10))
+            (= result 15)))))
+
+  ;; Reject an empty transformed source when resumption discards its original only seed.
+  (let ([saved #f] [phase 0])
+    (guard (condition [(and (= phase 1) (who-condition? condition)
+                            (eq? 'transduce1 (condition-who condition))
+                            (message-condition? condition)
+                            (equal? "empty transformed source" (condition-message condition)))
+                       #t]
+                      [else #f])
+      (transduce1
+       (tfilter (lambda (value)
+                  (if saved #t
+                      ;; Revisit the original filter decision without accepting its value.
+                      (call/cc (lambda (resume) (set! saved resume) #t)))))
+       (rfsum) '(1))
+      (if (= phase 0) (begin (set! phase 1) (saved #f)) #f)))
+
+  (not (transduce1 (tidentity)
+                  (make-reducer 'false-seed
+                                (case-lambda [() 'unused] [(acc) acc] [(acc x) acc]))
+                  '(#f 1))))
+
+(mat transducer-free-nested-sequence-retention
+  ;; Exhausted free sequences must not accumulate as cleanup roots across reset passes.
+  (andmap
+   (lambda (make-source)
+     (let ([cursor (sequence
+                    (tmapcat (lambda (value)
+                               (sequence (tcompose (tmap add1) (ttake 1)) (make-source))))
+                    (range 32))])
+       (let pass ([remaining 3])
+         (and (= 32 (length (iter->list cursor)))
+              (not (iter-finalized? cursor))
+              (= 1 (length (($iter-children cursor))))
+              (or (= remaining 1)
+                  (begin (iter-reset! cursor) (pass (- remaining 1))))))))
+   (list (lambda () (range 1)) (lambda () '(0)) (lambda () (vector 0))
+         (lambda () (eduction (tidentity) '(0))))))
+
+(mat transducer-sequence-resource-capability
+  ;; A sequence may acquire a nested resource even when its upstream list is free.
+  (let ([closed 0])
+    (let* ([inner (make-iter (lambda () iter-end) void
+                             (lambda () (set! closed (+ closed 1))))]
+           [nested (sequence (tcompose (tidentity) (tcat)) (list inner))]
+           [cursor (sequence (tcat) (list nested))])
+      (and (equal? '() (iter->list cursor))
+           (= closed 1) (iter-finalized? nested)))))
+
+(define-record-type review-late-sequence-source (fields cursor))
+
+(mat transducer-sequence-late-resource-discovery
+  (begin
+    (iter-register-source! review-late-sequence-source? review-late-sequence-source-cursor)
+    #t)
+
+  ;; Both a supplied dynamic cursor and an unknown adapter can acquire a resource later.
+  (andmap
+   (lambda (source-wrapper)
+     (let ([children '()] [closed 0])
+       (let* ([resource (make-iter (lambda () iter-end) void
+                                   (lambda () (set! closed (+ closed 1))))]
+              [dynamic (mk-$iter (lambda () iter-end) void #f (lambda () children))]
+              [nested (sequence (tidentity) (source-wrapper dynamic))]
+              [xform (tcompose
+                      (tmap (lambda (value)
+                              (if (eq? value 'acquire)
+                                  (begin (set! children (list resource)) '())
+                                  value)))
+                      (tcat))])
+         (and (equal? '() (into 'list xform (list nested 'acquire)))
+              (= closed 1) (iter-finalized? nested)))))
+   (list (lambda (cursor) cursor) make-review-late-sequence-source)))

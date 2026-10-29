@@ -96,10 +96,14 @@
          [(name proc context initially-stopped?)
           (make name proc context initially-stopped?)]))))
 
+  ;; Resource acquisition means consuming nested iterator sources whose cleanup must
+  ;; join this pass. This immutable capability is conservative: custom stages and
+  ;; tcat may acquire; ordinary map/filter/buffering stages cannot. Returning a
+  ;; resource as an ordinary value is not acquisition. Composition combines flags.
   (define-record-type ($transducer mk-$transducer $transducer?)
     (fields (immutable name)
             (immutable reducer-proc)
-            (immutable metadata))
+            (immutable acquires-resources?))
     (opaque #t)
     (sealed #t))
 
@@ -506,11 +510,17 @@
   `proc` must accept a reducer and return a reducer. Unseeded terminals initialize that
   transformed reducer; explicit seeds bypass its initializer. Mutable transformation
   state must be created inside `proc` per application, not shared in the description.
+  Custom stages conservatively permit nested resource acquisition for sequence cleanup.
   |#
   (define make-transducer
     (lambda (name proc)
       (pcheck ([symbol? name] [procedure? proc])
-              (mk-$transducer name proc #f))))
+              (mk-$transducer name proc #t))))
+
+  ;; Private constructor: only built-ins proven not to acquire nested resources.
+  ;; Callback-owned resources remain the callback's responsibility.
+  (define make-non-acquiring-transducer
+    (lambda (name proc) (mk-$transducer name proc #f)))
 
   #|proc:transducer-name
   The `transducer-name` procedure returns the symbolic name of `xform`.
@@ -527,7 +537,7 @@
   |#
   (define tidentity
     (lambda ()
-      (make-transducer 'tidentity (lambda (reducer) reducer))))
+      (make-non-acquiring-transducer 'tidentity (lambda (reducer) reducer))))
 
   #|proc:tcompose
   The `tcompose` procedure composes transducers in left-to-right pipeline
@@ -539,14 +549,15 @@
       (pcheck ([all-transducers? xform*])
               (if (null? xform*)
                   (tidentity)
-                  (make-transducer
+                  (mk-$transducer
                    'tcompose
                    (lambda (reducer)
                      (let loop ([xform* xform*])
                        (if (null? xform*)
                            reducer
                            (apply-transducer (car xform*)
-                                             (loop (cdr xform*)))))))))))
+                                             (loop (cdr xform*))))))
+                   (bool (exists $transducer-acquires-resources? xform*)))))))
 
   #|proc:tchain
   The `tchain` procedure composes the transducers in `xform-list` in
@@ -566,7 +577,7 @@
   (define tmap
     (lambda (proc)
       (pcheck ([procedure? proc])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tmap
                (lambda (reducer)
                  (mk-$reducer
@@ -586,7 +597,7 @@
   (define tmap/i
     (lambda (proc)
       (pcheck ([procedure? proc])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tmap/i
                (lambda (reducer)
                  (let ([i 0])
@@ -609,7 +620,7 @@
   (define tfilter
     (lambda (pred)
       (pcheck ([procedure? pred])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tfilter
                (lambda (reducer)
                  (mk-$reducer
@@ -631,7 +642,7 @@
   (define tfilter/i
     (lambda (pred)
       (pcheck ([procedure? pred])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tfilter/i
                (lambda (reducer)
                  (let ([i 0])
@@ -666,7 +677,7 @@
   (define tkeep
     (lambda (proc)
       (pcheck ([procedure? proc])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tkeep
                (lambda (reducer)
                  (mk-$reducer
@@ -688,7 +699,7 @@
   (define tkeep/i
     (lambda (proc)
       (pcheck ([procedure? proc])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tkeep/i
                (lambda (reducer)
                  (let ([i 0])
@@ -810,7 +821,7 @@
   |#
   (define tflatten
     (lambda ()
-      (make-transducer
+      (make-non-acquiring-transducer
        'tflatten
        (lambda (reducer)
          (mk-$reducer
@@ -832,7 +843,7 @@
   (define ttake
     (lambda (n)
       (pcheck ([natural? n])
-              (make-transducer
+              (make-non-acquiring-transducer
                'ttake
                (lambda (reducer)
                  (let ([left n])
@@ -861,7 +872,7 @@
   (define tdrop
     (lambda (n)
       (pcheck ([natural? n])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tdrop
                (lambda (reducer)
                  (let ([left n])
@@ -885,7 +896,7 @@
   (define ttake-while
     (lambda (pred)
       (pcheck ([procedure? pred])
-              (make-transducer
+              (make-non-acquiring-transducer
                'ttake-while
                (lambda (reducer)
                  (mk-$reducer
@@ -909,7 +920,7 @@
   (define tdrop-while
     (lambda (pred)
       (pcheck ([procedure? pred])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tdrop-while
                (lambda (reducer)
                  (let ([dropping? #t])
@@ -935,7 +946,7 @@
   (define ttake-nth
     (lambda (n)
       (pcheck ([positive-natural? n])
-              (make-transducer
+              (make-non-acquiring-transducer
                'ttake-nth
                (lambda (reducer)
                  (let ([i 0])
@@ -971,7 +982,7 @@
       [(start stop) (tslice start stop 1)]
       [(start stop step)
        (tslice/check start stop step)
-       (make-transducer
+       (make-non-acquiring-transducer
         'tslice
         (lambda (reducer)
           (let ([i 0])
@@ -1007,7 +1018,7 @@
   (define tpartition
     (lambda (n)
       (pcheck ([positive-natural? n])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tpartition
                (lambda (reducer)
                  (let ([buf (make-list-builder)] [count 0])
@@ -1036,7 +1047,7 @@
   (define tpartition-all
     (lambda (n)
       (pcheck ([positive-natural? n])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tpartition-all
                (lambda (reducer)
                  (let ([buf (make-list-builder)] [count 0])
@@ -1070,7 +1081,7 @@
   (define tpartition-by
     (lambda (proc)
       (pcheck ([procedure? proc])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tpartition-by
                (lambda (reducer)
                  (let ([started? #f] [key #f] [buf (make-list-builder)])
@@ -1123,7 +1134,7 @@
   (define tdedupe-by
     (lambda (proc)
       (pcheck ([procedure? proc])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tdedupe-by
                (lambda (reducer)
                  (let ([started? #f] [key #f])
@@ -1164,7 +1175,7 @@
   (define tdistinct-by
     (lambda (proc)
       (pcheck ([procedure? proc])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tdistinct-by
                (lambda (reducer)
                  (let ([seen (make-hashtable equal-hash equal?)])
@@ -1189,7 +1200,7 @@
   |#
   (define tinterpose
     (lambda (sep)
-      (make-transducer
+      (make-non-acquiring-transducer
        'tinterpose
        (lambda (reducer)
          (let ([first? #t])
@@ -1216,7 +1227,7 @@
   (define ttap
     (lambda (proc)
       (pcheck ([procedure? proc])
-              (make-transducer
+              (make-non-acquiring-transducer
                'ttap
                (lambda (reducer)
                  (mk-$reducer
@@ -1237,7 +1248,7 @@
   (define tinspect
     (lambda (who proc)
       (pcheck ([procedure? proc])
-              (make-transducer
+              (make-non-acquiring-transducer
                'tinspect
                (lambda (reducer)
                  (mk-$reducer
@@ -1271,29 +1282,39 @@
   The `transduce1` procedure runs transducer `xform` over transducible `source` using its first
   transformed value as the accumulator for reducer record `reducer`. The result is the reducer's
   completion value. An empty transformed source raises an error. The first value must be a valid
-  accumulator for `reducer`.
+  accumulator for `reducer`. The uninitialized seed is private and distinct from `#f`;
+  continuation resumption preserves whether the lexical accumulator has been seeded.
   |#
   (define transduce1
     (lambda (xform reducer source)
       (pcheck ([transducer? xform] [reducer? reducer] [transducible? source])
-              (let ([seen? #f])
+              ;; The seed travels with the accumulator's lexical binding. A separate
+              ;; mutable flag can describe a later pass on continuation resumption.
+              (let ([uninitialized (list 'uninitialized)])
                 (transduce
                  xform
                  (make-reducer
                   'transduce1
                   (case-lambda
-                    [() #f]
+                    [() uninitialized]
                     [(acc)
-                     (if seen?
+                     (if (not (eq? acc uninitialized))
                          (reducer-complete reducer acc)
                          (errorf 'transduce1 "empty transformed source"))]
                     [(acc x)
-                     (if seen?
-                         (reducer-step reducer acc x)
-                         (begin
-                           (set! seen? #t)
-                           x))]))
+                     (if (eq? acc uninitialized)
+                         x
+                         (reducer-step reducer acc x))]))
                  source)))))
+
+  ;; A known free source converts without acquiring a resource. Unknown registered
+  ;; adapters stay conservative, and cursor metadata includes future acquisitions.
+  (define resource-free-sequence-source?
+    (lambda (source)
+      (if (iter? source)
+          (not ($iter-resource-capable? source))
+          (or (list? source) (vector? source) (string? source) (bytevector? source)
+              (fxvector? source) (flvector? source) (hashtable? source)))))
 
   #|proc:sequence
   Return a lazy iterator applying transducer `xform` to transducible `source`.
@@ -1307,7 +1328,9 @@
   retaining the pipeline. Previously acquired nested resources remain reachable for cleanup;
   reset does not implicitly rewind those nested sources. Resource-finalized sources cannot
   be reset. Errors or nonlocal exits leave pass state undefined. Ordinary fiber suspension
-  preserves the live pass.
+  preserves the live pass. A known non-acquiring built-in pipeline over a permanently
+  free source is resource-free, so outer flattening passes need not retain this cursor.
+  Custom stages, nested-source stages, and unknown adapters remain cleanup candidates.
   |#
   (define sequence
     (lambda (xform source)
@@ -1366,9 +1389,14 @@
                     (initialize!)
                     (mk-$iter next!
                               initialize!
-                              #f (lambda () (if upstream
-                                                (cons upstream (context-resources context))
-                                                (context-resources context)))
+                              #f (if (and (not ($transducer-acquires-resources? xform))
+                                          (resource-free-sequence-source? source))
+                                     ;; Fixed cleanup links prove permanent freedom, even
+                                     ;; before a deferred built-in source is constructed.
+                                     (if upstream (list upstream) '())
+                                     (lambda () (if upstream
+                                                    (cons upstream (context-resources context))
+                                                    (context-resources context))))
                               (lambda () (if upstream (list upstream) '()))))))))
 
   #|proc:into

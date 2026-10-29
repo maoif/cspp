@@ -37,14 +37,23 @@
     (lambda (who value)
       (nav-error who "focused value cannot be removed from: ~s" value)))
 
-  ;; A suffix that selects no values returns without changing the operation's
-  ;; update counter. Only a terminal invocation authorizes materializing a default.
+  ;; A suffix that selects nothing returns with its checkpointed prefix unchanged,
+  ;; including after a completed predicate is resumed with a different decision.
+  ;; Only successful terminal return authorizes materializing a virtual default.
   (define update-default-focus
     (lambda (default update absent present)
-      (let* ([counter (current-update-count)]
-             [before (if counter (car counter) 0)]
-             [child (update default)])
-        (if (= before (if counter (car counter) 0)) (absent) (present child)))))
+      (let ([counter (current-update-count)])
+        (define run
+          (lambda ()
+            (let* ([before (if counter (car counter) 0)]
+                   [child (update default)])
+              (if (= before (if counter (car counter) 0)) (absent) (present child)))))
+        (if counter
+            (dynamic-wind
+              (lambda () (set-cdr! counter (+ 1 (cdr counter))))
+              run
+              (lambda () (set-cdr! counter (- (cdr counter) 1))))
+            (run)))))
 
   (define indexed-transform/default
     (lambda (value index default update)
@@ -662,7 +671,11 @@
   The `nav/nth/default` procedure returns a navigator that focuses zero-based
   `index`, or `default` when the index is out of range. Clearing visits the default
   through later path steps but never inserts a missing location. Transforming inserts a
-  missing location only if the full path reaches the update callback. The result is a navigator.
+  missing location only if the full path reaches the update callback. Completed step/suffix
+  checkpoints restore terminal-count prefixes on resumption, without undoing heap updates.
+  Capturing inside custom traversal/adapter or hash/equivalence/comparison callbacks after
+  earlier suffix updates is unsupported for default materialization, as is backward resumption
+  within a still-running step/suffix. The result is a navigator.
   Kind: Reusable step constructor.
   |#
   (define nav/nth/default
@@ -818,7 +831,12 @@
   For alists it focuses every matching
   entry in order, just like `nav/key`. Clearing visits a missing key's default through
   later path steps but never inserts that key. Transforming inserts it only if the full path
-  reaches the update callback. The result is a navigator.
+  reaches the update callback. Completed direct step/suffix checkpoints restore terminal-count
+  prefixes on resumption. Callback effects and earlier heap updates are not rolled back.
+  Continuation capture inside custom traversal/adapter or hash/equivalence/comparison callbacks
+  after earlier suffix updates is unsupported; their progress has no library checkpoint. Backward
+  resumption within a still-running step/suffix is also unsupported for materialization.
+  The result is a navigator.
   Kind: Reusable step constructor.
   |#
   (define nav/key/default
