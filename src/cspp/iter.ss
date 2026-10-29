@@ -298,6 +298,7 @@
   Reset resolves the selected start from the current source again, so changes between
   passes are visible. Mutation during a pass is unspecified. The final pull does not seek
   past the selected range, even when `step` is larger than the remaining range.
+  An empty configured range (`start >= stop`) does not seek through the source on reset.
   Kind: resource-free cursor constructor; each call creates independent producer state.
   |#
   (define-who list->iter
@@ -326,10 +327,12 @@
                    (lambda ()
                      (set! index start)
                      (set! remaining
-                           (let loop ([tail source] [count start])
-                             (cond [(null? tail) '()]
-                                   [(= count 0) tail]
-                                   [else (loop (cdr tail) (sub1 count))])))))
+                           ;; An empty interval needs no source prefix, on any pass.
+                           (if (>= start stop) '()
+                               (let loop ([tail source] [count start])
+                                 (cond [(null? tail) '()]
+                                       [(= count 0) tail]
+                                       [else (loop (cdr tail) (sub1 count))]))))))
                  (reset!)
                  (mk-$iter
                   (lambda ()
@@ -566,30 +569,36 @@
   The `range` procedure returns an iterator over numbers from `start` toward exclusive `stop`.
   The nonzero `step` parameter is added after each value and must point toward `stop`. When only
   `stop` is supplied, `start` is zero; when `step` is omitted, it is one. Equal bounds produce
-  an empty iterator.
-  Kind: cursor constructor; each call creates independent producer state.
+  an empty iterator. Parameters must be ordered real numbers (not NaN). Each active pull
+  signals a `range` error if addition cannot advance in the requested direction, including
+  when an inexact step is lost to rounding; it never emits an endless stalled value.
+  Kind: resource-free cursor constructor; reset restarts from `start`.
   |#
   (define-who range
     (case-lambda
       [(stop) (range 0 stop 1)]
       [(start stop) (range start stop 1)]
       [(start stop step)
-       (pcheck ([number? start stop step])
+       (pcheck ([real? start stop step])
+               (unless (and (= start start) (= stop stop) (= step step))
+                 (errorf who "range parameters must be ordered real numbers"))
                (when (= step 0)
                  (errorf who "step cannot be 0"))
                (unless (or (= start stop)
                            (and (< start stop) (> step 0))
                            (and (> start stop) (< step 0)))
                  (errorf who "step does not point from ~a toward ~a" start stop))
-               (let ([value start])
+               (let ([value start] [ascending? (> step 0)])
                  (mk-$iter
                   (lambda ()
-                    (if (if (> step 0)
-                            (>= value stop)
-                            (<= value stop))
+                    (if (if ascending? (>= value stop) (<= value stop))
                         iter-end
-                        (let ([current value])
-                          (set! value (+ value step))
+                        (let ([current value] [next (+ value step)])
+                          ;; Nonzero inexact steps can round back to the current value.
+                          ;; Also reject unordered arithmetic, e.g. -inf.0 + +inf.0.
+                          (unless (if ascending? (> next current) (< next current))
+                            (errorf who "step ~s cannot advance from ~s" step current))
+                          (set! value next)
                           current)))
                   (lambda () (set! value start)))))]))
 

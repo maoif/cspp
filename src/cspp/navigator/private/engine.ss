@@ -26,31 +26,42 @@
 
   ;; A custom step may delegate through a fresh public operation. Its engine
   ;; continuation still belongs to the defining traversal, including optional
-  ;; sibling handling, recursive references, and virtual-default update tracking.
+  ;; sibling handling, recursive references, and conditional/default evidence.
   ;; Capture the engine callback's dynamic scope at definition time: a custom step
   ;; can invoke it inside nav-transform/nav-traverse, whose fresh public scope must
   ;; not erase the outer path's bindings, optional handling, or update counter.
   ;; The equality fast path avoids parameterization when no scope changed.
   ;; Checkpoints belong inside the restored scope so delegated custom operations
   ;; cannot reset a different public operation's terminal evidence. Pass the
-  ;; already captured counter to avoid another dynamic lookup on every child.
+  ;; captured counter to avoid another lookup on every child. Focus evidence is
+  ;; checkpointed at path entry and user callbacks; a returning conditional suffix
+  ;; reasserts its focus, so engine children need only default-update checkpoints.
   (define bind-continuation
     (lambda (continue)
       (let ([env (current-recursive-env)]
             [optional? (current-optional-focus?)]
             [counter (current-update-count)]
+            [focus-scope (current-focus-scope)]
             [terminal? (current-selection-terminal?)])
         (lambda (value)
-          (if (and (eq? env (current-recursive-env))
-                   (eq? optional? (current-optional-focus?))
-                   (eq? counter (current-update-count))
-                   (eq? terminal? (current-selection-terminal?)))
-              (nav-with-update-checkpoint counter (lambda () (continue value)))
-              (parameterize ([current-recursive-env env]
-                             [current-optional-focus? optional?]
-                             [current-update-count counter]
-                             [current-selection-terminal? terminal?])
-                (nav-with-update-checkpoint counter (lambda () (continue value)))))))))
+          (let* ([active (current-focus-scope)]
+                 ;; Inner conditions in this operation remain active until this
+                 ;; suffix returns. A fresh public operation has another token;
+                 ;; only that boundary needs to reinstall the defining focus scope.
+                 [scope (if (eq? (car active) (car focus-scope)) active focus-scope)])
+            (if (and (eq? env (current-recursive-env))
+                     (eq? optional? (current-optional-focus?))
+                     (eq? counter (current-update-count))
+                     (eq? scope active)
+                     (eq? terminal? (current-selection-terminal?)))
+                (nav-with-evidence-checkpoint counter '() (lambda () (continue value)))
+                (parameterize ([current-recursive-env env]
+                               [current-optional-focus? optional?]
+                               [current-update-count counter]
+                               [current-focus-scope scope]
+                               [current-selection-terminal? terminal?])
+                  (nav-with-evidence-checkpoint counter '()
+                                                (lambda () (continue value))))))))))
 
   (define emit-descendant-children
     (lambda (value emit)
@@ -148,7 +159,9 @@
   (define select-path
     (case-lambda
       [(path data emit)
-       (run-select (nav-path-steps (nav-compile-path path)) '() data emit)]
+       (nav-with-evidence-checkpoint
+        (current-update-count) (cdr (current-focus-scope))
+        (lambda () (run-select (nav-path-steps (nav-compile-path path)) '() data emit)))]
       [(path data emit terminal?)
        (nav-with-scope ([current-selection-terminal? terminal?])
          (select-path path data emit))]))
@@ -187,8 +200,8 @@
 
   (define transform-path
     (lambda (path proc data)
-      (nav-with-update-checkpoint
-       (current-update-count)
+      (nav-with-evidence-checkpoint
+       (current-update-count) (cdr (current-focus-scope))
        (lambda ()
          (run-transform (nav-path-steps (nav-compile-path path)) '() data proc)))))
 
@@ -288,18 +301,22 @@
 
   (define transform-path!
     (lambda (path proc data)
-      (nav-with-update-checkpoint
-       (current-update-count)
+      (nav-with-evidence-checkpoint
+       (current-update-count) (cdr (current-focus-scope))
        (lambda ()
          (run-transform! (nav-path-steps (nav-compile-path path)) '() data proc)))))
 
   (define clear-path
     (lambda (path proc data)
-      (run-clear (nav-path-steps (nav-compile-path path)) '() data proc)))
+      (nav-with-evidence-checkpoint
+       (current-update-count) (cdr (current-focus-scope))
+       (lambda () (run-clear (nav-path-steps (nav-compile-path path)) '() data proc)))))
 
   (define clear-path!
     (lambda (path proc data)
-      (run-clear! (nav-path-steps (nav-compile-path path)) '() data proc)))
+      (nav-with-evidence-checkpoint
+       (current-update-count) (cdr (current-focus-scope))
+       (lambda () (run-clear! (nav-path-steps (nav-compile-path path)) '() data proc)))))
 
   #|proc:nav-traverse
   The `nav-traverse` procedure calls `proc` once for each value selected by
@@ -310,7 +327,10 @@
   (define nav-traverse
     (lambda (path data proc)
       (pcheck ([procedure? proc])
-              (parameterize ([current-recursive-env '()] [current-optional-focus? #f])
+              (parameterize ([current-recursive-env '()]
+                             [current-focus-scope (make-nav-focus-scope)]
+                             [current-update-count #f]
+                             [current-optional-focus? #f])
                 (select-path path data proc #t)))))
 
   #|proc:nav-traverse/i
@@ -416,6 +436,9 @@
   terminal consumption does not prevent a later reset. Traversal callbacks run on demand.
   Separate cursors over a pure path and unchanged data may run concurrently; operations on
   the same cursor are dependent. Continuation resumption does not rewind its mutable cursor.
+  A suspended producer retains its traversal stack, which can include the first consumer's
+  calling context, until completion or reset. After completion or failure the cursor retains
+  no consumer continuation.
   Kind: Lazy iterator bridge; each returned iterator has its own destructive cursor.
   |#
   (define nav-traverse->iter
@@ -424,8 +447,10 @@
       ;; `return` is the consumer continuation for the current iter-next! call.
       ;; Each yield saves the next producer segment and returns one focus. Each
       ;; advance replaces return before resuming, so later errors belong to the
-      ;; current consumer. `failure` carries a producer condition across that
-      ;; transfer; it is re-raised outside the suspended producer's handler.
+      ;; current consumer. Clear return after transferring back, on both yield
+      ;; and completion. A live resume can still retain its original stack tail.
+      ;; `failure` carries a producer condition across the transfer; it is
+      ;; re-raised outside the suspended producer's handler.
       (let ([compiled (nav-compile-path path)]
             [resume #f] [return #f] [done? #f] [failure '()])
         (define reset!
@@ -440,7 +465,10 @@
                                  (set! done? #t)
                                  (set! resume #f)
                                  (return iter-end)])
-                      (parameterize ([current-recursive-env '()] [current-optional-focus? #f])
+                      (parameterize ([current-recursive-env '()]
+                                     [current-focus-scope (make-nav-focus-scope)]
+                                     [current-update-count #f]
+                                     [current-optional-focus? #f])
                         (select-path
                          compiled data
                          (lambda (value)
@@ -463,6 +491,9 @@
                        (lambda (consumer)
                          (set! return consumer)
                          (resume)))])
+                 ;; The transfer consumed this continuation. Keeping it would retain
+                 ;; arbitrary data on the old consumer's stack, even after exhaustion.
+                 (set! return #f)
                  ;; Raise outside the suspended producer so the current caller handles it.
                  (if (null? failure)
                      value
@@ -530,7 +561,9 @@
     (lambda (path proc data)
       (pcheck ([procedure? proc])
               (parameterize ([current-update-count (cons 0 0)]
-                             [current-recursive-env '()] [current-optional-focus? #f])
+                             [current-recursive-env '()]
+                             [current-focus-scope (make-nav-focus-scope)]
+                             [current-optional-focus? #f])
                 (transform-path
                  path
                  (lambda (value)
@@ -569,6 +602,7 @@
       (pcheck ([procedure? proc])
               (let ([result (parameterize ([current-update-count (cons 0 0)]
                                            [current-recursive-env '()]
+                                           [current-focus-scope (make-nav-focus-scope)]
                                            [current-optional-focus? #f])
                               (transform-path! path
                                                (lambda (value)
@@ -625,7 +659,10 @@
   |#
   (define nav-clearval
     (lambda (path data)
-      (let ([result (parameterize ([current-recursive-env '()] [current-optional-focus? #f])
+      (let ([result (parameterize ([current-recursive-env '()]
+                                   [current-focus-scope (make-nav-focus-scope)]
+                                   [current-update-count #f]
+                                   [current-optional-focus? #f])
                       (clear-path path (lambda (value) nav-missing) data))])
         (if (nav-missing? result)
             (nav-error 'nav-clearval "cannot remove root value")
@@ -639,7 +676,10 @@
   |#
   (define nav-clearval!
     (lambda (path data)
-      (let ([result (parameterize ([current-recursive-env '()] [current-optional-focus? #f])
+      (let ([result (parameterize ([current-recursive-env '()]
+                                   [current-focus-scope (make-nav-focus-scope)]
+                                   [current-update-count #f]
+                                   [current-optional-focus? #f])
                       (clear-path! path (lambda (value) nav-missing) data))])
         (if (nav-missing? result)
             (nav-error 'nav-clearval! "cannot remove root value")

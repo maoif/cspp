@@ -11,10 +11,11 @@
           make-nav nav-name nav-coerce nav/path nav-compile-path nav/path-append
           make-nav-ref nav-ref? nav-missing nav-missing?
           make-nav-scope-parameter nav-with-scope current-update-count
-          nav-with-update-checkpoint nav-note-update!
+          make-nav-focus-scope current-focus-scope nav-with-evidence-checkpoint nav-note-update!
           current-optional-focus? nav-call-step
           nav-error nav-focus-error nav-focus-error? nav-absent-focus?
-          nav-call-user nav-protect-callback nav-unsupported-error nav-required-error
+          nav-call-user nav-call-protected nav-protect-callback
+          nav-unsupported-error nav-required-error
           nav-path-steps nav-normalize-step nav-debug-name-core nav->datum-core
           install-nav-key-proc! install-nav-nth-proc!)
   (import (chezscheme)
@@ -128,47 +129,81 @@
   ;; default focus supplies a fallback for an absent location without creating it.
   ;; Its suffix can select nothing, so visiting the default alone must not insert it.
   ;; Terminal evidence is a per-operation count of successful terminal returns.
-  ;; Its private pair stores (count . active-default-depth). Checkpoints are needed
-  ;; only inside virtual-default suffixes; ordinary transforms keep the fast path.
-  ;; A checkpoint records its lexical prefix before a step/suffix runs. Resuming
-  ;; an already completed checkpoint restores that prefix; nested checkpoints then
-  ;; restore their own later prefixes, retaining earlier sibling evidence. Live
-  ;; fiber suspension does not rewind evidence: only normal return marks completion.
+  ;; Its private pair stores (count . active-default-depth).
+  ;;
+  ;; Focus evidence is a private boolean cell for one nav/must traversal or one
+  ;; nav/choice candidate. It records reaching that wrapped path's callback, even
+  ;; if the outer suffix selects nothing. Active cells form a dynamically scoped
+  ;; stack so a suffix can checkpoint both its inner and enclosing conditions.
+  ;; A focus scope is (operation-token . evidence-cells). Each public operation
+  ;; creates a unique token and an empty stack. Same-operation suffixes inherit
+  ;; active inner cells until callback return; callbacks delegated through a fresh
+  ;; public operation restore their defining scope. Comparing tokens avoids winding
+  ;; a new parameter binding for every child of a conditional. No evidence lives
+  ;; in a reusable path description.
+  ;;
+  ;; An evidence prefix is the evidence established before entering a path/suffix,
+  ;; including earlier siblings. A checkpoint saves that prefix in lexical bindings.
+  ;; Resuming a completed checkpoint restores it; nested checkpoints
+  ;; restore their later prefixes, retaining earlier siblings. Live fiber suspension
+  ;; does not rewind evidence: only normal return marks completion. Checkpoints
+  ;; allocate only inside conditionals or virtual defaults. Focus evidence needs
+  ;; checkpoints at wrapped-path entry and ordinary user callbacks (predicates/getters),
+  ;; not every engine child: returning from the conditional callback reasserts its
+  ;; reached focus. Defaults still need per-suffix terminal-evidence checkpoints.
+  ;; Example: nav/must around a predicate saves #f on entry. An initial true
+  ;; decision reaches a callback that sets #t on return; replaying the predicate
+  ;; as false restores #f, so nav/must
+  ;; reports no focus. A later sibling's predicate checkpoint saves #t if an earlier
+  ;; sibling already selected, so replaying that later sibling preserves the prefix.
   ;; This restores bookkeeping, not targets, callback effects, or mutable builders.
   ;; Captures inside custom traversal/adapter or hash/equivalence/comparison callbacks
-  ;; after earlier suffix calls are unsupported for default materialization: their progress
-  ;; cannot be reconstructed. Backward resumption within a step/suffix that has not
-  ;; returned normally is unsupported for this evidence. Overlapping branches of
-  ;; one operation are dependent; their caller must order them.
+  ;; after earlier suffix calls are unsupported for focus/default evidence: their
+  ;; opaque progress cannot be reconstructed. Backward resumption inside a path/suffix
+  ;; that has not returned normally is unsupported. Overlapping branches of one
+  ;; operation are dependent; their caller must order them.
   (define current-update-count (make-nav-scope-parameter #f))
-
-  #|proc:nav-with-update-checkpoint
-  Run thunk `run`, with signature `() -> values`, and return its values unchanged.
-  `counter` is the defining operation's private evidence pair, or `#f` outside updates.
-  Inside a virtual-default suffix, retain the current terminal-evidence prefix in a
-  checkpoint. Continuation resumption across a completed checkpoint restores that prefix;
-  suspending an active checkpoint preserves its live evidence. Outside defaults, call
-  `run` directly. Kind: private execution helper; no heap or callback rollback.
+  #|proc:make-nav-focus-scope
+  Return a fresh private focus scope: a unique operation identity paired with an empty
+  evidence-cell stack. Nested conditions share that identity and extend the stack;
+  independent public invocations receive distinct identities and cells.
   |#
-  (define nav-with-update-checkpoint
-    (lambda (counter run)
-      (if (or (not counter) (zero? (cdr counter)))
-          (run)
-          (let ([prefix (car counter)] [completed? #f])
-            (call-with-values
-              (lambda ()
-                (dynamic-wind
-                  (lambda ()
-                    (when completed?
-                      (set-car! counter prefix)
-                      (set! completed? #f)))
-                  run
-                  void))
-              (lambda results
-                ;; Set this only after leaving the winder. A timer can suspend
-                ;; between any two instructions while its body is still live.
-                (set! completed? #t)
-                (apply values results)))))))
+  (define make-nav-focus-scope
+    (lambda () (cons (list #f) '())))
+  (define current-focus-scope (make-nav-scope-parameter (cons #f '())))
+
+  #|proc:nav-with-evidence-checkpoint
+  Run thunk `run`, with signature `() -> values`, returning its values unchanged.
+  `counter` is the defining operation's update-evidence pair or `#f`; `focuses` is its
+  stack of active conditional evidence cells. Save their prefixes, tracking `counter`
+  only inside virtual defaults. Continuation resumption across a completed checkpoint
+  restores the saved evidence; suspension of a live checkpoint preserves its progress.
+  Without active evidence, call `run` directly. Kind: private execution helper;
+  no heap, source, or callback rollback.
+  |#
+  (define nav-with-evidence-checkpoint
+    (lambda (counter focuses run)
+      (let ([counter (and counter (not (zero? (cdr counter))) counter)])
+        (if (and (not counter) (null? focuses))
+            (run)
+            (let ([prefix (and counter (car counter))]
+                  [focus-prefix (map car focuses)]
+                  [completed? #f])
+              (call-with-values
+                (lambda ()
+                  (dynamic-wind
+                    (lambda ()
+                      (when completed?
+                        (when counter (set-car! counter prefix))
+                        (for-each set-car! focuses focus-prefix)
+                        (set! completed? #f)))
+                    run
+                    void))
+                (lambda results
+                  ;; Mark completion only outside the winder: timer preemption can
+                  ;; suspend at any instruction while its body is still live.
+                  (set! completed? #t)
+                  (apply values results))))))))
 
   #|proc:nav-note-update!
   Record one successful terminal callback return in the active operation, if any.
@@ -243,13 +278,36 @@
     (lambda (exn)
       (and (nav-focus-error? exn) (not (nav-callback-error? exn)))))
 
-  ;; Keep the original condition components and message, but mark callback-origin
-  ;; navigation failures so optional path handlers cannot mistake them for absence.
-  (define nav-call-user
+  ;; Keep original condition components/messages, but mark callback-origin failures
+  ;; so optional paths cannot mistake them for absent focuses. Engine-owned suffix
+  ;; callbacks need this protection too, without installing per-child checkpoints.
+  #|proc:nav-call-protected
+  Apply procedure `proc` to the supplied arguments and return its values unchanged.
+  Mark callback-origin absent-focus conditions so optional paths propagate them.
+  `proc` accepts the supplied arguments and may return any number of values.
+  Kind: private callback error boundary; it does not checkpoint focus evidence.
+  |#
+  (define nav-call-protected
     (lambda (proc . args)
       (guard (exn [(nav-absent-focus? exn)
                    (raise (condition exn (make-nav-callback-error)))])
         (apply proc args))))
+
+  ;; Ordinary user callbacks are supported capture points. Save the evidence from
+  ;; earlier siblings here, where it is precise, rather than at every engine child.
+  #|proc:nav-call-user
+  Apply user procedure `proc` to the supplied arguments, protecting its absent-focus
+  errors and returning its values unchanged. `proc` accepts those arguments and may return
+  any number of values. Checkpoint active conditional evidence at this callback boundary.
+  Kind: private ordinary-callback boundary; opaque traversal callbacks use separate protection.
+  |#
+  (define nav-call-user
+    (lambda (proc . args)
+      (let ([focuses (cdr (current-focus-scope))])
+        (if (null? focuses)
+            (apply nav-call-protected proc args)
+            (nav-with-evidence-checkpoint
+             #f focuses (lambda () (apply nav-call-protected proc args)))))))
 
   (define nav-protect-callback
     (lambda (proc)
@@ -287,9 +345,11 @@
   `transform!-proc` has signature `(parent update!) -> parent`; it mutates each focus
   using `(update! child)`, which returns the replacement child. The result is a navigator.
   Custom navigators created by this procedure do not support clearing. Callbacks may suspend
-  in fibers. For virtual-default materialization, capturing a continuation inside a traversal
-  callback after earlier `update` calls is unsupported: resumption cannot restore its opaque
-  progress. Completed engine suffixes have their own terminal-evidence checkpoints.
+  in fibers. For conditional focus checks and virtual-default materialization, capturing a
+  continuation inside a traversal callback after earlier suffix calls is unsupported:
+  resumption cannot restore its opaque progress. Completed engine suffixes have their own
+  evidence checkpoints. Capturing inside an ordinary predicate/getter is supported within
+  the bounded checkpoint rules described above.
   Kind: Reusable custom step constructor; callbacks determine the supported update modes.
   |#
   (define make-nav

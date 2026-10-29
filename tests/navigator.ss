@@ -2986,3 +2986,207 @@
         [(1) (and (null? result) (= calls 1)
                   (begin (set! phase 2) (saved #t)))]
         [else (and (equal? '((x . 1)) result) (= calls 2))]))))
+
+
+;; Complete before each resumption. A false replay must discard evidence from the
+;; original true branch; a later true replay must establish evidence again.
+(define conditional-resumption-results
+  (lambda (wrap operate source)
+    (let ([saved #f] [pending '(#f #f #t)] [results '()])
+      (let ([result
+             ;; Empty nav/must is the expected error; other conditions are test failures.
+             (guard (condition
+                     [(and (who-condition? condition)
+                           (eq? 'nav/must (condition-who condition))) 'required-focus-error])
+               (operate
+                (wrap (nav/pred
+                       (lambda (value)
+                         ;; Capture directly in the predicate, not an opaque traversal callback.
+                         (call/cc (lambda (resume) (set! saved resume) #t)))))
+                source))])
+        (set! results (cons result results))
+        (if (null? pending) (reverse results)
+            (let ([decision (car pending)])
+              (set! pending (cdr pending))
+              (saved decision)))))))
+
+(mat navigator-conditional-focus-resumption
+  (equal? '(8 required-focus-error required-focus-error 8)
+          (conditional-resumption-results
+           nav/must (lambda (path source) (nav-transform path add1 source)) 7))
+
+  (equal? '(8 8 8 8)
+          (conditional-resumption-results
+           (lambda (path) (nav/choice path nav/stay))
+           (lambda (path source) (nav-transform path add1 source)) 7))
+
+  ;; Selection tests observe callbacks directly, without assuming collector rollback.
+  (equal? '(7 required-focus-error required-focus-error 7)
+          (conditional-resumption-results
+           nav/must
+           (lambda (path source)
+             (let ([last #f]) (nav-traverse path source (lambda (value) (set! last value))) last))
+           7))
+
+  (equal? '(7 9 9 7)
+          (conditional-resumption-results
+           (lambda (path)
+             (nav/choice path (nav/getter 'fallback (lambda (value) 9))))
+           (lambda (path source)
+             (let ([last #f]) (nav-traverse path source (lambda (value) (set! last value))) last))
+           7)))
+
+;; Keep the cursor live while checking that its old consumer's private vector dies.
+(define navigator-consumer-released?
+  (lambda (make-cursor)
+    (let ([cursor (make-cursor)] [reference #f])
+      (define consume
+        (lambda ()
+          (let ([payload (make-vector 100000 'payload)])
+            (set! reference (weak-cons payload #f))
+            ;; The failure case is caught by this consumer, as required by the bridge.
+            (guard (condition [else 'expected-failure]) (iter-next! cursor))
+            ;; Exhaust the one-focus case too: a live producer still needs its stack.
+            (iter-next! cursor)
+            (vector-ref payload 0))))
+      (consume)
+      (collect (collect-maximum-generation))
+      (collect (collect-maximum-generation))
+      (let ([released? (bwp-object? (car reference))])
+        (iter-reset! cursor)
+        released?))))
+
+(mat navigator-cursor-releases-consumer
+  (andmap navigator-consumer-released?
+          (list (lambda () (nav-traverse->iter nav/none 7))
+                (lambda () (nav-traverse->iter nav/stay 7))
+                ;; An absent required focus exercises the producer-error transfer.
+                (lambda () (nav-traverse->iter (nav/key 'missing) 7))
+                (lambda () (sequence (tidentity) (nav-traverse->iter nav/none 7))))))
+
+
+(mat navigator-conditional-resumption-retains-prefix
+  (andmap
+   (lambda (wrap)
+     (let ([saved #f] [phase 0])
+       (let ([result
+              (nav-transform
+               (wrap (nav/path nav/all
+                               (nav/pred
+                                (lambda (value)
+                                  (if (= value 1) #t
+                                      ;; An earlier sibling has already established focus evidence.
+                                      (call/cc (lambda (resume) (set! saved resume) #t)))))))
+               add1 '(1 2))])
+         (if (= phase 0) (begin (set! phase 1) (saved #f))
+             (equal? '(2 2) result)))))
+   (list nav/must (lambda (path) (nav/choice path nav/stay)))))
+
+(mat navigator-nested-conditional-resumption
+  (equal? '(8 required-focus-error required-focus-error 8)
+          (conditional-resumption-results
+           (lambda (path) (nav/must (nav/choice path nav/none)))
+           (lambda (path source) (nav-transform path add1 source)) 7))
+
+  (equal? '(8 8 8 8)
+          (conditional-resumption-results
+           (lambda (path) (nav/choice (nav/maybe path) nav/stay))
+           (lambda (path source) (nav-transform path add1 source)) 7))
+
+  (equal? '(() required-focus-error required-focus-error ())
+          (conditional-resumption-results
+           (lambda (path) (nav/path nav/all (nav/must path))) nav-clearval '(7)))
+
+  (equal? '(#(7) required-focus-error required-focus-error #(7))
+          (conditional-resumption-results
+           nav/must
+           (lambda (path source) (nav-transform! path (lambda (value) value) source))
+           (vector 7))))
+
+(mat navigator-conditional-independent-fibers
+  (andmap
+   (lambda (workers)
+     (let ([done (make-channel)]
+           [path (nav/must (nav/choice (nav/path nav/all (nav/pred positive?)) nav/stay))])
+       (run-fibers
+        (lambda ()
+          (do ([task 0 (+ task 1)]) ((= task 12))
+            (spawn-fiber
+             (lambda ()
+               (channel-put!
+                done
+                (equal? '(2 -2 4)
+                        (nav-transform path (lambda (value) (fiber-yield) (add1 value))
+                                       '(1 -2 3)))))))
+          (let loop ([remaining 12] [correct? #t])
+            (if (= remaining 0) correct?
+                (let ([result (channel-get done)])
+                  (loop (- remaining 1) (and correct? result))))))
+        workers)))
+   '(1 4)))
+
+
+(mat navigator-conditional-delegated-resumption
+  (equal? '(8 required-focus-error required-focus-error 8)
+          (conditional-resumption-results
+           (lambda (path)
+             (nav/must
+              (nav/path
+               (make-nav
+                'delegate
+                (lambda (value emit) (nav-traverse nav/stay value emit))
+                (lambda (value update) (nav-transform nav/stay update value))
+                (lambda (value update!) (nav-transform! nav/stay update! value)))
+               path)))
+           (lambda (path source) (nav-transform path add1 source)) 7)))
+
+(mat navigator-conditional-independent-threads
+  (let ([path (nav/must (nav/path nav/all (nav/pred positive?)))])
+    (define check
+      (lambda (source expected)
+        (let loop ([pass 0])
+          (or (= pass 100)
+              (and (equal? expected (nav-transform path add1 source))
+                   (loop (+ pass 1)))))))
+    (equal? '#(#t #t)
+            (run-threads 2 (lambda () (check '(1 -2 3) '(2 -2 4)))
+                           (lambda () (check '(10 0 -1) '(11 0 -1)))))))
+
+(mat navigator-conditional-resumption-in-fibers
+  (andmap
+   (lambda (workers)
+     (run-fibers
+      (lambda ()
+        (equal? '(8 required-focus-error required-focus-error 8)
+                (conditional-resumption-results
+                 nav/must
+                 (lambda (path source)
+                   (nav-transform path (lambda (value) (fiber-yield) (add1 value)) source))
+                 7)))
+      workers))
+   '(1 4)))
+
+
+(mat navigator-conditional-terminal-resumption
+  (andmap
+   (lambda (path)
+     (let ([saved #f] [phase 0])
+       (let ([result
+              (nav-transform path
+                             (lambda (value)
+                               ;; Resume the updater after conditional focus was already reached.
+                               (call/cc (lambda (resume) (set! saved resume) (add1 value))))
+                             7)])
+         (if (= phase 0) (begin (set! phase 1) (saved 9)) (= result 9)))))
+   (list (nav/must nav/stay) (nav/choice nav/stay nav/stay))))
+
+(mat navigator-conditional-callback-values
+  (let ([calls 0])
+    (nav-traverse (nav/must nav/all) '(1 2)
+                  (lambda (value) (set! calls (+ calls 1)) (values)))
+    (= calls 2))
+
+  (let ([calls 0])
+    (nav-traverse (nav/choice nav/all nav/stay) '(1 2)
+                  (lambda (value) (set! calls (+ calls 1)) (values 'a 'b)))
+    (= calls 2)))

@@ -36,7 +36,7 @@
         (parameterize ([current-optional-focus? #t])
           (run (lambda (value)
                  (parameterize ([current-optional-focus? outer-optional?])
-                   (nav-call-user callback value))))))))
+                   (nav-call-protected callback value))))))))
 
   #|proc:nav/pred
   The `nav/pred` procedure returns a navigator that focuses the current value
@@ -98,20 +98,47 @@
            (optional-focus (lambda (callback) (clear-path! compiled callback value))
                            clear!))))))
 
-  ;; Count focuses during the operation itself so stateful callbacks run only once.
+  ;; Focus evidence belongs to this traversal, not to the reusable combinator.
+  ;; A returning outer callback establishes a wrapped-path focus, even when its
+  ;; suffix selects nothing. Set evidence after return so resuming inside that
+  ;; callback reasserts the focus after an enclosing checkpoint restores its prefix.
+  ;; Preserve any number of selection callback values; transforms still return one.
+  ;; Path/user-callback checkpoints restore the cells on completed resumption.
+  (define with-focus-evidence
+    (lambda (run callback finish)
+      (let ([evidence (list #f)] [scope (current-focus-scope)])
+        (call-with-values
+          (lambda ()
+            (parameterize ([current-focus-scope
+                            (cons (car scope) (cons evidence (cdr scope)))])
+              (run (lambda (value)
+                     (call-with-values
+                       (lambda () (callback value))
+                       (case-lambda
+                         ;; Transforms and ordinary callbacks return one value;
+                         ;; avoid allocating a results list on that common path.
+                         [(result) (set-car! evidence #t) result]
+                         [results
+                          (set-car! evidence #t)
+                          (apply values results)]))))))
+          (lambda results (finish (car evidence) results))))))
+
+  ;; Check during the operation itself so stateful callbacks run only once.
   (define require-focus
     (lambda (run callback)
-      (let ([selected? #f])
-        (let ([result (run (lambda (value)
-                             (set! selected? #t)
-                             (callback value)))])
-          (unless selected?
-            (nav-error 'nav/must "required path selected no values"))
-          result))))
+      (with-focus-evidence
+       run callback
+       (lambda (selected? results)
+         (unless selected?
+           (nav-error 'nav/must "required path selected no values"))
+         (apply values results)))))
 
   #|proc:nav/must
   The `nav/must` procedure wraps `path` so selecting no values signals an error.
-  Each operation checks its own traversal without a separate selection pass.
+  Each operation checks its own traversal without a separate selection pass. Completed
+  continuation resumption restores focus evidence at path and user-callback boundaries.
+  Captures inside custom traversal/adapter or hash/equivalence/comparison callbacks after
+  earlier suffix calls, and backward resumption inside a still-live path/suffix, are unsupported.
   The result is a navigator.
   Kind: Reusable conditional step combinator.
   |#
@@ -215,16 +242,18 @@
       (let loop ([paths paths])
         (if (null? paths)
             value
-            (let ([selected? #f])
-              (let ([result (optional-focus
-                             (lambda (continue) (run (car paths) continue value))
-                             (lambda (child) (set! selected? #t) (callback child)))])
-                (if selected? result (loop (cdr paths)))))))))
+            (with-focus-evidence
+             (lambda (continue)
+               (optional-focus (lambda (emit) (run (car paths) emit value)) continue))
+             callback
+             (lambda (selected? results)
+               (if selected? (apply values results) (loop (cdr paths)))))))))
 
   #|proc:nav/choice
   The `nav/choice` procedure returns a navigator that uses the first path in
   `paths` that yields a focus during the current operation. Each candidate is traversed
   once. Absent focuses are skipped; successful sibling focuses of the chosen path remain.
+  Candidate focus evidence follows the same bounded continuation rules as `nav/must`.
   Kind: Reusable conditional step combinator.
   |#
   (define nav/choice

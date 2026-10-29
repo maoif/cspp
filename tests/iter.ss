@@ -1008,3 +1008,47 @@
               (iter-next! cursor)
               (saved iter-end))
             (and (eq? value 'b) (iter-end? (iter-next! cursor))))))))
+
+
+(mat iter-range-inexact-progress
+  ;; Finite ascending/descending ranges must reject an increment lost to rounding.
+  (andmap
+   (lambda (step)
+     (let ([cursor (range 1e20 (+ 1e20 (* step 65536.0)) step)])
+       (guard (condition
+               [(and (who-condition? condition) (eq? 'range (condition-who condition))) #t]
+               [else #f])
+         (iter-next! cursor)
+         #f)))
+   '(1.0 -1.0))
+
+  (equal? '(0 1/3 2/3) (iter->list (range 0 1 1/3)))
+
+  (equal? '(0.0 0.5 1.0 1.5) (iter->list (range 0.0 2.0 0.5)))
+
+  (let ([start (expt 10 30)])
+    (equal? (list start (+ start 1) (+ start 2))
+            (iter->list (range start (+ start 3))))))
+
+(mat iter-empty-list-slices
+  (andmap
+   (lambda (bounds)
+     (let ([cursor (apply list->iter '(0 1 2 3) bounds)])
+       (and (iter-end? (iter-next! cursor))
+            (begin (iter-reset! cursor) (iter-end? (iter-next! cursor))))))
+   '((0 0) (3 0) (4 4) (1000000 0))))
+
+
+(mat iter-range-ordered-parameters
+  ;; Complex bounds and NaN parameters have no ordered range semantics.
+  (error? (range 1+2i 4 1))
+
+  ;; Even equal bounds must reject a NaN step rather than silently accepting it.
+  (error? (range 0 0 +nan.0))
+
+  ;; A NaN stop must fail at construction, rather than creating an unbounded source.
+  (error? (range 0 +nan.0 1))
+
+  (equal? '() (iter->list (range 1.0 1.0 -1.0)))
+
+  (equal? '(1e308) (iter->list (range 1e308 +inf.0 1e308))))
