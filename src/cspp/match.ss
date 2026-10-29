@@ -691,6 +691,10 @@ Examples:
 
   #|macro:mlet
   The `mlet` macro evaluates right-hand sides in parallel and binds them with match patterns.
+  Each right-hand side runs once in the surrounding scope, in unspecified order, before matching.
+  Patterns match separately from left to right; earlier captures are visible to later patterns.
+  Separate bindings cannot combine into repetition, extension, or catamorphism syntax.
+  Record, datatype, and custom-expander declarations resolve in the surrounding pattern scope.
   Its body permits local definitions, evaluates expressions in order, and returns the final values.
   For example, `(mlet ([(,x ,y) '(10 20)]) (+ x y))` returns `30`.
   |#
@@ -699,9 +703,11 @@ Examples:
       (syntax-case stx ()
         [(k () e0 e* ...) #'(let () e0 e* ...)]
         [(k ([pat* rhs*] ...) e0 e* ...)
-         #'(($mlambda+ mlet
-                       [(pat* ...) (let () e0 e* ...)])
-            rhs* ...)]
+         (with-syntax ([(whole* ...) (generate-temporaries #'(pat* ...))])
+           ;; Isolate each pattern without changing the matcher's binding environment.
+           #'(($mlambda+ mlet
+                         [((#`whole* pat*) ...) (let () e0 e* ...)])
+              rhs* ...))]
         [_ (syntax-error stx "bad form:")])))
 
   #|macro:mlet*

@@ -368,6 +368,90 @@
      )
 
 
+(mat mlet-independent-patterns
+     ;; An ellipsis in a separate binding remains a literal symbol.
+     (equal? 1 (mlet ([,x 1] [... '...]) x))
+
+     ;; A mismatched literal must not become a repetition of the preceding binding.
+     (error? (mlet ([,x 1] [... 'wrong]) x))
+
+     ;; Adjacent patterns must not form an extension at expansion time.
+     (guard (condition [else #f])
+       (= 42 (eval '(mlet ([unquote 'unquote] [,x 42]) x) (environment '(cspp)))))
+
+     ;; Literal patterns must reject unrelated values rather than form a capture.
+     (error? (mlet ([unquote 1] [x 2]) 'accepted))
+
+     ;; A literal else pattern must not become a generated fallback clause.
+     (guard (condition [else #f])
+       (= 42 (eval '(mlet ([else 'else]) 42) (environment '(cspp)))))
+
+     ;; A mismatched literal else must fail at runtime, rather than fail to expand.
+     (guard (condition [(syntax-violation? condition) #f] [else #t])
+       (eval '(mlet ([else 'wrong]) 'accepted) (environment '(cspp)))
+       #f)
+
+     ;; A literal quasisyntax list must not turn into a whole-value capture.
+     (let ([x 'outer])
+       (equal? '(outer 10 20)
+               (mlet ([#`x '(quasisyntax x)] [(,a ,b) '(10 20)]) (list x a b))))
+
+     ;; Literal pattern data must not become a catamorphism that invokes project.
+     (let ([calls 0])
+       (let ([project (lambda (input) (set! calls (+ calls 1)) 'unexpected)])
+         (and (equal? 42
+                      (mlet ([unquote-splicing 'unquote-splicing]
+                             [(project -> ,x) '(project -> 42)]) x))
+              (= calls 0)))))
+
+(mat mlet-parallel-evaluation
+     ;; Every right-hand side sees outer bindings and runs exactly once.
+     (let ([x 40] [calls 0])
+       (and (equal? '(1 42)
+                    (mlet ([,x (begin (set! calls (+ calls 1)) 1)]
+                           [,y (begin (set! calls (+ calls 1)) (+ x 2))])
+                      (list x y)))
+            (= calls 2)))
+
+     ;; All right-hand sides run before a failed pattern can leave the binding form.
+     (let ([calls 0])
+       (guard (condition [else (= calls 2)])
+         (mlet ([expected (begin (set! calls (+ calls 1)) 'wrong)]
+                [,x (begin (set! calls (+ calls 1)) 42)]) x)
+         #f))
+
+     ;; Later patterns can still refer to earlier captures.
+     (equal? '(1 2) (mlet ([,x '(1 2)] [`x '(1 2)]) x))
+
+     ;; Captures may shadow syntax names without hiding generated macro bindings.
+     (equal? '(1 2 3 4)
+             (mlet ([,match 1] [,let 2] [,if 3] [,value 4]) (list match let if value))))
+
+(mat mlet-pattern-binding-environment
+     ;; A capture must not hide the record declaration selected by another pattern.
+     (guard (condition [else #f])
+       (= 42 (eval '(let ()
+                      (record Point (x))
+                      (mlet ([,Point 99] [,(record Point :values ,x) (Point 42)]) x))
+                    (environment '(cspp)))))
+
+     ;; Custom-expander lookup also uses the original pattern environment.
+     (guard (condition [else #f])
+       (= 42 (eval '(let ()
+                      (define-match-expander identity-expander
+                        (lambda (pp rho input pattern body failure)
+                          (syntax-case pattern ()
+                            [(_ subpattern) (pp rho input #'subpattern body failure)])))
+                      (mlet ([,identity-expander 99] [,(identity ,x) 42]) x))
+                    (environment '(cspp) '(cspp private match)))))
+
+     ;; Datatype variant metadata must survive a capture with the variant's name.
+     (guard (condition [else #f])
+       (= 42 (eval '(let ()
+                      (datatype Tree [Leaf value])
+                      (mlet ([,Leaf 99] [,(datatype Tree Leaf :values ,x) (Leaf 42)]) x))
+                    (environment '(cspp))))))
+
 (mat mlet*
 
      (equal?
