@@ -385,17 +385,27 @@
        (benchmark-reporter? reporter)))
 
 (mat benchmark-rich-reporter
-     (let ([out (open-output-string)])
-       (benchmark-report (benchmark-run (list bench-basic) (benchmark-test-config))
-                         (benchmark-rich-reporter)
-                         out)
-       (let ([text (get-output-string out)])
-         (and (benchmark-string-contains? text "Benchmark results")
-              (benchmark-string-contains? text "+")
-              (benchmark-string-contains? text "|")
-              (benchmark-string-contains? text "bench-basic")
-              (benchmark-string-contains? text "cpu/ns")
-              (benchmark-string-contains? text "counters"))))
+     (let* ([text (call-with-string-output-port
+                   (lambda (out)
+                     (benchmark-report
+                      (benchmark-run (list bench-basic) (benchmark-test-config))
+                      (benchmark-rich-reporter)
+                      out)))]
+            [lines (benchmark-string-lines text)]
+            ;; The default 80-column layout may wrap names across physical rows.
+            [name-parts (map (lambda (line)
+                               (string-trim (cadr (string-split line #\|))))
+                             (filter (lambda (line)
+                                       (and (positive? (string-length line))
+                                            (char=? (string-ref line 0) #\|)))
+                                     lines))])
+       (and (benchmark-string-contains? text "Benchmark results")
+            (benchmark-string-contains? text "+")
+            (benchmark-string-contains? text "|")
+            (string=? (apply string-append name-parts) "namebench-basicbench-basic")
+            (benchmark-string-contains? text "cpu/ns")
+            (benchmark-string-contains? text "counters")
+            (andmap (lambda (line) (<= (string-length line) 80)) lines)))
      (let ([out (open-output-string)])
        (benchmark-report (benchmark-run (list bench-basic) (benchmark-test-config))
                          (benchmark-rich-reporter
