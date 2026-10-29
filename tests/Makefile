@@ -99,6 +99,8 @@ $(OBJS_TEST) $(STRESS_TESTS:.ss=.so): %.so: %.ss mat.so $(NET_TEST_SUPPORT) ../c
 	if [ -s "$$stderr" ]; then cat "$$stderr" >&2; fi; \
 	if [ $$status -ne 0 ]; then exit $$status; fi
 
+digest.so: digest-process.py
+
 file.so: fswatcher-blocking-process.ss
 
 fiber.so: fiber-quantum-process.ss fiber-inherited-timer-process.ss

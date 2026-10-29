@@ -13,10 +13,10 @@ Make-based build that produces the `cspp` launcher. The public umbrella library 
 - **Parsing and formats:** parser combinators, CSV, JSON5, TOML, XML, Scheme, ELF, WebAssembly,
   and Protocol Buffers.
 - **Files and system APIs:** file and port helpers, paths, globbing, processes,
-  signals, filesystem and user information, UUIDs, hashes, digests, and optional-library probes.
+  signals, filesystem and user information, UUIDs, hashes, and optional-library probes.
 - **Networking:** sockets, IP and DNS helpers, URIs, TLS, HTTP/HTTPS, FTP/FTPS, SSH, SFTP, SCP,
   WebSocket, and gRPC APIs.
-- **Cryptography:** random data, hashes, encodings, MACs, KDFs, AEAD, ciphers, keys, signatures,
+- **Cryptography:** random data, digests, encodings, MACs, KDFs, AEAD, ciphers, keys, signatures,
   key agreement, passwords, envelopes, and certificates.
 - **Application support:** command-line parsing, logging, terminal rendering, benchmarking, and
   test helpers.
@@ -26,6 +26,24 @@ Make-based build that produces the `cspp` launcher. The public umbrella library 
 
 Some networking, cryptography, hashing, compression, and UUID features use optional native
 libraries selected at build time. `(cspp optional-library)` reports which features were enabled.
+
+Cryptographic digests are available from `(cspp crypto digest)`, `(cspp crypto)`, or `(cspp)`.
+Use `digest-bytevector`, `digest-string`, and `digest-file` with an algorithm symbol, or helpers
+such as `sha256-bytevector`. Incremental operations use `make-digester`, `digester-update-*`,
+`digester-get`, `digester-reset!`, `digester-finalize!`, and `digester-destroy!`.
+`digester-get` preserves the state; finalization releases it. `call-with-digester` passes a
+managed digester to a callback and returns the digest, ignoring callback results.
+
+String digest APIs encode each character as **native-endian UTF-32 without a byte-order mark**.
+Slice indices count characters for strings and bytes for bytevectors and files; `stop` is
+exclusive. To hash UTF-8 text, use `(digest-bytevector 'sha256 (string->utf8 text))`.
+OpenSSL supplies MD5, SHA-2, SHA-3, and BLAKE2; BLAKE3 uses its independently optional library.
+MD5 is retained for legacy interoperability and is unsuitable for security-sensitive hashing.
+
+The old `(cspp digest)` and `(cspp crypto hash)` imports have been removed. Replace them with
+`(cspp crypto digest)` and replace the former crypto `hash-*` names with `digest-*` or
+`digester-*` as appropriate. Algorithm-specific helpers retain their names. Noncryptographic
+xxHash operations remain in `(cspp hash)`.
 
 ## 🔧 Build
 

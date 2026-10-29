@@ -12,17 +12,16 @@
           ffi-random-bytevector
           ffi-random-fill!
           ffi-constant-time-eq
-          ffi-hash-bytevector
-          ffi-hash-string
-          ffi-hash-output-size
-          ffi-hash-block-size
-          ffi-hash-state-create
-          ffi-hash-state-destroy
-          ffi-hash-state-get
-          ffi-hash-state-finalize
-          ffi-hash-state-reset!
-          ffi-hash-state-update-bytevector!
-          ffi-hash-state-update-string!
+          ffi-digest-bytevector
+          ffi-digest-string
+          ffi-digest-output-size
+          ffi-digest-block-size
+          ffi-digest-state-create
+          ffi-digest-state-destroy
+          ffi-digest-state-get
+          ffi-digest-state-reset!
+          ffi-digest-state-update-bytevector!
+          ffi-digest-state-update-string!
           ffi-hmac-state-create
           ffi-hmac-state-destroy
           ffi-hmac-state-get
@@ -133,118 +132,150 @@
                 (require-optional-library 'ffi-constant-time-eq 'openssl)
                 (native bv1 start1 stop1 bv2 start2 stop2)))))
 
-  (define ffi-hash-bytevector
-    (foreign-procedure "crypto_hash_bytevector" (ptr ptr unsigned-64 unsigned-64) ptr))
-  (define ffi-hash-string
-    (foreign-procedure "crypto_hash_string" (ptr ptr unsigned-64 unsigned-64) ptr))
-  #|proc:ffi-hash-output-size
-  The `ffi-hash-output-size` procedure calls the native openssl operation
-  `crypto_hash_output_size`.
+  #|proc:ffi-digest-bytevector
+  The `ffi-digest-bytevector` procedure returns the OpenSSL digest of bytevector `bytes`
+  using the symbol `algorithm` and byte indices `start` (inclusive) and `stop` (exclusive).
+  The caller validates slice bounds. It returns `#f` on a native algorithm or allocation
+  failure and raises an error when OpenSSL is unavailable.
+  |#
+  (define ffi-digest-bytevector
+    (let ([native (foreign-procedure "crypto_digest_bytevector"
+                                    (ptr ptr unsigned-64 unsigned-64) ptr)])
+      (lambda (algorithm bytes start stop)
+        (pcheck ([symbol? algorithm] [bytevector? bytes] [natural? start stop])
+          (require-optional-library 'ffi-digest-bytevector 'openssl)
+          (native algorithm bytes start stop)))))
+
+  #|proc:ffi-digest-string
+  The `ffi-digest-string` procedure returns the OpenSSL digest of string `text` using the
+  symbol `algorithm` and character indices `start` (inclusive) and `stop` (exclusive).
+  Characters use native-endian UTF-32 without a byte-order mark. The caller validates
+  slice bounds. It returns `#f` on a native algorithm or allocation failure and raises
+  an error when OpenSSL is unavailable.
+  |#
+  (define ffi-digest-string
+    (let ([native (foreign-procedure "crypto_digest_string"
+                                    (ptr ptr unsigned-64 unsigned-64) ptr)])
+      (lambda (algorithm text start stop)
+        (pcheck ([symbol? algorithm] [string? text] [natural? start stop])
+          (require-optional-library 'ffi-digest-string 'openssl)
+          (native algorithm text start stop)))))
+  #|proc:ffi-digest-output-size
+  The `ffi-digest-output-size` procedure calls the native openssl operation
+  `crypto_digest_output_size`.
   Parameters `algorithm` are passed to the native operation in that order.
   `algorithm` is the digest algorithm symbol, such as `sha256`.
   It returns the requested size in bytes, or -1 when the algorithm is unsupported.
   It raises an error when OpenSSL is unavailable.
   |#
-  (define ffi-hash-output-size
-    (let ([native (foreign-procedure "crypto_hash_output_size" (ptr) int)])
+  (define ffi-digest-output-size
+    (let ([native (foreign-procedure "crypto_digest_output_size" (ptr) int)])
       (lambda (algorithm)
         (pcheck ([symbol? algorithm])
-                (require-optional-library 'ffi-hash-output-size 'openssl)
+                (require-optional-library 'ffi-digest-output-size 'openssl)
                 (native algorithm)))))
-  #|proc:ffi-hash-block-size
-  The `ffi-hash-block-size` procedure calls the native openssl operation `crypto_hash_block_size`.
+  #|proc:ffi-digest-block-size
+  The `ffi-digest-block-size` procedure calls the native OpenSSL operation
+  `crypto_digest_block_size`.
   Parameters `algorithm` are passed to the native operation in that order.
   `algorithm` is the digest algorithm symbol, such as `sha256`.
   It returns the requested size in bytes, or -1 when the algorithm is unsupported.
   It raises an error when OpenSSL is unavailable.
   |#
-  (define ffi-hash-block-size
-    (let ([native (foreign-procedure "crypto_hash_block_size" (ptr) int)])
+  (define ffi-digest-block-size
+    (let ([native (foreign-procedure "crypto_digest_block_size" (ptr) int)])
       (lambda (algorithm)
         (pcheck ([symbol? algorithm])
-                (require-optional-library 'ffi-hash-block-size 'openssl)
+                (require-optional-library 'ffi-digest-block-size 'openssl)
                 (native algorithm)))))
-  #|proc:ffi-hash-state-create
-  The `ffi-hash-state-create` procedure calls the native openssl operation
-  `crypto_hash_state_create`.
+  #|proc:ffi-digest-state-create
+  The `ffi-digest-state-create` procedure calls the native openssl operation
+  `crypto_digest_state_create`.
   Parameters `algorithm` are passed to the native operation in that order.
   `algorithm` is the digest algorithm symbol, such as `sha256`.
   It returns an owned native handle, or zero on allocation, parsing, or initialization failure.
   It raises an error when OpenSSL is unavailable.
   |#
-  (define ffi-hash-state-create
-    (let ([native (foreign-procedure "crypto_hash_state_create" (ptr) void*)])
+  (define ffi-digest-state-create
+    (let ([native (foreign-procedure "crypto_digest_state_create" (ptr) void*)])
       (lambda (algorithm)
         (pcheck ([symbol? algorithm])
-                (require-optional-library 'ffi-hash-state-create 'openssl)
+                (require-optional-library 'ffi-digest-state-create 'openssl)
                 (native algorithm)))))
-  #|proc:ffi-hash-state-destroy
-  The `ffi-hash-state-destroy` procedure calls the native openssl operation
-  `crypto_hash_state_destroy`.
-  Parameters `ptr-st` are passed to the native operation in that order.
-  `ptr-st` is a native handle.
+  #|proc:ffi-digest-state-destroy
+  The `ffi-digest-state-destroy` procedure calls the native openssl operation
+  `crypto_digest_state_destroy`.
+  Parameters `handle` are passed to the native operation in that order.
+  `handle` is a native handle.
   It releases the native resource and returns unspecified values; a zero handle is ignored.
   It raises an error when OpenSSL is unavailable.
   |#
-  (define ffi-hash-state-destroy
-    (let ([native (foreign-procedure "crypto_hash_state_destroy" (void*) void)])
-      (lambda (ptr-st)
-        (pcheck ([natural? ptr-st])
-                (require-optional-library 'ffi-hash-state-destroy 'openssl)
-                (native ptr-st)))))
-  (define ffi-hash-state-get
-    (foreign-procedure "crypto_hash_state_get" (void*) ptr))
-  (define ffi-hash-state-finalize
-    (foreign-procedure "crypto_hash_state_finalize" (void*) ptr))
-  #|proc:ffi-hash-state-reset!
-  The `ffi-hash-state-reset!` procedure calls the native openssl operation
-  `crypto_hash_state_reset`.
-  Parameters `ptr-st` are passed to the native operation in that order.
-  `ptr-st` is a native handle.
+  (define ffi-digest-state-destroy
+    (let ([native (foreign-procedure "crypto_digest_state_destroy" (void*) void)])
+      (lambda (handle)
+        (pcheck ([natural? handle])
+                (require-optional-library 'ffi-digest-state-destroy 'openssl)
+                (native handle)))))
+  #|proc:ffi-digest-state-get
+  The `ffi-digest-state-get` procedure returns the digest bytevector for native OpenSSL
+  context `handle`, preserving its state. It returns `#f` on a zero handle or native
+  failure and raises an error when OpenSSL is unavailable.
+  |#
+  (define ffi-digest-state-get
+    (let ([native (foreign-procedure "crypto_digest_state_get" (void*) ptr)])
+      (lambda (handle)
+        (pcheck ([natural? handle])
+          (require-optional-library 'ffi-digest-state-get 'openssl)
+          (native handle)))))
+  #|proc:ffi-digest-state-reset!
+  The `ffi-digest-state-reset!` procedure calls the native openssl operation
+  `crypto_digest_state_reset`.
+  Parameters `handle` are passed to the native operation in that order.
+  `handle` is a native handle.
   It returns 1 on success and 0 on failure.
   It raises an error when OpenSSL is unavailable.
   |#
-  (define ffi-hash-state-reset!
-    (let ([native (foreign-procedure "crypto_hash_state_reset" (void*) int)])
-      (lambda (ptr-st)
-        (pcheck ([natural? ptr-st])
-                (require-optional-library 'ffi-hash-state-reset! 'openssl)
-                (native ptr-st)))))
-  #|proc:ffi-hash-state-update-bytevector!
-  The `ffi-hash-state-update-bytevector!` procedure calls the native openssl operation
-  `crypto_hash_state_update_bytevector`.
-  Parameters `ptr-st`, `bytevector`, `start`, `stop` are passed to the native operation in that
+  (define ffi-digest-state-reset!
+    (let ([native (foreign-procedure "crypto_digest_state_reset" (void*) int)])
+      (lambda (handle)
+        (pcheck ([natural? handle])
+                (require-optional-library 'ffi-digest-state-reset! 'openssl)
+                (native handle)))))
+  #|proc:ffi-digest-state-update-bytevector!
+  The `ffi-digest-state-update-bytevector!` procedure calls the native openssl operation
+  `crypto_digest_state_update_bytevector`.
+  Parameters `handle`, `bytevector`, `start`, `stop` are passed to the native operation in that
   order.
-  `ptr-st` is a native handle.
+  `handle` is a native handle.
   `bytevector` is the input bytevector.
   `start` is the inclusive start index of the input slice.
   `stop` is the exclusive end index of the input slice.
   It returns 1 on success and 0 on failure.
   It raises an error when OpenSSL is unavailable.
   |#
-  (define ffi-hash-state-update-bytevector!
-    (let ([native (foreign-procedure "crypto_hash_state_update_bytevector" (void* ptr unsigned-64 unsigned-64) int)])
-      (lambda (ptr-st bytevector start stop)
-        (pcheck ([bytevector? bytevector] [natural? ptr-st] [natural? start] [natural? stop])
-                (require-optional-library 'ffi-hash-state-update-bytevector! 'openssl)
-                (native ptr-st bytevector start stop)))))
-  #|proc:ffi-hash-state-update-string!
-  The `ffi-hash-state-update-string!` procedure calls the native openssl operation
-  `crypto_hash_state_update_string`.
-  Parameters `ptr-st`, `text`, `start`, `stop` are passed to the native operation in that order.
-  `ptr-st` is a native handle.
+  (define ffi-digest-state-update-bytevector!
+    (let ([native (foreign-procedure "crypto_digest_state_update_bytevector" (void* ptr unsigned-64 unsigned-64) int)])
+      (lambda (handle bytevector start stop)
+        (pcheck ([bytevector? bytevector] [natural? handle] [natural? start] [natural? stop])
+                (require-optional-library 'ffi-digest-state-update-bytevector! 'openssl)
+                (native handle bytevector start stop)))))
+  #|proc:ffi-digest-state-update-string!
+  The `ffi-digest-state-update-string!` procedure calls the native openssl operation
+  `crypto_digest_state_update_string`.
+  Parameters `handle`, `text`, `start`, `stop` are passed to the native operation in that order.
+  `handle` is a native handle.
   `text` is the input string; characters are hashed as native-endian UTF-32 values.
   `start` is the inclusive start index of the input slice.
   `stop` is the exclusive end index of the input slice.
   It returns 1 on success and 0 on failure.
   It raises an error when OpenSSL is unavailable.
   |#
-  (define ffi-hash-state-update-string!
-    (let ([native (foreign-procedure "crypto_hash_state_update_string" (void* ptr unsigned-64 unsigned-64) int)])
-      (lambda (ptr-st text start stop)
-        (pcheck ([string? text] [natural? ptr-st] [natural? start] [natural? stop])
-                (require-optional-library 'ffi-hash-state-update-string! 'openssl)
-                (native ptr-st text start stop)))))
+  (define ffi-digest-state-update-string!
+    (let ([native (foreign-procedure "crypto_digest_state_update_string" (void* ptr unsigned-64 unsigned-64) int)])
+      (lambda (handle text start stop)
+        (pcheck ([string? text] [natural? handle] [natural? start] [natural? stop])
+                (require-optional-library 'ffi-digest-state-update-string! 'openssl)
+                (native handle text start stop)))))
 
   #|proc:ffi-hmac-state-create
   The `ffi-hmac-state-create` procedure calls the native openssl operation

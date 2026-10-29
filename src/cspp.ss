@@ -4,7 +4,6 @@
           ;; add libs here if you want them auto-compiled when compiling this file,
           ;; but not auto-imported when importing (cspp)
           (cspp optional-library-check)
-          (cspp crypto digest)
           (cspp rich private render)
           (cspp concurrency fiber)
           (cspp concurrency fiber-net)
@@ -45,7 +44,6 @@
 
                   (cspp uuid)
                   (cspp hash)
-                  (cspp digest)
                   (cspp protobuf)
                   (cspp optional-library)
                   (cspp crypto)

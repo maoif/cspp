@@ -27,7 +27,7 @@ int crypto_constant_time_eq(ptr bv1, uint64_t start1, uint64_t stop1, ptr bv2,
   return -1;
 }
 
-ptr crypto_hash_bytevector(ptr which, ptr bv, uint64_t start, uint64_t stop) {
+ptr crypto_digest_bytevector(ptr which, ptr bv, uint64_t start, uint64_t stop) {
   (void)which;
   (void)bv;
   (void)start;
@@ -35,7 +35,7 @@ ptr crypto_hash_bytevector(ptr which, ptr bv, uint64_t start, uint64_t stop) {
   return cspp_unavailable_status("openssl: disabled at build time");
 }
 
-ptr crypto_hash_string(ptr which, ptr str, uint64_t start, uint64_t stop) {
+ptr crypto_digest_string(ptr which, ptr str, uint64_t start, uint64_t stop) {
   (void)which;
   (void)str;
   (void)start;
@@ -43,41 +43,36 @@ ptr crypto_hash_string(ptr which, ptr str, uint64_t start, uint64_t stop) {
   return cspp_unavailable_status("openssl: disabled at build time");
 }
 
-int crypto_hash_output_size(ptr which) {
+int crypto_digest_output_size(ptr which) {
   (void)which;
   return -1;
 }
 
-int crypto_hash_block_size(ptr which) {
+int crypto_digest_block_size(ptr which) {
   (void)which;
   return -1;
 }
 
-void * crypto_hash_state_create(ptr which) {
+void * crypto_digest_state_create(ptr which) {
   (void)which;
   return 0;
 }
 
-void crypto_hash_state_destroy(void *ptr_st) {
+void crypto_digest_state_destroy(void *ptr_st) {
   (void)ptr_st;
 }
 
-ptr crypto_hash_state_get(void *ptr_st) {
-  (void)ptr_st;
-  return cspp_unavailable_status("openssl: disabled at build time");
-}
-
-ptr crypto_hash_state_finalize(void *ptr_st) {
+ptr crypto_digest_state_get(void *ptr_st) {
   (void)ptr_st;
   return cspp_unavailable_status("openssl: disabled at build time");
 }
 
-int crypto_hash_state_reset(void *ptr_st) {
+int crypto_digest_state_reset(void *ptr_st) {
   (void)ptr_st;
   return -1;
 }
 
-int crypto_hash_state_update_bytevector(void *ptr_st, ptr bv, uint64_t start,
+int crypto_digest_state_update_bytevector(void *ptr_st, ptr bv, uint64_t start,
                                         uint64_t stop) {
   (void)ptr_st;
   (void)bv;
@@ -86,7 +81,7 @@ int crypto_hash_state_update_bytevector(void *ptr_st, ptr bv, uint64_t start,
   return -1;
 }
 
-int crypto_hash_state_update_string(void *ptr_st, ptr str, uint64_t start,
+int crypto_digest_state_update_string(void *ptr_st, ptr str, uint64_t start,
                                     uint64_t stop) {
   (void)ptr_st;
   (void)str;

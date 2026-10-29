@@ -1,5 +1,5 @@
 (import (cspp)
-        (cspp digest))
+        (cspp crypto digest))
 
 (define fail
   (lambda (message)

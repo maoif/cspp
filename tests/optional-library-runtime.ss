@@ -47,11 +47,18 @@
 ;; Disabled incremental digester creation must raise before exposing a null context.
 (check-disabled-error 'blake3 (lambda () (make-digester 'blake3)))
 
+;; Disabled digests must raise instead of exposing an error vector as a digest.
+(check-disabled-error 'openssl (lambda () (digest-bytevector 'sha256 #vu8(1))))
+(check-disabled-error 'openssl (lambda () (digest-string 'sha256 "a")))
+(check-disabled-error 'openssl (lambda () (make-digester 'sha256)))
+(check-disabled-error 'blake3 (lambda () (digest-bytevector 'blake3 #vu8(1))))
+(check-disabled-error 'blake3 (lambda () (digest-string 'blake3 "a")))
+
 ;; Disabled OpenSSL status APIs must raise before exposing -1.
 (check-disabled-error 'openssl (lambda () (ffi-random-status)))
 
 ;; Disabled OpenSSL cleanup must raise before appearing to free an invalid handle.
-(check-disabled-error 'openssl (lambda () (ffi-hash-state-destroy 1)))
+(check-disabled-error 'openssl (lambda () (ffi-digest-state-destroy 1)))
 
 ;; Disabled OpenSSL handle creation must raise before returning zero.
 (check-disabled-error 'openssl (lambda () (ffi-net-tls-context-create 0)))

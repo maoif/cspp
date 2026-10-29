@@ -24,7 +24,7 @@
 typedef struct {
   EVP_MD *md;
   EVP_MD_CTX *ctx;
-} cspp_hash_state;
+} cspp_digest_state;
 
 typedef struct {
   EVP_MAC *mac;
@@ -231,7 +231,7 @@ int crypto_constant_time_eq(ptr bv1, uint64_t start1, uint64_t stop1, ptr bv2,
                        Sbytevector_data(bv2) + (size_t)start2, len1) == 0;
 }
 
-ptr crypto_hash_bytevector(ptr which, ptr bv, uint64_t start, uint64_t stop) {
+ptr crypto_digest_bytevector(ptr which, ptr bv, uint64_t start, uint64_t stop) {
   EVP_MD *md = fetch_digest(which);
   EVP_MD_CTX *ctx;
   ptr ans = Sfalse;
@@ -252,12 +252,12 @@ done:
   return ans;
 }
 
-ptr crypto_hash_string(ptr which, ptr str, uint64_t start, uint64_t stop) {
+ptr crypto_digest_string(ptr which, ptr str, uint64_t start, uint64_t stop) {
   ptr bv = make_string_utf32_copy(str, start, stop);
-  return crypto_hash_bytevector(which, bv, 0, slice_len(start, stop) * 4);
+  return crypto_digest_bytevector(which, bv, 0, slice_len(start, stop) * 4);
 }
 
-int crypto_hash_output_size(ptr which) {
+int crypto_digest_output_size(ptr which) {
   EVP_MD *md = fetch_digest(which);
   int size = -1;
   if (md != NULL) {
@@ -267,7 +267,7 @@ int crypto_hash_output_size(ptr which) {
   return size;
 }
 
-int crypto_hash_block_size(ptr which) {
+int crypto_digest_block_size(ptr which) {
   EVP_MD *md = fetch_digest(which);
   int size = -1;
   if (md != NULL) {
@@ -277,8 +277,8 @@ int crypto_hash_block_size(ptr which) {
   return size;
 }
 
-void *crypto_hash_state_create(ptr which) {
-  cspp_hash_state *st = malloc(sizeof(cspp_hash_state));
+void *crypto_digest_state_create(ptr which) {
+  cspp_digest_state *st = malloc(sizeof(cspp_digest_state));
   if (st == NULL) return NULL;
 
   st->md = fetch_digest(which);
@@ -298,16 +298,16 @@ fail:
   return NULL;
 }
 
-void crypto_hash_state_destroy(void *ptr_st) {
-  cspp_hash_state *st = (cspp_hash_state *)ptr_st;
+void crypto_digest_state_destroy(void *ptr_st) {
+  cspp_digest_state *st = (cspp_digest_state *)ptr_st;
   if (st == NULL) return;
   if (st->ctx != NULL) EVP_MD_CTX_free(st->ctx);
   if (st->md != NULL) EVP_MD_free(st->md);
   free(st);
 }
 
-ptr crypto_hash_state_get(void *ptr_st) {
-  cspp_hash_state *st = (cspp_hash_state *)ptr_st;
+ptr crypto_digest_state_get(void *ptr_st) {
+  cspp_digest_state *st = (cspp_digest_state *)ptr_st;
   EVP_MD_CTX *dup;
   ptr ans;
   if (st == NULL || st->ctx == NULL) return Sfalse;
@@ -322,33 +322,25 @@ ptr crypto_hash_state_get(void *ptr_st) {
   return ans;
 }
 
-ptr crypto_hash_state_finalize(void *ptr_st) {
-  cspp_hash_state *st = (cspp_hash_state *)ptr_st;
-  ptr ans;
-  if (st == NULL || st->ctx == NULL) return Sfalse;
-  ans = digest_ctx_result(st->ctx);
-  return ans;
-}
-
-int crypto_hash_state_reset(void *ptr_st) {
-  cspp_hash_state *st = (cspp_hash_state *)ptr_st;
+int crypto_digest_state_reset(void *ptr_st) {
+  cspp_digest_state *st = (cspp_digest_state *)ptr_st;
   if (st == NULL || st->ctx == NULL || st->md == NULL) return 0;
   if (EVP_MD_CTX_reset(st->ctx) != 1) return 0;
   return EVP_DigestInit_ex(st->ctx, st->md, NULL);
 }
 
-int crypto_hash_state_update_bytevector(void *ptr_st, ptr bv, uint64_t start,
+int crypto_digest_state_update_bytevector(void *ptr_st, ptr bv, uint64_t start,
                                         uint64_t stop) {
-  cspp_hash_state *st = (cspp_hash_state *)ptr_st;
+  cspp_digest_state *st = (cspp_digest_state *)ptr_st;
   if (st == NULL || st->ctx == NULL) return 0;
   return EVP_DigestUpdate(st->ctx, Sbytevector_data(bv) + (size_t)start,
                           slice_len(start, stop));
 }
 
-int crypto_hash_state_update_string(void *ptr_st, ptr str, uint64_t start,
+int crypto_digest_state_update_string(void *ptr_st, ptr str, uint64_t start,
                                     uint64_t stop) {
   ptr bv = make_string_utf32_copy(str, start, stop);
-  return crypto_hash_state_update_bytevector(ptr_st, bv, 0, slice_len(start, stop) * 4);
+  return crypto_digest_state_update_bytevector(ptr_st, bv, 0, slice_len(start, stop) * 4);
 }
 
 static int hmac_init_state(cspp_hmac_state *st) {

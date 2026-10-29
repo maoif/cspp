@@ -4,15 +4,15 @@
           make-digester digester? digester-update-bytevector! digester-update-string!
           digester-get digester-finalize! digester-reset! digester-destroy! call-with-digester
 
-          ;; Algorithm-specific bytevector, string, and file helpers.
-          sha224-bytevector sha256-bytevector sha384-bytevector sha512-bytevector
+          ;; Algorithm-specific helpers; MD5 is retained for legacy interoperability.
+          md5-bytevector sha224-bytevector sha256-bytevector sha384-bytevector sha512-bytevector
           sha512-224-bytevector sha512-256-bytevector sha3-224-bytevector sha3-256-bytevector
           sha3-384-bytevector sha3-512-bytevector blake2b-512-bytevector blake2s-256-bytevector
           blake3-bytevector
-          sha224-string sha256-string sha384-string sha512-string sha512-224-string
+          md5-string sha224-string sha256-string sha384-string sha512-string sha512-224-string
           sha512-256-string sha3-224-string sha3-256-string sha3-384-string sha3-512-string
           blake2b-512-string blake2s-256-string blake3-string
-          sha224-file sha256-file sha384-file sha512-file sha512-224-file sha512-256-file
+          md5-file sha224-file sha256-file sha384-file sha512-file sha512-224-file sha512-256-file
           sha3-224-file sha3-256-file sha3-384-file sha3-512-file blake2b-512-file
           blake2s-256-file blake3-file)
   (import (cspp chez)
@@ -24,10 +24,11 @@
   #|proc:digest-algorithms
   The `digest-algorithms` value lists the supported digest algorithm symbols. Availability
   depends on the optional OpenSSL and BLAKE3 libraries and the active OpenSSL providers.
+  MD5 is provided only for legacy interoperability and is unsuitable for secure hashing.
   |#
   (define digest-algorithms
-          '(sha224 sha256 sha384 sha512 sha512-224 sha512-256 sha3-224 sha3-256 sha3-384 sha3-512
-          blake2b-512 blake2s-256 blake3))
+    '(md5 sha224 sha256 sha384 sha512 sha512-224 sha512-256
+      sha3-224 sha3-256 sha3-384 sha3-512 blake2b-512 blake2s-256 blake3))
 
   (define check-algorithm
     (lambda (who algorithm)
@@ -69,7 +70,7 @@
         (ensure-backend who algorithm)
         (if (eq? algorithm 'blake3)
             32
-            (let ([size (ffi-hash-output-size algorithm)])
+            (let ([size (ffi-digest-output-size algorithm)])
               (unless (fx> size 0) (errorf who "digest algorithm unavailable: ~s" algorithm))
               size)))))
 
@@ -84,7 +85,7 @@
         (ensure-backend who algorithm)
         (if (eq? algorithm 'blake3)
             64
-            (let ([size (ffi-hash-block-size algorithm)])
+            (let ([size (ffi-digest-block-size algorithm)])
               (unless (fx> size 0) (errorf who "digest algorithm unavailable: ~s" algorithm))
               size)))))
 
@@ -110,7 +111,7 @@
          (check-result who
            (if (eq? algorithm 'blake3)
                (ffi-blake3-bytevector bytes start stop)
-               (ffi-hash-bytevector algorithm bytes start stop))))]))
+               (ffi-digest-bytevector algorithm bytes start stop))))]))
 
   #|proc:digest-string
   The `digest-string` procedure returns the digest of `text` using the symbol `algorithm`.
@@ -134,7 +135,7 @@
          (check-result who
            (if (eq? algorithm 'blake3)
                (ffi-blake3-string text start stop)
-               (ffi-hash-string algorithm text start stop))))]))
+               (ffi-digest-string algorithm text start stop))))]))
 
   #|proc:digest
   The `digest` procedure returns a fresh digest bytevector for the string or bytevector
@@ -187,7 +188,7 @@
          (ensure-backend who algorithm)
          (let ([handle (if (eq? algorithm 'blake3)
                            (ffi-blake3-create)
-                           (ffi-hash-state-create algorithm))])
+                           (ffi-digest-state-create algorithm))])
            (when (= handle 0) (errorf who "failed to create digester for ~s" algorithm))
            (%make-digester algorithm handle #f #f)))]))
 
@@ -210,7 +211,7 @@
          (check-live who state)
          (check-slice who (bytevector-length bytes) start stop)
          (unless (= 1 ((if (blake3-state? state)
-                           ffi-blake3-update-bytevector! ffi-hash-state-update-bytevector!)
+                           ffi-blake3-update-bytevector! ffi-digest-state-update-bytevector!)
                        (digester-handle state) bytes start stop))
            (errorf who "failed to update digester"))
          state)]))
@@ -235,7 +236,7 @@
          (check-live who state)
          (check-slice who (string-length text) start stop)
          (unless (= 1 ((if (blake3-state? state)
-                           ffi-blake3-update-string! ffi-hash-state-update-string!)
+                           ffi-blake3-update-string! ffi-digest-state-update-string!)
                        (digester-handle state) text start stop))
            (errorf who "failed to update digester"))
          state)]))
@@ -250,13 +251,13 @@
       (pcheck ([digester? state])
         (check-live who state)
         (check-result who
-          ((if (blake3-state? state) ffi-blake3-get ffi-hash-state-get)
+          ((if (blake3-state? state) ffi-blake3-get ffi-digest-state-get)
            (digester-handle state))))))
 
   (define release-handle!
     (lambda (state)
       (unless (= (digester-handle state) 0)
-        ((if (blake3-state? state) ffi-blake3-destroy ffi-hash-state-destroy)
+        ((if (blake3-state? state) ffi-blake3-destroy ffi-digest-state-destroy)
          (digester-handle state))
         (digester-handle-set! state 0))))
 
@@ -284,7 +285,7 @@
     (lambda (state)
       (pcheck ([digester? state])
         (check-live who state)
-        (unless (= 1 ((if (blake3-state? state) ffi-blake3-reset! ffi-hash-state-reset!)
+        (unless (= 1 ((if (blake3-state? state) ffi-blake3-reset! ffi-digest-state-reset!)
                       (digester-handle state)))
           (errorf who "failed to reset digester"))
         state)))
@@ -341,9 +342,11 @@
   (define-who digest-file
     (case-lambda
       [(algorithm path)
-       (pcheck ([string? path]) (digest-file algorithm path 0 (file-size path)))]
+       (pcheck ([string? path] [file-regular? path])
+         (digest-file algorithm path 0 (file-size path)))]
       [(algorithm path start)
-       (pcheck ([string? path]) (digest-file algorithm path start (file-size path)))]
+       (pcheck ([string? path] [file-regular? path])
+         (digest-file algorithm path start (file-size path)))]
       [(algorithm path start stop)
        (pcheck ([symbol? algorithm] [string? path] [file-regular? path])
          (check-algorithm who algorithm)
@@ -375,6 +378,16 @@
            [(input start) (pcheck ([input? input]) (generic 'algorithm input start))]
            [(input start stop)
             (pcheck ([input? input]) (generic 'algorithm input start stop))]))]))
+
+  #|proc:md5-bytevector
+  The `md5-bytevector` procedure returns a fresh MD5 digest bytevector for `bytes`.
+  Optional nonnegative fixnums `start` and `stop` select a half-open
+  byte slice, defaulting to zero and the input length.
+  Input is a bytevector.
+  Invalid inputs and backend failures raise errors. MD5 is retained only for legacy
+  interoperability; it is unsuitable for security-sensitive hashing.
+  |#
+  (define-specialized-digest md5-bytevector md5 digest-bytevector bytes bytevector?)
 
   #|proc:sha224-bytevector
   The `sha224-bytevector` procedure returns a fresh `sha224` digest bytevector for the
@@ -479,6 +492,16 @@
   Invalid inputs and native backend failures raise errors.
   |#
   (define-specialized-digest blake3-bytevector blake3 digest-bytevector bytes bytevector?)
+
+  #|proc:md5-string
+  The `md5-string` procedure returns a fresh MD5 digest bytevector for `text`.
+  Optional nonnegative fixnums `start` and `stop` select a half-open
+  character slice, defaulting to zero and the input length.
+  Strings use native-endian UTF-32 without a byte-order mark.
+  Invalid inputs and backend failures raise errors. MD5 is retained only for legacy
+  interoperability; it is unsuitable for security-sensitive hashing.
+  |#
+  (define-specialized-digest md5-string md5 digest-string text string?)
 
   #|proc:sha224-string
   The `sha224-string` procedure returns a fresh `sha224` digest bytevector for the
@@ -596,6 +619,16 @@
   Invalid inputs and native backend failures raise errors.
   |#
   (define-specialized-digest blake3-string blake3 digest-string text string?)
+
+  #|proc:md5-file
+  The `md5-file` procedure returns a fresh MD5 digest bytevector for `path`.
+  Optional nonnegative fixnums `start` and `stop` select a half-open
+  byte slice, defaulting to zero and the input length.
+  Input is a regular file path.
+  Invalid inputs and backend failures raise errors. MD5 is retained only for legacy
+  interoperability; it is unsuitable for security-sensitive hashing.
+  |#
+  (define-specialized-digest md5-file md5 digest-file path string?)
 
   #|proc:sha224-file
   The `sha224-file` procedure returns a fresh `sha224` digest bytevector for the

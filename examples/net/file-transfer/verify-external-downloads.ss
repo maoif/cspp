@@ -24,7 +24,7 @@ The `uri` parameter is the HTTPS resource, `path` is the destination outside the
           (errorf 'verify-external-download
                   "HTTP download failed with status ~a for ~a"
                   (http-response-status response) uri))
-        (let ([actual (bytevector->hex (hash-file 'sha256 path))])
+        (let ([actual (bytevector->hex (digest-file 'sha256 path))])
           (unless (string-ci=? actual expected-hex)
             (errorf 'verify-external-download
                     "SHA-256 mismatch for ~a: expected ~a, got ~a"

@@ -182,6 +182,7 @@
   ;; Error case: bytevector slices cannot run backwards or exceed the data.
   (error? (digest-bytevector 'sha256 #vu8(1) 1 0))
 
+  ;; Error case: the stop index cannot exceed the input length.
   (error? (digest-bytevector 'sha256 #vu8(1) 0 2))
 
   ;; Error case: inexact or out-of-fixnum indices must not truncate at the FFI boundary.
@@ -221,3 +222,36 @@
                    [after (length (directory-list "/proc/self/fd"))])
               (and raised? (= before after))))
           #t))))
+
+(mat digest-md5-legacy
+  (mat-requires (openssl)
+    (with-digest-file #vu8(97 98 99)
+      (lambda (path)
+        (and (string=? "900150983cd24fb0d6963f7d28e17f72"
+                       (bytevector->hex (md5-bytevector #vu8(97 98 99))))
+             (string=? "900150983cd24fb0d6963f7d28e17f72"
+                       (bytevector->hex (md5-file path)))
+             (string=? "900150983cd24fb0d6963f7d28e17f72"
+                       (bytevector->hex
+                         (call-with-digester 'md5
+                           (lambda (state)
+                             (digester-update-bytevector! state #vu8(97 98 99)))))))))))
+
+(mat digest-continuation-cleanup
+  (mat-requires (openssl)
+    (let ([escaped-state #f])
+      (and (eq? 'escaped
+                 (call/1cc
+                   (lambda (escape)
+                     (call-with-digester
+                       (lambda (state)
+                         (set! escaped-state state)
+                         (escape 'escaped))))))
+           ;; Error case: a continuation escape must release the digester before returning.
+           (guard (c [else #t]) (digester-get escaped-state) #f)))))
+
+(mat digest-process-failures
+  ;; Error case: FIFO rejection and provider failures must terminate cleanly in isolation.
+  (= 0 (system (if (file-exists? "digest-process.py")
+                   "python3 -I digest-process.py"
+                   "python3 -I tests/digest-process.py"))))
