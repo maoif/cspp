@@ -92,6 +92,7 @@
   #|macro:for/fold
   The `for/fold` macro iterates its source clauses in parallel and evaluates the body.
   `:init` binds an accumulator updated from the body result; `:finish` supplies the final value.
+  The body permits local definitions followed by expressions, with the last supplying its result.
   Binding clauses scope their variables over subsequent clauses and the body. Each binding clause
   uses its corresponding Scheme binding form with one binding. An indexed guard binds a zero-based
   index counting passes through that guard, including passes rejected by a later guard.
@@ -332,9 +333,9 @@
                                              (let lp-configs ([configs (if frag-config frag-config '())])
                                                (if (null? configs)
                                                    (if frag-init
-                                                       #`(let ([t-acc (begin body* ...)])
+                                                       #`(let ([t-acc (let () body* ...)])
                                                            (for-loop #,@updates))
-                                                       #`(begin body* ...
+                                                       #`(begin (let () body* ...)
                                                                 (for-loop #,@updates)))
                                                    (let ([conf (car configs)])
                                                      (syntax-case conf ()
@@ -400,6 +401,7 @@
   expressions use `let` semantics in the surrounding scope and are evaluated before validation.
   Their evaluation order is unspecified. No expression sees its own clause's item bindings.
   `:init` binds an accumulator updated from the body result; `:finish` supplies the final value.
+  The body permits local definitions followed by expressions, with the last supplying its result.
   Binding clauses use the corresponding Scheme binding form and scope over subsequent clauses.
   Indexed guards count passes starting at zero and reset on every entry to their loop level.
   A standalone `[:index name]` after an iterator binds a zero-based counter of visits reaching
@@ -535,9 +537,9 @@
                                                      #,@(if (identifier? #'counter) #'((fx1+ counter)) '())
                                                      #,@last-update)))])
                              (if frag-init
-                                 #`(let ([t-acc (begin body* ...)])
+                                 #`(let ([t-acc (let () body* ...)])
                                      #,(call-loop (list #'t-acc)))
-                                 #`(begin body* ...
+                                 #`(begin (let () body* ...)
                                           #,(call-loop '()))))
                            (with-syntax ([(forloop) (generate-temporaries '(forloop))])
                              (let* ([i/c (car i/c*)] [iter-cl (car i/c)] [configs (cdr i/c)]
@@ -801,11 +803,11 @@
                          [append-value
                           (cond
                            [(not vector?)
-                            #'(let ([next (cons (begin body ...) '())])
+                            #'(let ([next (cons (let () body ...) '())])
                                 (set-cdr! cursor next)
                                 next)]
-                           [length #'(begin (vector-set! storage count (begin body ...)) cursor)]
-                           [else #'(collection-block-add! cursor count (begin body ...))])]
+                           [length #'(begin (vector-set! storage count (let () body ...)) cursor)]
+                           [else #'(collection-block-add! cursor count (let () body ...))])]
                          [traversal
                           #`(compiler #t #,(if counter? #'count #'#f)
                               ((:init cursor storage)

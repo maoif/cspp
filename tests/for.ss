@@ -1,5 +1,37 @@
 (import (cspp) (cspp private for))
 
+(mat loop-body-definition-context
+     ;; Guards, accumulation, and collection must not change the body's definition context.
+     (andmap
+      (lambda (kind)
+        (andmap
+         (lambda (guarded?)
+           (let ([folding? (memq kind '(for/fold for*/fold))])
+             (guard (condition [else #f])
+               (equal? '(1 2)
+                       (eval `(let ([seen '()])
+                                (,kind (,@(if folding? '([:init total 0]) '())
+                                        [x 2] ,@(if guarded? '([:guard #t]) '()))
+                                  (define y (+ x 1))
+                                  (define (read) y)
+                                  (set! seen (cons (read) seen))
+                                  ,(if folding? '(+ total y) 'y))
+                                (reverse seen))
+                             (environment '(cspp)))))))
+         '(#f #t)))
+      '(for for/fold for/list for/vector for* for*/fold for*/list for*/vector))
+
+     ;; A collector still collects the final value from the definition body.
+     (equal? '(10 11) (for/list ([x 2]) (define y (+ x 10)) y))
+
+     (equal? '#(10 11) (for*/vector ([:length 2] [x 2]) (define y (+ x 10)) y))
+
+     ;; Body-local names do not change the private traversal state.
+     (= 3 (for/fold ([:init total 0] [:finish total] [x 2])
+            (define x 99)
+            (define increment (if (= total 0) 1 2))
+            (+ total increment))))
+
 (mat literal-source-quotation-scope
      ;; A lexically rebound quote is an application, not valid literal shorthand.
      (andmap
