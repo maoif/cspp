@@ -364,13 +364,14 @@
 
   ;; Bulk selections use ranges so an early-stopping consumer need not allocate
   ;; every index first. Lists/sequential adapters walk their spine once; callbacks
-  ;; retain invocation-local progress across ordinary suspension.
+  ;; retain invocation-local progress across ordinary suspension. Stop after the
+  ;; last selected index; a large stride must not force traversal of an unused tail.
   (define indexed-walk
     (lambda (value start stop step visit)
       (unless (>= start stop)
         (if (list? value)
             (let loop ([items value] [index 0] [next start])
-              (when (< index stop)
+              (when (< next stop)
                 (if (= index next)
                     (begin (visit index (car items))
                            (loop (cdr items) (fx1+ index) (+ next step)))

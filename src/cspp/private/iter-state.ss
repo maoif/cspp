@@ -1,7 +1,8 @@
 (library (cspp private iter-state)
   (export mk-$iter $iter? $iter-next!-proc $iter-reset!-proc $iter-fini-proc
           $iter-children $iter-ops $iter-finalized? $iter-finalized?-set!
-          iter-resource? finalize-iter-chain! finalize-iter-chains! reset-iter-chain!)
+          $iter-resource-capable? iter-resource? finalize-iter-chain!
+          finalize-iter-chains! reset-iter-chain!)
   (import (chezscheme) (cspp list) (cspp utils))
 
   ;; A chain is an iterator and the upstream iterators reachable through children.
@@ -13,26 +14,53 @@
   ;; nested resources for cleanup but restart only their upstream source. Private
   ;; reset callbacks reset local state only; public custom producers keep their own
   ;; reset callbacks, which may manage opaque upstream state.
+  ;; Resource capability is immutable conservative metadata: #f proves the graph
+  ;; permanently resource-free; #t means it may reach a resource now or later. It
+  ;; is not ownership and does not disable a cursor. Fixed child lists combine
+  ;; direct children's capability once; callbacks for dynamic child links remain
+  ;; capable even when currently empty. Avoid per-pass retention of free wrappers
+  ;; without repeating full graph classification or missing later acquisitions.
+  #|proc:mk-$iter
+  Construct private iterator state. `next!-proc` has signature `() -> value-or-iter-end`;
+  `reset!-proc` has signature `() -> unspecified` and resets local state. Optional
+  `fini-proc` has signature `() -> unspecified`; omit it or use `void` for a free leaf.
+  With a fourth argument, `fini-proc` is a finalizer or `#f`, and `children` is either a
+  fixed iterator list or `() -> iterator-list` for dynamic cleanup/restart dependencies.
+  A fixed list must stay unchanged and permits permanent resource-free classification.
+  The five-argument form takes separate dynamic cleanup `children` and `reset-children`
+  callbacks, both `() -> iterator-list`. Dynamic graphs remain resource-capable even
+  when currently empty. Return a cursor; callbacks may suspend, and each cursor owns
+  its own pipeline state. Kind: private state constructor.
+  |#
   (define-record-type ($iter mk-$iter $iter?)
     (fields (immutable next!-proc) (immutable reset!-proc) (immutable fini-proc) (immutable children)
-            (immutable reset-children) (immutable ops) (mutable finalized?))
+            (immutable reset-children) (immutable ops) (mutable finalized?)
+            (immutable resource-capable?))
     (opaque #t)
     (sealed #t)
     (protocol (lambda (p)
                 (case-lambda
                   [(next!-proc reset!-proc fini-proc)
                    (pcheck ([procedure? next!-proc reset!-proc fini-proc])
-                           (p next!-proc reset!-proc (if (eq? fini-proc void) #f fini-proc)
-                              (lambda () '()) (lambda () '()) (make-list-builder) #f))]
+                           (let ([fini-proc (if (eq? fini-proc void) #f fini-proc)])
+                             (p next!-proc reset!-proc fini-proc
+                                (lambda () '()) (lambda () '()) (make-list-builder) #f
+                                (bool fini-proc))))]
                   [(next!-proc reset!-proc fini-proc children)
-                   (p next!-proc reset!-proc fini-proc children children (make-list-builder) #f)]
+                   (if (list? children)
+                       (let ([child-proc (lambda () children)])
+                         (p next!-proc reset!-proc fini-proc child-proc child-proc
+                            (make-list-builder) #f
+                            (or (bool fini-proc) (bool (exists $iter-resource-capable? children)))))
+                       (p next!-proc reset!-proc fini-proc children children
+                          (make-list-builder) #f #t))]
                   [(next!-proc reset!-proc fini-proc children reset-children)
                    (p next!-proc reset!-proc fini-proc children reset-children
-                      (make-list-builder) #f)]
+                      (make-list-builder) #f #t)]
                   [(next!-proc reset!-proc)
                    (pcheck ([procedure? next!-proc reset!-proc])
                            (p next!-proc reset!-proc #f (lambda () '()) (lambda () '())
-                              (make-list-builder) #f))]))))
+                              (make-list-builder) #f #f))]))))
 
   ;; One explicit identity set belongs to each reset operation, including when
   ;; callbacks suspend/migrate. Postorder resets sources before local rebuilding
@@ -83,9 +111,10 @@
 
   ;; A forest is the collection of root cursors and their reachable child graphs.
   ;; One forest walk shares identity memoization across every retained root.
-  ;; A cleanup candidate is a resource cursor or a wrapper with child links; it
-  ;; does not imply resource ownership. Dynamic children are read during this walk,
-  ;; so a lazy source's earlier resource-free state cannot hide later acquisition.
+  ;; A cleanup candidate is a cursor capable of reaching a resource, including a
+  ;; currently empty dynamic source; it does not imply present resource ownership.
+  ;; Dynamic children are read during this walk, so earlier resource-free state
+  ;; cannot hide later acquisition. Permanently free graphs need no walk.
   #|proc:finalize-iter-chains!
   Finalize the resources reachable from the list of iterator roots `iterators`, sharing
   identity memoization across all roots. Return an unspecified value. Resource-free
@@ -98,27 +127,26 @@
         (let ([seen (make-eq-hashtable)])
           (define visit
             (lambda (iterator)
-              (if (hashtable-contains? seen iterator)
-                  (hashtable-ref seen iterator #f)
-                  (begin
-                    (hashtable-set! seen iterator #f)
-                    (let* ([children (($iter-children iterator))]
-                           ;; Visit every child even if an earlier one has resources.
-                           [child-resources? (fold-left
-                                              (lambda (found? child) (or (visit child) found?))
-                                              #f children)]
-                           [resource? (or ($iter-fini-proc iterator) child-resources?)])
-                      (unless ($iter-finalized? iterator)
-                        ;; Mark before user cleanup; errors leave state undefined.
-                        (when resource? ($iter-finalized?-set! iterator #t))
-                        (when ($iter-fini-proc iterator) (($iter-fini-proc iterator))))
-                      (hashtable-set! seen iterator resource?)
-                      resource?)))))
+              (cond [(not ($iter-resource-capable? iterator)) #f]
+                    [(hashtable-contains? seen iterator) (hashtable-ref seen iterator #f)]
+                    [else
+                     (hashtable-set! seen iterator #f)
+                     (let* ([children (($iter-children iterator))]
+                            ;; Visit every child even if an earlier one has resources.
+                            [child-resources? (fold-left
+                                               (lambda (found? child) (or (visit child) found?))
+                                               #f children)]
+                            [resource? (or ($iter-fini-proc iterator) child-resources?)])
+                       (unless ($iter-finalized? iterator)
+                         ;; Mark before user cleanup; errors leave state undefined.
+                         (when resource? ($iter-finalized?-set! iterator #t))
+                         (when ($iter-fini-proc iterator) (($iter-fini-proc iterator))))
+                       (hashtable-set! seen iterator resource?)
+                       resource?)])))
           (for-each visit iterators)))))
 
   (define finalize-iter-chain!
     (lambda (iterator)
-      (unless (and (not ($iter-fini-proc iterator))
-                   (null? (($iter-children iterator))))
+      (when ($iter-resource-capable? iterator)
         (finalize-iter-chains! (list iterator)))))
 )

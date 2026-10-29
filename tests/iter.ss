@@ -947,3 +947,64 @@
               (iter-next! cursor)
               (saved iter-end))
             (and (eq? 'b3 value) (iter-end? (iter-next! cursor))))))))
+
+(mat iter-concat-stale-completion
+  (andmap
+   (lambda (exhaust-all?)
+     (let ([saved #f] [phase 0] [second (list->iter '(second-1 second-2))])
+       (let ([cursor
+              (iter-concat
+               (make-iter
+                (lambda ()
+                  (if saved iter-end
+                      ;; Resume this producer after its occurrence has already ended.
+                      (call/cc (lambda (continuation) (set! saved continuation) 'first))))
+                void)
+               second)])
+         (guard (condition [else #f])
+           (let ([value (iter-next! cursor)])
+             (if (= phase 0)
+                 (begin
+                   (set! phase 1)
+                   (unless (eq? 'first value) (error 'test "missing first value"))
+                   (iter-next! cursor)
+                   (when exhaust-all? (iter-next! cursor) (iter-next! cursor))
+                   (saved iter-end))
+                 (if exhaust-all?
+                     (and (iter-end? value) (iter-end? (iter-next! cursor)))
+                     (and (eq? 'second-2 value) (iter-end? (iter-next! cursor))))))))))
+   '(#f #t)))
+
+(mat iter-sparse-last-stride
+  (andmap
+   (lambda (step)
+     (let ([cursor (list->iter '(0 1 2 3 4) 0 1 step)])
+       (and (equal? '(0) (collect-iter cursor))
+            (begin (iter-reset! cursor) #t)
+            (equal? '(0) (collect-iter cursor)))))
+   (list 1 5 1000000 (+ (most-positive-fixnum) 1)))
+
+  (equal? '(1 3) (iter->list (list->iter '(0 1 2 3 4) 1 4 2))))
+
+(mat iter-concat-stale-repeated-handle
+  ;; Different occurrences can share a handle: identity of that handle is not the schedule position.
+  (let ([saved #f] [phase 0] [remaining '(a b)])
+    (let* ([source
+            (make-iter
+             (lambda ()
+               (if (null? remaining) iter-end
+                   (let ([value (car remaining)])
+                     (set! remaining (cdr remaining))
+                     (if saved value
+                         ;; Save the first occurrence before concat switches and resets the handle.
+                         (call/cc (lambda (continuation) (set! saved continuation) value))))))
+             (lambda () (set! remaining '(a b))))]
+           [cursor (iter-concat source source)])
+      (let ([value (iter-next! cursor)])
+        (if (= phase 0)
+            (begin
+              (set! phase 1)
+              (iter-next! cursor)
+              (iter-next! cursor)
+              (saved iter-end))
+            (and (eq? value 'b) (iter-end? (iter-next! cursor))))))))

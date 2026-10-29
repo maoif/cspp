@@ -45,6 +45,8 @@
   ;; A restart dependency is an upstream cursor that must reset before the wrapper's
   ;; local state. Reset visits each reachable dependency once per identity. Cleanup
   ;; links may also retain historical nested resources that need no implicit restart.
+  ;; Fixed wrappers declare unchanged child lists so private resource-capability metadata
+  ;; can exclude permanently free graphs from terminal cleanup and transducer retention.
   ;;
   ;; Independent operations have no conflicting mutable accesses requiring ordering:
   ;; separate cursors over unchanged data are independent, even in threads/fibers.
@@ -294,7 +296,8 @@
   `start` and `stop` parameters select a half-open range, and positive `step` selects the
   distance between values. The iterator returns each selected value until it reaches its end.
   Reset resolves the selected start from the current source again, so changes between
-  passes are visible. Mutation during a pass is unspecified.
+  passes are visible. Mutation during a pass is unspecified. The final pull does not seek
+  past the selected range, even when `step` is larger than the remaining range.
   Kind: resource-free cursor constructor; each call creates independent producer state.
   |#
   (define-who list->iter
@@ -332,13 +335,16 @@
                   (lambda ()
                     (if (or (null? remaining) (>= index stop))
                         iter-end
-                        (let ([value (car remaining)])
-                          (let loop ([tail remaining] [count step])
-                            (cond [(null? tail) (set! remaining '())]
-                                  [(= count 0)
-                                   (set! index (+ index step))
-                                   (set! remaining tail)]
-                                  [else (loop (cdr tail) (sub1 count))]))
+                        (let ([value (car remaining)] [next-index (+ index step)])
+                          ;; No next selected value means no need to seek a final stride.
+                          (if (>= next-index stop)
+                              (set! remaining '())
+                              (let loop ([tail remaining] [count step])
+                                (cond [(null? tail) (set! remaining '())]
+                                      [(= count 0)
+                                       (set! index next-index)
+                                       (set! remaining tail)]
+                                      [else (loop (cdr tail) (sub1 count))])))
                           value)))
                   reset!)))]))
 
@@ -685,7 +691,7 @@
                                          (begin (set! done? #t) iter-end)
                                          values))))
                              (lambda () (set! done? #f))
-                             #f (lambda () iter*))))))))
+                             #f iter*)))))))
   ;; (iter-interleave (a0 a1 ...) (b0 b1 ...)) ->
   ;; (a0 b0 a1 b1 ...)
   #|proc:iter-interleave
@@ -747,7 +753,7 @@
                                                       (loop))
                                                     value))])))))
                              reset-local!
-                             #f (lambda () sources))))))))
+                             #f sources)))))))
   #|proc:iter-concat
   Return a lazy sequential wrapper over `iter` and all iterators in `iter*`.
   A first occurrence starts at its current position; before a later occurrence of the
@@ -756,6 +762,8 @@
   support reset for repeated occurrences; nonseekable streams cannot be restarted.
   Switching sources never finalizes them. Reset resets sources and restarts the wrapper;
   terminal completion finalizes the chain, closing repeated resource handles only once.
+  Continuation resumption retains the current source schedule: a stale source completion
+  cannot skip the current occurrence or advance an already exhausted wrapper.
   |#
   (define iter-concat
     (lambda (iter . iter*)
@@ -767,21 +775,25 @@
                    (let loop ()
                      (if (null? remaining)
                          iter-end
-                         (let ([x (iter-next! (car remaining))])
+                         (let* ([occurrence remaining]
+                                [x (iter-next! (car occurrence))])
                            (if (iter-end? x)
                                (begin
-                                 (set! remaining (cdr remaining))
-                                 (unless (null? remaining)
-                                   (let ([next (car remaining)])
-                                     (if (hashtable-ref seen next #f) (iter-reset! next)
-                                         (hashtable-set! seen next #t))))
+                                 ;; A resumed producer may finish an occurrence already passed.
+                                 ;; Only that still-current list tail may advance the schedule.
+                                 (when (eq? remaining occurrence)
+                                   (set! remaining (cdr occurrence))
+                                   (unless (null? remaining)
+                                     (let ([next (car remaining)])
+                                       (if (hashtable-ref seen next #f) (iter-reset! next)
+                                           (hashtable-set! seen next #t)))))
                                  (loop))
                                x)))))
                  (lambda ()
                    (set! remaining sources)
                    (hashtable-clear! seen)
                    (hashtable-set! seen iter #t))
-                 #f (lambda () sources))))))
+                 #f sources)))))
   #|proc:iter-distinct
   Return an iterator that emits the first value from `iter` for each equivalence
   class according to `(equal? previous current) -> boolean`. Kind: lazy wrapper with
@@ -802,7 +814,7 @@
                                (loop)
                                (begin (set! seen (cons x seen)) x))))))
                  (lambda () (set! seen '()))
-                 #f (lambda () (list iter)))))))
+                 #f (list iter))))))
   #|proc:iter-sorted
   Consume `iter` immediately, sort its values with `(<? left right) -> boolean`, and
   return a cursor over that snapshot. Kind: eager buffering wrapper requiring finite input.
@@ -833,7 +845,7 @@
                                 (let ([x (vector-ref snapshot index)])
                                   (set! index (fx1+ index)) x)))
                  rebuild!
-                 #f (lambda () (list iter)))))))
+                 #f (list iter))))))
 
 ;;; terminal ops
 

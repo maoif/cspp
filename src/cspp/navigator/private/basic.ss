@@ -542,10 +542,12 @@
                 (indexed-transform
                  value (index-list (indexed-length value))
                  (lambda (old)
-                   (let ([entry (update (cons index old))])
-                     (unless (and (pair? entry) (eqv? (car entry) index))
-                       (nav-error 'nav-transform "entry must retain index ~s: ~s" index entry))
-                     (set! index (fx+ index 1))
+                   ;; The resumed storage location and entry identity must agree,
+                   ;; even when the mutable labeling counter has advanced meanwhile.
+                   (let* ([entry-index index] [entry (update (cons entry-index old))])
+                     (unless (and (pair? entry) (eqv? (car entry) entry-index))
+                       (nav-error 'nav-transform "entry must retain index ~s: ~s" entry-index entry))
+                     (set! index (fx1+ entry-index))
                      (cdr entry)))))]
              [(keyed-entries value)
               => (lambda (entries)
@@ -565,10 +567,11 @@
                (indexed-transform!
                 value (index-list (indexed-length value))
                 (lambda (old)
-                  (let ([entry (checked-entry clear! (cons index old))])
-                    (unless (eqv? (car entry) index)
-                      (nav-error 'nav/entries "entry must retain index ~s: ~s" index entry))
-                    (set! index (fx+ index 1))
+                  (let* ([entry-index index]
+                         [entry (checked-entry clear! (cons entry-index old))])
+                    (unless (eqv? (car entry) entry-index)
+                      (nav-error 'nav/entries "entry must retain index ~s: ~s" entry-index entry))
+                    (set! index (fx1+ entry-index))
                     (cdr entry)))))]
             [(alist? value)
              (for-each
@@ -586,6 +589,8 @@
   must return pairs. Map keys can change; the last entry in traversal order wins a key
   collision in maps with unique keys. Alists retain duplicate entries and their order.
   An indexed collection's entry must retain its index, and its value replaces that element.
+  A resumed suffix retains its focused index for labeling and validation; this does not
+  restore container contents or earlier callback effects.
   For containers supporting both protocols, indexed entries take precedence, except alists.
   Clearing visits later path steps and retains each entry pair; removing an entry is unsupported.
   Mutable clearing must retain map keys and indexes. Writable map parents rebuild their

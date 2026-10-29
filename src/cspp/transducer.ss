@@ -271,8 +271,10 @@
 
   ;; A resource context is explicit per-pass state, never an ambient handler. It
   ;; carries source dispatch and cleanup candidates discovered by that pass. A candidate
-  ;; owns a resource or has upstream links; it need not itself have resources. Free leaf
-  ;; cursors are ignored. Shallow retention avoids repeatedly classifying shared graphs;
+  ;; can reach a resource now or later; it need not currently own one. Immutable capability
+  ;; excludes permanently free graphs, including fixed wrappers, from retention. Dynamic
+  ;; child graphs remain candidates even when currently empty. This avoids retaining each
+  ;; exhausted free inner cursor in an unbounded stream or repeating graph classification;
   ;; one terminal forest walk discovers actual resources, including later lazy acquisitions.
   ;; The identity set is allocated only for candidates. User callbacks cannot observe or
   ;; share this context except through a dependent active cursor.
@@ -290,10 +292,9 @@
 
   (define remember-resource!
     (lambda (context iterator)
-      (when (and context
+      (when (and context ($iter-resource-capable? iterator)
                  (not (and ($resource-context-seen context)
-                           (hashtable-contains? ($resource-context-seen context) iterator)))
-                 (or ($iter-fini-proc iterator) (pair? (($iter-children iterator)))))
+                           (hashtable-contains? ($resource-context-seen context) iterator))))
         (unless ($resource-context-seen context)
           ($resource-context-seen-set! context (make-eq-hashtable)))
         (hashtable-set! ($resource-context-seen context) iterator #t)
@@ -773,7 +774,8 @@
   Other inputs are emitted as scalar values. Each inner iterator starts at its current
   position without implicit reset; repeated handles share that cursor. Inner exhaustion
   keeps resources open until the outer terminal succeeds or its sequence is explicitly
-  finalized. Inner eductions complete their state without completing the outer reduction.
+  finalized. Permanently resource-free inner graphs are not retained for cleanup.
+  Inner eductions complete their state without completing the outer reduction.
   Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tcat

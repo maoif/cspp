@@ -2791,3 +2791,68 @@
             (begin (iter-reset! cursor) #t)
             (equal? '(2 4) (iter->list cursor)))))
    (list array fxarray bytearray dlist)))
+
+(mat navigator-entry-index-resumption
+  (andmap
+   (lambda (constructor)
+     (let ([saved #f] [phase 0] [indexes '()])
+       (guard (condition [else #f])
+         (let ([result
+                (nav-transform
+                 nav/entries
+                 (lambda (entry)
+                   (set! indexes (cons (car entry) indexes))
+                   (if saved entry
+                       ;; The resumed update still targets this lexical index-0 location.
+                       (call/cc (lambda (continuation) (set! saved continuation) entry))))
+                 (constructor 1 2))])
+           (if (= phase 0)
+               (begin (set! phase 1) (saved (cons 0 10)))
+               (and (equal? '(10 2) (nav-select nav/all result))
+                    (equal? '(1 1 0) indexes)))))))
+   (list vector list array fxarray bytearray dlist)))
+
+(mat navigator-entry-index-resumption-validation
+  ;; A replayed entry must retain its actual index, even if the old pass advanced its counter.
+  (let ([saved #f] [phase 0])
+    (guard (condition [else (= phase 1)])
+      (nav-transform
+       nav/entries
+       (lambda (entry)
+         (if saved entry
+             ;; Resume the actual index-0 update with an invalid replacement index.
+             (call/cc (lambda (continuation) (set! saved continuation) entry))))
+       (vector 1 2))
+      (if (= phase 0)
+          (begin (set! phase 1) (saved (cons 2 10)))
+          #f))))
+
+(mat navigator-entry-clear-resumption
+  (andmap
+   (lambda (constructor)
+     (let ([saved #f] [phase 0] [source (constructor 1 2)])
+       (guard (condition [else #f])
+         (let ([result
+                (nav-clearval!
+                 (nav/path nav/entries
+                           (nav/pred
+                            (lambda (entry)
+                              (if saved #f
+                                  ;; Both the original and resumed predicates retain every entry.
+                                  (call/cc (lambda (continuation)
+                                             (set! saved continuation) #f))))))
+                 source)])
+           (if (= phase 0)
+               (begin (set! phase 1) (saved #f))
+               (and (eq? result source) (equal? '(1 2) (nav-select nav/all source))))))))
+   (list vector list array fxarray bytearray dlist)))
+
+(mat navigator-sparse-range-boundaries
+  (andmap
+   (lambda (constructor)
+     (let ([source (constructor 0 1 2 3 4)])
+       (and (equal? '(0) (nav-select (nav/slice 0 5 5) source))
+            (equal? '(1 3) (nav-select (nav/slice 1 4 2) source))
+            (equal? '() (nav-select (nav/slice 5 5 100) source))
+            (equal? '(4) (nav-select (nav/slice 4 5 100) source)))))
+   (list list dlist)))

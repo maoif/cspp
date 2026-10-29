@@ -1560,7 +1560,8 @@
    (lambda (dl index value) (dlist-set! dl index value) dl)
    (lambda (source start stop step visit)
      (let loop ([node (dlist-first source)] [index 0] [next start])
-       (when (< index stop)
+       ;; Once the next focus is outside the range, its remaining tail is unused.
+       (when (< next stop)
          (if (= index next)
              (begin (visit index (dnode-value node))
                     (loop (dnode-right node) (fx1+ index) (+ next step)))

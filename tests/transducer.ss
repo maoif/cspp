@@ -1255,3 +1255,45 @@
                                value)))
                    (tcat))])
       (and (equal? '() (into 'list xform source)) (= closed 1)))))
+
+(mat transducer-free-wrapper-retention
+  ;; Cleanup links, not a GC timing assumption, show whether exhausted free roots are retained.
+  (andmap
+   (lambda (wrap)
+     (let ([cursor (sequence (tmapcat (lambda (value) (wrap (range 1)))) (range 32))])
+       (let pass ([remaining 3])
+         (and (= 32 (length (iter->list cursor)))
+              (not (iter-finalized? cursor))
+              (= 1 (length (($iter-children cursor))))
+              (or (= remaining 1)
+                  (begin (iter-reset! cursor) (pass (- remaining 1))))))))
+   (list (lambda (source) (iter-concat source))
+         (lambda (source) (iter-zip source (range 1)))
+         (lambda (source) (iter-interleave source (range 0)))
+         (lambda (source) (iter-distinct = source))
+         (lambda (source) (iter-sorted < source)))))
+
+(mat transducer-empty-dynamic-cleanup-candidate
+  ;; A dynamic graph can gain its first child after its empty wrapper was consumed.
+  (andmap
+   (lambda (wrap)
+     (let ([children '()] [closed 0])
+       (let* ([resource (make-iter (lambda () iter-end) void
+                                   (lambda () (set! closed (+ closed 1))))]
+              [dynamic (mk-$iter (lambda () iter-end) void #f (lambda () children))]
+              [wrapper (wrap dynamic)]
+              [xform (tcompose
+                      (tmap (lambda (value)
+                              (if (eq? value 'acquire)
+                                  (begin (set! children (list resource)) '())
+                                  value)))
+                      (tcat))])
+         (and (equal? '() (into 'list xform (list wrapper 'acquire)))
+              (= closed 1)
+              (iter-finalized? wrapper)))))
+   (list (lambda (source) source)
+         (lambda (source) (iter-concat source))
+         (lambda (source) (iter-zip source (range 0)))
+         (lambda (source) (iter-interleave source (range 0)))
+         (lambda (source) (iter-distinct = source))
+         (lambda (source) (iter-sorted < source)))))
