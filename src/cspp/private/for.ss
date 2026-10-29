@@ -745,13 +745,13 @@
                         #f)]))]
           [:fixnums
            (when (not (<= 1 nops 3))
-             (syntax-error op* "invalid number of options for iter type `:fxnums`:"))
+             (syntax-error op* "invalid number of options for iter type `:fixnums`:"))
            (with-syntax ([(t-start t-stop t-step) (generate-temporaries '(t-start t-stop t-step))])
              (case nops
                [1 (source-fragment (lambda (e)
                           #`(let ([t-stop #,(car op*)])
                               (unless (and (fixnum? t-stop) (fx>= t-stop 0))
-                                (errorf ':fxnums "not a nonnegative fixnum: ~a" t-stop))
+                                (errorf ':fixnums "not a nonnegative fixnum: ~a" t-stop))
                               #,e))
                         #`[#,v 0]
                         #`(fx= #,v t-stop)
@@ -760,7 +760,7 @@
                [2 (source-fragment (lambda (e)
                           #`(let ([t-start #,(car op*)] [t-stop #,(cadr op*)])
                               (unless (and (fixnum? t-start) (fixnum? t-stop) (fx<= t-start t-stop))
-                                (errorf ':fxnums "invalid range from ~a to ~a" t-start t-stop))
+                                (errorf ':fixnums "invalid range from ~a to ~a" t-start t-stop))
                               #,e))
                         #`[#,v t-start]
                         #`(>= #,v t-stop)
@@ -771,7 +771,7 @@
                               (unless (and (fixnum? t-start) (fixnum? t-stop) (fixnum? t-step)
                                            (or (and (fx<= t-start t-stop) (fx> t-step 0))
                                                (and (fx>= t-start t-stop) (fx< t-step 0))))
-                                (errorf ':fxnums "invalid range from ~a to ~a, step ~a" t-start t-stop t-step))
+                                (errorf ':fixnums "invalid range from ~a to ~a, step ~a" t-start t-stop t-step))
                               #,e))
                         #`[#,v t-start]
                         #`(if (fx<= t-start t-stop)
@@ -1024,7 +1024,7 @@
         (let ([name (car (generate-temporaries '(source-expression)))])
           (set! evaluations (cons #`[#,name #,expression] evaluations))
           name))
-      (when (null? options) (syntax-error cl "for: missing iterator source:"))
+      (when (null? options) (syntax-violation type "missing iterator source" cl))
       (let loop ([remaining (cdr options)] [arguments (list (bind-expression (car options)))]
                  [positional 1] [predicate #f] [index #f])
         (if (null? remaining)
@@ -1156,6 +1156,7 @@
        (fragment-raw-termination fragment) (fragment-filter fragment) (fragment-visit fragment)))
     (syntax-case cl ()
       [(v lit)
+       (literal? #'lit)
        (with-evaluations
         (syntax-case #'lit (quote)
           [(quote value)

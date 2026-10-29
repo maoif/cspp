@@ -1,5 +1,41 @@
 (import (cspp) (cspp private for))
 
+(mat fixnums-error-identity
+     ;; Every runtime arity identifies the documented :fixnums source type.
+     (andmap
+      (lambda (kind)
+        (andmap
+         (lambda (arguments)
+           (guard (condition
+                   [(syntax-violation? condition) #f]
+                   [else (and (who-condition? condition)
+                              (eq? ':fixnums (condition-who condition)))])
+             (eval `(,kind ([x :fixnums ,@arguments]) x) (environment '(cspp)))
+             #f))
+         '((#f) (0 #f) (0 2 0))))
+      '(for for/fold for/list for/vector for* for*/fold for*/list for*/vector))
+
+     ;; A missing bound also names :fixnums rather than the unsupported :fxnums spelling.
+     (guard (condition
+             [(syntax-violation? condition)
+              (and (who-condition? condition)
+                   (eq? ':fixnums (condition-who condition)))]
+             [else #f])
+       (eval '(for/list ([x :fixnums]) x) (environment '(cspp)))
+       #f)
+
+     ;; Missing sources of other typed iterators must not enter literal-shorthand parsing either.
+     (andmap
+      (lambda (type)
+        (guard (condition
+                [(syntax-violation? condition)
+                 (and (who-condition? condition) (eq? type (condition-who condition)))]
+                [else #f])
+          (eval `(for/list ([x ,type]) x) (environment '(cspp)))
+          #f))
+      '(:iota :fxiota :nums :list :string :vector :fxvector :flvector :bytevector
+              :hashtable-keys :hashtable-values :iter)))
+
 (mat loop-malformed-syntax-conditions
      ;; Invalid clause structure and static bytevector options are syntax violations.
      (andmap
