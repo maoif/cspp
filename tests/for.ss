@@ -1,5 +1,45 @@
 (import (cspp) (cspp private for))
 
+(mat loop-malformed-syntax-conditions
+     ;; Invalid clause structure and static bytevector options are syntax violations.
+     (andmap
+      (lambda (kind)
+        (andmap
+         (lambda (clauses)
+           (guard (condition
+                   [(syntax-violation? condition)
+                    (and (syntax-violation-form condition) #t)]
+                   [else #f])
+             (eval `(,kind ,clauses x) (environment '(cspp)))
+             #f))
+         '(([x #f])
+           ()
+           ([:guard #t])
+           ([x 2] [:unknown #t])
+           ([:index i] [:index j] [x 2])
+           ([x 2] [:finish x])
+           ([x :bytevector #vu8(1 2) :type invalid])
+           ([x :bytevector #vu8(1 2) :big :little])
+           ([x :vector '#(1 2) :step])
+           ([x :vector '#(1 2) :rev :rev]))))
+      '(for for/fold for/list for/vector for* for*/fold for*/list for*/vector))
+
+     ;; The clause-handler duplicate and orphan-configuration paths share the same condition type.
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (let ([state (make-eq-hashtable)])
+         (add-clause! state 'index #'(:index i))
+         (add-clause! state 'index #'(:index j)))
+       #f)
+
+     (guard (condition [(syntax-violation? condition) #t] [else #f])
+       (handle-iter/config-config (make-eq-hashtable) #'(:guard #t))
+       #f)
+
+     ;; Invalid runtime values remain ordinary errors, distinct from malformed syntax.
+     (guard (condition [(syntax-violation? condition) #f] [else #t])
+       (for/list ([x :iota #f]) x)
+       #f))
+
 (mat loop-body-required
      ;; Every loop variant diagnoses a missing body even if its sources would be empty.
      (andmap

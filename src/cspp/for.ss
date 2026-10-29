@@ -94,6 +94,8 @@
   `:init` binds an accumulator updated from the body result; `:finish` supplies the final value.
   The body requires at least one expression and permits preceding local definitions.
   Its last expression supplies the body result.
+  Malformed clauses and static options raise syntax violations; invalid source values raise
+  runtime errors when their source is initialized.
   Binding clauses scope their variables over subsequent clauses and the body. Each binding clause
   uses its corresponding Scheme binding form with one binding. An indexed guard binds a zero-based
   index counting passes through that guard, including passes rejected by a later guard.

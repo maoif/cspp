@@ -150,12 +150,13 @@
                       (map (lambda (group) (cons (car group) (reverse (cdr group))))
                            (reverse (hashtable-ref s 'iter/config '())))))
                   s)
-                (errorf 'for "clauses are not handled entirely: ~a" cl*))
+                (syntax-violation 'for "unexpected trailing clauses" clauses (car cl*)))
             (let loop-trans ([trans (filter (lambda (row)
                                               (eq? (car row) state))
                                             table)])
               (if (null? trans)
-                  (errorf 'for "no handler for clauses: ~a" cl*)
+                  (syntax-violation 'for "unexpected clause or missing iterator clause"
+                                    clauses (and (pair? cl*) (car cl*)))
                   (let* ([row     (car trans)]
                          [to      (list-ref row 1)]
                          [handler (list-ref row 2)])
@@ -180,7 +181,7 @@
   (define (add-clause! state name cl)
     (let ([?cl (hashtable-ref state name #f)])
       (if ?cl
-          (errorf 'for "clause already exists: ~a" cl)
+          (syntax-violation 'for "duplicate clause" cl)
           (hashtable-set! state name cl))))
 
   (define handle-init
@@ -352,7 +353,7 @@
       (define (add-clause! cl)
         (let ([res (hashtable-ref state 'iter/config '())])
           (if (null? res)
-              (errorf 'for "no iter clause before config clause: ~a" cl)
+              (syntax-violation 'for "configuration clause requires a preceding iterator" cl)
               (set-cdr! (car res) (cons cl (cdar res))))))
       (syntax-case cl ()
         [(:index v)
@@ -834,12 +835,14 @@
                                    (let ([t (syntax->datum (cadr op-type))])
                                      (unless (memq t '(single double u8 s8 u16 s16 u24 s24 u32 s32 u40 s40
                                                               u48 s48 u56 s56 u64 s64))
-                                       (errorf ':bytevector "unknown access type: ~a" t))
+                                       (syntax-violation ':bytevector "unknown access type"
+                                                         cl (cadr op-type)))
                                      t)
                                    'u8)]
                     [endianness (if op-little
                                     (if op-big
-                                        (errorf ':bytevector ":big and :little cannot be given at the same time")
+                                        (syntax-violation ':bytevector
+                                                          ":big and :little cannot be combined" cl)
                                         #'(endianness little))
                                     (if op-big
                                         #'(endianness big)
