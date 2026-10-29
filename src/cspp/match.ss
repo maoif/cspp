@@ -19,25 +19,155 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
           (cspp private match)
           (cspp io))
 
-  (define subvector->list
-    (lambda (vec start)
-      (let ([len (vector-length vec)]
-            [ls (list (vector-ref vec start))])
-        ;; no need to do error tests
-        (let loop ([next ls]
-                   [i (add1 start)])
-          (if (fx= i len)
-              ls
-              (let ([item (list (vector-ref vec i))])
-                (set-cdr! next item)
-                (loop item (add1 i))))))))
+  #|macro:$match/constant-regex
+  The `$match/constant-regex` helper checks `expression` after preceding captures are bound.
+  A literal string or quoted SRE compiles once into the private mutable `cache`; other
+  expressions retain their ordinary evaluation. For example, `"."` uses the cache, whereas
+  `(quote argument)` calls a captured procedure named `quote` on every candidate.
+  |#
+  (define-syntax $match/constant-regex
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ cache expression)
+         (if (or (string? (syntax->datum #'expression))
+                 (syntax-case #'expression (quote) [(quote datum) #t] [_ #f]))
+             #'(or cache
+                   (let ([compiled (irregex expression)])
+                     (set! cache compiled)
+                     compiled))
+             #'expression)])))
 
-  ;; match interface
+  #|doc
+(match <expr>
+  <clause> ...
+  [else <result>])
+
+<pattern> := <literal>
+            | ,<identifier>                    ; capture
+            | `<identifier>                    ; compare with a capture
+            | _                                ; ignore
+            | ,@<identifier>                   ; splice one matched value
+            | ,@[]                              ; splice for effect
+            | ,@[,<identifier> ...]             ; catamorphism with multiple values
+            | ,@[<procedure> -> ,<identifier> ...]
+            | (#`<identifier> <pattern>)        ; capture the whole matched value too
+            | (<pattern> ...)
+            | (<pattern> ... . <pattern>)       ; dotted list
+            | (<pattern> ... <pattern> ...)     ; repeated prefix
+            | #(<pattern> ...)
+            | ,(record <type> :fields (<field> <pattern>) ...)
+            | ,(record <type> :values <pattern> ...)
+            | ,(datatype <type> <variant> :fields (<field> <pattern>) ...)
+            | ,(datatype <type> <variant> :values <pattern> ...)
+            | ,(datatype <type> <singleton>)
+            | ,(box <pattern>)
+            | ,(regex <expression> <group> ...)
+            | ,(hash (<literal> <pattern>) ...)
+            | ,(<match-expander> <argument> ...)
+
+<group> := (<number-or-name> ,<identifier>)
+<number-or-name> := <exact-nonnegative-integer> | <symbol>
+
+<literal> := <number> | <boolean> | <string> | <character> | <symbol>
+
+<clause> := [<pattern> <result>]
+          | [<pattern> <condition> <result>]
+
+The `...` pattern repeats zero or more list or vector elements and collects captures as lists.
+`match` evaluates `<expr>` once, tries clauses from left to right, and returns the selected body.
+An omitted `else` raises an error when no clause matches.
+The `,@` forms recursively apply the same clauses as a catamorphism: `,@x` returns the value
+of matching the current input again, while `,@[]` keeps only the recursive side effect.
+
+Examples:
+
+(match '(10 20) [(,x ,y) (+ x y)])
+;; => 30
+
+(match '(1 2 3) [(,x ...) x])
+;; => (1 2 3)
+
+(match (make-Point 10 20)
+  [,(record Point :fields (y ,y) (x ,x)) (list x y)])
+;; => (10 20)
+
+(match '(1 2)
+  [() '()]
+  [(,head . ,@tail) (cons (add1 head) tail)])
+;; => (2 3)
+  |#
+
+  #|macro:match
+  The `match` macro evaluates its input once and tries its pattern clauses in order.
+  `,name` captures a value, `` `name `` compares against a bound value, and `_` ignores a value.
+  List and vector patterns destructure their elements; `...` repeats a pattern zero or more times,
+  collecting its captures in lists. Captures preceding a suffix are visible to its backreferences.
+  A repeated prefix prefers the shortest prefix whose remaining suffix matches. For example,
+  `(match '(1 2) [(,x ... ,y ...) (list x y)])` returns `(() (1 2))`; vector patterns use the
+  same preference. A false clause condition proceeds to the next clause without trying another
+  partition of an already matched pattern. Literal symbols use bare names; `'name` is the
+  structural list pattern `(quote name)`, and `_` and repetition-position `...` retain their
+  special meanings. Use captures and conditions to distinguish reserved pattern shapes as data.
+  Vector lengths are checked before element patterns run. A fixed-length suffix after a
+  repetition is tried only at its possible ending position, skipping impossible candidates.
+  Records use `,(record Type :fields (field pattern) ...)` for a named subset of fields,
+  or `,(record Type :values pattern ...)` for all fields in declaration order. Both native Chez
+  and CSPP record types are supported. Empty `:fields` checks only the type; empty `:values`
+  requires a type with no fields. Fields belong to the selected type, excluding inherited fields.
+  Named fields must be unique; unknown fields and wrong positional counts are errors. These are
+  syntax errors for static descriptors and runtime errors for local generative descriptors when
+  the input has the selected type. Malformed modes and selectors are always syntax errors.
+  Record syntax requires the explicit wrapper; the old `,(Type ...)` form is unsupported.
+  Datatypes use `,(datatype Type Variant :fields (field pattern) ...)` or
+  `,(datatype Type Variant :values pattern ...)` with the same field rules as records.
+  A zero-field variant also accepts the shorthand `,(datatype Type Singleton)`.
+  Datatype patterns select the declared variant type; the old `,(Type Variant ...)` is unsupported.
+  The `record`, `datatype`, `box`, `regex`, and `hash` heads are reserved by spelling, as are the
+  field-mode tags `:fields` and `:values` in record and datatype patterns. Other heads retain
+  custom-expander dispatch; a record named `hash` uses `,(record hash :values ...)`.
+  A custom head `name` resolves the compile-time binding `name-expander` registered by
+  `define-match-expander` from `(cspp private match)`; its expander defines its argument grammar.
+  Box, hash, and regex extensions retain their existing forms. Expressions embedded in
+  extensions are evaluated as expressions and do not declare pattern captures.
+  Literal regex strings and quoted SREs compile lazily once per match invocation, including
+  its catamorphism calls. Other regex expressions are evaluated on every visited candidate.
+  Quotation is recognized in the expression's binding scope, including earlier captures.
+  Regex group numbers require exact nonnegative integers; group names are literal symbols.
+  Hash keys are literal data, including bare symbols. An empty `,(hash)` checks the input type.
+  Pattern variables intentionally shadow outer bindings in the selected body. Generated matcher
+  bindings remain hygienic, so names such as `rtd`, `fields`, and `indices` in a pattern cannot
+  capture or rename the matcher's internal temporaries.
+  The reader treats `,(hash ...)` as `(unquote (hash ...))`, which invokes the hash extension.
+  To match such a list as data, capture its head and use a guard, for example:
+  ```scheme
+  (match '(unquote (hash ("key" 42)))
+    [(,head (hash ("key" ,value))) (eq? head 'unquote) value]) ; => 42
+  ```
+  A clause has exactly one result expression, optionally preceded by one condition expression.
+  After the pattern matches, a false condition tries the next clause; any non-false value selects
+  the result. Conditions can refer to captures and are not evaluated for failed patterns.
+  The final `else` clause has exactly one result expression. Use `begin` or `let` to group actions
+  or local definitions within a result, and `and` to combine conditions. The old `(guard ...)`
+  marker is unsupported; Chez exception-handling `guard` remains an ordinary expression.
+  An unmatched input without a fallback raises an error. The selected result supplies its values.
+  Independent invocations keep their matcher state separate and may run in different fibers or
+  threads. Matching does not lock or snapshot mutable inputs; callers must coordinate mutation
+  of shared lists, vectors, strings, boxes, records, and hashtables with their readers.
+  Repeated captures before a suffix may construct their lists lazily on first reference.
+  If closures share one such capture across fibers or threads, callers must serialize its first
+  reads and assignments, or materialize it once before publishing it for read-only access.
+  Unsynchronized access can construct different lists or lose assignments; this is a caller bug.
+  Later shared assignments and mutation of captured values also require caller synchronization.
+  |#
   (define-syntax match
     (lambda (stx)
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;   helpers
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+      #|proc:literal?
+      The `literal?` helper reports whether syntax is a self-contained literal pattern.
+      For example, `42` produces `#t`, while `x` produces `#f` because identifiers are symbols.
+      |#
       (define literal?
         (lambda (lit)
           (let ([p (syntax->datum lit)])
@@ -45,52 +175,313 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                 (boolean? p)
                 (string? p)
                 (char? p)))))
+      ;; A collector is active only while compiling a repeated element pattern.
+      (define capture-collector #f)
+      (define regex-cache-bindings '())
+      #|proc:cache-constant-regex
+      The `cache-constant-regex` helper rewrites a regex extension `pattern` to compile a literal
+      string or apparent quoted SRE once, when first reached during a match invocation.
+      It records a private cache binding outside the recursive matcher and defers the final
+      constant check until preceding captures are in scope. For example, `(regex "." (0 ,x))`
+      caches its regex; `(regex (quote argument) (0 ,x))` remains dynamic if `quote` is captured.
+      |#
+      (define cache-constant-regex
+        (lambda (pattern)
+          (syntax-case pattern ()
+            [(extension expression . groups)
+             (if (or (string? (syntax->datum #'expression))
+                     (syntax-case #'expression (quote) [(quote datum) #t] [_ #f]))
+                 (with-syntax ([(cache) (generate-temporaries '(cache))])
+                   (set! regex-cache-bindings (cons #'[cache #f] regex-cache-bindings))
+                   #'(extension ($match/constant-regex cache expression) . groups))
+                 pattern)])))
+      #|proc:pattern-identifier?
+      The `pattern-identifier?` helper checks whether `variable` occurs in the original syntax
+      of `pattern`, comparing identifiers hygienically. For example, `x` occurs in `(tag ,x)`,
+      while a fresh identifier introduced by an expander does not. Only captures supplied by
+      the caller escape a custom expansion; private captures may belong to individual branches.
+      |#
+      (define pattern-identifier?
+        (lambda (variable pattern)
+          (syntax-case pattern ()
+            [name (identifier? #'name) (bound-identifier=? variable #'name)]
+            [(head . tail) (or (pattern-identifier? variable #'head)
+                               (pattern-identifier? variable #'tail))]
+            [#(items ...) (exists (lambda (item) (pattern-identifier? variable item))
+                                 #'(items ...))]
+            [_ #f])))
+      #|proc:collect-pattern-captures
+      The `collect-pattern-captures` helper records the captures introduced by one compiler step.
+      It ignores extension arguments until their expander compiles them as patterns. For example,
+      `,x` records `x`, while `(box ,x)` records nothing until its subpattern is compiled.
+      |#
+      (define collect-pattern-captures
+        (lambda (pattern)
+          (when capture-collector
+            (syntax-case pattern (unquote unquote-splicing quasisyntax)
+              [,variable (identifier? #'variable) (capture-collector #'variable)]
+              [,@variable (identifier? #'variable) (capture-collector #'variable)]
+              [,@[,names ...]
+               (andmap identifier? #'(names ...))
+               (for-each capture-collector #'(names ...))]
+              [,@[procedure -> ,names ...]
+               (and (andmap identifier? #'(names ...))
+                    (identifier? #'procedure) (eq? (datum ->) '->))
+               (for-each capture-collector #'(names ...))]
+              [(#`name subpattern)
+               (identifier? #'name)
+               (capture-collector #'name)]
+              [_ (void)]))))
+      #|proc:compile-repeated-pattern
+      The `compile-repeated-pattern` helper compiles `pattern` once, collecting
+      its unique caller-visible captures. `rho` is the compiler environment
+      and `failure` is the failure identifier. It calls `generate` with the captures and a
+      two-argument procedure that inserts an input identifier and success expression into it.
+      For example, `,x` supplies `(x)` and a procedure producing `(let ([x input]) success)`.
+      |#
+      (define compile-repeated-pattern
+        (lambda (rho pattern failure generate)
+          (let ([captures '()]
+                [input (car (generate-temporaries '(input)))]
+                [success (car (generate-temporaries '(success)))])
+            (define (add! variable)
+              (unless (exists (lambda (capture) (bound-identifier=? variable capture)) captures)
+                (set! captures (cons variable captures))))
+            (define (insert expression value body)
+              (syntax-case expression ()
+                [name
+                 (identifier? #'name)
+                 (cond [(bound-identifier=? #'name success) body]
+                       [(bound-identifier=? #'name input) value]
+                       [else expression])]
+                [(head . tail) #`(#,(insert #'head value body) . #,(insert #'tail value body))]
+                [#(items ...) #`#(#,@(map (lambda (item) (insert item value body)) #'(items ...)))]
+                [_ expression]))
+            (let ([compiled (fluid-let ([capture-collector add!])
+                              (process-pattern rho input pattern success failure))])
+              ;; Nested repetitions export their collected bindings to the surrounding pattern.
+              (when capture-collector (for-each capture-collector captures))
+              (generate captures (lambda (value body) (insert compiled value body)))))))
+      #|proc:handle-extension
+      The `handle-extension` helper dispatches an extension pattern to its expander.
+      For example, `(hash ("key" ,x))` selects the hash expander and returns its matcher syntax.
+      |#
       (define handle-extension
         (lambda (ext rho expr-id pat body fk)
           (define (match-expander? ext)
             (let* ([n ($construct-name ext ext "-expander")]
                    [?p (rho n)])
-              (and ?p (eq? '*MATCH-EXPANDER* (car ?p)))))
-          (define (record? ext)
-            (or (valid-record-type? rho ext)
-                (valid-record-type? rho ($construct-name ext "$record-" ext))))
+              (and (pair? ?p) (eq? '*MATCH-EXPANDER* (car ?p)))))
           (cond
-           [(match-expander? ext)
-            (let ([expander (cdr (rho ($construct-name ext ext "-expander")))])
-              (assert (procedure? expander))
-              (expander process-pattern rho expr-id pat body fk))]
-           ;; TODO make this dispatch extensible
-           [(record? ext)
+           [(eq? 'record (syntax->datum ext))
             (record-expander process-pattern rho expr-id pat body fk)]
+           [(eq? 'datatype (syntax->datum ext))
+            (datatype-expander process-pattern rho expr-id pat body fk)]
+           ;; These heads keep their built-in meanings even when a record or custom
+           ;; expander has the same spelling; explicit `record` selects that type.
            [(eq? 'box (syntax->datum ext))
             (box-expander process-pattern rho expr-id pat body fk)]
            [(eq? 'regex (syntax->datum ext))
-            (regex-expander process-pattern rho expr-id pat body fk)]
+            (regex-expander process-pattern rho expr-id (cache-constant-regex pat) body fk)]
            [(eq? 'hash (syntax->datum ext))
             (hash-expander process-pattern rho expr-id pat body fk)]
+           [(match-expander? ext)
+            (let ([expander (cdr (rho ($construct-name ext ext "-expander")))])
+              (unless (procedure? expander)
+                (syntax-error ext "match: invalid custom expander procedure:"))
+              (let ([collect capture-collector])
+                (fluid-let ([capture-collector
+                             (and collect
+                                  (lambda (variable)
+                                    (when (pattern-identifier? variable pat)
+                                      (collect variable))))])
+                  (expander process-pattern rho expr-id pat body fk))))]
            [else (syntax-error ext "match: invalid extension pattern: ")])))
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;   main logic
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+      #|proc:process-pattern
+      The `process-pattern` helper compiles one pattern against `expr-id`.
+      It returns success syntax when the pattern matches and calls `failure` otherwise; for
+      example, compiling `,x` against `value` returns a binding of `x` to `value`.
+      |#
       (define process-pattern
         (lambda (rho expr-id pat body fk)
-          (define extract-pat-vars
-            (lambda (pat)
-              (let loop ([pat pat] [patvars '()])
-                (syntax-case pat (unquote unquote-splicing quasisyntax)
-                  [,var  (identifier? #'var) (cons #'var patvars)]
-                  [,@var (identifier? #'var) (cons #'var patvars)]
-                  [,@[,vars ...]
-                   (andmap identifier? #'(vars ...))
-                   (append #'(vars ...) patvars)]
-                  [,@[proc -> ,vars ...]
-                   (and (andmap identifier? #'(vars ...)) (identifier? #'proc) (eq? '-> (datum ->)))
-                   (append #'(vars ...) patvars)]
-                  [(#`nref pat) (identifier? #'nref) (cons #'nref (loop #'pat patvars))]
-                  [(pat0 . pat1) (loop #'pat0 (loop #'pat1 patvars))]
-                  [#(pat0 pat1 ...) (loop #'pat0 (loop #'(pat1 ...) patvars))]
-                  [_ patvars]))))
+          ;; Conservatively include embedded expressions as well as backreferences.
+          #|proc:mentions-variable?
+          The `mentions-variable?` helper reports whether a syntax tree refers to an identifier.
+          For example, `'(,x stop)` with identifier `x` produces `#t`, while `'(stop)` produces
+          `#f`.
+          |#
+          (define mentions-variable?
+            (lambda (pattern variable)
+              (syntax-case pattern ()
+                [(head . tail)
+                 (or (mentions-variable? #'head variable)
+                     (mentions-variable? #'tail variable))]
+                [#(items ...) (exists (lambda (item) (mentions-variable? item variable))
+                                     #'(items ...))]
+                [name (identifier? #'name) (free-identifier=? #'name variable)]
+                [_ #f])))
+          #|proc:transparent-suffix?
+          The `transparent-suffix?` helper reports whether a suffix can be inspected without
+          introducing hidden prefix references. A suffix `,x` or `,(box stop)` produces `#t`;
+          built-in box, hash, record, and datatype subpatterns are checked recursively. Regexes,
+          custom expanders, catamorphisms, and quasiquoted identifiers remain opaque.
+          |#
+          (define transparent-suffix?
+            (lambda (pattern)
+              (syntax-case pattern (unquote unquote-splicing quasiquote)
+                [,name (identifier? #'name) #t]
+                ;; Identifier macros may introduce prefix references at their use site.
+                [`name (identifier? #'name) #f]
+                [,(extension arguments ...)
+                 (identifier? #'extension)
+                 (and (memq (datum extension) '(box hash record datatype))
+                      (for-all transparent-suffix?
+                               (extension-subpatterns rho #'(extension arguments ...))))]
+                [(unquote-splicing . arguments) #f]
+                [(head . tail) (and (transparent-suffix? #'head) (transparent-suffix? #'tail))]
+                [#(items ...) (for-all transparent-suffix? #'(items ...))]
+                [_ #t])))
+          #|proc:bind-pattern-captures
+          The `bind-pattern-captures` helper emits lexical bindings for captured variables.
+          For example, variables `(x y)` and expressions `(10 20)` produce nested bindings
+          equivalent to `(let ([x 10]) (let ([y 20]) body))`.
+          |#
+          (define bind-pattern-captures
+            (lambda (variables expressions body)
+              (if (null? variables)
+                  body
+                  #`(let ([#,(car variables) #,(car expressions)])
+                      #,(bind-pattern-captures (cdr variables) (cdr expressions) body)))))
+          #|proc:bind-lazy-pattern-captures
+          The `bind-lazy-pattern-captures` helper binds each `(identifier expression)` in
+          `entries` around `body`, evaluating the expression only on its first reference.
+          Reads and assignments share a private location, including references from closures.
+          For example, `(x (reverse prefix))` reverses `prefix` once if `x` is read, and never
+          reverses it if `x` is unused or assigned first. Assigning `#f` remains a valid value.
+          Initialization and assignment are unsynchronized. Callers sharing the generated binding
+          across fibers or threads must serialize its first reads and assignments, as for `match`.
+          |#
+          (define bind-lazy-pattern-captures
+            (lambda (entries body)
+              (if (null? entries)
+                  body
+                  (with-syntax ([variable (caar entries)]
+                                [expression (cadar entries)]
+                                [(value ready?) (generate-temporaries '(value ready?))])
+                    #`(let ([value #f] [ready? #f])
+                        (let-syntax
+                            ([variable
+                              (identifier-syntax
+                               (reference
+                                (if ready?
+                                    value
+                                    (begin (set! value expression)
+                                           (set! ready? #t)
+                                           value)))
+                               ((set! reference rhs)
+                                (begin (set! value rhs) (set! ready? #t))))])
+                          #,(bind-lazy-pattern-captures (cdr entries) body)))))))
+          #|proc:bind-suffix-captures
+          The `bind-suffix-captures` helper binds accumulated ellipsis captures around a suffix
+          continuation. A capture needed by the suffix is materialized on first reference;
+          independent captures are bound after the suffix matches. For example, accumulated
+          `(2 1)` becomes `(1 2)` when used, avoiding copies for failed independent suffixes.
+          |#
+          (define bind-suffix-captures
+            (lambda (variables accumulators suffix success generate)
+             (let ([transparent? (transparent-suffix? suffix)])
+              (let loop ([variables variables] [accumulators accumulators]
+                         [early '()] [late '()])
+                (define (bind entries body)
+                  (bind-pattern-captures (map car entries) (map cadr entries) body))
+                (if (null? variables)
+                    (bind-lazy-pattern-captures
+                     (reverse early) (generate (bind (reverse late) success)))
+                    (let ([entry (list (car variables) #`(reverse #,(car accumulators)))])
+                      (if (or (not transparent?)
+                              (mentions-variable? suffix (car variables)))
+                          (loop (cdr variables) (cdr accumulators) (cons entry early) late)
+                          (loop (cdr variables) (cdr accumulators) early (cons entry late)))))))))
+          #|proc:vector-pattern-size
+          The `vector-pattern-size` helper returns a pattern sequence's minimum length and
+          whether that length is exact. For example, `(a b)` returns `2` and `#t`, while
+          `(a ... b)` returns `1` and `#f`. These facts reject impossible vector shapes before
+          matching elements and avoid retrying a fixed suffix at impossible source positions.
+          |#
+          (define vector-pattern-size
+            (lambda (patterns)
+              (let loop ([patterns patterns] [minimum 0] [exact? #t])
+                (syntax-case patterns ()
+                  [() (values minimum exact?)]
+                  [(pattern dots . rest)
+                   (eq? (datum dots) '...)
+                   (loop #'rest minimum #f)]
+                  [(pattern . rest) (loop #'rest (fx1+ minimum) exact?)]))))
+          #|proc:process-vector-pats
+          The `process-vector-pats` helper compiles fixed and repeated vector elements.
+          For example, `#(,x ...)` against `#(1 2)` binds `x` to `(1 2)` and checks the vector
+          length before returning the success continuation.
+          |#
+          (define process-vector-pats
+            (lambda (vecid vlen veci pats body fk)
+              (syntax-case pats ()
+                [()
+                 #`(if (fx= #,veci #,vlen)
+                       #,body
+                       (#,fk))]
+                [(pat dots)
+                 (eq? (datum dots) '...)
+                 (compile-repeated-pattern rho #'pat fk
+                   (lambda (variables compile-item)
+                     (with-syntax ([(patvars ...) variables])
+                       (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
+                                     [(i viter vitem) (generate-temporaries '(i viter vitem))])
+                         #`(let viter ([i #,veci] [bindings '()] ...)
+                             (if (fx= i #,vlen)
+                                 #,(bind-pattern-captures variables
+                                                          (map (lambda (binding) #`(reverse #,binding))
+                                                               #'(bindings ...))
+                                                          body)
+                                 (let ([vitem (vector-ref #,vecid i)])
+                                   #,(compile-item #'vitem
+                                                   #'(viter (fx1+ i) (cons patvars bindings) ...)))))))))]
+                [(pat0 dots . pat1)
+                 (eq? (datum dots) '...)
+                 (let-values ([(minimum exact?) (vector-pattern-size #'pat1)])
+                  (compile-repeated-pattern rho #'pat0 fk
+                   (lambda (variables compile-item)
+                     (with-syntax ([(patvars ...) variables])
+                       (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
+                                     [(i viter vitem new-fk) (generate-temporaries '(i viter vitem new-fk))])
+                         #`(let viter ([i #,veci] [bindings '()] ...)
+                             (let ([new-fk
+                                    (lambda ()
+                                      (if (fx< i #,vlen)
+                                          (let ([vitem (vector-ref #,vecid i)])
+                                            #,(compile-item #'vitem
+                                                            #'(viter (fx1+ i) (cons patvars bindings) ...)))
+                                          (#,fk)))])
+                               #,(bind-suffix-captures
+                                  variables #'(bindings ...) #'pat1 body
+                                  (lambda (success)
+                                    #`(if (#,(if exact? #'fx= #'fx>=) (fx- #,vlen i) #,minimum)
+                                          #,(process-vector-pats vecid vlen #'i #'pat1 success #'new-fk)
+                                          (new-fk)))))))))))]
+                [(pat0 pat1 ...)
+                 (with-syntax ([(vitem next-index) (generate-temporaries '(vitem next-index))])
+                   #`(if (fx< #,veci #,vlen)
+                         (let ([vitem (vector-ref #,vecid #,veci)]
+                               [next-index (fx1+ #,veci)])
+                           #,(process-pattern rho #'vitem #'pat0
+                                              (process-vector-pats vecid vlen #'next-index
+                                                                   #'(pat1 ...) body fk)
+                                              fk))
+                         (#,fk)))])))
           ;;(printf "process-pattern ~s ~s ~s ~s~n" expr-id pat body fk)
+          (collect-pattern-captures pat)
           (with-syntax ([expr-id expr-id])
             (syntax-case pat (unquote quasiquote unquote-splicing quasisyntax)
               [,var
@@ -130,55 +521,55 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                (identifier? #'nref)
                #`(let ([nref expr-id])
                    #,(process-pattern rho #'expr-id #'pat body fk))]
-              [,(?match-extension special-pats ...)
+              [,(?match-extension . special-pats)
                (identifier? #'?match-extension)
-               (handle-extension #'?match-extension rho #'expr-id #'(?match-extension special-pats ...) body fk)]
+               (handle-extension #'?match-extension rho #'expr-id #'(?match-extension . special-pats) body fk)]
               ;; ... in the end
               [(pat dots)
                (eq? (datum dots) '...)
-               #`(if (pair? expr-id)
-                     ;; Get all pat vars in `pat`,
-                     ;; iterate through the input list, for each item,
-                     ;; destructure it and accumulate matched components in `bindings ...`.
-                     #,(with-syntax ([(patvars ...) (extract-pat-vars #'pat)])
-                         (with-syntax ([(lbs ...)      (generate-temporaries #'(patvars ...))]
-                                       [(iter first rest) (generate-temporaries '(iter first rest))])
-                           #`(let ([lbs (make-list-builder)] ...)
-                               (let iter ([ls expr-id])
-                                 (cond
-                                  [(null? ls)
-                                   (let ([patvars (lbs)] ...)
-                                     #,body)]
-                                  [(pair? ls)
-                                   (let ([first (car ls)] [rest (cdr ls)])
-                                     #,(process-pattern rho #'first #'pat
-                                                        #'(begin (lbs patvars) ...
-                                                                 (iter rest))
-                                                        fk))]
-                                  [else (#,fk)])))))
+               #`(if (or (null? expr-id) (pair? expr-id))
+                     ;; Collect captures from pattern positions, excluding extension expressions.
+                     #,(compile-repeated-pattern rho #'pat fk
+                         (lambda (variables compile-item)
+                           (with-syntax ([(patvars ...) variables]
+                                         [(bindings ...) (generate-temporaries variables)]
+                                         [(iter first rest) (generate-temporaries '(iter first rest))])
+                             #`(let iter ([ls expr-id] [bindings '()] ...)
+                                   (cond
+                                    [(null? ls)
+                                     #,(bind-pattern-captures variables
+                                                              (map (lambda (binding) #`(reverse #,binding))
+                                                                   #'(bindings ...))
+                                                              body)]
+                                    [(pair? ls)
+                                     (let ([first (car ls)] [rest (cdr ls)])
+                                       #,(compile-item #'first
+                                                       #'(iter rest (cons patvars bindings) ...)))]
+                                    [else (#,fk)])))))
                      (#,fk))]
               ;; ... in the middle, prefer `pat1`
               [(pat0 dots . pat1)
                (eq? (datum dots) '...)
-               (with-syntax ([(patvars ...) (extract-pat-vars #'pat0)])
-                 (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
-                               [(iter ls first rest new-fk) (generate-temporaries '(iter ls first rest new-fk))])
-                   #`(let iter ([ls expr-id] [bindings '()] ...)
-                       (let ([new-fk (lambda ()
-                                       ;; give up one item in the list to be matched against `pat0`
-                                       (if (pair? ls)
-                                           (let ([first (car ls)] [rest (cdr ls)])
-                                             #,(process-pattern rho #'first #'pat0
-                                                                #'(iter rest (cons patvars bindings) ...)
-                                                                fk))
-                                           (#,fk)))])
-                         ;; Match the input directly with `pat1` first, if it matches,
-                         ;; `pat0` or all pats vars inside `pat0` is '().
-                         ;; If the input fails to match `pat1`, call `new-fk`,
-                         #,(process-pattern rho #'ls #'pat1
-                                            #`(let ([patvars (reverse bindings)] ...)
-                                                #,body)
-                                            #'new-fk)))))]
+               (compile-repeated-pattern rho #'pat0 fk
+                 (lambda (variables compile-item)
+                   (with-syntax ([(patvars ...) variables]
+                                 [(bindings ...) (generate-temporaries variables)]
+                                 [(iter ls first rest new-fk)
+                                  (generate-temporaries '(iter ls first rest new-fk))])
+                     #`(let iter ([ls expr-id] [bindings '()] ...)
+                         (let ([new-fk
+                                (lambda ()
+                                  ;; Give up one item to match against the repeated pattern.
+                                  (if (pair? ls)
+                                      (let ([first (car ls)] [rest (cdr ls)])
+                                        #,(compile-item #'first
+                                                        #'(iter rest (cons patvars bindings) ...)))
+                                      (#,fk)))])
+                           ;; Prefer the suffix, extending the repeated prefix on failure.
+                           #,(bind-suffix-captures
+                              variables #'(bindings ...) #'pat1 body
+                              (lambda (success)
+                                (process-pattern rho #'ls #'pat1 success #'new-fk))))))))]
               ;; encapsulates (pat ...), (pat . pat), (pat ... . pat)
               [(pat0 . pat1)
                (with-syntax ([(first rest) (generate-temporaries '(first rest))])
@@ -194,58 +585,14 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                      (#,fk))]
               ;; `pats` has at least one pattern
               [#(pats ...)
-               #`(if (vector? expr-id)
+               (let-values ([(minimum exact?) (vector-pattern-size #'(pats ...))])
+                #`(if (vector? expr-id)
                      #,(with-syntax ([(vlen) (generate-temporaries '(vlen))])
                          #`(let ([vlen (vector-length expr-id)])
-                             (if (fx= 0 vlen)
-                                 (#,fk)
-                                 #,(let loop ([veci 0] [pats #'(pats ...)])
-                                     (with-syntax ([vi (datum->syntax #'expr-id veci)])
-                                       (syntax-case pats ()
-                                         ;; here we use list pattern for ease of looping
-                                         [()
-                                          #`(if (fx= vi vlen)
-                                                #,body
-                                                (#,fk))]
-                                         [(pat dots)
-                                          (eq? (datum dots) '...)
-                                          (with-syntax ([(patvars ...) (extract-pat-vars #'pat)])
-                                            (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
-                                                          [(i viter vitem) (generate-temporaries '(i viter vitem))])
-                                              #`(let viter ([i vi] [bindings '()] ...)
-                                                  (if (fx= i vlen)
-                                                      (let ([patvars (reverse bindings)] ...)
-                                                        #,body)
-                                                      (let ([vitem (vector-ref expr-id i)])
-                                                        #,(process-pattern rho #'vitem #'pat
-                                                                           #'(viter (add1 i) (cons patvars bindings) ...)
-                                                                           fk))))))]
-                                         ;; note: here `.` is restored
-                                         [(pat0 dots . pat1)
-                                          (eq? (datum dots) '...)
-                                          (with-syntax ([(patvars ...) (extract-pat-vars #'pat0)])
-                                            (with-syntax ([(bindings ...) (generate-temporaries #'(patvars ...))]
-                                                          [(ls iter new-fk) (generate-temporaries '(ls iter new-fk))])
-                                              ;; Turn the rest of the vector into a list and proceeed as in `(pat0 dots . pat1)`.
-                                              #`(let iter ([ls (subvector->list expr-id vi)] [bindings '()] ...)
-                                                  (let ([new-fk (lambda ()
-                                                                  (if (pair? ls)
-                                                                      (let ([first (car ls)] [rest (cdr ls)])
-                                                                        #,(process-pattern rho #'first #'pat0
-                                                                                           #'(iter rest (cons patvars bindings) ...)
-                                                                                           fk))
-                                                                      (#,fk)))])
-                                                    #,(process-pattern rho #'ls #'pat1
-                                                                       #`(let ([patvars (reverse bindings)] ...)
-                                                                           #,body)
-                                                                       #'new-fk)))))]
-                                         [(pat0 pat1 ...)
-                                          (with-syntax ([(vitem) (generate-temporaries '(vitem))])
-                                            #`(let ([vitem (vector-ref expr-id vi)])
-                                                #,(process-pattern rho #'vitem #'pat0
-                                                                   (loop (add1 veci) (cdr pats))
-                                                                   fk)))]))))))
-                     (#,fk))]
+                             (if (#,(if exact? #'fx= #'fx>=) vlen #,minimum)
+                                 #,(process-vector-pats #'expr-id #'vlen #'0 #'(pats ...) body fk)
+                                 (#,fk))))
+                     (#,fk)))]
               [lit
                (literal? #'lit)
                #`(if (equal? lit expr-id) #,body (#,fk))]
@@ -255,19 +602,29 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
               [sym
                (identifier? #'sym)
                #`(if (eq? 'sym expr-id) #,body (#,fk))]))))
+      #|proc:process-clause
+      The `process-clause` helper compiles one clause and its optional condition.
+      For example, `[ ,x (positive? x) x ]` emits a capture, predicate check, and
+      failure call when the guard is false.
+      |#
       (define process-clause
         (lambda (rho expr-id cl fk)
           ;;(printf "process-clause ~s ~s ~s~n" expr-id cl fk)
-          (syntax-case cl (guard)
-            [(pat (guard guard-e* ...) e0 e* ...)
+          (syntax-case cl (else)
+            [(else . rest)
+             (syntax-error cl "match: else must be final with exactly one result expression:")]
+            [(pat condition result)
              (process-pattern rho expr-id #'pat
-                              #`(if (and guard-e* ...)
-                                    (begin e0 e* ...)
-                                    ;; call fail continuation
-                                    (#,fk))
+                              #`(if condition result (#,fk))
                               fk)]
-            [(pat e0 e* ...)
-             (process-clause rho expr-id #'[pat (guard #t) e0 e* ...] fk)])))
+            [(pat result)
+             (process-pattern rho expr-id #'pat #'result fk)]
+            [_ (syntax-error cl "match: expected [pattern result] or [pattern condition result]:")])))
+      #|proc:generate-skeleton
+      The `generate-skeleton` helper chains clauses from left to right with zero-argument
+      failure continuations. For example, two clauses produce the first matcher followed by
+      a continuation that invokes the second matcher when the first fails.
+      |#
       (define generate-skeleton
         (lambda (rho expr-id cl* fk)
           ;;(printf "generate-skeleton: ~s ~s ~s~n" expr-id cl* fk)
@@ -278,63 +635,100 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
                   #`(let ([fk (lambda () #,(loop (cdr cl*)))])
                       #,(process-clause rho expr-id (car cl*) #'fk)))))))
       (syntax-case stx (else)
-        [(k e cl* ... [else e0 e* ...])
-         ;; `match-loop` used for catamorphism
+        [(k e cl* ... [else result])
+         ;; `match-loop` recursively applies the same clauses for `,@` patterns.
          ;; `rho`: compile-time environment
          (lambda (rho)
-           #`(let match-loop ([v e])
-               #,(generate-skeleton rho #'v #'(cl* ...) #'(begin e0 e* ...))))]
+           (let ([matcher (generate-skeleton rho #'v #'(cl* ...) #'result)])
+             #`(let (#,@(reverse regex-cache-bindings))
+                 (let match-loop ([v e]) #,matcher))))]
         [(k e cl0 cl* ...)
          #'(let ([v e])
              (match v cl0 cl* ...
                     [else (errorf 'match "no match found")]))]
         [_ (syntax-error 'match "bad match form")])))
 
+  #|macro:mlambda
+  The `mlambda` macro creates a one-argument procedure whose clauses use `match`.
+  For example, `((mlambda [(,x ,y) (+ x y)]) '(10 20))` returns `30`.
+  |#
   (define-syntax mlambda
     (lambda (stx)
-      (syntax-case stx ()
+      (syntax-case stx (else)
+        [(k cl* ... [else result])
+         #'(lambda (arg)
+             (match arg cl* ... [else result]))]
         [(k cl cl* ...)
          #'(lambda (arg)
              (match arg cl cl* ...
                     [else (errorf 'k "no match found")]))]
         [_ (syntax-error stx "bad form:")])))
 
+  #|macro:$mlambda+
+  The `$mlambda+` macro creates a procedure accepting any number of arguments and matching
+  them as a list. Its first argument names errors. For example,
+  `(($mlambda+ add [(,x ,y) (+ x y)]) 10 20)` returns `30`.
+  |#
   (define-syntax $mlambda+
     (lambda (stx)
-      (syntax-case stx ()
+      (syntax-case stx (else)
+        [(k who cl* ... [else result])
+         #'(lambda arg
+             (match arg cl* ... [else result]))]
         [(k who cl cl* ...)
          #'(lambda arg
              (match arg cl cl* ...
                     [else (errorf 'who "no match found")]))]
         [_ (syntax-error stx "bad form:")])))
 
+  #|macro:mlambda+
+  The `mlambda+` macro creates a variadic matching procedure without an explicit error name.
+  For example, `((mlambda+ [(,x ,y) (+ x y)]) 10 20)` returns `30`.
+  |#
   (define-syntax mlambda+
     (syntax-rules ()
       [(k cl cl* ...) ($mlambda+ mlambda+ cl cl* ...)]))
 
+  #|macro:mlet
+  The `mlet` macro evaluates right-hand sides in parallel and binds them with match patterns.
+  Each right-hand side runs once in the surrounding scope, in unspecified order, before matching.
+  Patterns match separately from left to right; earlier captures are visible to later patterns.
+  Separate bindings cannot combine into repetition, extension, or catamorphism syntax.
+  Record, datatype, and custom-expander declarations resolve in the surrounding pattern scope.
+  Its body permits local definitions, evaluates expressions in order, and returns the final values.
+  For example, `(mlet ([(,x ,y) '(10 20)]) (+ x y))` returns `30`.
+  |#
   (define-syntax mlet
     (lambda (stx)
       (syntax-case stx ()
         [(k () e0 e* ...) #'(let () e0 e* ...)]
         [(k ([pat* rhs*] ...) e0 e* ...)
-         #'(($mlambda+ mlet
-                       [(pat* ...) e0 e* ...])
-            rhs* ...)]
+         (with-syntax ([(whole* ...) (generate-temporaries #'(pat* ...))])
+           ;; Isolate each pattern without changing the matcher's binding environment.
+           #'(($mlambda+ mlet
+                         [((#`whole* pat*) ...) (let () e0 e* ...)])
+              rhs* ...))]
         [_ (syntax-error stx "bad form:")])))
 
+  #|macro:mlet*
+  The `mlet*` macro evaluates pattern bindings from left to right, making earlier captures
+  available to later right-hand sides. For example, `(mlet* ([,x 10] [,y (+ x 20)]) y)` returns
+  `30`.
+  Each pattern is isolated from generated clause syntax; a bare `else` matches the symbol `else`.
+  Its body permits local definitions, evaluates expressions in order, and returns the final values.
+  |#
   (define-syntax mlet*
     (lambda (stx)
       (syntax-case stx (else)
         [(k () e0 e* ...) #'(let () e0 e* ...)]
         [(k ([pat* rhs*] ...) e0 e* ...)
-         (trace-let loop ([pat* #'(pat* ...)] [rhs* #'(rhs* ...)])
+         (let loop ([pat* #'(pat* ...)] [rhs* #'(rhs* ...)])
            (if (null? pat*)
-               #'(begin e0 e* ...)
-               #`(match #,(car rhs*)
-                   [#,(car pat*) #,(loop (cdr pat*) (cdr rhs*))]
-                   ;; TODO when k is not quoted, the error is "bad form" below,
-                   ;; which is not quite precise
-                   [else (errorf 'k "no match found")])))]
+               #'(let () e0 e* ...)
+               (with-syntax ([(whole) (generate-temporaries '(whole))])
+                 #`(match #,(car rhs*)
+                     [(#`whole #,(car pat*)) #,(loop (cdr pat*) (cdr rhs*))]
+                     [else (errorf 'k "no match found")]))))]
         [_ (syntax-error stx "bad form:")])))
 
 

@@ -1,7 +1,6 @@
 (library (cspp adt)
   (export datatype record)
   (import (cspp chez)
-          (cspp private match)
           (cspp string)
           (cspp list)
           (cspp internal))
@@ -15,6 +14,12 @@
   `pred` is a one-argument predicate checked during construction and before mutable assignment.
   Fields default to immutable; `:mutable` and `:immutable` are mutually exclusive.
   Expansion defines the type predicate, constructors, variant predicates, accessors, and setters.
+  Match a variant with `,(datatype Type Variant :fields (field pattern) ...)` for a named subset,
+  or `,(datatype Type Variant :values pattern ...)` for every field in declaration order.
+  `:fields` allows an empty subset; named fields must be unique. `:values` requires exactly
+  the declared number of fields. A zero-field variant also accepts `,(datatype Type Variant)`.
+  Example: after `(datatype Tree [Empty] [Leaf value])`, matching `(Leaf 42)` with
+  `,(datatype Tree Leaf :fields (value ,x))` binds `x` to `42`.
   |#
   ;; Syntax:
   ;; (datatype type predicate? [variant field ...] ...)
@@ -278,8 +283,7 @@
              ([dtuid (gen-dtuid #'dt #'(variant0 variants ...))]
               ;; $datatype-mk-dt
               [mkdt (construct-datatype-name #'dt "mk-" #'dt)]
-              [((singletons ...) (mvariants ...)) (classify-variants #'(variant0 variants ...))]
-              [dt-expander ($construct-name #'dt #'dt "-expander")])
+              [((singletons ...) (mvariants ...)) (classify-variants #'(variant0 variants ...))])
            (with-syntax ([(suids ...) (gen-vuids #'dt #'dtuid #'(singletons ...))]
                          [(muids ...) (gen-vuids #'dt #'dtuid #'(mvariants ...))]
                          [(mksingletons ...) (generate-temporaries #'(singletons ...))]
@@ -302,8 +306,7 @@
                            [(setters ...) (get-setters #'dt #'(mvariants ...))])
                #`(module (dt dt? mnames ... snames ...
                              mkvariants ... mvariants? ... singletons ... singletons? ...
-                             getters ... setters ...
-                             dt-expander)
+                             getters ... setters ...)
                    (define-record-type (dt mkdt dt?)
                      (nongenerative dtuid))
                    (define-record-type (mnames mkvariants mvariants?)
@@ -322,8 +325,11 @@
                    ...
                    (define singletons (mksingletons))
                    ...
-                   (begin setter-wrappers ...)
-                   (define-match-expander dt-expander datatype-expander)))))]
+                   (define-property mkvariants $datatype-variant-key #'mnames)
+                   ...
+                   (define-property singletons $datatype-variant-key #'snames)
+                   ...
+                   (begin setter-wrappers ...)))))]
         [(_ dt variant0 variants ...)
          (check-datatype-name #'dt)
          (with-syntax ([dt? ($construct-name #'dt #'dt "?")])
@@ -341,6 +347,12 @@
   is given. `:mutable` and `:immutable` are mutually exclusive options.
   `pred` is a one-argument predicate checked during construction and before mutable assignment.
   Expansion defines the constructor, type predicate, accessors, and setters for mutable fields.
+  Match a record with `,(record Type :fields (field pattern) ...)` for a named subset or
+  `,(record Type :values pattern ...)` for every field in declaration order. Named fields must
+  be unique, and `:values` requires exactly the declared number of fields. The explicit wrapper
+  is required; constructor names are not match extension heads. For example, after
+  `(record Point (x y))`, matching `(Point 10 20)` with `,(record Point :fields (y ,v))`
+  binds `v` to `20`.
   |#
   ;; Syntax:
   ;; (record type predicate? (field ...))
@@ -495,7 +507,6 @@
          (andmap identifier? #'(dt pred))
          (with-syntax ([mkdt #'dt]
                        [dtname     ($construct-name #'dt "$record-" #'dt)]
-                       [dt-expander ($construct-name #'dt #'dt "-expander")]
                        [uid        (gen-uid #'dt #'(fld fld* ...))]
                        [(flds ...) (handle-fields #'dt #'(fld fld* ...))]
                        [proto      (gen-protocol #'dt #'(fld fld* ...))])
@@ -503,13 +514,13 @@
                           (gen-setter-wrappers #'dt #'(flds ...) #'(fld fld* ...))]
                          [(getters ...) (get-getters #'(flds ...))]
                          [(setters ...) (get-setters #'dt #'(flds ...))])
-             #`(module (dtname mkdt pred getters ... setters ... dt-expander)
+             #`(module (dtname mkdt pred getters ... setters ...)
                  (define-record-type (dtname mkdt pred)
                    (nongenerative uid)
                    (fields flds ...)
                    (protocol proto))
-                 (begin setter-wrappers ...)
-                 (define-match-expander dt-expander record-expander))))]
+                 (define-property mkdt $record-type-key #'dtname)
+                 (begin setter-wrappers ...))))]
         [(k dt (fld fld* ...))
          (identifier? #'dt)
          (with-syntax ([dt? ($construct-name #'dt #'dt "?")])
