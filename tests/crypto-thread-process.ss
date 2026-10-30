@@ -110,4 +110,33 @@
                  (error 'crypto-threads "cipher chunks changed under concurrent updates"))))
            (lambda () (cipher-destroy! serial) (cipher-destroy! parallel)))
          (check-shared-destroy make-state cipher-destroy!)))]
+    [(string=? mode "resources")
+     (when (optional-library-available? (optional-library-info 'openssl))
+       (check-shared-destroy (lambda () (generate-private-key 'x25519)) destroy-private-key!)
+       (let ([private (generate-private-key 'ed25519)])
+         (dynamic-wind
+           void
+           (lambda ()
+             (check-shared-destroy (lambda () (private-key->public-key private))
+                                   destroy-public-key!))
+           (lambda () (destroy-private-key! private))))
+       (check-shared-destroy make-cert-store destroy-cert-store!)
+       (let* ([port (open-file-input-port "tests/data/crypto/leaf.cert.pem")]
+              [pem (dynamic-wind void (lambda () (get-bytevector-all port))
+                                 (lambda () (close-port port)))])
+         (check-shared-destroy (lambda () (load-certificate pem)) destroy-certificate!))
+       (let* ([left (generate-private-key 'ed25519)]
+              [right (pem->private-key (store-private-key left))])
+         (dynamic-wind
+           void
+           (lambda ()
+             ;; Reversed argument order and duplicate resources must not deadlock.
+             (run-workers 4
+               (lambda ()
+                 (do ([index 0 (fx1+ index)]) [(fx= index 100)]
+                   (unless (and (private-key=? left right)
+                                (private-key=? right left)
+                                (private-key=? left left))
+                     (error 'crypto-threads "concurrent key equality changed"))))))
+           (lambda () (destroy-private-key! left) (destroy-private-key! right)))))]
     [else (error 'crypto-threads "unknown fixture mode" mode)]))

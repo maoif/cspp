@@ -43,6 +43,9 @@ MD5 is retained for legacy interoperability and is unsuitable for security-sensi
 Digest, HMAC, cipher, AEAD, signing, and verification states serialize individual operations
 on a shared state. Concurrent updates take effect in lock-acquisition order; use separate states
 for independent messages. User callbacks run without holding a state lock.
+Keys, certificates, and trust stores also serialize use and destruction. Multi-resource
+operations acquire their locks in a fixed order. A call racing with destruction either
+finishes before destruction or raises a destroyed-resource error.
 
 The old `(cspp digest)` and `(cspp crypto hash)` imports have been removed. Replace them with
 `(cspp crypto digest)` and replace the former crypto `hash-*` names with `digest-*` or

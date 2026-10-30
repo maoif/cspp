@@ -167,11 +167,12 @@ The `destroy-certificate!` procedure releases foreign resources owned by `cert`.
   (define-who destroy-certificate!
     (lambda (cert)
       (pcheck ([certificate? cert])
-              (unless (crypto-certificate-destroyed? cert)
-                (ffi-cert-free (crypto-certificate-handle cert))
-                (crypto-certificate-handle-set! cert 0)
-                (crypto-certificate-destroyed?-set! cert #t))
-              cert)))
+              (with-crypto-locks ((crypto-certificate-lock cert))
+                (unless (crypto-certificate-destroyed? cert)
+                  (ffi-cert-free (crypto-certificate-handle cert))
+                  (crypto-certificate-handle-set! cert 0)
+                  (crypto-certificate-destroyed?-set! cert #t))
+                cert))))
 
   #|proc:certificate-subject
 The `certificate-subject` procedure returns the subject distinguished name as a string.
@@ -179,11 +180,12 @@ The `certificate-subject` procedure returns the subject distinguished name as a 
   (define-who certificate-subject
     (lambda (cert)
       (pcheck ([certificate? cert])
-              (check-certificate-live who cert)
-              (let ([ans (ffi-cert-subject (crypto-certificate-handle cert))])
-                (when (eq? ans #f)
-                  (errorf who "failed to read certificate subject"))
-                ans))))
+              (with-crypto-locks ((crypto-certificate-lock cert))
+                (check-certificate-live who cert)
+                (let ([ans (ffi-cert-subject (crypto-certificate-handle cert))])
+                  (when (eq? ans #f)
+                    (errorf who "failed to read certificate subject"))
+                  ans)))))
 
   #|proc:certificate-issuer
 The `certificate-issuer` procedure returns the issuer distinguished name as a string.
@@ -191,11 +193,12 @@ The `certificate-issuer` procedure returns the issuer distinguished name as a st
   (define-who certificate-issuer
     (lambda (cert)
       (pcheck ([certificate? cert])
-              (check-certificate-live who cert)
-              (let ([ans (ffi-cert-issuer (crypto-certificate-handle cert))])
-                (when (eq? ans #f)
-                  (errorf who "failed to read certificate issuer"))
-                ans))))
+              (with-crypto-locks ((crypto-certificate-lock cert))
+                (check-certificate-live who cert)
+                (let ([ans (ffi-cert-issuer (crypto-certificate-handle cert))])
+                  (when (eq? ans #f)
+                    (errorf who "failed to read certificate issuer"))
+                  ans)))))
 
   #|proc:certificate-not-before
 The `certificate-not-before` procedure returns the UTC start time as an ISO-8601 string.
@@ -203,11 +206,12 @@ The `certificate-not-before` procedure returns the UTC start time as an ISO-8601
   (define-who certificate-not-before
     (lambda (cert)
       (pcheck ([certificate? cert])
-              (check-certificate-live who cert)
-              (let ([ans (ffi-cert-not-before (crypto-certificate-handle cert))])
-                (when (eq? ans #f)
-                  (errorf who "failed to read certificate not-before time"))
-                ans))))
+              (with-crypto-locks ((crypto-certificate-lock cert))
+                (check-certificate-live who cert)
+                (let ([ans (ffi-cert-not-before (crypto-certificate-handle cert))])
+                  (when (eq? ans #f)
+                    (errorf who "failed to read certificate not-before time"))
+                  ans)))))
 
   #|proc:certificate-not-after
 The `certificate-not-after` procedure returns the UTC expiry time as an ISO-8601 string.
@@ -215,11 +219,12 @@ The `certificate-not-after` procedure returns the UTC expiry time as an ISO-8601
   (define-who certificate-not-after
     (lambda (cert)
       (pcheck ([certificate? cert])
-              (check-certificate-live who cert)
-              (let ([ans (ffi-cert-not-after (crypto-certificate-handle cert))])
-                (when (eq? ans #f)
-                  (errorf who "failed to read certificate not-after time"))
-                ans))))
+              (with-crypto-locks ((crypto-certificate-lock cert))
+                (check-certificate-live who cert)
+                (let ([ans (ffi-cert-not-after (crypto-certificate-handle cert))])
+                  (when (eq? ans #f)
+                    (errorf who "failed to read certificate not-after time"))
+                  ans)))))
 
   #|proc:certificate-subject-alt-names
 The `certificate-subject-alt-names` procedure returns SAN entries as typed pairs such as `(dns . "example.com")`.
@@ -227,9 +232,10 @@ The `certificate-subject-alt-names` procedure returns SAN entries as typed pairs
   (define-who certificate-subject-alt-names
     (lambda (cert)
       (pcheck ([certificate? cert])
-              (check-certificate-live who cert)
-              (let ([ans (ffi-cert-subject-alt-names (crypto-certificate-handle cert))])
-                (if (eq? ans #f) '() ans)))))
+              (with-crypto-locks ((crypto-certificate-lock cert))
+                (check-certificate-live who cert)
+                (let ([ans (ffi-cert-subject-alt-names (crypto-certificate-handle cert))])
+                  (if (eq? ans #f) '() ans))))))
 
   #|proc:certificate-hostname-matches?
   The `certificate-hostname-matches?` procedure returns `#t` if string `hostname` matches
@@ -239,10 +245,11 @@ The `certificate-subject-alt-names` procedure returns SAN entries as typed pairs
   (define-who certificate-hostname-matches?
     (lambda (cert hostname)
       (pcheck ([certificate? cert] [string? hostname])
-              (check-certificate-live who cert)
-              (check-hostname who hostname)
-              (not (fx= 0 (ffi-cert-hostname-matches (crypto-certificate-handle cert)
-                                                     (string->utf8 hostname)))))))
+              (with-crypto-locks ((crypto-certificate-lock cert))
+                (check-certificate-live who cert)
+                (check-hostname who hostname)
+                (not (fx= 0 (ffi-cert-hostname-matches (crypto-certificate-handle cert)
+                                                       (string->utf8 hostname))))))))
 
   #|proc:certificate-public-key
 The `certificate-public-key` procedure extracts the certificate public key as a `(crypto pkey)` object.
@@ -250,11 +257,12 @@ The `certificate-public-key` procedure extracts the certificate public key as a 
   (define-who certificate-public-key
     (lambda (cert)
       (pcheck ([certificate? cert])
-              (check-certificate-live who cert)
-              (let ([ans (ffi-cert-public-key-der (crypto-certificate-handle cert))])
-                (when (eq? ans #f)
-                  (errorf who "failed to extract certificate public key"))
-                (der->public-key ans)))))
+              (with-crypto-locks ((crypto-certificate-lock cert))
+                (check-certificate-live who cert)
+                (let ([ans (ffi-cert-public-key-der (crypto-certificate-handle cert))])
+                  (when (eq? ans #f)
+                    (errorf who "failed to extract certificate public key"))
+                  (der->public-key ans))))))
 
   #|proc:certificate-serial-number
 The `certificate-serial-number` procedure returns the certificate serial number bytes.
@@ -262,11 +270,12 @@ The `certificate-serial-number` procedure returns the certificate serial number 
   (define-who certificate-serial-number
     (lambda (cert)
       (pcheck ([certificate? cert])
-              (check-certificate-live who cert)
-              (let ([ans (ffi-cert-serial-number (crypto-certificate-handle cert))])
-                (when (eq? ans #f)
-                  (errorf who "failed to read certificate serial number"))
-                ans))))
+              (with-crypto-locks ((crypto-certificate-lock cert))
+                (check-certificate-live who cert)
+                (let ([ans (ffi-cert-serial-number (crypto-certificate-handle cert))])
+                  (when (eq? ans #f)
+                    (errorf who "failed to read certificate serial number"))
+                  ans)))))
 
   #|proc:certificate-fingerprint
 The `certificate-fingerprint` procedure returns a certificate digest, defaulting to SHA-256.
@@ -276,11 +285,12 @@ The `certificate-fingerprint` procedure returns a certificate digest, defaulting
       [(cert) (certificate-fingerprint cert 'sha256)]
       [(cert which)
        (pcheck ([certificate? cert])
-               (check-certificate-live who cert)
-               (let ([ans (ffi-cert-fingerprint (crypto-certificate-handle cert) which)])
-                 (when (eq? ans #f)
-                   (errorf who "failed to compute certificate fingerprint using ~s" which))
-                 ans))]))
+               (with-crypto-locks ((crypto-certificate-lock cert))
+                 (check-certificate-live who cert)
+                 (let ([ans (ffi-cert-fingerprint (crypto-certificate-handle cert) which)])
+                   (when (eq? ans #f)
+                     (errorf who "failed to compute certificate fingerprint using ~s" which))
+                   ans)))]))
 
   #|proc:make-cert-store
 The `make-cert-store` procedure creates an empty or system-backed certificate store.
@@ -305,11 +315,12 @@ The `destroy-cert-store!` procedure releases foreign resources owned by `store`.
   (define-who destroy-cert-store!
     (lambda (store)
       (pcheck ([cert-store? store])
-              (unless (crypto-cert-store-destroyed? store)
-                (ffi-cert-store-destroy (crypto-cert-store-handle store))
-                (crypto-cert-store-handle-set! store 0)
-                (crypto-cert-store-destroyed?-set! store #t))
-              store)))
+              (with-crypto-locks ((crypto-cert-store-lock store))
+                (unless (crypto-cert-store-destroyed? store)
+                  (ffi-cert-store-destroy (crypto-cert-store-handle store))
+                  (crypto-cert-store-handle-set! store 0)
+                  (crypto-cert-store-destroyed?-set! store #t))
+                store))))
 
   #|proc:cert-store-add!
 The `cert-store-add!` procedure adds a trusted certificate to `store`.
@@ -317,12 +328,13 @@ The `cert-store-add!` procedure adds a trusted certificate to `store`.
   (define-who cert-store-add!
     (lambda (store cert)
       (pcheck ([cert-store? store] [certificate? cert])
-              (check-cert-store-live who store)
-              (check-certificate-live who cert)
-              (unless (fx= 1 (ffi-cert-store-add (crypto-cert-store-handle store)
-                                                 (crypto-certificate-handle cert)))
-                (errorf who "failed to add certificate to store"))
-              store)))
+              (with-crypto-locks ((crypto-certificate-lock cert) (crypto-cert-store-lock store))
+                (check-cert-store-live who store)
+                (check-certificate-live who cert)
+                (unless (fx= 1 (ffi-cert-store-add (crypto-cert-store-handle store)
+                                                   (crypto-certificate-handle cert)))
+                  (errorf who "failed to add certificate to store"))
+                store))))
 
   #|proc:cert-store-load-system-defaults!
 The `cert-store-load-system-defaults!` procedure appends system trust anchors to `store`.
@@ -330,33 +342,41 @@ The `cert-store-load-system-defaults!` procedure appends system trust anchors to
   (define-who cert-store-load-system-defaults!
     (lambda (store)
       (pcheck ([cert-store? store])
-              (check-cert-store-live who store)
-              (unless (fx= 1 (ffi-cert-store-load-defaults (crypto-cert-store-handle store)))
-                (errorf who "failed to load system certificate defaults"))
-              store)))
+              (with-crypto-locks ((crypto-cert-store-lock store))
+                (check-cert-store-live who store)
+                (unless (fx= 1 (ffi-cert-store-load-defaults (crypto-cert-store-handle store)))
+                  (errorf who "failed to load system certificate defaults"))
+                store))))
 
   (define verify-certificate-chain*
     (lambda (who cert chain store hostname)
       (check-certificate-chain who chain)
       (when hostname (check-hostname who hostname))
-      (let ([state (ffi-cert-verify-state-create (crypto-certificate-handle cert)
-                                                 (crypto-cert-store-handle store)
-                                                 (if hostname (string->utf8 hostname) #f))])
-        (when (eq? state 0)
-          (errorf who "failed to create certificate verification state"))
-        (dynamic-wind
-          void
-          (lambda ()
-            (for-each
-             (lambda (chain-cert)
-               (check-certificate-live who chain-cert)
-               (unless (fx= 1 (ffi-cert-verify-state-add-chain-cert state
-                                                                     (crypto-certificate-handle chain-cert)))
-                 (errorf who "failed to add certificate chain element for verification")))
-             chain)
-            (not (fx= 0 (ffi-cert-verify-state-verify state))))
-          (lambda ()
-            (ffi-cert-verify-state-destroy state))))))
+      (call-with-crypto-locks
+        (cons (crypto-cert-store-lock store)
+              (map crypto-certificate-lock (cons cert chain)))
+        (lambda ()
+          (check-cert-store-live who store)
+          (for-each (lambda (certificate) (check-certificate-live who certificate))
+                    (cons cert chain))
+          (let ([state (ffi-cert-verify-state-create (crypto-certificate-handle cert)
+                                                     (crypto-cert-store-handle store)
+                                                     (if hostname (string->utf8 hostname) #f))])
+            (when (eq? state 0)
+              (errorf who "failed to create certificate verification state"))
+            (dynamic-wind
+              void
+              (lambda ()
+                (for-each
+                 (lambda (chain-cert)
+                   (check-certificate-live who chain-cert)
+                   (unless (fx= 1 (ffi-cert-verify-state-add-chain-cert state
+                                                                         (crypto-certificate-handle chain-cert)))
+                     (errorf who "failed to add certificate chain element for verification")))
+                 chain)
+                (not (fx= 0 (ffi-cert-verify-state-verify state))))
+              (lambda ()
+                (ffi-cert-verify-state-destroy state))))))))
 
   #|proc:verify-certificate-chain
   The `verify-certificate-chain` procedure returns `#t` if the live certificate `cert`

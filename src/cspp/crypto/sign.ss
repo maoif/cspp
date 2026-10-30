@@ -90,16 +90,17 @@
        (sign-message alg (default-digest alg) key message)]
       [(alg digest key message)
        (pcheck ([private-key? key])
-               (check-signing-algorithm who alg)
-               (check-signing-key who alg (crypto-private-key-algorithm key)
-                                  (crypto-private-key-destroyed? key))
-               (let* ([bv (string/bytevector->utf8 message)]
-                      [ans (ffi-sign-message alg digest
-                                             (crypto-private-key-handle key)
-                                             bv 0 (bytevector-length bv))])
-                 (when (eq? ans #f)
-                   (errorf who "failed to sign message using ~s" alg))
-                 ans))]))
+               (with-crypto-locks ((crypto-private-key-lock key))
+                 (check-signing-algorithm who alg)
+                 (check-signing-key who alg (crypto-private-key-algorithm key)
+                                    (crypto-private-key-destroyed? key))
+                 (let* ([bv (string/bytevector->utf8 message)]
+                        [ans (ffi-sign-message alg digest
+                                               (crypto-private-key-handle key)
+                                               bv 0 (bytevector-length bv))])
+                   (when (eq? ans #f)
+                     (errorf who "failed to sign message using ~s" alg))
+                   ans)))]))
 
   #|proc:verify-signature?
   The `verify-signature?` procedure returns `#t` if bytevector `signature` authenticates
@@ -114,14 +115,15 @@
        (verify-signature? alg (default-digest alg) key message signature)]
       [(alg digest key message signature)
        (pcheck ([public-key? key] [bytevector? signature])
-               (check-signing-algorithm who alg)
-               (check-signing-key who alg (crypto-public-key-algorithm key)
-                                  (crypto-public-key-destroyed? key))
-               (let ([bv (string/bytevector->utf8 message)])
-                 (not (fx= 0 (ffi-verify-message alg digest
-                                                 (crypto-public-key-handle key)
-                                                 bv 0 (bytevector-length bv)
-                                                 signature 0 (bytevector-length signature))))))]))
+               (with-crypto-locks ((crypto-public-key-lock key))
+                 (check-signing-algorithm who alg)
+                 (check-signing-key who alg (crypto-public-key-algorithm key)
+                                    (crypto-public-key-destroyed? key))
+                 (let ([bv (string/bytevector->utf8 message)])
+                   (not (fx= 0 (ffi-verify-message alg digest
+                                                   (crypto-public-key-handle key)
+                                                   bv 0 (bytevector-length bv)
+                                                   signature 0 (bytevector-length signature)))))))]))
 
   #|proc:make-sign-state
   The `make-sign-state` procedure returns a buffered signing state for algorithm symbol
@@ -135,10 +137,11 @@
        (make-sign-state alg (default-digest alg) key)]
       [(alg digest key)
        (pcheck ([private-key? key])
-               (check-signing-algorithm who alg)
-               (check-signing-key who alg (crypto-private-key-algorithm key)
-                                  (crypto-private-key-destroyed? key))
-               (%make-sign-state (make-mutex 'sign) alg digest key '() #f #f))]))
+               (with-crypto-locks ((crypto-private-key-lock key))
+                 (check-signing-algorithm who alg)
+                 (check-signing-key who alg (crypto-private-key-algorithm key)
+                                    (crypto-private-key-destroyed? key))
+                 (%make-sign-state (make-mutex 'sign) alg digest key '() #f #f)))]))
 
   #|proc:make-verify-state
   The `make-verify-state` procedure returns a buffered verification state for algorithm
@@ -152,10 +155,11 @@
        (make-verify-state alg (default-digest alg) key)]
       [(alg digest key)
        (pcheck ([public-key? key])
-               (check-signing-algorithm who alg)
-               (check-signing-key who alg (crypto-public-key-algorithm key)
-                                  (crypto-public-key-destroyed? key))
-               (%make-verify-state (make-mutex 'verify) alg digest key '() #f #f))]))
+               (with-crypto-locks ((crypto-public-key-lock key))
+                 (check-signing-algorithm who alg)
+                 (check-signing-key who alg (crypto-public-key-algorithm key)
+                                    (crypto-public-key-destroyed? key))
+                 (%make-verify-state (make-mutex 'verify) alg digest key '() #f #f)))]))
 
   (define update-state!
     (lambda (setter getter len who st bv start stop)

@@ -1,5 +1,8 @@
 (library (cspp crypto private)
   (export check-slice
+          make-crypto-lock
+          call-with-crypto-locks
+          with-crypto-locks
           ensure-openssl
           bytevector-append
           subbytevector
@@ -10,6 +13,7 @@
           bytevector-empty
           make-crypto-private-key
           crypto-private-key?
+          crypto-private-key-lock
           crypto-private-key-handle
           crypto-private-key-handle-set!
           crypto-private-key-algorithm
@@ -18,6 +22,7 @@
           crypto-private-key-destroyed?-set!
           make-crypto-public-key
           crypto-public-key?
+          crypto-public-key-lock
           crypto-public-key-handle
           crypto-public-key-handle-set!
           crypto-public-key-algorithm
@@ -26,12 +31,14 @@
           crypto-public-key-destroyed?-set!
           make-crypto-certificate
           crypto-certificate?
+          crypto-certificate-lock
           crypto-certificate-handle
           crypto-certificate-handle-set!
           crypto-certificate-destroyed?
           crypto-certificate-destroyed?-set!
           make-crypto-cert-store
           crypto-cert-store?
+          crypto-cert-store-lock
           crypto-cert-store-handle
           crypto-cert-store-handle-set!
           crypto-cert-store-destroyed?
@@ -47,6 +54,58 @@
   (import (cspp chez)
           (cspp utils)
           (cspp crypto ffi))
+
+  (define-record-type (crypto-lock %make-crypto-lock crypto-lock?)
+    (fields rank mutex))
+  (define next-lock-rank 0)
+  (define lock-rank-mutex (make-mutex 'crypto-lock-rank))
+
+  #|proc:make-crypto-lock
+  The `make-crypto-lock` procedure returns a new internal resource lock with a unique
+  ordering rank. Acquire multiple locks through `with-crypto-locks` to avoid deadlocks.
+  |#
+  (define make-crypto-lock
+    (lambda ()
+      (pcheck ()
+        (with-mutex lock-rank-mutex
+          (let ([rank next-lock-rank])
+            (set! next-lock-rank (+ rank 1))
+            (%make-crypto-lock rank (make-mutex 'crypto-resource)))))))
+
+  #|proc:call-with-crypto-locks
+  The `call-with-crypto-locks` procedure acquires the internal resource locks in list
+  `locks` in creation order, calls the zero-argument procedure `proc`, and returns its
+  values. It releases locks on every exit. The callback must not invoke user code.
+  |#
+  (define call-with-crypto-locks
+    (lambda (locks proc)
+      (pcheck ([list? locks] [procedure? proc])
+        (for-each (lambda (lock)
+                    (unless (crypto-lock? lock)
+                      (error 'call-with-crypto-locks "invalid internal resource lock")))
+                  locks)
+        (let loop ([locks (if (or (null? locks) (null? (cdr locks)))
+                             locks
+                             (list-sort (lambda (left right)
+                                          (< (crypto-lock-rank left) (crypto-lock-rank right)))
+                                        locks))]
+                   [previous #f])
+          (cond
+            [(null? locks) (proc)]
+            [(eq? (car locks) previous) (loop (cdr locks) previous)]
+            [else
+             (with-mutex (crypto-lock-mutex (car locks))
+               (loop (cdr locks) (car locks)))])))))
+
+  #|macro:with-crypto-locks
+  The `with-crypto-locks` macro acquires each internal resource lock in `(lock ...)`
+  once, in creation order, evaluates `body ...`, and returns its values. Locks are
+  released on normal and exceptional exits. No user callbacks should run in the body.
+  |#
+  (define-syntax with-crypto-locks
+    (syntax-rules ()
+      [(_ (lock ...) body ...)
+       (call-with-crypto-locks (list lock ...) (lambda () body ...))]))
 
   #|proc:ensure-openssl
 The `ensure-openssl` procedure raises an error attributed to `who` when OpenSSL is unavailable.
@@ -148,26 +207,38 @@ The `bytevector-prefix?` procedure checks whether `prefix` matches the initial b
 
   (define-record-type (crypto-private-key make-crypto-private-key crypto-private-key?)
     (opaque #t)
-    (fields (mutable handle)
+    (protocol (lambda (new)
+                (lambda (handle algorithm bits destroyed?)
+                  (new (make-crypto-lock) handle algorithm bits destroyed?))))
+    (fields lock (mutable handle)
             algorithm
             bits
             (mutable destroyed?)))
 
   (define-record-type (crypto-public-key make-crypto-public-key crypto-public-key?)
     (opaque #t)
-    (fields (mutable handle)
+    (protocol (lambda (new)
+                (lambda (handle algorithm bits destroyed?)
+                  (new (make-crypto-lock) handle algorithm bits destroyed?))))
+    (fields lock (mutable handle)
             algorithm
             bits
             (mutable destroyed?)))
 
   (define-record-type (crypto-certificate make-crypto-certificate crypto-certificate?)
     (opaque #t)
-    (fields (mutable handle)
+    (protocol (lambda (new)
+                (lambda (handle destroyed?)
+                  (new (make-crypto-lock) handle destroyed?))))
+    (fields lock (mutable handle)
             (mutable destroyed?)))
 
   (define-record-type (crypto-cert-store make-crypto-cert-store crypto-cert-store?)
     (opaque #t)
-    (fields (mutable handle)
+    (protocol (lambda (new)
+                (lambda (handle destroyed?)
+                  (new (make-crypto-lock) handle destroyed?))))
+    (fields lock (mutable handle)
             (mutable destroyed?)))
 
   (define-record-type (crypto-envelope make-crypto-envelope crypto-envelope?)

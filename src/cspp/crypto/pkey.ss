@@ -109,11 +109,12 @@ The `destroy-private-key!` procedure releases the foreign resources owned by `ke
   (define-who destroy-private-key!
     (lambda (key)
       (pcheck ([private-key? key])
-              (unless (crypto-private-key-destroyed? key)
-                (ffi-pkey-free (crypto-private-key-handle key))
-                (crypto-private-key-handle-set! key 0)
-                (crypto-private-key-destroyed?-set! key #t))
-              key)))
+              (with-crypto-locks ((crypto-private-key-lock key))
+                (unless (crypto-private-key-destroyed? key)
+                  (ffi-pkey-free (crypto-private-key-handle key))
+                  (crypto-private-key-handle-set! key 0)
+                  (crypto-private-key-destroyed?-set! key #t))
+                key))))
 
   #|proc:destroy-public-key!
 The `destroy-public-key!` procedure releases the foreign resources owned by `key`.
@@ -121,11 +122,12 @@ The `destroy-public-key!` procedure releases the foreign resources owned by `key
   (define-who destroy-public-key!
     (lambda (key)
       (pcheck ([public-key? key])
-              (unless (crypto-public-key-destroyed? key)
-                (ffi-pkey-free (crypto-public-key-handle key))
-                (crypto-public-key-handle-set! key 0)
-                (crypto-public-key-destroyed?-set! key #t))
-              key)))
+              (with-crypto-locks ((crypto-public-key-lock key))
+                (unless (crypto-public-key-destroyed? key)
+                  (ffi-pkey-free (crypto-public-key-handle key))
+                  (crypto-public-key-handle-set! key 0)
+                  (crypto-public-key-destroyed?-set! key #t))
+                key))))
 
   #|proc:private-key->public-key
 The `private-key->public-key` procedure derives the corresponding public key.
@@ -133,11 +135,12 @@ The `private-key->public-key` procedure derives the corresponding public key.
   (define-who private-key->public-key
     (lambda (key)
       (pcheck ([private-key? key])
-              (check-private-key-live who key)
-              (let ([handle (ffi-pkey-public-from-private (crypto-private-key-handle key))])
-                (when (eq? handle 0)
-                  (errorf who "failed to derive public key"))
-                (raw->public-key who handle)))))
+              (with-crypto-locks ((crypto-private-key-lock key))
+                (check-private-key-live who key)
+                (let ([handle (ffi-pkey-public-from-private (crypto-private-key-handle key))])
+                  (when (eq? handle 0)
+                    (errorf who "failed to derive public key"))
+                  (raw->public-key who handle))))))
 
   (define store-dispatch
     (lambda (who kind key fmt)
@@ -163,11 +166,12 @@ The `store-private-key` procedure serializes `key` to PEM or DER as a bytevector
       [(key) (store-private-key key 'pem)]
       [(key fmt)
        (pcheck ([private-key? key])
-               (check-private-key-live who key)
-               (let ([ans (store-dispatch who 'private key fmt)])
-                 (when (eq? ans #f)
-                   (errorf who "failed to store private key"))
-                 ans))]))
+               (with-crypto-locks ((crypto-private-key-lock key))
+                 (check-private-key-live who key)
+                 (let ([ans (store-dispatch who 'private key fmt)])
+                   (when (eq? ans #f)
+                     (errorf who "failed to store private key"))
+                   ans)))]))
 
   #|proc:store-public-key
 The `store-public-key` procedure serializes `key` to PEM or DER as a bytevector.
@@ -177,11 +181,12 @@ The `store-public-key` procedure serializes `key` to PEM or DER as a bytevector.
       [(key) (store-public-key key 'pem)]
       [(key fmt)
        (pcheck ([public-key? key])
-               (check-public-key-live who key)
-               (let ([ans (store-dispatch who 'public key fmt)])
-                 (when (eq? ans #f)
-                   (errorf who "failed to store public key"))
-                 ans))]))
+               (with-crypto-locks ((crypto-public-key-lock key))
+                 (check-public-key-live who key)
+                 (let ([ans (store-dispatch who 'public key fmt)])
+                   (when (eq? ans #f)
+                     (errorf who "failed to store public key"))
+                   ans)))]))
 
   (define load-dispatch
     (lambda (who kind bv start stop fmt)
@@ -273,8 +278,9 @@ The `private-key=?` procedure compares two private keys by DER serialization.
   (define-who private-key=?
     (lambda (a b)
       (pcheck ([private-key? a b])
+              (with-crypto-locks ((crypto-private-key-lock a) (crypto-private-key-lock b))
               (equal? (store-private-key a 'der)
-                      (store-private-key b 'der)))))
+                      (store-private-key b 'der))))))
 
   #|proc:public-key=?
 The `public-key=?` procedure compares two public keys by DER serialization.
@@ -282,6 +288,7 @@ The `public-key=?` procedure compares two public keys by DER serialization.
   (define-who public-key=?
     (lambda (a b)
       (pcheck ([public-key? a b])
+              (with-crypto-locks ((crypto-public-key-lock a) (crypto-public-key-lock b))
               (equal? (store-public-key a 'der)
-                      (store-public-key b 'der)))))
+                      (store-public-key b 'der))))))
   )
