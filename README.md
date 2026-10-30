@@ -37,6 +37,16 @@ managed digester to a callback and returns the digest, ignoring callback results
 String digest APIs encode each character as **native-endian UTF-32 without a byte-order mark**.
 Slice indices count characters for strings and bytes for bytevectors and files; `stop` is
 exclusive. To hash UTF-8 text, use `(digest-bytevector 'sha256 (string->utf8 text))`.
+
+String encodings in the crypto APIs are explicit:
+
+| API | String encoding |
+| --- | --- |
+| Digests, legacy unsafe hashes, HMAC | Native-endian UTF-32, without a byte-order mark |
+| Signing, KDFs, passwords, envelopes | UTF-8 |
+
+Pass bytevectors for another encoding. Ed25519 accepts `#f` for its optional external
+digest argument; an explicit digest symbol raises an error.
 OpenSSL supplies MD5, SHA-2, SHA-3, and BLAKE2; BLAKE3 uses its independently optional library.
 MD5 is retained for legacy interoperability and is unsuitable for security-sensitive hashing.
 

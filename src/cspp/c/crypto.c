@@ -1123,6 +1123,7 @@ ptr crypto_sign_message(ptr alg, ptr digest, void *ptr_pkey, ptr bv, uint64_t st
   if (ctx == NULL) goto done;
 
   if (alg == Sstring_to_symbol("ed25519")) {
+    if (digest != Sfalse) goto done;
     if (EVP_DigestSignInit(ctx, NULL, NULL, NULL, pkey) != 1) goto done;
     if (EVP_DigestSign(ctx, NULL, &sig_len, Sbytevector_data(bv) + (size_t)start,
                        slice_len(start, stop)) != 1) {
@@ -1176,6 +1177,7 @@ int crypto_verify_message(ptr alg, ptr digest, void *ptr_pkey, ptr msg,
   if (ctx == NULL) goto done;
 
   if (alg == Sstring_to_symbol("ed25519")) {
+    if (digest != Sfalse) goto done;
     if (EVP_DigestVerifyInit(ctx, NULL, NULL, NULL, pkey) != 1) goto done;
     ok = EVP_DigestVerify(ctx, Sbytevector_data(sig) + (size_t)sig_start,
                           slice_len(sig_start, sig_stop),

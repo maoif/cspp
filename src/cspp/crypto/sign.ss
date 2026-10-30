@@ -33,6 +33,14 @@
         [(ed25519) #f]
         [else 'sha256])))
 
+  (define check-signing-digest
+    (lambda (who algorithm digest)
+      (if (eq? algorithm 'ed25519)
+          (when digest (errorf who "Ed25519 requires #f for the external digest"))
+          (unless (memq digest '(md5 sha1 sha224 sha256 sha384 sha512 sha512-224 sha512-256
+                                sha3-224 sha3-256 sha3-384 sha3-512 blake2b-512 blake2s-256))
+            (errorf who "unsupported signing digest: ~s" digest)))))
+
   (define check-signing-key
     (lambda (who algorithm key-algorithm destroyed?)
       (when destroyed? (errorf who "key is destroyed"))
@@ -82,7 +90,9 @@
   The `sign-message` procedure returns a signature bytevector for string or bytevector
   `message`, using algorithm symbol `alg` and the live private `key`. The optional
   `digest` defaults to `sha256` for RSA-PSS/ECDSA and `#f` for Ed25519, which uses no
-  external digest. Strings use UTF-8. Mismatched key algorithms raise an error.
+  external digest and rejects any other value. Other algorithms require an OpenSSL
+  digest symbol; unknown symbols raise errors. Strings use UTF-8. Mismatched key
+  algorithms raise an error. MD5 and SHA-1 are retained only for legacy interoperability.
   |#
   (define-who sign-message
     (case-lambda
@@ -92,6 +102,7 @@
        (pcheck ([private-key? key])
                (with-crypto-locks ((crypto-private-key-lock key))
                  (check-signing-algorithm who alg)
+                 (check-signing-digest who alg digest)
                  (check-signing-key who alg (crypto-private-key-algorithm key)
                                     (crypto-private-key-destroyed? key))
                  (let* ([bv (string/bytevector->utf8 message)]
@@ -106,8 +117,9 @@
   The `verify-signature?` procedure returns `#t` if bytevector `signature` authenticates
   string or bytevector `message`, using algorithm symbol `alg` and live public `key`.
   The optional `digest` defaults to `sha256` for RSA-PSS/ECDSA and `#f` for Ed25519.
-  Strings use UTF-8. Invalid signatures return `#f`; mismatched key algorithms raise
-  an error, as do destroyed keys.
+  Ed25519 requires `#f`; other algorithms require a known OpenSSL digest symbol.
+  Strings use UTF-8. Invalid signatures return `#f`; unknown digests, mismatched key
+  algorithms, and destroyed keys raise errors.
   |#
   (define-who verify-signature?
     (case-lambda
@@ -117,6 +129,7 @@
        (pcheck ([public-key? key] [bytevector? signature])
                (with-crypto-locks ((crypto-public-key-lock key))
                  (check-signing-algorithm who alg)
+                 (check-signing-digest who alg digest)
                  (check-signing-key who alg (crypto-public-key-algorithm key)
                                     (crypto-public-key-destroyed? key))
                  (let ([bv (string/bytevector->utf8 message)])
@@ -128,6 +141,7 @@
   #|proc:make-sign-state
   The `make-sign-state` procedure returns a buffered signing state for algorithm symbol
   `alg` and live private `key`. The optional `digest` defaults as in `sign-message`.
+  It is validated at construction, including requiring `#f` for Ed25519.
   Mismatched key algorithms raise an error. The caller owns the key and must keep it
   live until finalization; destroying the state does not destroy the key.
   |#
@@ -139,6 +153,7 @@
        (pcheck ([private-key? key])
                (with-crypto-locks ((crypto-private-key-lock key))
                  (check-signing-algorithm who alg)
+                 (check-signing-digest who alg digest)
                  (check-signing-key who alg (crypto-private-key-algorithm key)
                                     (crypto-private-key-destroyed? key))
                  (%make-sign-state (make-mutex 'sign) alg digest key '() #f #f)))]))
@@ -146,7 +161,8 @@
   #|proc:make-verify-state
   The `make-verify-state` procedure returns a buffered verification state for algorithm
   symbol `alg` and live public `key`. The optional `digest` defaults as in
-  `verify-signature?`. Mismatched key algorithms raise an error. The caller owns the key
+  `verify-signature?` and is validated at construction. Mismatched algorithms raise an
+  error. The caller owns the key
   and must keep it live until finalization; destroying the state preserves the key.
   |#
   (define-who make-verify-state
@@ -157,6 +173,7 @@
        (pcheck ([public-key? key])
                (with-crypto-locks ((crypto-public-key-lock key))
                  (check-signing-algorithm who alg)
+                 (check-signing-digest who alg digest)
                  (check-signing-key who alg (crypto-public-key-algorithm key)
                                     (crypto-public-key-destroyed? key))
                  (%make-verify-state (make-mutex 'verify) alg digest key '() #f #f)))]))

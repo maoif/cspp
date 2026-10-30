@@ -42,8 +42,12 @@
         (errorf who "HMAC state is finalized"))))
 
   #|proc:make-hmac-state
-The `make-hmac-state` procedure creates an incremental HMAC state.
-|#
+  The `make-hmac-state` procedure returns an owned incremental HMAC state for digest
+  symbol `which` and bytevector `key`. Optional nonnegative fixnums `start` and `stop`
+  select the half-open key slice, defaulting to zero and the bytevector length.
+  The state copies the key and serializes its operations. Release it with
+  `hmac-finalize!` or `hmac-destroy!`. Invalid inputs and native failures raise errors.
+  |#
   (define-who make-hmac-state
     (case-lambda
       [(which key)
@@ -84,8 +88,12 @@ The `hmac-update-bytevector!` procedure updates an HMAC state with a bytevector 
                  st))]))
 
   #|proc:hmac-update-string!
-The `hmac-update-string!` procedure updates an HMAC state with a string slice.
-|#
+  The `hmac-update-string!` procedure feeds string `str` into the live HMAC state `st`
+  and returns `st`. Characters use native-endian UTF-32 without a byte-order mark.
+  Optional nonnegative fixnums `start` and `stop` select a half-open character slice,
+  defaulting to zero and the string length. Invalid or terminal states, invalid slices,
+  and native update failures raise errors.
+  |#
   (define-who hmac-update-string!
     (case-lambda
       [(st str)
@@ -135,8 +143,10 @@ The `hmac-finalize!` procedure finalizes an HMAC state and returns the MAC value
                   ans)))))
 
   #|proc:hmac-reset!
-The `hmac-reset!` procedure resets an HMAC state to accept a new message with the same key.
-|#
+  The `hmac-reset!` procedure clears the accumulated input of live state `st`, retaining
+  its original key and algorithm, and returns `st`. Finalized or destroyed states and
+  native reset failures raise errors.
+  |#
   (define-who hmac-reset!
     (lambda (st)
       (pcheck ([hmac-state? st])
@@ -161,8 +171,11 @@ The `hmac-destroy!` procedure releases the foreign resources owned by an HMAC st
                 st))))
 
   #|proc:call-with-hmac-state
-The `call-with-hmac-state` procedure creates an HMAC state, passes it to `proc`, and always destroys it afterwards.
-|#
+  The `call-with-hmac-state` procedure creates an HMAC state for digest symbol `which`
+  and bytevector `key`, calls `(proc state)`, and returns the callback's values.
+  The callback runs without holding a state lock. The state is destroyed on every exit,
+  including errors and continuation escapes. Invalid inputs or native failures raise errors.
+  |#
   (define-who call-with-hmac-state
     (lambda (which key proc)
       (pcheck ([procedure? proc] [bytevector? key])
@@ -173,8 +186,11 @@ The `call-with-hmac-state` procedure creates an HMAC state, passes it to `proc`,
                   (lambda () (hmac-destroy! st)))))))
 
   #|proc:hmac
-The `hmac` procedure computes an HMAC for a string or bytevector message.
-|#
+  The `hmac` procedure returns an HMAC bytevector for string or bytevector `data`, using
+  digest symbol `which` and bytevector `key`. Strings use native-endian UTF-32 without
+  a byte-order mark; bytevectors are used as supplied. To authenticate UTF-8 text,
+  pass `(string->utf8 text)`. Invalid inputs and native failures raise errors.
+  |#
   (define-who hmac
     (lambda (which key data)
       (pcheck ([bytevector? key])
@@ -189,8 +205,11 @@ The `hmac` procedure computes an HMAC for a string or bytevector message.
                    [else (errorf who "expected string or bytevector, given ~s" data)]))))))
 
   #|proc:hmac-verify?
-The `hmac-verify?` procedure returns `#t` when `expected-tag` matches the computed HMAC.
-|#
+  The `hmac-verify?` procedure returns `#t` if bytevector `expected-tag` matches the HMAC
+  of string or bytevector `data` using digest symbol `which` and bytevector `key`.
+  Strings use native-endian UTF-32 without a byte-order mark. It compares equal-length
+  tags in constant time and returns `#f` for a mismatch. Invalid inputs raise errors.
+  |#
   (define-who hmac-verify?
     (lambda (which key data expected-tag)
       (pcheck ([bytevector? key expected-tag])

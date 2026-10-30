@@ -18,6 +18,21 @@
                    "python3 -I crypto-thread-process.py rsa-parameters"
                    "python3 -I tests/crypto-thread-process.py rsa-parameters"))))
 
+(mat crypto-hmac-string-encoding
+  (mat-requires (openssl)
+    (let ([expected (if (eq? (native-endianness) (endianness little))
+                        "2ffc6ca16617b7c6871c4597ca0454ca4ce259e60dbce969b3a4d10e227c2ecd"
+                        "3a18be658803b8d8fbdf8f8dbbcd1b4ad48d04430e471ba67b11882ffb9125d2")])
+      (and (string=? expected (bytevector->hex (hmac 'sha256 #vu8(1 2 3) "Aλ😀")))
+           (hmac-verify? 'sha256 #vu8(1 2 3) "Aλ😀" (hex->bytevector expected))
+           (string=? expected
+             (bytevector->hex
+               (call-with-hmac-state 'sha256 #vu8(1 2 3)
+                 (lambda (state)
+                   (hmac-update-string! state "_Aλ😀_" 1 2)
+                   (hmac-update-string! state "_Aλ😀_" 2 4)
+                   (hmac-finalize! state)))))))))
+
 (define read-crypto-fixture
   (lambda (name)
     (let* ([root (if (file-exists? "data/crypto") "data/crypto/" "tests/data/crypto/")]
@@ -150,6 +165,44 @@
                         (crypto-rejects?
                           (lambda () (verify-signature?
                                        'rsa-pss public #vu8(1 2 3) signature))))))))
+        (lambda () (destroy-public-key! public) (destroy-private-key! private))))))
+
+(mat crypto-signing-digest-validation
+  (mat-requires (openssl)
+    (let* ([private (generate-private-key 'ed25519)]
+           [public (private-key->public-key private)]
+           [signature (sign-message 'ed25519 private #vu8(1 2 3))])
+      (dynamic-wind
+        void
+        (lambda ()
+          (and (equal? signature (sign-message 'ed25519 #f private #vu8(1 2 3)))
+               (verify-signature? 'ed25519 #f public #vu8(1 2 3) signature)
+               ;; Error case: Ed25519 must not silently ignore an explicit external digest.
+               (for-all
+                 (lambda (digest)
+                   (and (crypto-rejects?
+                          (lambda () (sign-message 'ed25519 digest private #vu8(1 2 3))))
+                        (crypto-rejects?
+                          (lambda () (verify-signature?
+                                       'ed25519 digest public #vu8(1 2 3) signature)))
+                        (crypto-rejects? (lambda () (make-sign-state 'ed25519 digest private)))
+                        (crypto-rejects?
+                          (lambda () (make-verify-state 'ed25519 digest public)))))
+                 '(sha256 unsupported 42))))
+        (lambda () (destroy-public-key! public) (destroy-private-key! private)))))
+
+  (mat-requires (openssl)
+    (let* ([private (generate-private-key 'ecdsa)]
+           [public (private-key->public-key private)])
+      (dynamic-wind
+        void
+        (lambda ()
+          ;; Error case: unknown digests are input errors for signing and verification alike.
+          (and (crypto-rejects? (lambda () (sign-message 'ecdsa 'unsupported private #vu8())))
+               (crypto-rejects?
+                 (lambda () (verify-signature? 'ecdsa 'unsupported public #vu8() #vu8())))
+               (crypto-rejects? (lambda () (make-sign-state 'ecdsa 'unsupported private)))
+               (crypto-rejects? (lambda () (make-verify-state 'ecdsa 'unsupported public)))))
         (lambda () (destroy-public-key! public) (destroy-private-key! private))))))
 
 (mat crypto-agreement-key-compatibility
