@@ -450,6 +450,39 @@ association-list filters as `test-select`.
             (string-append (substring path 0 (fx- length 3)) ".so")
             (string-append path ".so")))))
 
+  (define $close-compile-output
+    (lambda (out)
+      (guard (raised
+              [else
+               ;; Discard pending data after a failed flush so the port can close.
+               (clear-output-port out)
+               (close-output-port out)
+               (raise raised)])
+        (close-output-port out))))
+
+  (define $compile-source-file
+    (lambda (path metadata)
+      (let ([in (open-file-input-port path)])
+        (dynamic-wind
+          (lambda () (void))
+          (lambda ()
+            (let ([source (make-source-file-descriptor path in #t)])
+              (set! in (transcoded-port in (current-transcoder)))
+              (let ([out (open-file-output-port ($compile-output-path path)
+                           (file-options replace))])
+                (dynamic-wind
+                  (lambda () (void))
+                  (lambda ()
+                    ($run-with-expected-condition metadata
+                      (lambda ()
+                        ;; Own both ports even when an expected warning exits the compiler.
+                        ;; No WPO or coverage ports are supplied for temporary source.
+                        (parameterize ([compile-file-message #f] [generate-wpo-files #f]
+                                       [generate-covin-files #f] [case-sensitive #t])
+                          (compile-port in out source)))))
+                  (lambda () ($close-compile-output out))))))
+          (lambda () (close-input-port in))))))
+
   (define $compile-case
     (lambda (descriptor metadata)
       (let ([path ($compile-temp-path)])
@@ -465,19 +498,8 @@ association-list filters as `test-select`.
                                  [print-gensym #t] [case-sensitive #t])
                     (for-each (lambda (form) (write form out) (newline out))
                               (test-descriptor-body descriptor))))
-                (lambda ()
-                  (guard (raised
-                          [else
-                           ;; Discard pending data after a failed flush so the port can close.
-                           (clear-output-port out)
-                           (close-output-port out)
-                           (raise raised)])
-                    (close-output-port out)))))
-            ($run-with-expected-condition metadata
-              (lambda ()
-                (parameterize ([compile-file-message #f] [generate-wpo-files #f]
-                               [generate-covin-files #f] [case-sensitive #t])
-                  (compile-file path)))))
+                (lambda () ($close-compile-output out))))
+            ($compile-source-file path metadata))
           (lambda ()
             (when (file-exists? path) (delete-file path))
             (let ([output-path ($compile-output-path path)])

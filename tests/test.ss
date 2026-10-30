@@ -2084,3 +2084,29 @@
                   (make-test-config (test-text-reporter) out #f #f 'never)))
               "built-in reporter"))
           (lambda () (close-port out) (when (file-exists? path) (delete-file path))))))))
+
+(mat test-compile-closes-ports-on-warnings
+  ;; Error: warning expectations and warning-as-error exits must close compiler-owned file ports.
+  (if (file-directory? "/proc/self/fd")
+      (for-all
+        (lambda (row)
+          (collect)
+          (parameterize ([collect-trip-bytes (* 1024 1024 1024)])
+            (let ([before (length (directory-list "/proc/self/fd"))])
+              (and (for-all
+                     (lambda (_)
+                       (let ([result
+                              (car (test-run
+                                     (list (make-test-compile 'compiler-exit
+                                             (cadr row) (caddr row)))
+                                     (test-silent-config)))])
+                         (eq? (test-result-status result) (car row))))
+                     (iota 8))
+                   (= before (length (directory-list "/proc/self/fd")))))))
+        (list (list 'passed '((eval-when (compile) (warningf 'compiler "expected")))
+                    (list (cons 'raises warning?)))
+              (list 'failed '((eval-when (compile) (warningf 'compiler "rejected")))
+                    '((warnings . error)))
+              (list 'errored '((lambda (x x) x)) '())
+              (list 'passed '((define valid (lambda (x) x))) '())))
+      #t))
