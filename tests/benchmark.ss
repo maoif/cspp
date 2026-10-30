@@ -2352,3 +2352,40 @@
     (and (= (cdr (assq 'mean summary)) (/ huge 2))
          (finite? (cdr (assq 'stddev summary)))
          (= (cdr (assq 'stddev summary)) (/ huge 2)))))
+
+(mat benchmark-filtered-descriptor-output-is-unused
+  ;; An excluded descriptor's incompatible default output must not prevent the run's empty report.
+  (call-with-values open-bytevector-output-port
+    (lambda (unused extract)
+      (dynamic-wind
+        (lambda () (void))
+        (lambda ()
+          (call-with-port (open-output-string)
+            (lambda (fallback)
+              (let* ([ran? #f]
+                     [descriptor (make-benchmark 'excluded-output
+                                   (lambda (state) (set! ran? #t)) `((output . ,unused)))]
+                     [config (benchmark-config-with
+                               (parameterize ([current-output-port fallback])
+                                 (default-benchmark-config))
+                               `((filter . ,(lambda (benchmark) #f))))]
+                     [results (benchmark-run descriptor config)])
+                (and (null? results) (not ran?)
+                     (not (string=? (get-output-string fallback) "")))))))
+        (lambda () (close-port unused))))))
+
+(mat benchmark-run-one-does-not-validate-unused-reporting
+  ;; The low-level runner returns one result without invoking a reporter or using its output port.
+  (call-with-values open-bytevector-output-port
+    (lambda (unused extract)
+      (dynamic-wind
+        (lambda () (void))
+        (lambda ()
+          (let* ([descriptor (make-benchmark 'no-report (lambda (state) (void)) '())]
+                 [config (make-benchmark-config 0 1 0 1 unused #f (benchmark-text-reporter) #f #f)]
+                 [expanded (car (benchmark-expand descriptor config))]
+                 [result (benchmark-run-one expanded config)])
+            (and (not (benchmark-result-error result))
+                 (= (length (benchmark-result-samples result)) 1)
+                 (= (bytevector-length (extract)) 0))))
+        (lambda () (close-port unused))))))

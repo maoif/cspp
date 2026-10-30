@@ -2270,8 +2270,6 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
 
   (define $run-expanded
     (lambda (expanded config)
-      ($check-reporter-output 'benchmark-run-one
-        (benchmark-config-reporter config) (benchmark-config-output config))
       (let* ([state (car expanded)]
              [benchmark (cdr expanded)]
              ;; Expansion preserves positional argument order in the state alist.
@@ -2304,7 +2302,8 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
   #|proc:benchmark-run-one
   The `benchmark-run-one` procedure runs one concrete expanded benchmark pair
   `expanded` with runner `config` and returns one benchmark result. Explicit config
-  fields override descriptor options, which override default settings.
+  fields override descriptor options, which override default settings. Reporting fields
+  are unused: this procedure neither invokes a reporter nor validates its output port.
   |#
   (define benchmark-run-one
     (lambda (expanded config)
@@ -2393,12 +2392,12 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
               (finish results)
               (let* ([benchmark (car benchmarks)]
                      [effective ($effective-benchmark-config benchmark config)])
-                ($check-reporter-output 'benchmark-run
-                  (benchmark-config-reporter effective) (benchmark-config-output effective))
                 (if (not ($benchmark-matches-selector?
                           benchmark (benchmark-config-filter effective)))
                     (loop-benchmarks (cdr benchmarks) results)
                     (begin
+                      ($check-reporter-output 'benchmark-run
+                        (benchmark-config-reporter effective) (benchmark-config-output effective))
                       (set! selected? #t)
                       (record-report! '() effective)
                       (let* ([next-results results]

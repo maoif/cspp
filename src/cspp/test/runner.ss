@@ -551,6 +551,8 @@ list of file path strings, and `config` is a test runner configuration.
     (lambda (paths config)
       (pcheck ([(lambda (value) (and (list? value) (andmap string? value))) paths]
                [test-config? config])
+              (test-check-reporter-output 'test-run-files
+                (test-config-reporter config) (test-config-output config))
               (let ([registry (make-test-registry)])
                 (parameterize ([current-test-registry registry])
                   (for-each

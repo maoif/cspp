@@ -2068,3 +2068,19 @@
              (string-append "bash -c 'ulimit -f 0; trap \"\" XFSZ; "
                             "exec ../cspp --script=test-benchmark-close-error-process.ss'")))
       #t))
+
+(mat test-run-files-validates-output-before-loading
+  ;; Error: invalid reporting must reject before evaluating code from the supplied files.
+  (let ([path "tmp-cspp-invalid-report-loader.ss"])
+    (call-with-values open-bytevector-output-port
+      (lambda (out extract)
+        (dynamic-wind
+          (lambda ()
+            (test-write-file path "(error 'loader \"user file must not be evaluated\")\n"))
+          (lambda ()
+            (test-error-message-contains?
+              (lambda ()
+                (test-run-files (list path)
+                  (make-test-config (test-text-reporter) out #f #f 'never)))
+              "built-in reporter"))
+          (lambda () (close-port out) (when (file-exists? path) (delete-file path))))))))
