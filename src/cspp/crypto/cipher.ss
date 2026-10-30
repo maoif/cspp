@@ -94,13 +94,14 @@ The `make-cipher-state` procedure creates a lower-level cipher state in `mode` f
               (unless (fx= (bytevector-length iv) (cipher-iv-size which))
                 (errorf who "invalid IV length ~a for ~s, expected ~a"
                         (bytevector-length iv) which (cipher-iv-size which)))
-              (let ([handle (ffi-cipher-state-create which
-                                                    (if (eq? mode 'encrypt) 1 0)
-                                                    key 0 (bytevector-length key)
-                                                    iv 0 (bytevector-length iv))])
-                (when (eq? handle 0)
-                  (errorf who "failed to create cipher state for ~s" which))
-                (%make-cipher-state (make-mutex 'cipher) which mode handle #f #f)))))
+              (with-crypto-operation
+                (let ([handle (ffi-cipher-state-create which
+                                                      (if (eq? mode 'encrypt) 1 0)
+                                                      key 0 (bytevector-length key)
+                                                      iv 0 (bytevector-length iv))])
+                  (when (eq? handle 0)
+                    (errorf who "failed to create cipher state for ~s" which))
+                  (%make-cipher-state (make-mutex 'cipher) which mode handle #f #f))))))
 
   #|proc:cipher-update-bytevector!
 The `cipher-update-bytevector!` procedure transforms a bytevector slice and returns the output chunk.

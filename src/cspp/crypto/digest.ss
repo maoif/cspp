@@ -19,7 +19,8 @@
           (cspp utils)
           (only (cspp file) file-size)
           (cspp optional-library-check)
-          (only (cspp crypto private) with-crypto-mutex)
+          (only (cspp crypto private)
+                with-crypto-mutex with-crypto-operation)
           (cspp crypto ffi))
 
   #|proc:digest-algorithms
@@ -187,11 +188,12 @@
        (pcheck ([symbol? algorithm])
          (check-algorithm who algorithm)
          (ensure-backend who algorithm)
-         (let ([handle (if (eq? algorithm 'blake3)
-                           (ffi-blake3-create)
-                           (ffi-digest-state-create algorithm))])
-           (when (= handle 0) (errorf who "failed to create digester for ~s" algorithm))
-           (%make-digester (make-mutex 'digester) algorithm handle #f #f)))]))
+         (with-crypto-operation
+           (let ([handle (if (eq? algorithm 'blake3)
+                             (ffi-blake3-create)
+                             (ffi-digest-state-create algorithm))])
+             (when (= handle 0) (errorf who "failed to create digester for ~s" algorithm))
+             (%make-digester (make-mutex 'digester) algorithm handle #f #f))))]))
 
   #|proc:digester-update-bytevector!
   The `digester-update-bytevector!` procedure feeds `bytes` into the live digester `state`

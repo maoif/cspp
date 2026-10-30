@@ -55,21 +55,23 @@
 
   (define raw->private-key
     (lambda (who handle)
-      (let ([alg (ffi-pkey-algorithm handle)]
-            [bits (ffi-pkey-bits handle)])
-        (when (eq? alg #f)
-          (ffi-pkey-free handle)
-          (errorf who "unsupported private key"))
-        (make-crypto-private-key handle alg bits #f))))
+      (with-crypto-operation
+        (let ([alg (ffi-pkey-algorithm handle)]
+              [bits (ffi-pkey-bits handle)])
+          (when (eq? alg #f)
+            (ffi-pkey-free handle)
+            (errorf who "unsupported private key"))
+          (make-crypto-private-key handle alg bits #f)))))
 
   (define raw->public-key
     (lambda (who handle)
-      (let ([alg (ffi-pkey-algorithm handle)]
-            [bits (ffi-pkey-bits handle)])
-        (when (eq? alg #f)
-          (ffi-pkey-free handle)
-          (errorf who "unsupported public key"))
-        (make-crypto-public-key handle alg bits #f))))
+      (with-crypto-operation
+        (let ([alg (ffi-pkey-algorithm handle)]
+              [bits (ffi-pkey-bits handle)])
+          (when (eq? alg #f)
+            (ffi-pkey-free handle)
+            (errorf who "unsupported public key"))
+          (make-crypto-public-key handle alg bits #f)))))
 
   #|proc:generate-private-key
   The `generate-private-key` procedure returns an owned private key for symbol `alg`.

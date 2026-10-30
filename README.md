@@ -59,6 +59,11 @@ finishes before destruction or raises a destroyed-resource error.
 Callers must keep mutable input buffers unchanged until an operation returns. AEAD state
 constructors copy their key and nonce buffers, matching the ownership of cipher and HMAC states.
 Errors reach caller exception handlers after internal state/resource locks have been released.
+Internal native-resource operations defer timer, keyboard, and collection interrupts until
+their handles and ownership changes are consistent. An exited internal operation cannot be
+reentered, including through the continuation attached to a Chez error condition. Public
+`call-with-*` callbacks run with the caller's interrupt settings; their states are destroyed
+on continuation escape. `call-with-digester` rejects reentry into its destroyed callback scope.
 
 The old `(cspp digest)` and `(cspp crypto hash)` imports have been removed. Replace them with
 `(cspp crypto digest)` and replace the former crypto `hash-*` names with `digest-*` or

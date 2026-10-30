@@ -1,5 +1,11 @@
 (import (cspp))
 
+(mat crypto-continuation-safety
+  ;; Error case: suspending native operations must not permit use-after-free or double-free.
+  (= 0 (system (if (file-exists? "crypto-continuation-process.py")
+                   "python3 -I crypto-continuation-process.py"
+                   "python3 -I tests/crypto-continuation-process.py"))))
+
 (mat crypto-thread-safety
   ;; Error case: shared updates and destruction must be serialized without native corruption.
   (= 0 (system (if (file-exists? "crypto-thread-process.py")

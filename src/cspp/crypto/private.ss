@@ -4,6 +4,7 @@
           call-with-crypto-locks
           with-crypto-locks
           with-crypto-mutex
+          with-crypto-operation
           ensure-openssl
           bytevector-append
           subbytevector
@@ -61,16 +62,37 @@
   (define next-lock-rank 0)
   (define lock-rank-mutex (make-mutex 'crypto-lock-rank))
 
+  #|macro:with-crypto-operation
+  The `with-crypto-operation` macro evaluates `body ...` as one internal native-resource
+  transaction and returns its values. Timer, keyboard, and collection interrupts are
+  deferred until exit, so suspension cannot invalidate handles or interrupt ownership
+  changes. Reentering an exited transaction raises an error. Errors reach external
+  handlers after interrupts are restored. The body must not invoke user callbacks.
+  |#
+  (define-syntax with-crypto-operation
+    (syntax-rules ()
+      [(_ body ...)
+       (let ([exited? #f])
+         (guard (condition [else (raise condition)])
+           (with-interrupts-disabled
+             (dynamic-wind
+               (lambda ()
+                 (when exited?
+                   (error 'with-crypto-operation "cannot reenter an exited native operation")))
+               (lambda () body ...)
+               (lambda () (set! exited? #t))))))]))
+
   #|macro:with-crypto-mutex
   The `with-crypto-mutex` macro acquires recursive `mutex`, evaluates `body ...`, and
   returns its values. It releases the mutex on every exit. Errors are re-raised after
   releasing the mutex so caller exception handlers may safely invoke other crypto APIs.
+  Interrupts are deferred during the operation; exited operations cannot be reentered.
   No user callbacks should run in the body.
   |#
   (define-syntax with-crypto-mutex
     (syntax-rules ()
       [(_ mutex body ...)
-       (guard (condition [else (raise condition)])
+       (with-crypto-operation
          (with-mutex mutex body ...))]))
 
   #|proc:make-crypto-lock
@@ -80,16 +102,18 @@
   (define make-crypto-lock
     (lambda ()
       (pcheck ()
-        (with-mutex lock-rank-mutex
-          (let ([rank next-lock-rank])
-            (set! next-lock-rank (+ rank 1))
-            (%make-crypto-lock rank (make-mutex 'crypto-resource)))))))
+        (with-crypto-operation
+          (with-mutex lock-rank-mutex
+            (let ([rank next-lock-rank])
+              (set! next-lock-rank (+ rank 1))
+              (%make-crypto-lock rank (make-mutex 'crypto-resource))))))))
 
   #|proc:call-with-crypto-locks
   The `call-with-crypto-locks` procedure acquires the internal resource locks in list
   `locks` in creation order, calls the zero-argument procedure `proc`, and returns its
   values. It releases locks on every exit. The callback must not invoke user code.
   Errors are re-raised after releasing all locks, before calling external handlers.
+  Interrupts are deferred during the operation; exited operations cannot be reentered.
   |#
   (define call-with-crypto-locks
     (lambda (locks proc)
@@ -98,7 +122,7 @@
                     (unless (crypto-lock? lock)
                       (error 'call-with-crypto-locks "invalid internal resource lock")))
                   locks)
-        (guard (condition [else (raise condition)])
+        (with-crypto-operation
           (let loop ([locks (if (or (null? locks) (null? (cdr locks)))
                                locks
                                (list-sort (lambda (left right)

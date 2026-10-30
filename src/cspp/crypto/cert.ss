@@ -63,11 +63,12 @@
   (define load-certificate/raw
     (lambda (who bv start stop fmt)
       (check-cert-format who fmt)
-      (let ([handle (case fmt
-                      [(pem) (ffi-cert-load-pem bv start stop)]
-                      [(der) (ffi-cert-load-der bv start stop)]
-                      [else (unreachable!)])])
-        (raw->certificate who handle))))
+      (with-crypto-operation
+        (let ([handle (case fmt
+                        [(pem) (ffi-cert-load-pem bv start stop)]
+                        [(der) (ffi-cert-load-der bv start stop)]
+                        [else (unreachable!)])])
+          (raw->certificate who handle)))))
 
   (define string-find
     (lambda (str needle start)
@@ -161,22 +162,23 @@ The `load-certificate` procedure loads a single certificate from a PEM or DER by
                     (let ([blocks (split-pem-certificates slice)])
                       (when (null? blocks)
                         (errorf who "no PEM certificates found"))
-                      (let ([owned '()] [complete? #f])
-                        (dynamic-wind
-                          void
-                          (lambda ()
-                            (for-each
-                              (lambda (block)
-                                (let ([certificate (load-certificate/raw
-                                                     who block 0 (bytevector-length block) 'pem)])
-                                  (set! owned (cons certificate owned))))
-                              blocks)
-                            (let ([certificates (reverse owned)])
-                              (set! complete? #t)
-                              certificates))
-                          (lambda ()
-                            (unless complete?
-                              (for-each destroy-certificate! owned))))))]
+                      (with-crypto-operation
+                        (let ([owned '()] [complete? #f])
+                          (dynamic-wind
+                            void
+                            (lambda ()
+                              (for-each
+                                (lambda (block)
+                                  (let ([certificate (load-certificate/raw
+                                                       who block 0 (bytevector-length block) 'pem)])
+                                    (set! owned (cons certificate owned))))
+                                blocks)
+                              (let ([certificates (reverse owned)])
+                                (set! complete? #t)
+                                certificates))
+                            (lambda ()
+                              (unless complete?
+                                (for-each destroy-certificate! owned)))))))]
                    [else (unreachable!)])))]))
 
   #|proc:destroy-certificate!

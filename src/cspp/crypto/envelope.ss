@@ -33,8 +33,10 @@
       (hkdf 'sha256 shared (bytevector) (string->utf8 "cspp-envelope") 32)))
 
   (define call-with-temporary-key
-    (lambda (key destroy! proc)
-      (dynamic-wind void (lambda () (proc key)) (lambda () (destroy! key)))))
+    (lambda (create destroy! proc)
+      (with-crypto-operation
+        (let ([key (create)])
+          (dynamic-wind void (lambda () (proc key)) (lambda () (destroy! key)))))))
 
   #|proc:seal-envelope
   The `seal-envelope` procedure returns an encrypted envelope for the live X25519
@@ -58,7 +60,8 @@
               (unless (eq? (public-key-algorithm recipient-public-key) 'x25519)
                 (errorf who "safe envelope currently requires an x25519 recipient public key"))
               (let ([pt (string/bytevector->utf8 plaintext)])
-                (call-with-temporary-key (generate-private-key 'x25519) destroy-private-key!
+                (call-with-temporary-key (lambda () (generate-private-key 'x25519))
+                  destroy-private-key!
                   (lambda (epriv)
                     (let* ([shared (derive-shared-secret 'x25519 epriv recipient-public-key)]
                            [key (derive-envelope-key shared)]
@@ -97,7 +100,8 @@
               (unless (and (eq? (envelope-kem envelope) 'x25519)
                            (eq? (envelope-cipher envelope) 'chacha20-poly1305))
                 (errorf who "unsupported envelope"))
-              (call-with-temporary-key (pem->public-key (envelope-ephemeral-key envelope))
+              (call-with-temporary-key
+                (lambda () (pem->public-key (envelope-ephemeral-key envelope)))
                 destroy-public-key!
                 (lambda (epub)
                   (let* ([shared (derive-shared-secret 'x25519 recipient-private-key epub)]

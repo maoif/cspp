@@ -60,10 +60,11 @@
        (pcheck ([bytevector? key])
                (check-mac-algorithm who which)
                (check-slice who (bytevector-length key) start stop)
-               (let ([handle (ffi-hmac-state-create which key start stop)])
-                 (when (eq? handle 0)
-                   (errorf who "failed to create HMAC state for ~s" which))
-                 (%make-hmac-state (make-mutex 'hmac) handle which #f #f)))]))
+               (with-crypto-operation
+                 (let ([handle (ffi-hmac-state-create which key start stop)])
+                   (when (eq? handle 0)
+                     (errorf who "failed to create HMAC state for ~s" which))
+                   (%make-hmac-state (make-mutex 'hmac) handle which #f #f))))]))
 
   #|proc:hmac-update-bytevector!
 The `hmac-update-bytevector!` procedure updates an HMAC state with a bytevector slice.
