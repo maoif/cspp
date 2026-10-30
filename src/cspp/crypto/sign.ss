@@ -33,6 +33,13 @@
         [(ed25519) #f]
         [else 'sha256])))
 
+  (define check-signing-key
+    (lambda (who algorithm key-algorithm destroyed?)
+      (when destroyed? (errorf who "key is destroyed"))
+      (unless (eq? key-algorithm
+                   (case algorithm [(rsa-pss) 'rsa] [(ecdsa) 'ec] [else algorithm]))
+        (errorf who "key algorithm ~s is incompatible with ~s" key-algorithm algorithm))))
+
   (define-record-type (sign-state %make-sign-state sign-state?)
     (opaque #t)
     (fields algorithm
@@ -72,8 +79,11 @@
         (errorf who "verify state is finalized"))))
 
   #|proc:sign-message
-The `sign-message` procedure signs `message` with `key`.
-|#
+  The `sign-message` procedure returns a signature bytevector for string or bytevector
+  `message`, using algorithm symbol `alg` and the live private `key`. The optional
+  `digest` defaults to `sha256` for RSA-PSS/ECDSA and `#f` for Ed25519, which uses no
+  external digest. Strings use UTF-8. Mismatched key algorithms raise an error.
+  |#
   (define-who sign-message
     (case-lambda
       [(alg key message)
@@ -81,6 +91,8 @@ The `sign-message` procedure signs `message` with `key`.
       [(alg digest key message)
        (pcheck ([private-key? key])
                (check-signing-algorithm who alg)
+               (check-signing-key who alg (crypto-private-key-algorithm key)
+                                  (crypto-private-key-destroyed? key))
                (let* ([bv (string/bytevector->utf8 message)]
                       [ans (ffi-sign-message alg digest
                                              (crypto-private-key-handle key)
@@ -90,8 +102,12 @@ The `sign-message` procedure signs `message` with `key`.
                  ans))]))
 
   #|proc:verify-signature?
-The `verify-signature?` procedure returns `#t` when `signature` is valid for `message` and `key`.
-|#
+  The `verify-signature?` procedure returns `#t` if bytevector `signature` authenticates
+  string or bytevector `message`, using algorithm symbol `alg` and live public `key`.
+  The optional `digest` defaults to `sha256` for RSA-PSS/ECDSA and `#f` for Ed25519.
+  Strings use UTF-8. Invalid signatures return `#f`; mismatched key algorithms raise
+  an error, as do destroyed keys.
+  |#
   (define-who verify-signature?
     (case-lambda
       [(alg key message signature)
@@ -99,6 +115,8 @@ The `verify-signature?` procedure returns `#t` when `signature` is valid for `me
       [(alg digest key message signature)
        (pcheck ([public-key? key] [bytevector? signature])
                (check-signing-algorithm who alg)
+               (check-signing-key who alg (crypto-public-key-algorithm key)
+                                  (crypto-public-key-destroyed? key))
                (let ([bv (string/bytevector->utf8 message)])
                  (not (fx= 0 (ffi-verify-message alg digest
                                                  (crypto-public-key-handle key)
@@ -106,8 +124,11 @@ The `verify-signature?` procedure returns `#t` when `signature` is valid for `me
                                                  signature 0 (bytevector-length signature))))))]))
 
   #|proc:make-sign-state
-The `make-sign-state` procedure creates a buffered signing state.
-|#
+  The `make-sign-state` procedure returns a buffered signing state for algorithm symbol
+  `alg` and live private `key`. The optional `digest` defaults as in `sign-message`.
+  Mismatched key algorithms raise an error. The caller owns the key and must keep it
+  live until finalization; destroying the state does not destroy the key.
+  |#
   (define-who make-sign-state
     (case-lambda
       [(alg key)
@@ -115,11 +136,16 @@ The `make-sign-state` procedure creates a buffered signing state.
       [(alg digest key)
        (pcheck ([private-key? key])
                (check-signing-algorithm who alg)
+               (check-signing-key who alg (crypto-private-key-algorithm key)
+                                  (crypto-private-key-destroyed? key))
                (%make-sign-state alg digest key '() #f #f))]))
 
   #|proc:make-verify-state
-The `make-verify-state` procedure creates a buffered verification state.
-|#
+  The `make-verify-state` procedure returns a buffered verification state for algorithm
+  symbol `alg` and live public `key`. The optional `digest` defaults as in
+  `verify-signature?`. Mismatched key algorithms raise an error. The caller owns the key
+  and must keep it live until finalization; destroying the state preserves the key.
+  |#
   (define-who make-verify-state
     (case-lambda
       [(alg key)
@@ -127,6 +153,8 @@ The `make-verify-state` procedure creates a buffered verification state.
       [(alg digest key)
        (pcheck ([public-key? key])
                (check-signing-algorithm who alg)
+               (check-signing-key who alg (crypto-public-key-algorithm key)
+                                  (crypto-public-key-destroyed? key))
                (%make-verify-state alg digest key '() #f #f))]))
 
   (define update-state!

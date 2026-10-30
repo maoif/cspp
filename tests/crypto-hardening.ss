@@ -87,3 +87,45 @@
         (lambda ()
           (destroy-cert-store! store)
           (for-each destroy-certificate! (list leaf root intermediate)))))))
+
+(mat crypto-signing-key-compatibility
+  (mat-requires (openssl)
+    (let* ([private (generate-private-key 'rsa)]
+           [public (private-key->public-key private)])
+      (dynamic-wind
+        void
+        (lambda ()
+          (let ([signature (sign-message 'rsa-pss private #vu8(1 2 3))])
+            (and (verify-signature? 'rsa-pss public #vu8(1 2 3) signature)
+                 ;; Error case: RSA keys must not sign or verify under an ECDSA label.
+                 (crypto-rejects? (lambda () (sign-message 'ecdsa private #vu8(1 2 3))))
+                 (crypto-rejects?
+                   (lambda () (verify-signature? 'ecdsa public #vu8(1 2 3) signature)))
+                 (crypto-rejects? (lambda () (make-sign-state 'ecdsa private)))
+                 (crypto-rejects? (lambda () (make-verify-state 'ecdsa public)))
+                 ;; Error case: buffered constructors must reject already destroyed keys.
+                 (begin
+                   (destroy-private-key! private)
+                   (destroy-public-key! public)
+                   (and (crypto-rejects? (lambda () (make-sign-state 'rsa-pss private)))
+                        (crypto-rejects? (lambda () (make-verify-state 'rsa-pss public)))
+                        (crypto-rejects?
+                          (lambda () (verify-signature?
+                                       'rsa-pss public #vu8(1 2 3) signature))))))))
+        (lambda () (destroy-public-key! public) (destroy-private-key! private))))))
+
+(mat crypto-agreement-key-compatibility
+  (mat-requires (openssl)
+    (for-all
+      (lambda (entry)
+        (let* ([private (generate-private-key (car entry))]
+               [public (private-key->public-key private)])
+          (dynamic-wind
+            void
+            (lambda ()
+              (and (bytevector? (derive-shared-secret (car entry) private public))
+                   ;; Error case: a valid pair cannot be used under another KEM label.
+                   (crypto-rejects?
+                     (lambda () (derive-shared-secret (cadr entry) private public)))))
+            (lambda () (destroy-public-key! public) (destroy-private-key! private)))))
+      '((x25519 ecdh) (ecdh x25519)))))

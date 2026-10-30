@@ -919,6 +919,18 @@ static ptr pkey_algorithm_symbol(EVP_PKEY *pkey) {
   }
 }
 
+static int pkey_matches_algorithm(EVP_PKEY *key, ptr algorithm) {
+  int id;
+  if (key == NULL) return 0;
+  id = EVP_PKEY_get_base_id(key);
+  if (algorithm == Sstring_to_symbol("rsa-pss")) return id == EVP_PKEY_RSA;
+  if (algorithm == Sstring_to_symbol("ecdsa") ||
+      algorithm == Sstring_to_symbol("ecdh")) return id == EVP_PKEY_EC;
+  if (algorithm == Sstring_to_symbol("ed25519")) return id == EVP_PKEY_ED25519;
+  if (algorithm == Sstring_to_symbol("x25519")) return id == EVP_PKEY_X25519;
+  return 0;
+}
+
 static ptr bio_to_bytevector(BIO *bio) {
   char *data = NULL;
   long len = BIO_ctrl(bio, BIO_CTRL_INFO, 0, &data);
@@ -1102,7 +1114,7 @@ ptr crypto_sign_message(ptr alg, ptr digest, void *ptr_pkey, ptr bv, uint64_t st
   size_t sig_len = 0;
   unsigned char *sig = NULL;
 
-  if (pkey == NULL) return Sfalse;
+  if (!pkey_matches_algorithm(pkey, alg)) return Sfalse;
   ctx = EVP_MD_CTX_new();
   if (ctx == NULL) goto done;
 
@@ -1155,7 +1167,7 @@ int crypto_verify_message(ptr alg, ptr digest, void *ptr_pkey, ptr msg,
   EVP_MD *md = NULL;
   int ok = 0;
 
-  if (pkey == NULL) return 0;
+  if (!pkey_matches_algorithm(pkey, alg)) return 0;
   ctx = EVP_MD_CTX_new();
   if (ctx == NULL) goto done;
 
@@ -1196,6 +1208,8 @@ ptr crypto_derive_shared_secret(ptr alg, void *ptr_priv, void *ptr_pub) {
 
   if (priv == NULL || pub == NULL) return Sfalse;
   if (!(alg == Sstring_to_symbol("x25519") || alg == Sstring_to_symbol("ecdh")))
+    return Sfalse;
+  if (!pkey_matches_algorithm(priv, alg) || !pkey_matches_algorithm(pub, alg))
     return Sfalse;
   ctx = EVP_PKEY_CTX_new(priv, NULL);
   if (ctx == NULL) goto done;
