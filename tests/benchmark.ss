@@ -2189,3 +2189,33 @@
               '("(" "((format . cspp-benchmark-baseline) (version . 1) (results))\n42")))
           (lambda () (when (file-exists? path) (delete-file path)))))
       #t))
+
+(mat benchmark-lifecycle-callback-arities
+  ;; Error: invalid hooks must reject descriptors, fixtures, and suites before acquiring resources.
+  (for-all
+    (lambda (options)
+      (guard (raised [else #t])
+        (make-benchmark 'invalid-hook (lambda arguments (void)) options)
+        #f))
+    (list `((setup . ,(lambda () #f)))
+          `((teardown . ,(lambda (state) (void))))))
+
+  ;; Error: fixture and suite macros must validate their callback signatures at definition time.
+  (for-all
+    (lambda (form)
+      (guard (raised [else #t]) (eval form (environment '(cspp))) #f))
+    '((let () (define-benchmark-fixture bad (:setup (lambda () #f))) bad)
+      (let () (define-benchmark-fixture bad (:teardown (lambda (state) #f))) bad)
+      (let () (define-benchmark-suite bad (:suite-setup (lambda () #f))) bad)
+      (let () (define-benchmark-suite bad (:suite-teardown (lambda (state) #f))) bad)))
+
+  ;; Optional and rest-argument hooks accepting the required arguments remain supported.
+  (let* ([calls '()]
+         [descriptor
+          (make-benchmark 'valid-hook
+            (lambda (state value) (set! calls (cons value calls)))
+            `((setup . ,(case-lambda [() #f] [(state) 'ready]))
+              (teardown . ,(lambda arguments (set! calls (cons 'closed calls))))))]
+         [result (car (benchmark-run descriptor (benchmark-test-config)))])
+    (and (not (benchmark-result-error result))
+         (equal? (reverse calls) '(ready closed ready closed)))))

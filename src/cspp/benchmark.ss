@@ -1035,8 +1035,12 @@ The `benchmark-state-counter-add!` procedure adds numeric `value` to counter
           (let ([value (cdr option)])
             (unless
               (case (car option)
-                [(setup teardown suite-setup suite-teardown)
-                 (or (procedure? value) (and (eq? who 'make-benchmark) (not value)))]
+                [(setup suite-setup)
+                 (or (and (procedure? value) (logbit? 1 (procedure-arity-mask value)))
+                     (and (eq? who 'make-benchmark) (not value)))]
+                [(teardown suite-teardown)
+                 (or (and (procedure? value) (logbit? 2 (procedure-arity-mask value)))
+                     (and (eq? who 'make-benchmark) (not value)))]
                 [(fixture) (or (not value) (benchmark-fixture? value))]
                 [(suite) (or (not value) (symbol? value))]
                 [(template-args)
@@ -1061,6 +1065,7 @@ The `make-benchmark` procedure creates a benchmark descriptor named by symbol
 `benchmark-options`. Options include argument tables/ranges, sample setup/teardown,
 fixture and suite context, template arguments, and runner configuration defaults.
 Unknown options and invalid hooks/configuration values are rejected at construction.
+Setup hooks must accept one argument and teardown hooks must accept two arguments.
 Singleton options cannot repeat; argument tables and ranges may repeat with distinct names.
 Setup has signature `(lambda (state) value)`; teardown has signature
 `(lambda (state value) unspecified)` and runs after the body, even without setup.
@@ -1960,7 +1965,7 @@ the body condition takes precedence.
 The `define-benchmark-fixture` macro defines a reusable fixture descriptor named
 by `name`. Its setup hook receives state and its teardown hook receives state
 and the setup value. Only `:setup` and `:teardown` options are accepted, and each
-supplied hook must be a procedure.
+supplied hook must accept its documented arguments.
 Setup must clean up partial resources if it raises; teardown runs only after successful setup.
 |#
   (define-syntax define-benchmark-fixture
@@ -1997,7 +2002,7 @@ Descriptor `:setup` and `:teardown` hooks cannot be combined with a fixture.
   receives that state and setup value, or `#f` if setup raised; it can inspect user
   data in the state to release partially acquired resources. Only these two hook
   options are accepted; measurement defaults belong to child benchmark descriptors.
-  Each supplied hook must be a procedure.
+  Setup must accept one argument and teardown must accept two arguments.
   Every member expression must evaluate to a benchmark descriptor.
   |#
   (define-syntax define-benchmark-suite
