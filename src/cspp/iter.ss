@@ -681,7 +681,10 @@
   `iter*`. Kind: lazy lockstep wrapper; traversal stops when any source ends, possibly
   consuming one value from other sources on its last pull. Further pulls stay exhausted
   without reading sources until reset. Reset resets all sources and clears that stop flag.
-  Repeating a handle consumes successive values from that cursor; it does not clone it.
+  Continuation resumption observes this current stop flag before further source reads or
+  tuple emission; it does not restore consumed source values.
+  Sources are read left to right. Repeating a handle consumes successive values from that
+  cursor; it does not clone it.
   With one source return it directly. Terminal completion finalizes all source resources.
   |#
   (define iter-zip
@@ -695,8 +698,25 @@
                              (lambda ()
                                (if done?
                                    iter-end
-                                   (let ([values (map iter-next! iter*)])
-                                     (if (memq iter-end values)
+                                   (let ([values
+                                          (let gather ([sources iter*])
+                                            (cond
+                                             [done? iter-end]
+                                             [(null? sources) '()]
+                                             [else
+                                              (let ([value (iter-next! (car sources))])
+                                                ;; Read left to right: repeated handles share
+                                                ;; one cursor. Chez map need not keep order.
+                                                ;; A resumed producer must also consult the
+                                                ;; current stop flag before further reads.
+                                                (if done? iter-end
+                                                    (let ([tail (gather (cdr sources))])
+                                                      (if (iter-end? tail) iter-end
+                                                          (cons value tail)))))]))])
+                                     ;; An aborted gather is the sentinel, not a partial tuple.
+                                     ;; Ordinary end markers still gather the remaining sources,
+                                     ;; preserving this wrapper's last-pull consumption behavior.
+                                     (if (or (iter-end? values) (memq iter-end values))
                                          (begin (set! done? #t) iter-end)
                                          values))))
                              (lambda () (set! done? #f))
@@ -807,22 +827,34 @@
   Return an iterator that emits the first value from `iter` for each equivalence
   class according to `(equal? previous current) -> boolean`. Kind: lazy wrapper with
   per-pass history of emitted values; reset clears history and resets the source.
-  Terminal completion finalizes upstream resources. History may grow without bound.
+  History may grow without bound during a pass; upstream exhaustion releases it.
+  Further pulls return `iter-end` until reset, including on continuation resumption.
+  Terminal completion finalizes upstream resources.
   |#
   (define iter-distinct
     (lambda (equal? iter)
       (pcheck ([procedure? equal?] [$iter? iter])
-              (let ([seen '()])
+              (let ([seen '()] [done? #f])
                 (mk-$iter
                  (lambda ()
                    (let loop ()
-                     (let ([x (iter-next! iter)])
-                       (if (iter-end? x)
-                           iter-end
-                           (if (exists (lambda (y) (equal? y x)) seen)
-                               (loop)
-                               (begin (set! seen (cons x seen)) x))))))
-                 (lambda () (set! seen '()))
+                     (if done? iter-end
+                         (let ([x (iter-next! iter)])
+                           (cond
+                            ;; A resumed producer may return after this pass has ended.
+                            [done? iter-end]
+                            [(iter-end? x)
+                             (set! done? #t)
+                             (set! seen '())
+                             iter-end]
+                            [else
+                             (let ([duplicate? (exists (lambda (y) (equal? y x)) seen)])
+                               ;; Comparisons can suspend or capture continuations too.
+                               ;; Never rebuild released history on a completed pass.
+                               (cond [done? iter-end]
+                                     [duplicate? (loop)]
+                                     [else (set! seen (cons x seen)) x]))])))))
+                 (lambda () (set! seen '()) (set! done? #f))
                  #f (list iter))))))
   #|proc:iter-sorted
   Consume `iter` immediately, sort its values with `(<? left right) -> boolean`, and

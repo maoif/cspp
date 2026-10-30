@@ -337,7 +337,15 @@
   (define indexed-ref/missing
     (lambda (value index)
       (cond [(list? value)
-             (if (< index (length value)) (list-ref value index) nav-missing)]
+             ;; Proper-list validation above preserves rejection of improper/cyclic
+             ;; inputs. Seek only to the requested location: computing length first
+             ;; would scan the whole spine again even for index zero. As in native
+             ;; length/list-ref, supported list positions fit fixnums. Generic
+             ;; comparison accepts bignum misses without per-node bignum arithmetic.
+             (let loop ([items value] [position 0])
+               (cond [(null? items) nav-missing]
+                     [(= position index) (car items)]
+                     [else (loop (cdr items) (fx1+ position))]))]
             [(vector? value)
              (if (< index (vector-length value)) (vector-ref value index) nav-missing)]
             [(fxvector? value)

@@ -1265,6 +1265,8 @@
   The `transduce` procedure runs transducer `xform` over transducible `source` using reducer
   record `reducer`. With three arguments, the transformed reducer supplies the initial
   accumulator; with four arguments, `init` supplies it and initialization is skipped.
+  `init` must have the reducer's accumulator representation, which may differ from its
+  completed result. Collection reducers document their accepted seed types and ordering.
   The result is the reducer's completion value after source exhaustion or an early `reduced`
   result. Kind: consuming terminal. After successful reducer completion, finalize the entire
   iterator resource chain, including supplied resource iterators, adapters, and nested tcat
@@ -1282,8 +1284,10 @@
   The `transduce1` procedure runs transducer `xform` over transducible `source` using its first
   transformed value as the accumulator for reducer record `reducer`. The result is the reducer's
   completion value. An empty transformed source raises an error. The first value must be a valid
-  accumulator for `reducer`. The uninitialized seed is private and distinct from `#f`;
-  continuation resumption preserves whether the lexical accumulator has been seeded.
+  accumulator for `reducer`; see collection reducer docs for seed types and ordering.
+  A completed result container is not necessarily a valid seed. The uninitialized seed
+  is private and distinct from `#f`. Continuation resumption preserves whether the lexical
+  accumulator has been seeded.
   |#
   (define transduce1
     (lambda (xform reducer source)
@@ -1318,11 +1322,21 @@
 
   #|proc:sequence
   Return a lazy iterator applying transducer `xform` to transducible `source`.
+  Construction and reset apply `xform` and initialize its reducer immediately: custom
+  callbacks can perform effects or raise errors before the first pull. Initialization
+  outputs are queued for subsequent pulls; source mode is captured at initialization.
   Non-iterator source conversion is deferred until input is needed; a known-empty pass
   creates no source adapter or snapshot. Supplied cursors remain cleanup dependencies.
+  The first converted source cursor is retained for subsequent pulls, reset, and cleanup.
+  Continuation resumption inside conversion cannot replace that committed cursor or restart
+  a completed pass. Unused cursors returned by later conversion resumptions are not adopted;
+  the caller remains responsible for their resources. Pending outputs are consumed first.
   Each pull buffers one input's complete expansion; initialization and completion may
   also emit values. An iterator source starts at its current position. Exhaustion
-  does not finalize the chain. A terminal operation or explicit `iter-finalize!` releases
+  releases the completed reducer and accumulator, retaining queued output; it does not
+  finalize the chain. Continuation resumption uses current pass state: a resumed upstream
+  return cannot restart a completed pass; a resumed reducer may still enqueue output.
+  A terminal operation or explicit `iter-finalize!` releases
   all reachable resources, including supplied iterators and nested `tcat` sources.
   Reset restarts the upstream source and creates fresh transducer counters/buffers while
   retaining the pipeline. Previously acquired nested resources remain reachable for cleanup;
@@ -1364,27 +1378,52 @@
                         ($resource-context-source-mode-set! context (current-transducer-source-mode))
                         (set! done? #f)
                         (set! q-head '()) (set! q-tail '())
-                        (set! effective (apply-transducer xform emit-reducer))
-                        (set! acc (reduction-seed effective default-init))))
+                        (let ([applied (apply-transducer xform emit-reducer)])
+                          ;; Application itself calls custom constructors. A resumed one
+                          ;; must not reinstall completed state or initialize it again.
+                          (unless done?
+                            (set! effective applied)
+                            (let ([seed (reduction-seed applied default-init)])
+                              ;; Initializers can also resume after completion.
+                              (unless done? (set! acc seed)))))))
                     (define finish!
                       (lambda ()
                         (unless done?
                           (set! done? #t)
-                          (set! acc (reducer-complete effective (unreduced acc))))))
+                          (reducer-complete effective (unreduced acc))
+                          ;; Successful completion leaves only queued output to consume.
+                          ;; Drop private history/buffers without losing resource-context
+                          ;; links or reset configuration. Never do this on fiber suspension.
+                          (set! effective #f)
+                          (set! acc #f))))
                     (define next!
                       (lambda ()
                         (let loop ()
                           (cond [(pair? q-head) (dequeue!)]
                                 [done? iter-end]
                                 [(reduced? acc) (finish!) (loop)]
+                                [(not upstream)
+                                 (let ([candidate (source->iter source)])
+                                   ;; Conversion calls registered user code. A resumed return
+                                   ;; must not replace an already committed cleanup/reset link.
+                                   (unless (or upstream done?) (set! upstream candidate)))
+                                 ;; Recheck queued output, completion and early termination
+                                 ;; before another read; conversion may resume after progress.
+                                 (loop)]
                                 [else
-                                 (unless upstream (set! upstream (source->iter source)))
                                  (let ([value (iter-next! upstream)])
-                                   (if (iter-end? value)
-                                       (finish!)
-                                       (begin
-                                         (set! acc (reducer-step effective acc value))
-                                         (when (reduced? acc) (finish!))))
+                                   ;; Upstream continuations can return after completion;
+                                   ;; do not read the released reducer in that case.
+                                   (unless done?
+                                     (if (iter-end? value)
+                                         (finish!)
+                                         (let ([next-acc (reducer-step effective acc value)])
+                                           ;; Reducer callbacks may likewise resume after
+                                           ;; completion. Keep their queued emissions but
+                                           ;; never reinstall their old accumulator.
+                                           (unless done?
+                                             (set! acc next-acc)
+                                             (when (reduced? acc) (finish!))))))
                                    (loop))]))))
                     (initialize!)
                     (mk-$iter next!
@@ -1577,8 +1616,11 @@
                (transduce-run 'port-bytes-transduce xform reducer init source run-port-bytes))]))
 
   #|proc:tfor-each
-  The `tfor-each` procedure runs `proc` for side effects on each transformed
-  value from `source` and returns unspecified values.
+  Apply transducer `xform` to transducible `source`, calling `proc` on each output value.
+  Callback signature: `(proc value) -> unspecified`; its return value is ignored.
+  Kind: consuming terminal; successful completion, including early termination, finalizes
+  the reachable iterator resource chain. Borrowed ports remain open. Errors or nonlocal
+  exits leave chain state undefined. Return an unspecified value.
   |#
   (define tfor-each
     (lambda (xform proc source)
@@ -1617,6 +1659,8 @@
   #|proc:rflist
   The `rflist` procedure returns a reducer that accumulates values into a list
   in input order.
+  The accumulator is a proper list in reverse input order; an explicit seed must use that
+  order. For example, `(transduce (tidentity) (rflist) '(2 1) '(3))` returns `(1 2 3)`.
   Kind: reusable reducer constructor. Each initialization creates independent accumulation
   state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
@@ -1627,6 +1671,9 @@
   #|proc:rfreverselist
   The `rfreverselist` procedure returns a reducer that accumulates values into
   a list in reverse input order.
+  The accumulator is a proper list in reverse input order and completion returns it
+  unchanged. An explicit seed uses that same order: seed `(2 1)` and input `(3)` produce
+  `(3 2 1)`.
   Kind: reusable reducer constructor. Each initialization creates independent accumulation
   state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
@@ -1637,6 +1684,10 @@
   #|proc:rfvector
   The `rfvector` procedure returns a reducer that accumulates values into a
   vector in input order.
+  An explicit seed may be a proper list of prior values in reverse input order, or the
+  opaque accumulator returned by initializing this same reducer through `completion`.
+  A completed vector is not a seed. For example,
+  `(transduce (tidentity) (rfvector) '(2 1) '(3))` returns `#(1 2 3)`.
   Kind: reusable reducer constructor. Each initialization creates independent accumulation
   state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
@@ -1647,6 +1698,10 @@
   #|proc:rfstring
   The `rfstring` procedure returns a reducer that accumulates characters into
   a string in input order.
+  An explicit seed may be a proper character list in reverse input order, or the opaque
+  accumulator returned by initializing this same reducer through `completion`.
+  A completed string is not a seed. For example,
+  `(transduce (tidentity) (rfstring) '(#\b #\a) '(#\c))` returns `"abc"`.
   Kind: reusable reducer constructor. Each initialization creates independent accumulation
   state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
@@ -1657,6 +1712,10 @@
   #|proc:rfbytevector
   The `rfbytevector` procedure returns a reducer that accumulates exact byte
   values into a bytevector in input order.
+  An explicit seed may be a proper list of exact bytes in reverse input order, or the
+  opaque accumulator returned by initializing this same reducer through `completion`.
+  A completed bytevector is not a seed. For example,
+  `(transduce (tidentity) (rfbytevector) '(2 1) '(3))` returns `#vu8(1 2 3)`.
   Kind: reusable reducer constructor. Each initialization creates independent accumulation
   state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#

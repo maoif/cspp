@@ -1384,3 +1384,247 @@
          (and (equal? '() (into 'list xform (list nested 'acquire)))
               (= closed 1) (iter-finalized? nested)))))
    (list (lambda (cursor) cursor) make-review-late-sequence-source)))
+
+
+(define sequence-history-released?
+  (lambda (stage expected-count consume)
+    (let ([references '()])
+      (let ([cursor
+             (sequence
+              (tcompose
+               (tmap (lambda (value)
+                       (let ([payload (make-vector 256 value)])
+                         (set! references (cons (weak-cons payload #f) references))
+                         payload)))
+               stage
+               (tmap (lambda (value) 0)))
+              (range 10))])
+        (let pass ([remaining 2])
+          (and (= expected-count (length (consume cursor)))
+               (begin
+                 (collect (collect-maximum-generation))
+                 (collect (collect-maximum-generation))
+                 (andmap (lambda (reference) (bwp-object? (car reference))) references))
+               (iter-end? (iter-next! cursor))
+               (or (= remaining 1)
+                   (begin (iter-reset! cursor) (pass (- remaining 1))))))))))
+
+(mat transducer-completed-sequence-releases-history
+  ;; Keep completed cursors live without keeping generated inputs in sources or outputs.
+  (andmap
+   (lambda (consume)
+     (andmap
+      (lambda (case) (sequence-history-released? (car case) (cdr case) consume))
+      (list (cons (tdistinct) 10) (cons (tdedupe) 10)
+            (cons (tpartition 100) 0) (cons (tpartition-all 100) 1)
+            (cons (tcompose (tdistinct) (ttake 3)) 3))))
+   (list transducer-drain iter->list))
+
+  ;; An accumulator can retain memory even when the applied reducer has no history.
+  (let ([reference #f])
+    (let ([cursor
+           (sequence
+            (make-transducer
+             'private-accumulator
+             (lambda (downstream)
+               (make-reducer
+                'private-accumulator
+                (case-lambda
+                  [() (let ([payload (make-vector 256 'accumulator)])
+                        (set! reference (weak-cons payload #f))
+                        payload)]
+                  [(acc) acc]
+                  [(acc value) acc]))))
+            '(1 2 3))])
+      (and (equal? '() (transducer-drain cursor))
+           (begin
+             (collect (collect-maximum-generation))
+             (collect (collect-maximum-generation))
+             (bwp-object? (car reference)))
+           (iter-end? (iter-next! cursor))
+           (begin (iter-reset! cursor) (equal? '() (iter->list cursor)))))))
+
+(mat transducer-completed-sequence-resumption
+  (andmap
+   (lambda (capture-in-source?)
+     (let ([saved #f] [phase 0])
+       (let* ([capture
+               (lambda (value)
+                 (if saved value
+                     ;; Resume a callback after successful completion released reducer state.
+                     (call/cc (lambda (resume) (set! saved resume) value))))]
+              [cursor (sequence (if capture-in-source? (tidentity) (tmap capture))
+                                (if capture-in-source?
+                                    (iter-map capture (range 3))
+                                    (range 3)))])
+         (let ([value (iter-next! cursor)])
+           (if (= phase 0)
+               (begin (transducer-drain cursor) (set! phase 1) (saved 9))
+               (and (if capture-in-source? (iter-end? value) (= value 9))
+                    (iter-end? (iter-next! cursor))))))))
+   '(#f #t)))
+
+(mat transducer-sequence-resumed-construction-releases-state
+  (andmap
+   (lambda (capture-phase)
+     (let ([saved #f] [phase 0] [reference #f])
+       (define capture
+         (lambda (where)
+           (when (and (eq? where capture-phase) (not saved))
+             ;; Revisit application, initialization, or completion after the pass has ended.
+             (call/cc (lambda (resume) (set! saved resume))))))
+       (define payload
+         (lambda ()
+           (let ([value (make-vector 256 'state)])
+             (set! reference (weak-cons value #f))
+             value)))
+       (let ([cursor
+              (sequence
+               (make-transducer
+                'capture-construction
+                (lambda (downstream)
+                  (capture 'apply)
+                  (let ([state (payload)])
+                    (make-reducer
+                     'private-state
+                     (case-lambda
+                       [() (capture 'init)
+                        (if (eq? capture-phase 'init) (payload) state)]
+                       [(acc) (capture 'complete)
+                        (if (eq? capture-phase 'complete) (payload) acc)]
+                       [(acc value) state])))))
+               '())])
+         (let ([result (iter-next! cursor)])
+           (if (= phase 0)
+               (begin (set! phase 1) (saved (void)))
+               (begin
+                 ;; The saved continuation may retain state; discard it before checking.
+                 (set! saved #f)
+                 (collect (collect-maximum-generation))
+                 (collect (collect-maximum-generation))
+                 (and (iter-end? result) (bwp-object? (car reference))
+                      (iter-end? (iter-next! cursor)))))))))
+   '(apply init complete)))
+
+(define-record-type review-resumable-adapter-source (fields convert))
+
+(iter-register-source!
+ review-resumable-adapter-source?
+ (lambda (source) ((review-resumable-adapter-source-convert source))))
+
+(mat transducer-sequence-retains-committed-adapter
+  (andmap
+   (lambda (completed?)
+     (let ([saved #f] [phase 0] [remaining '(1 2 3 4)] [conversions 0]
+           [closed (vector 0 0 0)] [resets (vector 0 0 0)] [late-pulls 0])
+       (define late-source
+         (lambda (slot)
+           (make-iter
+            (lambda () (set! late-pulls (+ late-pulls 1)) 99)
+            (lambda () (vector-set! resets slot (+ 1 (vector-ref resets slot))))
+            (lambda () (vector-set! closed slot (+ 1 (vector-ref closed slot)))))))
+       (let* ([original
+               (make-iter
+                (lambda ()
+                  (if (null? remaining) iter-end
+                      (let ([value (car remaining)]) (set! remaining (cdr remaining)) value)))
+                (lambda ()
+                  (vector-set! resets 0 (+ 1 (vector-ref resets 0)))
+                  (set! remaining '(1 2 3 4)))
+                (lambda () (vector-set! closed 0 (+ 1 (vector-ref closed 0)))))]
+              [first-late (late-source 1)] [second-late (late-source 2)]
+              [cursor
+               (sequence
+                (tidentity)
+                (make-review-resumable-adapter-source
+                 (lambda ()
+                   (set! conversions (+ conversions 1))
+                   ;; Revisit deferred conversion after the same cursor has progressed.
+                   (call/cc (lambda (resume) (set! saved resume) original)))))])
+         (let ([value (iter-next! cursor)])
+           (cond
+            [(= phase 0)
+             (and (= value 1) (= 2 (iter-next! cursor))
+                  (or (not completed?) (equal? '(3 4) (transducer-drain cursor)))
+                  (begin (set! phase 1) (saved first-late)))]
+            [(= phase 1)
+             (and (if completed? (iter-end? value) (= value 3))
+                  (= late-pulls 0)
+                  (begin (set! phase 2) (saved second-late)))]
+            [else
+             (let ([okay?
+                    (and (if completed? (iter-end? value) (= value 4))
+                         (= late-pulls 0) (iter-end? (iter-next! cursor))
+                         (begin (iter-reset! cursor) #t)
+                         (equal? resets '#(1 0 0))
+                         (equal? '(1 2 3 4) (transducer-drain cursor))
+                         (= conversions 1)
+                         (equal? '() (iter->list cursor))
+                         (equal? closed '#(1 0 0))
+                         (begin (iter-finalize! cursor) #t)
+                         (equal? closed '#(1 0 0))
+                         (iter-finalized? original)
+                         (not (iter-finalized? first-late))
+                         (not (iter-finalized? second-late)))])
+               ;; Ignored conversion results were supplied by the caller, who closes them.
+               (iter-finalize! original)
+               (iter-finalize! first-late)
+               (iter-finalize! second-late)
+               okay?)])))))
+   '(#f #t)))
+
+(mat transducer-sequence-adapter-resumption-drains-buffer-first
+  (let ([saved #f] [phase 0] [pulls 0] [late-pulls 0])
+    (let* ([source (iter-map (lambda (value) (set! pulls (+ pulls 1)) value) (range 1 4))]
+           [late (make-iter (lambda () (set! late-pulls (+ late-pulls 1)) 99) void)]
+           [cursor
+            (sequence
+             (tmapcat (lambda (value) (list value (* value 10))))
+             (make-review-resumable-adapter-source
+              (lambda ()
+                ;; Revisit conversion while an earlier input's expansion is still buffered.
+                (call/cc (lambda (resume) (set! saved resume) source)))))])
+      (let ([value (iter-next! cursor)])
+        (cond [(= phase 0) (and (= value 1) (begin (set! phase 1) (saved late)))]
+              [(= phase 1) (and (= value 10) (= pulls 1)
+                               (begin (set! phase 2) (saved late)))]
+              [(= phase 2) (and (= value 2) (= pulls 2)
+                               (begin (set! phase 3) (saved late)))]
+              [else (and (= value 20) (= pulls 2) (= late-pulls 0)
+                         (equal? '(3 30) (iter->list cursor)) (= pulls 3))])))))
+
+(mat transducer-sequence-yielding-adapter-construction
+  (andmap
+   (lambda (workers)
+     (run-fibers
+      (lambda ()
+        (let ([done (make-channel)] [xform (tcompose (tmap add1) (ttake 3))])
+          (do ([task 0 (fx1+ task)]) ((fx= task 16))
+            (spawn-fiber
+             (lambda ()
+               (let ([conversions 0] [closed 0] [resets 0] [position 0])
+                 (let ([cursor
+                        (sequence
+                         xform
+                         (make-review-resumable-adapter-source
+                          (lambda ()
+                            (set! conversions (+ conversions 1))
+                            (fiber-yield)
+                            (make-iter
+                             (lambda ()
+                               (fiber-yield)
+                               (let ([value position]) (set! position (+ position 1)) value))
+                             (lambda () (set! position 0) (set! resets (+ resets 1)))
+                             (lambda () (set! closed (+ closed 1)))))))])
+                   (channel-put!
+                    done
+                    (and (equal? '(1 2 3) (transducer-drain cursor)) (= closed 0)
+                         (begin (iter-reset! cursor) #t)
+                         (equal? '(1 2 3) (iter->list cursor))
+                         (= conversions 1) (= resets 1) (= closed 1))))))))
+          (let loop ([remaining 16] [okay? #t])
+            (if (fxzero? remaining) okay?
+                (let ([result (channel-get done)])
+                  (loop (fx1- remaining) (and okay? result)))))))
+      workers 100))
+   '(1 4)))

@@ -1052,3 +1052,94 @@
   (equal? '() (iter->list (range 1.0 1.0 -1.0)))
 
   (equal? '(1e308) (iter->list (range 1e308 +inf.0 1e308))))
+
+
+(mat iter-distinct-releases-history
+  ;; Generated payloads belong to history, not the configured source or callback.
+  (let ([references '()])
+    (let ([cursor
+           (iter-distinct
+            eq?
+            (iter-map
+             (lambda (value)
+               (let ([payload (make-vector 256 value)])
+                 (set! references (cons (weak-cons payload #f) references))
+                 payload))
+             (range 10)))])
+      (let pass ([remaining 2])
+        (iter-for-each (lambda (value) (void)) cursor)
+        (collect (collect-maximum-generation))
+        (collect (collect-maximum-generation))
+        (and (andmap (lambda (reference) (bwp-object? (car reference))) references)
+             ;; Keep the exhausted cursor reachable through collection; reset must still work.
+             (iter-end? (iter-next! cursor))
+             (or (= remaining 1)
+                 (begin (iter-reset! cursor) (pass (- remaining 1)))))))))
+
+(mat iter-distinct-completed-resumption
+  (andmap
+   (lambda (capture-in-source?)
+     (let ([saved #f] [phase 0] [pulls 0])
+       (let ([cursor
+              (iter-distinct
+               (lambda (left right)
+                 (if (or capture-in-source? saved) (= left right)
+                     ;; Revisit a comparison after its history has been released.
+                     (call/cc (lambda (resume) (set! saved resume) #f))))
+               (iter-map
+                (lambda (value)
+                  (set! pulls (+ pulls 1))
+                  (if (or (not capture-in-source?) saved) value
+                      ;; Revisit a producer return after the wrapper has exhausted.
+                      (call/cc (lambda (resume) (set! saved resume) value))))
+                (range 3)))])
+         (unless capture-in-source? (iter-next! cursor))
+         (let ([value (iter-next! cursor)])
+           (if (= phase 0)
+               (begin
+                 (collect-iter cursor)
+                 (set! phase 1)
+                 (saved (if capture-in-source? 9 #f)))
+               (and (iter-end? value) (iter-end? (iter-next! cursor)) (= pulls 3)))))))
+   '(#f #t)))
+
+(mat iter-zip-exhausted-continuation-resumption
+  (andmap
+   (lambda (capture-slot)
+     (let ([saved #f] [phase 0] [pulls (vector 0 0 0)])
+       (define source
+         (lambda (slot)
+           (make-iter
+            (lambda ()
+              (let ([count (vector-ref pulls slot)])
+                (vector-set! pulls slot (+ count 1))
+                (if (and (= slot capture-slot) (= count 0))
+                    ;; Resume a first-tuple producer after a later pull exhausts the zip.
+                    (call/cc (lambda (resume) (set! saved resume) slot))
+                    (if (= count 1) iter-end slot))))
+            (lambda () (vector-set! pulls slot 0)))))
+       (let ([cursor (iter-zip (source 0) (source 1) (source 2))])
+         (let ([value (iter-next! cursor)])
+           (if (= phase 0)
+               (begin
+                 (unless (equal? value '(0 1 2)) (error 'test "missing initial tuple"))
+                 (iter-next! cursor)
+                 (set! phase 1)
+                 (saved 9))
+               (and (iter-end? value)
+                    (equal? pulls '#(2 2 2))
+                    (iter-end? (iter-next! cursor))
+                    (equal? pulls '#(2 2 2))
+                    (if (= phase 1)
+                        (begin (set! phase 2) (saved 10))
+                        (begin
+                          (iter-reset! cursor)
+                          (and (equal? '(0 1 2) (iter-next! cursor))
+                               (iter-end? (iter-next! cursor)))))))))))
+   '(0 1 2)))
+
+(mat iter-zip-repeated-handle-order
+  (let* ([source (range 7)] [cursor (iter-zip source source source)])
+    (and (equal? '((0 1 2) (3 4 5)) (collect-iter cursor))
+         (begin (iter-reset! cursor) #t)
+         (equal? '((0 1 2) (3 4 5)) (iter->list cursor)))))

@@ -670,8 +670,11 @@
   #|proc:nav/nth/default
   The `nav/nth/default` procedure returns a navigator that focuses zero-based
   `index`, or `default` when the index is out of range. Clearing visits the default
-  through later path steps but never inserts a missing location. Transforming inserts a
-  missing location only if the full path reaches the update callback. Completed step/suffix
+  through later path steps but never inserts a missing location. Persistent transformation
+  can extend lists and vectors, padding skipped locations with `default`, only if the full
+  path reaches the update callback. Other indexed types cannot extend, and destructive
+  transformation never inserts a missing index. Unsupported insertion can run the updater
+  before raising an error; callback effects are not rolled back. Completed step/suffix
   checkpoints restore terminal-count prefixes on resumption, without undoing heap updates.
   Capturing inside custom traversal/adapter or hash/equivalence/comparison callbacks after
   earlier suffix updates is unsupported for default materialization, as is backward resumption
@@ -828,11 +831,15 @@
   #|proc:nav/key/default
   The `nav/key/default` procedure returns a navigator that focuses the value for
   `key`, or focuses `default` (which defaults to `#f`) when `key` is missing.
-  For alists it focuses every matching
-  entry in order, just like `nav/key`. Clearing visits a missing key's default through
-  later path steps but never inserts that key. Transforming inserts it only if the full path
-  reaches the update callback. Completed direct step/suffix checkpoints restore terminal-count
-  prefixes on resumption. Callback effects and earlier heap updates are not rolled back.
+  For alists it focuses every matching entry in order, just like `nav/key`.
+  Clearing visits a missing key's default through later path steps but never inserts that key.
+  Persistent transformation can append a missing alist entry; destructive transformation
+  cannot insert into an alist. Native hashtables allow persistent insertion, and mutable
+  hashtables also allow destructive insertion. Registered keyed types follow their setter's
+  insertion capabilities. Insertion requires the full path to reach the update callback.
+  An unsupported insertion can run that callback before raising an error. Completed direct
+  step/suffix checkpoints restore terminal-count prefixes on continuation resumption.
+  Callback effects and earlier heap updates are not rolled back.
   Continuation capture inside custom traversal/adapter or hash/equivalence/comparison callbacks
   after earlier suffix updates is unsupported; their progress has no library checkpoint. Backward
   resumption within a still-running step/suffix is also unsupported for materialization.

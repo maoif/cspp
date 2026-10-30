@@ -312,6 +312,8 @@
   ;; Ordinary user callbacks are supported capture points. Save both evidence kinds
   ;; here, including a setter's successful terminal prefix. An enclosing suffix's
   ;; checkpoint predates the updater and cannot by itself restore that later prefix.
+  ;; Lazy cursor transfers additionally require an active consumer; detached producer
+  ;; resumption is excluded by nav-traverse->iter, independently of this evidence support.
   #|proc:nav-call-user
   Apply user procedure `proc` to the supplied arguments, protecting its absent-focus
   errors and returning its values unchanged. `proc` accepts those arguments and may return

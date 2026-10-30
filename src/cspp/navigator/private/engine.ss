@@ -436,6 +436,12 @@
   terminal consumption does not prevent a later reset. Traversal callbacks run on demand.
   Separate cursors over a pure path and unchanged data may run concurrently; operations on
   the same cursor are dependent. Continuation resumption does not rewind its mutable cursor.
+  A producer continuation is a Scheme continuation captured in a navigation callback during
+  a pull. Detached resumption invokes it between completed pulls, including after exhaustion.
+  This is unsupported: no active consumer is waiting for its output. A transfer then raises
+  a `nav-traverse->iter` error.
+  Ordinary fiber suspension during a pull preserves its consumer destination. Resuming after
+  reset or a nonlocal exit has undefined cursor state, as for other dependent lifecycle changes.
   A suspended producer retains its traversal stack, which can include the first consumer's
   calling context, until completion or reset. After completion or failure the cursor retains
   no consumer continuation.
@@ -453,6 +459,17 @@
       ;; re-raised outside the suspended producer's handler.
       (let ([compiled (nav-compile-path path)]
             [resume #f] [return #f] [done? #f] [failure '()])
+        (define return-to-consumer
+          (lambda (value)
+            ;; A completed pull clears its consumer to release arbitrary caller data.
+            ;; A saved producer continuation restores control, not this mutable slot;
+            ;; reject detached transfers instead of calling #f or retaining old callers.
+            ;; This check also covers completion and exception transfers. It requires
+            ;; no wind hook: ordinary fiber suspension keeps the live pull's consumer.
+            (if return
+                (return value)
+                (nav-error 'nav-traverse->iter
+                           "producer continuation resumed without an active iterator pull"))))
         (define reset!
           (lambda ()
             (set! return #f)
@@ -464,7 +481,7 @@
                                  (set! failure (list exn))
                                  (set! done? #t)
                                  (set! resume #f)
-                                 (return iter-end)])
+                                 (return-to-consumer iter-end)])
                       (parameterize ([current-recursive-env '()]
                                      [current-focus-scope (make-nav-focus-scope)]
                                      [current-update-count #f]
@@ -476,10 +493,10 @@
                            (call/1cc
                             (lambda (continue)
                               (set! resume continue)
-                              (return value)))) #t))
+                              (return-to-consumer value)))) #t))
                       (set! done? #t)
                       (set! resume #f)
-                      (return iter-end))))))
+                      (return-to-consumer iter-end))))))
         (reset!)
         (make-iter
          (lambda ()

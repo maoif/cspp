@@ -3294,3 +3294,73 @@
                       (nav/not-pred
                        (lambda (value) (nav-select-one (nav/key 'missing) '()))))
                      7)))
+
+;; A producer continuation has no consumer destination between completed pulls.
+;; Negative: resuming one must raise the documented bridge error on every attempt,
+;; including from later producer segments and after full exhaustion.
+(define navigator-detached-producer-results
+  (lambda (capture-at exhaust?)
+    (let ([saved #f] [pending '(#t #f raise)] [results '()] [initial? #t])
+      (let ([cursor
+             (nav-traverse->iter
+              (nav/path nav/all
+                        (nav/pred
+                         (lambda (value)
+                           (if (= value capture-at)
+                               (let ([decision
+                                      ;; Complete the pull before invoking the saved producer.
+                                      (call/cc (lambda (resume) (set! saved resume) #t))])
+                                 (if (eq? decision 'raise)
+                                     (error 'detached-producer "callback failure")
+                                     decision))
+                               #t))))
+              '(1 2 3))])
+        (let ([result
+               (guard (condition
+                       [(and (who-condition? condition)
+                             (eq? 'nav-traverse->iter (condition-who condition))) 'rejected]
+                       [else 'unexpected-error])
+                 (if exhaust?
+                     (iter->list cursor)
+                     (let pull ([remaining capture-at])
+                       (let ([value (iter-next! cursor)])
+                         (if (= remaining 1) value (pull (- remaining 1)))))))])
+          (unless initial? (set! results (cons result results)))
+          (set! initial? #f)
+          (if (null? pending)
+              (reverse results)
+              (let ([decision (car pending)])
+                (set! pending (cdr pending))
+                (saved decision))))))))
+
+(mat navigator-detached-producer-resumption
+  (andmap
+   (lambda (capture-at)
+     (andmap
+      (lambda (exhaust?)
+        (equal? '(rejected rejected rejected)
+                (navigator-detached-producer-results capture-at exhaust?)))
+      '(#f #t)))
+   '(1 2 3)))
+
+(mat navigator-list-index-boundaries
+  (equal? '(a) (nav-select nav/first '(a b c)))
+
+  (equal? '(c) (nav-select (nav/nth 2) '(a b c)))
+
+  (equal? '(missing) (nav-select (nav/nth/default 3 'missing) '(a b c)))
+
+  (equal? '(missing)
+          (nav-select (nav/nth/default (+ (most-positive-fixnum) 1) 'missing) '(a b c)))
+
+  (equal? '(missing) (nav-select (nav/nth/default 0 'missing) '()))
+
+  ;; Negative: improper lists remain unsupported, even when their head exists.
+  (error? (nav-select nav/first '(a . b)))
+
+  ;; Negative: cyclic lists must still be rejected before indexed traversal.
+  (let ([source (list 'a)])
+    (set-cdr! source source)
+    (guard (condition [else #t])
+      (nav-select nav/first source)
+      #f)))
