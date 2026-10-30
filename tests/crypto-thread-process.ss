@@ -27,6 +27,65 @@
   (lambda (update! state bytes count)
     (do ([index 0 (fx1+ index)]) [(fx= index count)] (update! state bytes))))
 
+(define run-actions
+  (lambda (actions)
+    (let ([mutex (make-mutex)] [remaining actions])
+      (run-workers (length actions)
+        (lambda ()
+          (let ([action (with-mutex mutex
+                          (let ([action (car remaining)])
+                            (set! remaining (cdr remaining))
+                            action))])
+            (action)))))))
+
+(define allow-terminal-error
+  (lambda (proc)
+    (guard (condition
+             [(and (message-condition? condition)
+                   (member (condition-message condition)
+                     '("digester is destroyed" "digester is finalized"
+                       "HMAC state is destroyed" "HMAC state is finalized"
+                       "cipher state is destroyed" "cipher state is finalized"
+                       "private key is destroyed" "public key is destroyed" "key is destroyed"
+                       "certificate is destroyed" "certificate store is destroyed")))
+              (void)])
+      (proc))))
+
+(define check-state-lifetime-races
+  (lambda (make-state update! get reset! finalize! destroy! bytes expected)
+    (let ([state (make-state)] [results-mutex (make-mutex)] [winners 0])
+      (dynamic-wind
+        void
+        (lambda ()
+          (update! state bytes)
+          ;; Error case: exactly one racing finalizer may complete and release the state.
+          (run-workers 4
+            (lambda ()
+              (allow-terminal-error
+                (lambda ()
+                  (unless (equal? expected (finalize! state))
+                    (error 'crypto-threads "racing finalizer returned a wrong result"))
+                  (with-mutex results-mutex (set! winners (fx1+ winners)))))))
+          (unless (fx= winners 1) (error 'crypto-threads "finalization was not exclusive")))
+        (lambda () (destroy! state))))
+    ;; Error case: use and reset racing with destruction must finish or reject the state.
+    (do ([round 0 (fx1+ round)]) [(fx= round 30)]
+      (let ([state (make-state)])
+        (dynamic-wind
+          void
+          (lambda ()
+            (run-actions
+              (list
+                (lambda () (allow-terminal-error
+                             (lambda () (repeat-update update! state bytes 16))))
+                (lambda () (allow-terminal-error
+                             (lambda ()
+                               (do ([index 0 (fx1+ index)]) [(fx= index 16)] (get state)))))
+                (lambda () (allow-terminal-error (lambda () (reset! state))))
+                (lambda () (allow-terminal-error (lambda () (finalize! state))))
+                (lambda () (destroy! state)))))
+          (lambda () (destroy! state)))))))
+
 (define check-shared-state
   (lambda (make-state update! get destroy! bytes)
     (let ([serial (make-state)] [parallel (make-state)])
@@ -148,4 +207,72 @@
                      #f)
              (error 'crypto-parameters "invalid RSA count accepted" bits)))
          '(4294967808 512.0 0 -1)))]
+    [(string=? mode "state-lifetimes")
+     (for-each
+       (lambda (entry)
+         (when (optional-library-available? (optional-library-info (car entry)))
+           (let* ([algorithm (cadr entry)]
+                  [make-state (lambda () (make-digester algorithm))])
+             (check-state-lifetime-races make-state digester-update-bytevector! digester-get
+               digester-reset! digester-finalize! digester-destroy! bytes
+               (digest-bytevector algorithm bytes)))))
+       '((openssl sha256) (blake3 blake3)))
+     (when (optional-library-available? (optional-library-info 'openssl))
+       (check-state-lifetime-races (lambda () (make-hmac-state 'sha256 #vu8(1 2 3)))
+         hmac-update-bytevector! hmac-get hmac-reset! hmac-finalize! hmac-destroy! bytes
+         (hmac 'sha256 #vu8(1 2 3) bytes)))]
+    [(string=? mode "resource-lifetimes")
+     (when (optional-library-available? (optional-library-info 'openssl))
+       (do ([round 0 (fx1+ round)]) [(fx= round 20)]
+         (let* ([private (generate-private-key 'ed25519)]
+                [public (private-key->public-key private)])
+           (dynamic-wind
+             void
+             (lambda ()
+               ;; Error case: native key use racing with destruction must not use freed memory.
+               (run-actions
+                 (list
+                   (lambda () (allow-terminal-error
+                                (lambda ()
+                                  (let ([signature (sign-message 'ed25519 private bytes)])
+                                    (unless (verify-signature? 'ed25519 public bytes signature)
+                                      (error 'crypto-threads "racing signer returned bad signature"))))))
+                   (lambda () (allow-terminal-error
+                                (lambda () (store-private-key private))))
+                   (lambda () (allow-terminal-error
+                                (lambda () (destroy-public-key!
+                                             (private-key->public-key private)))))
+                   (lambda () (destroy-private-key! private)))))
+             (lambda () (destroy-public-key! public) (destroy-private-key! private)))))
+       (let ([read-cert (lambda (name)
+                          (let ([port (open-file-input-port
+                                        (string-append "tests/data/crypto/" name))])
+                            (dynamic-wind
+                              void
+                              (lambda () (load-certificate (get-bytevector-all port)))
+                              (lambda () (close-port port)))))])
+         (do ([round 0 (fx1+ round)]) [(fx= round 20)]
+           (let* ([leaf (read-cert "leaf.cert.pem")]
+                  [intermediate (read-cert "intermediate.cert.pem")]
+                  [root (read-cert "root.cert.pem")] [store (make-cert-store)])
+             (dynamic-wind
+               (lambda () (cert-store-add! store root))
+               (lambda ()
+                 ;; Error case: verification must retain chain/store resources while in use.
+                 (run-actions
+                   (list
+                     (lambda () (allow-terminal-error
+                                  (lambda ()
+                                    (unless (verify-certificate-chain
+                                              leaf (list intermediate) store "example.com")
+                                      (error 'crypto-threads "racing verification failed")))))
+                     (lambda () (allow-terminal-error (lambda () (cert-store-add! store root))))
+                     (lambda () (allow-terminal-error (lambda () (certificate-subject leaf))))
+                     (lambda ()
+                       (destroy-certificate! intermediate)
+                       (destroy-certificate! leaf)
+                       (destroy-cert-store! store)))))
+               (lambda ()
+                 (destroy-cert-store! store)
+                 (for-each destroy-certificate! (list leaf root intermediate))))))))]
     [else (error 'crypto-threads "unknown fixture mode" mode)]))
