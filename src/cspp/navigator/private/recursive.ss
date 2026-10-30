@@ -115,6 +115,8 @@
 
   #|proc:nav/leaves
   The `nav/leaves` navigator focuses nested values with no supported children.
+  It supports selection only; both transformation modes and clearing are unsupported.
+  Use `nav/rec` / `nav/letrec` with `nav/children` to define recursive updates.
   Kind: Reusable tree traversal step.
   |#
   (define nav/leaves
@@ -156,6 +158,7 @@
   The `nav/before` procedure returns a navigator that focuses immediate leaf children
   of the current value before values selected by `path`. If no immediate child is a leaf,
   it focuses the current value itself first.
+  The result supports selection only; both transformation modes and clearing are unsupported.
   Kind: Reusable tree traversal step constructor.
   |#
   (define nav/before
@@ -175,6 +178,7 @@
   The `nav/after` procedure returns a navigator that focuses values selected by `path`
   before focusing immediate leaf children of the current value. If no immediate child is
   a leaf, it focuses the current value itself last.
+  The result supports selection only; both transformation modes and clearing are unsupported.
   Kind: Reusable tree traversal step constructor.
   |#
   (define nav/after

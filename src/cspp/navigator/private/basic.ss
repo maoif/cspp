@@ -918,7 +918,11 @@
   entry and may rename its key. Other keyed containers focus one submap containing the requested
   keys. Pure transforms remove the selected membership and merge every entry
   of the replacement submap, including new keys. Replacement entries win collisions with
-  unselected parent keys. The result is a navigator.
+  unselected parent keys. Mutating transformation is unsupported; clearing supports both
+  modes subject to the source's removal restrictions. Submaps share key and value objects
+  with the source. A suffix's in-place key changes must preserve the key policy of the
+  source and every other parent; rebuilding a temporary submap does not repair their
+  indexes. The result is a navigator.
   Kind: Reusable step constructor.
   |#
   (define nav/submap

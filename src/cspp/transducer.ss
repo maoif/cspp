@@ -507,9 +507,10 @@
 
   #|proc:make-transducer
   The `make-transducer` procedure returns a transducer record named `name`.
-  `proc` must accept a reducer and return a reducer. Unseeded terminals initialize that
-  transformed reducer; explicit seeds bypass its initializer. Mutable transformation
-  state must be created inside `proc` per application, not shared in the description.
+  `name` is a symbol; `proc` has signature `(downstream-reducer) -> reducer`.
+  Unseeded terminals initialize the transformed reducer; explicit seeds bypass its initializer.
+  Mutable transformation state must be created inside `proc` per application, not shared
+  in the description.
   Custom stages conservatively permit nested resource acquisition for sequence cleanup.
   |#
   (define make-transducer
@@ -540,8 +541,8 @@
       (make-non-acquiring-transducer 'tidentity (lambda (reducer) reducer))))
 
   #|proc:tcompose
-  The `tcompose` procedure composes transducers in left-to-right pipeline
-  order.
+  The `tcompose` procedure returns a transducer composing its `xform` arguments in
+  left-to-right pipeline order. With no arguments, it returns `(tidentity)`.
   Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tcompose
@@ -560,8 +561,8 @@
                    (bool (exists $transducer-acquires-resources? xform*)))))))
 
   #|proc:tchain
-  The `tchain` procedure composes the transducers in `xform-list` in
-  left-to-right pipeline order.
+  The `tchain` procedure returns a transducer composing the proper list of transducers
+  `xform-list` in left-to-right pipeline order. An empty list produces `(tidentity)`.
   Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tchain
@@ -572,6 +573,7 @@
   #|proc:tmap
   The `tmap` procedure returns a transducer that emits `(proc x)` for each
   input value `x`.
+  Callback signature: `(proc value) -> mapped-value`.
   Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tmap
@@ -591,6 +593,7 @@
   #|proc:tmap/i
   The `tmap/i` procedure returns a transducer that emits `(proc i x)` for each
   input value `x`, where `i` is the zero-based input index.
+  Callback signature: `(proc index value) -> mapped-value`.
   Kind: reusable stateful transducer constructor; each application stores
   a zero-based input index. Resetting a sequence creates fresh state.
   |#
@@ -615,6 +618,7 @@
   #|proc:tfilter
   The `tfilter` procedure returns a transducer that emits only values accepted
   by `pred`.
+  Callback signature: `(pred value) -> boolean`; any non-`#f` result accepts the value.
   Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tfilter
@@ -636,6 +640,7 @@
   #|proc:tfilter/i
   The `tfilter/i` procedure returns a transducer that emits values accepted by
   `(pred i x)`, where `i` is the zero-based input index.
+  Callback signature: `(pred index value) -> boolean`; a non-`#f` result accepts the value.
   Kind: reusable stateful transducer constructor; each application stores
   a zero-based input index. Resetting a sequence creates fresh state.
   |#
@@ -662,6 +667,7 @@
   #|proc:tremove
   The `tremove` procedure returns a transducer that emits only values rejected
   by `pred`.
+  Callback signature: `(pred value) -> boolean`; only a `#f` result retains the value.
   Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tremove
@@ -670,8 +676,8 @@
               (tfilter (lambda (x) (not (pred x)))))))
 
   #|proc:tkeep
-  The `tkeep` procedure emits `(proc x)` for each input value whose result is
-  not `#f`.
+  The `tkeep` procedure returns a transducer emitting `(proc x)` for each input value
+  whose result is not `#f`. Callback signature: `(proc value) -> mapped-value-or-#f`.
   Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tkeep
@@ -691,8 +697,9 @@
                   #f))))))
 
   #|proc:tkeep/i
-  The `tkeep/i` procedure applies `(proc i x)` to each input and emits the
-  result only when it is not `#f`.
+  The `tkeep/i` procedure returns a transducer applying `(proc i x)` to each input and
+  emitting the result only when it is not `#f`. The input index `i` starts at zero.
+  Callback signature: `(proc index value) -> mapped-value-or-#f`.
   Kind: reusable stateful transducer constructor; each application stores
   a zero-based input index. Resetting a sequence creates fresh state.
   |#
@@ -716,7 +723,9 @@
 
   #|proc:treplace
   The `treplace` procedure returns a transducer that replaces input values
-  according to association list `alist` using `equal?`.
+  according to association list `alist` using `equal?`. Each `(key . replacement)` pair
+  maps a matching input to its replacement; the first matching pair wins. Unmatched
+  input values are emitted unchanged.
   Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define treplace
@@ -833,10 +842,10 @@
           #f)))))
 
   #|proc:ttake
-  The `ttake` procedure returns a stateful transducer that emits at most `n`
-  input values. When `n` is zero, drivers request no source input, including when
-  earlier stages buffer or suppress outputs. Initialization/completion still run;
-  explicit seeds bypass initialization as usual.
+  The `ttake` procedure returns a stateful transducer that emits at most the first `n`
+  input values, where `n` is a nonnegative integer. When `n` is zero, drivers request no
+  source input, including when earlier stages buffer or suppress outputs.
+  Initialization/completion still run; explicit seeds bypass initialization as usual.
   Kind: reusable stateful transducer constructor; each application stores
   a remaining output allowance. Resetting a sequence creates fresh state.
   |#
@@ -865,7 +874,7 @@
 
   #|proc:tdrop
   The `tdrop` procedure returns a stateful transducer that skips the first `n`
-  input values and emits the rest.
+  input values and emits the rest. The count `n` must be a nonnegative integer.
   Kind: reusable stateful transducer constructor; each application stores
   a remaining skip count. Resetting a sequence creates fresh state.
   |#
@@ -888,7 +897,7 @@
                     #f)))))))
 
   #|proc:ttake-while
-  The `ttake-while` procedure emits input values while `pred` returns true,
+  The `ttake-while` procedure returns a transducer emitting input values while `pred` is true,
   then requests early termination before emitting the first failing value.
   Kind: reusable transducer constructor; no transformation history is shared across passes.
   Predicate signature: `(pred value) -> boolean`; the first false value ends the prefix.
@@ -911,7 +920,7 @@
                   #f))))))
 
   #|proc:tdrop-while
-  The `tdrop-while` procedure skips input values while `pred` returns true,
+  The `tdrop-while` procedure returns a transducer skipping input values while `pred` is true,
   then emits the first failing value and all remaining values.
   Kind: reusable stateful transducer constructor; each application stores
   a dropping flag. Resetting a sequence creates fresh state.
@@ -938,8 +947,8 @@
                     #f)))))))
 
   #|proc:ttake-nth
-  The `ttake-nth` procedure emits every `n`th input value, starting with index
-  zero.
+  The `ttake-nth` procedure returns a transducer emitting every `n`th input value,
+  starting with index zero. The stride `n` must be a positive integer.
   Kind: reusable stateful transducer constructor; each application stores
   a zero-based input index. Resetting a sequence creates fresh state.
   |#
@@ -971,8 +980,9 @@
         (errorf 'tslice "slice start greater than stop: ~a > ~a" start stop))))
 
   #|proc:tslice
-  The `tslice` procedure emits input values with indexes in `[start, stop)`.
-  With three arguments, `step` selects indexes by positive stride. Equal `start` and
+  The `tslice` procedure returns a transducer emitting input values with zero-based
+  indexes in `[start, stop)`. Bounds must be nonnegative integers with `start <= stop`.
+  Optional `step` is a positive integer stride, defaulting to one. Equal `start` and
   `stop` describe an empty slice: drivers request no input, even through buffering stages.
   Kind: reusable stateful transducer constructor; each application stores
   a zero-based input index. Resetting a sequence creates fresh state.
@@ -1010,8 +1020,8 @@
       (list->vector (builder))))
 
   #|proc:tpartition
-  The `tpartition` procedure emits vectors of exactly `n` values and drops the
-  trailing partial partition.
+  The `tpartition` procedure returns a transducer emitting vectors of exactly `n` values
+  and dropping the trailing partial partition. The size `n` must be a positive integer.
   Kind: reusable stateful transducer constructor; each application stores
   a count and partial partition buffer. Resetting a sequence creates fresh state.
   |#
@@ -1039,8 +1049,9 @@
                     #f)))))))
 
   #|proc:tpartition-all
-  The `tpartition-all` procedure emits vectors of up to `n` values, including
-  the trailing partial partition during completion.
+  The `tpartition-all` procedure returns a transducer emitting vectors of up to `n`
+  values, including the trailing partial partition during completion.
+  The size `n` must be a positive integer.
   Kind: reusable stateful transducer constructor; each application stores
   a count and partial partition buffer. Resetting a sequence creates fresh state.
   |#
@@ -1072,8 +1083,9 @@
                     #f)))))))
 
   #|proc:tpartition-by
-  The `tpartition-by` procedure starts a new vector partition whenever
-  `(proc x)` changes according to `equal?`.
+  The `tpartition-by` procedure returns a transducer starting a new vector partition whenever
+  `(proc x)` changes according to `equal?`. Completion emits the trailing partition unless
+  downstream reduction has already terminated.
   Kind: reusable stateful transducer constructor; each application stores
   the last key and partial partition buffer. Resetting a sequence creates fresh state.
   Callback signature: `(proc value) -> comparison-key`. Captured mutable state is caller-owned.
@@ -1116,7 +1128,8 @@
                     #f)))))))
 
   #|proc:tdedupe
-  The `tdedupe` procedure removes consecutive duplicate values using `equal?`.
+  The `tdedupe` procedure returns a transducer removing consecutive duplicate values using
+  `equal?`.
   Kind: reusable stateful transducer constructor; each application stores
   the previous comparison key. Resetting a sequence creates fresh state.
   |#
@@ -1125,8 +1138,8 @@
       (tdedupe-by id)))
 
   #|proc:tdedupe-by
-  The `tdedupe-by` procedure removes consecutive values whose computed keys are
-  `equal?`.
+  The `tdedupe-by` procedure returns a transducer removing consecutive values whose computed
+  keys are `equal?`.
   Kind: reusable stateful transducer constructor; each application stores
   the previous comparison key. Resetting a sequence creates fresh state.
   Callback signature: `(proc value) -> comparison-key`. Captured mutable state is caller-owned.
@@ -1154,8 +1167,8 @@
                     #f)))))))
 
   #|proc:tdistinct
-  The `tdistinct` procedure emits only the first occurrence of each value using
-  `equal?`.
+  The `tdistinct` procedure returns a transducer emitting only the first occurrence of each
+  value using `equal?`.
   Kind: reusable stateful transducer constructor; each application stores
   an equal-hash table of seen keys. Resetting a sequence creates fresh state.
   Retained keys must keep stable `equal?`/`equal-hash` behavior for the active pass.
@@ -1165,8 +1178,8 @@
       (tdistinct-by id)))
 
   #|proc:tdistinct-by
-  The `tdistinct-by` procedure emits only the first occurrence of each computed
-  key using `equal?`.
+  The `tdistinct-by` procedure returns a transducer emitting the first input value for each
+  computed key using `equal?`.
   Kind: reusable stateful transducer constructor; each application stores
   an equal-hash table of seen keys. Resetting a sequence creates fresh state.
   Retained keys must keep stable `equal?`/`equal-hash` behavior for the active pass.
@@ -1194,7 +1207,7 @@
                     #f)))))))
 
   #|proc:tinterpose
-  The `tinterpose` procedure emits `sep` between input values.
+  The `tinterpose` procedure returns a transducer emitting the value `sep` between input values.
   Kind: reusable stateful transducer constructor; each application stores
   a first-item flag. Resetting a sequence creates fresh state.
   |#
@@ -1221,7 +1234,8 @@
             #f))))))
 
   #|proc:ttap
-  The `ttap` procedure calls `(proc x)` for each input value, then emits `x`.
+  The `ttap` procedure returns a transducer calling `(proc x)` for each input value,
+  then emitting `x`. Callback signature: `(proc value) -> unspecified`; its result is ignored.
   Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define ttap
@@ -1241,8 +1255,9 @@
                   #f))))))
 
   #|proc:tinspect
-  The `tinspect` procedure calls `(proc who x)` for each input value, then
-  emits `x`.
+  The `tinspect` procedure returns a transducer calling `(proc who x)` for each input,
+  then emitting `x`. The label `who` is any value passed unchanged to `proc`.
+  Callback signature: `(proc who value) -> unspecified`; its result is ignored.
   Kind: reusable transducer constructor; no transformation history is shared across passes.
   |#
   (define tinspect
@@ -1288,6 +1303,8 @@
   A completed result container is not necessarily a valid seed. The uninitialized seed
   is private and distinct from `#f`. Continuation resumption preserves whether the lexical
   accumulator has been seeded.
+  Kind: consuming terminal; successful completion finalizes the reachable iterator
+  resource chain, including nested sources, as for `transduce`.
   |#
   (define transduce1
     (lambda (xform reducer source)
@@ -1725,6 +1742,8 @@
 
   #|proc:rfcount
   The `rfcount` procedure returns a reducer that counts transformed values.
+  Initialization returns zero; each step adds one to the numeric accumulator and completion
+  returns it unchanged. An explicit seed supplies the initial count.
   Kind: reusable reducer constructor. Each initialization creates independent accumulation
   state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
@@ -1739,7 +1758,8 @@
 
   #|proc:rfsum
   The `rfsum` procedure returns a reducer that sums transformed numeric values
-  with `+`.
+  with `+`. Initialization returns zero; completion returns the numeric accumulator.
+  An explicit numeric seed participates in the sum.
   Kind: reusable reducer constructor. Each initialization creates independent accumulation
   state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
@@ -1754,7 +1774,8 @@
 
   #|proc:rffxsum
   The `rffxsum` procedure returns a reducer that sums transformed fixnum values
-  with `fx+`.
+  with `fx+`. Initialization returns fixnum zero; completion returns the fixnum accumulator.
+  An explicit seed must be a fixnum; intermediate sums must remain within the fixnum range.
   Kind: reusable reducer constructor. Each initialization creates independent accumulation
   state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
@@ -1769,7 +1790,8 @@
 
   #|proc:rfflsum
   The `rfflsum` procedure returns a reducer that sums transformed flonum values
-  with `fl+`.
+  with `fl+`. Initialization returns `0.0`; completion returns the flonum accumulator.
+  An explicit seed must be a flonum and participates in the sum.
   Kind: reusable reducer constructor. Each initialization creates independent accumulation
   state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#
@@ -1784,7 +1806,8 @@
 
   #|proc:rfproduct
   The `rfproduct` procedure returns a reducer that multiplies transformed
-  numeric values with `*`.
+  numeric values with `*`. Initialization returns one; completion returns the numeric
+  accumulator. An explicit numeric seed participates in the product.
   Kind: reusable reducer constructor. Each initialization creates independent accumulation
   state; supplying a mutable explicit seed shares that seed at the caller's discretion.
   |#

@@ -58,7 +58,8 @@
   `get-proc` has signature `(parent) -> child`. `set-proc` has signature
   `(parent new-child) -> rebuilt-parent` and must leave the original parent unchanged.
   `set!-proc` has signature `(parent new-child) -> unspecified` and mutates the parent;
-  navigator mutation returns that original parent. The result is a navigator.
+  navigator mutation returns that original parent. Clearing is unsupported.
+  The result is a navigator.
   Kind: Reusable custom step constructor.
   |#
   (define nav/getter-setter!

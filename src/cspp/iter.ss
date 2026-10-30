@@ -369,6 +369,8 @@
   The `vector->iter` procedure returns an iterator over `source`. The optional integer
   `start`, `stop`, and nonzero `step` parameters select and direct a half-open indexed range.
   The iterator returns each selected vector value until it reaches its end.
+  Negative bounds count from the source end; out-of-range bounds are clipped.
+  Integer-valued inexact bounds/steps become exact; reset resolves bounds from current length.
   Kind: cursor constructor; each call creates independent producer state.
   |#
   (define vector->iter
@@ -397,6 +399,8 @@
   The `string->iter` procedure returns an iterator over `source`. The optional integer
   `start`, `stop`, and nonzero `step` parameters select and direct a half-open indexed range.
   The iterator returns each selected character until it reaches its end.
+  Negative bounds count from the source end; out-of-range bounds are clipped.
+  Integer-valued inexact bounds/steps become exact; reset resolves bounds from current length.
   Kind: cursor constructor; each call creates independent producer state.
   |#
   (define string->iter
@@ -406,6 +410,8 @@
   The `bytevector->iter` procedure returns an iterator over unsigned bytes in `source`. The
   optional integer `start`, `stop`, and nonzero `step` parameters select and direct a half-open
   indexed range. The iterator returns each selected byte until it reaches its end.
+  Negative bounds count from the source end; out-of-range bounds are clipped.
+  Integer-valued inexact bounds/steps become exact; reset resolves bounds from current length.
   Kind: cursor constructor; each call creates independent producer state.
   |#
   (define bytevector->iter
@@ -415,6 +421,8 @@
   The `fxvector->iter` procedure returns an iterator over fixnums in `source`. The optional
   integer `start`, `stop`, and nonzero `step` parameters select and direct a half-open indexed
   range. The iterator returns each selected fixnum until it reaches its end.
+  Negative bounds count from the source end; out-of-range bounds are clipped.
+  Integer-valued inexact bounds/steps become exact; reset resolves bounds from current length.
   Kind: cursor constructor; each call creates independent producer state.
   |#
   (define fxvector->iter
@@ -424,6 +432,8 @@
   The `flvector->iter` procedure returns an iterator over flonums in `source`. The optional
   integer `start`, `stop`, and nonzero `step` parameters select and direct a half-open indexed
   range. The iterator returns each selected flonum until it reaches its end.
+  Negative bounds count from the source end; out-of-range bounds are clipped.
+  Integer-valued inexact bounds/steps become exact; reset resolves bounds from current length.
   Kind: cursor constructor; each call creates independent producer state.
   |#
   (define flvector->iter

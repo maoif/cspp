@@ -208,6 +208,10 @@
   #|proc:nav/multi-path
   The `nav/multi-path` procedure returns a navigator that focuses all values
   selected by each path in `paths`, preserving path order.
+  Selection traverses each path against the input value. Transformations and clears
+  apply paths sequentially to the result of preceding paths, including in-place changes.
+  Overlapping paths may revisit changed values or encounter keys removed by an earlier path;
+  no snapshot of the original focuses is retained. Each path must support the requested mode.
   Kind: Reusable conditional step combinator.
   |#
   (define nav/multi-path
