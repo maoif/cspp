@@ -18,11 +18,13 @@ The `random-status` procedure returns `#t` when the OpenSSL random source is rea
       (not (fx= 0 (ffi-random-status)))))
 
   #|proc:random-bytes
-The `random-bytes` procedure returns a fresh random bytevector of length `len`.
-|#
+  The `random-bytes` procedure returns a fresh random bytevector of length `len`.
+  `len` must be a nonnegative fixnum; inexact or unrepresentable lengths raise an error
+  before native allocation. Native random-source failures also raise errors.
+  |#
   (define-who random-bytes
     (lambda (len)
-      (pcheck ([natural? len])
+      (pcheck ([(lambda (length) (and (fixnum? length) (fx>= length 0))) len])
               (ensure-openssl who)
               (let ([bv (ffi-random-bytevector len)])
                 (when (eq? bv #f)
@@ -30,14 +32,16 @@ The `random-bytes` procedure returns a fresh random bytevector of length `len`.
                 bv))))
 
   #|proc:random-key-bytes
-The `random-key-bytes` procedure returns a fresh random key bytevector of length `len`.
-|#
+  The `random-key-bytes` procedure returns a fresh random key bytevector of length `len`,
+  a nonnegative fixnum. It has the same validation and failure behavior as `random-bytes`.
+  |#
   (define random-key-bytes
     random-bytes)
 
   #|proc:random-nonce
-The `random-nonce` procedure returns a fresh random nonce bytevector of length `len`.
-|#
+  The `random-nonce` procedure returns a fresh random nonce bytevector of length `len`,
+  a nonnegative fixnum. It has the same validation and failure behavior as `random-bytes`.
+  |#
   (define random-nonce
     random-bytes)
 

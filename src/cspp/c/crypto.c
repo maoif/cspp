@@ -208,6 +208,7 @@ int crypto_random_status() {
 }
 
 ptr crypto_random_bytevector(uint64_t len) {
+  if (len > (uint64_t)INTPTR_MAX) return Sfalse;
   if (!cspp_openssl_require()) return Sfalse;
   ptr bv = Smake_bytevector((iptr)len, 0);
   if (rand_bytes_all(Sbytevector_data(bv), len) != 1) {

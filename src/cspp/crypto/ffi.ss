@@ -95,7 +95,18 @@
         (pcheck ()
                 (require-optional-library 'ffi-random-status 'openssl)
                 (native )))))
-  (define ffi-random-bytevector (foreign-procedure "crypto_random_bytevector" (unsigned-64) ptr))
+  #|proc:ffi-random-bytevector
+  The `ffi-random-bytevector` procedure returns `length` random bytes as a fresh
+  bytevector, or `#f` on native failure. `length` must be a nonnegative fixnum;
+  other values raise an error before conversion or allocation. Unavailable OpenSSL
+  raises an error.
+  |#
+  (define ffi-random-bytevector
+    (let ([native (foreign-procedure "crypto_random_bytevector" (unsigned-64) ptr)])
+      (lambda (length)
+        (pcheck ([(lambda (value) (and (fixnum? value) (fx>= value 0))) length])
+          (require-optional-library 'ffi-random-bytevector 'openssl)
+          (native length)))))
   #|proc:ffi-random-fill!
   The `ffi-random-fill!` procedure calls the native openssl operation `crypto_random_fill`.
   Parameters `bytevector`, `start`, `stop` are passed to the native operation in that order.

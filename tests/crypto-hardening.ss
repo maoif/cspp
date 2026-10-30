@@ -1,5 +1,11 @@
 (import (cspp))
 
+(mat crypto-input-validation
+  ;; Error case: invalid native arguments must raise without aborting or prompting.
+  (= 0 (system (if (file-exists? "crypto-input-process.py")
+                   "python3 -I crypto-input-process.py"
+                   "python3 -I tests/crypto-input-process.py"))))
+
 (mat crypto-continuation-safety
   ;; Error case: suspending native operations must not permit use-after-free or double-free.
   (= 0 (system (if (file-exists? "crypto-continuation-process.py")
