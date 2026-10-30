@@ -74,6 +74,51 @@
     (and (not (password-hash? encoded))
          (not (password-verify? "wrong" encoded)))))
 
+(define crypto-test-password-record
+  (lambda (algorithm cost block-size parallelism)
+    ;; Hand-built CPW1 record: one salt byte and one derived byte, independent of
+    ;; the production record encoder. Parameters are unsigned big-endian integers.
+    (let ([record (make-bytevector 28 0)])
+      (bytevector-copy! #vu8(67 80 87 49 1) 0 record 0 5)
+      (bytevector-u8-set! record 5 algorithm)
+      (bytevector-u32-set! record 6 cost (endianness big))
+      (bytevector-u32-set! record 10 block-size (endianness big))
+      (bytevector-u32-set! record 14 parallelism (endianness big))
+      (bytevector-u32-set! record 18 1 (endianness big))
+      (bytevector-u32-set! record 22 1 (endianness big))
+      (bytevector-u8-set! record 26 17)
+      (bytevector-u8-set! record 27 34)
+      record)))
+
+(mat crypto-password-record-parameters
+  ;; Error case: malformed algorithms, counts, and reserved fields must be rejected
+  ;; before a KDF is invoked, even when OpenSSL is unavailable.
+  (for-all
+    (lambda (parameters)
+      (let ([record (apply crypto-test-password-record parameters)])
+        (and (not (password-hash? record))
+             (not (password-verify? "password" record)))))
+    '((0 1 0 0) (3 1 0 0)
+      (2 0 0 0) (2 2147483648 0 0) (2 1 1 0) (2 1 0 1)
+      (1 0 1 1) (1 1 1 1) (1 3 1 1) (1 16 0 1) (1 16 1 0)
+      (1 2147483648 1 1) (1 16 2147483648 1) (1 16 1 2147483648)
+      (1 65536 1 1) (1 16 32768 32768) (1 16 1073741824 1)))
+
+  ;; Structural validity must not impose the native provider's current memory limits.
+  (for-all
+    (lambda (parameters) (password-hash? (apply crypto-test-password-record parameters)))
+    '((2 1 0 0) (2 2147483647 0 0) (1 16 1 1) (1 32768 1 1)
+      (1 1073741824 2 1) (1 16 1 1073741823)))
+
+  (mat-requires (openssl)
+    (let ([pbkdf2-record (password-hash/pbkdf2 "password" #vu8(1 2) 1 16)]
+          [scrypt-record (password-hash/scrypt "password" #vu8(1 2) 16 1 1 16)])
+      (and (password-hash? pbkdf2-record) (password-hash? scrypt-record)
+           (password-verify? "password" pbkdf2-record)
+           (password-verify? "password" scrypt-record)
+           (not (password-verify? "wrong" pbkdf2-record))
+           (not (password-verify? "wrong" scrypt-record))))))
+
 (mat crypto-aead-full-authentication-tags
   (mat-requires (openssl)
     (for-all

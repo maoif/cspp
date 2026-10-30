@@ -14,6 +14,8 @@
   (define password-magic (bytevector #x43 #x50 #x57 #x31))
   (define algo-scrypt 1)
   (define algo-pbkdf2 2)
+  (define native-int-maximum
+    (- (expt 2 (- (* 8 (foreign-sizeof 'int)) 1)) 1))
 
   (define normalize-password
     (lambda (who password)
@@ -35,6 +37,22 @@
         (u32-set! hdr 22 (bytevector-length derived))
         (bytevector-append hdr salt derived))))
 
+  (define valid-record-parameters?
+    (lambda (algorithm cost block-size parallelism)
+      (case algorithm
+        [(1)
+         (and (<= 2 cost native-int-maximum)
+              (zero? (bitwise-and cost (- cost 1)))
+              (<= 1 block-size native-int-maximum)
+              (<= 1 parallelism native-int-maximum)
+              ;; RFC 7914: r*p < 2^30 and N < 2^(16*r). With C-int-sized N,
+              ;; only r=1 needs an additional bound for the latter constraint.
+              (< (* block-size parallelism) 1073741824)
+              (or (>= block-size 2) (< cost 65536)))]
+        [(2)
+         (and (<= 1 cost native-int-maximum) (zero? block-size) (zero? parallelism))]
+        [else #f])))
+
   (define parse-password-record
     (lambda (who bv)
       (pcheck ([bytevector? bv])
@@ -47,9 +65,11 @@
                           [p3 (u32-ref bv 14)]
                           [salt-len (u32-ref bv 18)]
                           [derived-len (u32-ref bv 22)]
-                          [expect (fx+ 26 salt-len derived-len)])
-                     (and (fx> derived-len 0)
-                          (fx= expect (bytevector-length bv))
+                          [expect (+ 26 salt-len derived-len)])
+                     (and (<= 1 derived-len native-int-maximum)
+                          (= expect (bytevector-length bv))
+                          (valid-record-parameters? algo p1 p2 p3)
+                          (or (= algo algo-scrypt) (<= salt-len native-int-maximum))
                           (vector algo p1 p2 p3
                                   (subbytevector bv 26 (fx+ 26 salt-len))
                                   (subbytevector bv (fx+ 26 salt-len) expect))))))))
@@ -89,19 +109,23 @@ The `password-hash` procedure derives and encodes a default scrypt password hash
         (password-hash/scrypt password salt 16384 8 1 32))))
 
   #|proc:password-hash?
-  The `password-hash?` procedure returns `#t` when `x` has the structure of an encoded
-  password hash containing a nonempty derived key, and `#f` otherwise.
+  The `password-hash?` procedure returns `#t` when `x` is a supported, structurally valid
+  password hash bytevector with valid cost parameters and a nonempty derived key.
+  Unknown algorithms, invalid or unrepresentable costs, and malformed lengths return `#f`.
+  This predicate does not derive a key or check whether native memory limits allow the cost.
   |#
   (define password-hash?
     (lambda (x)
-      (and (bytevector? x)
-           (parse-password-record 'password-hash? x)
-           #t)))
+      (pcheck ()
+        (and (bytevector? x)
+             (parse-password-record 'password-hash? x)
+             #t))))
 
   #|proc:password-verify?
   The `password-verify?` procedure returns `#t` when the string or bytevector `password`
   matches the encoded password hash bytevector `encoded`. Malformed records, including
-  empty derived keys, return `#f`; native derivation failures raise an error.
+  invalid cost parameters, unknown algorithms, and empty derived keys, return `#f`
+  without deriving a key. Native derivation failures for valid records raise an error.
   |#
   (define-who password-verify?
     (lambda (password encoded)
