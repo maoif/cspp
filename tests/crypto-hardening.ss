@@ -165,3 +165,9 @@
               (lambda () (hkdf-expand 'sha256 #vu8(1) "info" 32))
               (lambda () (pbkdf2 'sha256 "password" "salt" 1 32))
               (lambda () (scrypt "password" "salt" 16 1 1 32))))))
+
+(mat crypto-envelope-native-ownership
+  ;; Error case: success and failure paths must release every temporary native key.
+  (= 0 (system (if (file-exists? "crypto-envelope-memory.py")
+                   "python3 -I crypto-envelope-memory.py"
+                   "python3 -I tests/crypto-envelope-memory.py"))))

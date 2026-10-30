@@ -101,6 +101,16 @@ $(OBJS_TEST) $(STRESS_TESTS:.ss=.so): %.so: %.ss mat.so $(NET_TEST_SUPPORT) ../c
 
 digest.so: digest-process.py
 
+ifeq ($(RESOLVED_WITH_OPENSSL),1)
+crypto-memory-fixture.so: ../src/cspp/c/crypto_memory_fixture.c $(ROOT_NATIVE_OPTIONS_FILE)
+	$(CC) $(CPPFLAGS) $(RESOLVED_OPENSSL_CFLAGS) -Wall -Wextra -O2 -fPIC \
+	  -shared $< -o $@ $(LDFLAGS) $(RESOLVED_OPENSSL_LIBS)
+
+crypto-hardening.so: crypto-memory-fixture.so
+endif
+
+crypto-hardening.so: crypto-envelope-memory.py crypto-envelope-memory.ss
+
 file.so: fswatcher-blocking-process.ss
 
 fiber.so: fiber-quantum-process.ss fiber-inherited-timer-process.ss
