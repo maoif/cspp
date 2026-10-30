@@ -250,7 +250,7 @@
 
   (define $sample-cpu-ns
     (lambda (sample)
-      (let ([iterations (benchmark-sample-iterations sample)])
+      (let ([iterations (inexact->exact (benchmark-sample-iterations sample))])
         (if (zero? iterations)
             0
             (/ ($time->ns (sstats-cpu (benchmark-sample-sstats sample)))
@@ -258,7 +258,7 @@
 
   (define $sample-real-ns
     (lambda (sample)
-      (let ([iterations (benchmark-sample-iterations sample)])
+      (let ([iterations (inexact->exact (benchmark-sample-iterations sample))])
         (if (zero? iterations)
             0
             (/ ($time->ns (sstats-real (benchmark-sample-sstats sample)))
@@ -266,7 +266,7 @@
 
   (define $sample-bytes
     (lambda (sample)
-      (let ([iterations (benchmark-sample-iterations sample)])
+      (let ([iterations (inexact->exact (benchmark-sample-iterations sample))])
         (if (zero? iterations)
             0
             (/ (sstats-bytes (benchmark-sample-sstats sample))

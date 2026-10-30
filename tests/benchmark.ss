@@ -2327,3 +2327,28 @@
         (lambda ()
           (guard (raised [else #t]) (benchmark-report '() (benchmark-datum-reporter) out) #f))
         (lambda () (close-port out))))))
+
+(mat benchmark-inexact-iterations-use-exact-arithmetic
+  (let* ([result (car (benchmark-results-from-data
+                       '(((name . fractional)
+                          (samples . (((iterations . 3.0) (cpu-ns . 1)
+                                       (real-ns . 1) (bytes . 1))))))))]
+         [samples (benchmark-result-samples result)]
+         [summary (benchmark-summarize samples)])
+    (and (eqv? (benchmark-sample-iterations (car samples)) 3.0)
+         (for-all
+           (lambda (metric)
+             (let ([mean (cdr (assq 'mean (cdr (assq metric summary))))])
+               (and (exact? mean) (= mean 1/3))))
+           '(cpu-ns real-ns bytes))))
+
+  ;; Error: inexact iteration representation must not overflow an otherwise finite deviation.
+  (let* ([huge (expt 10 308)]
+         [result (car (benchmark-results-from-data
+                        `(((name . finite-deviation)
+                           (samples . (((iterations . 1.0) (bytes . 0))
+                                       ((iterations . 1.0) (bytes . ,huge))))))))]
+         [summary (cdr (assq 'bytes (benchmark-summarize (benchmark-result-samples result))))])
+    (and (= (cdr (assq 'mean summary)) (/ huge 2))
+         (finite? (cdr (assq 'stddev summary)))
+         (= (cdr (assq 'stddev summary)) (/ huge 2)))))
