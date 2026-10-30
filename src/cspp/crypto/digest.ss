@@ -19,6 +19,7 @@
           (cspp utils)
           (only (cspp file) file-size)
           (cspp optional-library-check)
+          (only (cspp crypto private) with-crypto-mutex)
           (cspp crypto ffi))
 
   #|proc:digest-algorithms
@@ -208,7 +209,7 @@
          (digester-update-bytevector! state bytes start (bytevector-length bytes)))]
       [(state bytes start stop)
        (pcheck ([digester? state] [bytevector? bytes])
-         (with-mutex (digester-mutex state)
+         (with-crypto-mutex (digester-mutex state)
            (check-live who state)
            (check-slice who (bytevector-length bytes) start stop)
            (unless (= 1 ((if (blake3-state? state)
@@ -234,7 +235,7 @@
          (digester-update-string! state text start (string-length text)))]
       [(state text start stop)
        (pcheck ([digester? state] [string? text])
-         (with-mutex (digester-mutex state)
+         (with-crypto-mutex (digester-mutex state)
            (check-live who state)
            (check-slice who (string-length text) start stop)
            (unless (= 1 ((if (blake3-state? state)
@@ -251,7 +252,7 @@
   (define-who digester-get
     (lambda (state)
       (pcheck ([digester? state])
-        (with-mutex (digester-mutex state)
+        (with-crypto-mutex (digester-mutex state)
           (check-live who state)
           (check-result who
             ((if (blake3-state? state) ffi-blake3-get ffi-digest-state-get)
@@ -273,7 +274,7 @@
   (define-who digester-finalize!
     (lambda (state)
       (pcheck ([digester? state])
-        (with-mutex (digester-mutex state)
+        (with-crypto-mutex (digester-mutex state)
           (check-live who state)
           (let ([result (digester-get state)])
             (release-handle! state)
@@ -288,7 +289,7 @@
   (define-who digester-reset!
     (lambda (state)
       (pcheck ([digester? state])
-        (with-mutex (digester-mutex state)
+        (with-crypto-mutex (digester-mutex state)
           (check-live who state)
           (unless (= 1 ((if (blake3-state? state) ffi-blake3-reset! ffi-digest-state-reset!)
                         (digester-handle state)))
@@ -303,7 +304,7 @@
   (define-who digester-destroy!
     (lambda (state)
       (pcheck ([digester? state])
-        (with-mutex (digester-mutex state)
+        (with-crypto-mutex (digester-mutex state)
           (unless (digester-destroyed? state)
             (release-handle! state)
             (digester-destroyed?-set! state #t))

@@ -72,15 +72,15 @@ The `hmac-update-bytevector!` procedure updates an HMAC state with a bytevector 
     (case-lambda
       [(st bv)
        (pcheck ([hmac-state? st] [bytevector? bv])
-               (with-mutex (hmac-state-mutex st)
+               (with-crypto-mutex (hmac-state-mutex st)
                  (hmac-update-bytevector! st bv 0 (bytevector-length bv))))]
       [(st bv start)
        (pcheck ([hmac-state? st] [bytevector? bv])
-               (with-mutex (hmac-state-mutex st)
+               (with-crypto-mutex (hmac-state-mutex st)
                  (hmac-update-bytevector! st bv start (bytevector-length bv))))]
       [(st bv start stop)
        (pcheck ([hmac-state? st] [bytevector? bv])
-               (with-mutex (hmac-state-mutex st)
+               (with-crypto-mutex (hmac-state-mutex st)
                  (check-live-state who st)
                  (check-slice who (bytevector-length bv) start stop)
                  (when (fx= 0 (ffi-hmac-state-update-bytevector! (hmac-state-handle st) bv start stop))
@@ -98,15 +98,15 @@ The `hmac-update-bytevector!` procedure updates an HMAC state with a bytevector 
     (case-lambda
       [(st str)
        (pcheck ([hmac-state? st] [string? str])
-               (with-mutex (hmac-state-mutex st)
+               (with-crypto-mutex (hmac-state-mutex st)
                  (hmac-update-string! st str 0 (string-length str))))]
       [(st str start)
        (pcheck ([hmac-state? st] [string? str])
-               (with-mutex (hmac-state-mutex st)
+               (with-crypto-mutex (hmac-state-mutex st)
                  (hmac-update-string! st str start (string-length str))))]
       [(st str start stop)
        (pcheck ([hmac-state? st] [string? str])
-               (with-mutex (hmac-state-mutex st)
+               (with-crypto-mutex (hmac-state-mutex st)
                  (check-live-state who st)
                  (check-slice who (string-length str) start stop)
                  (when (fx= 0 (ffi-hmac-state-update-string! (hmac-state-handle st) str start stop))
@@ -119,7 +119,7 @@ The `hmac-get` procedure returns the current MAC without finalizing the state.
   (define-who hmac-get
     (lambda (st)
       (pcheck ([hmac-state? st])
-              (with-mutex (hmac-state-mutex st)
+              (with-crypto-mutex (hmac-state-mutex st)
                 (check-live-state who st)
                 (let ([ans (ffi-hmac-state-get (hmac-state-handle st))])
                   (when (eq? ans #f)
@@ -132,7 +132,7 @@ The `hmac-finalize!` procedure finalizes an HMAC state and returns the MAC value
   (define-who hmac-finalize!
     (lambda (st)
       (pcheck ([hmac-state? st])
-              (with-mutex (hmac-state-mutex st)
+              (with-crypto-mutex (hmac-state-mutex st)
                 (check-live-state who st)
                 (let ([ans (ffi-hmac-state-finalize (hmac-state-handle st))])
                   (when (eq? ans #f)
@@ -150,7 +150,7 @@ The `hmac-finalize!` procedure finalizes an HMAC state and returns the MAC value
   (define-who hmac-reset!
     (lambda (st)
       (pcheck ([hmac-state? st])
-              (with-mutex (hmac-state-mutex st)
+              (with-crypto-mutex (hmac-state-mutex st)
                 (check-live-state who st)
                 (when (fx= 0 (ffi-hmac-state-reset! (hmac-state-handle st)))
                   (errorf who "failed to reset HMAC state"))
@@ -162,7 +162,7 @@ The `hmac-destroy!` procedure releases the foreign resources owned by an HMAC st
   (define-who hmac-destroy!
     (lambda (st)
       (pcheck ([hmac-state? st])
-              (with-mutex (hmac-state-mutex st)
+              (with-crypto-mutex (hmac-state-mutex st)
                 (unless (hmac-state-destroyed? st)
                   (unless (eq? (hmac-state-handle st) 0)
                     (ffi-hmac-state-destroy (hmac-state-handle st))

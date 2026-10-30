@@ -3,6 +3,7 @@
           make-crypto-lock
           call-with-crypto-locks
           with-crypto-locks
+          with-crypto-mutex
           ensure-openssl
           bytevector-append
           subbytevector
@@ -60,6 +61,18 @@
   (define next-lock-rank 0)
   (define lock-rank-mutex (make-mutex 'crypto-lock-rank))
 
+  #|macro:with-crypto-mutex
+  The `with-crypto-mutex` macro acquires recursive `mutex`, evaluates `body ...`, and
+  returns its values. It releases the mutex on every exit. Errors are re-raised after
+  releasing the mutex so caller exception handlers may safely invoke other crypto APIs.
+  No user callbacks should run in the body.
+  |#
+  (define-syntax with-crypto-mutex
+    (syntax-rules ()
+      [(_ mutex body ...)
+       (guard (condition [else (raise condition)])
+         (with-mutex mutex body ...))]))
+
   #|proc:make-crypto-lock
   The `make-crypto-lock` procedure returns a new internal resource lock with a unique
   ordering rank. Acquire multiple locks through `with-crypto-locks` to avoid deadlocks.
@@ -76,6 +89,7 @@
   The `call-with-crypto-locks` procedure acquires the internal resource locks in list
   `locks` in creation order, calls the zero-argument procedure `proc`, and returns its
   values. It releases locks on every exit. The callback must not invoke user code.
+  Errors are re-raised after releasing all locks, before calling external handlers.
   |#
   (define call-with-crypto-locks
     (lambda (locks proc)
@@ -84,18 +98,19 @@
                     (unless (crypto-lock? lock)
                       (error 'call-with-crypto-locks "invalid internal resource lock")))
                   locks)
-        (let loop ([locks (if (or (null? locks) (null? (cdr locks)))
-                             locks
-                             (list-sort (lambda (left right)
-                                          (< (crypto-lock-rank left) (crypto-lock-rank right)))
-                                        locks))]
-                   [previous #f])
-          (cond
-            [(null? locks) (proc)]
-            [(eq? (car locks) previous) (loop (cdr locks) previous)]
-            [else
-             (with-mutex (crypto-lock-mutex (car locks))
-               (loop (cdr locks) (car locks)))])))))
+        (guard (condition [else (raise condition)])
+          (let loop ([locks (if (or (null? locks) (null? (cdr locks)))
+                               locks
+                               (list-sort (lambda (left right)
+                                            (< (crypto-lock-rank left) (crypto-lock-rank right)))
+                                          locks))]
+                     [previous #f])
+            (cond
+              [(null? locks) (proc)]
+              [(eq? (car locks) previous) (loop (cdr locks) previous)]
+              [else
+               (with-mutex (crypto-lock-mutex (car locks))
+                 (loop (cdr locks) (car locks)))]))))))
 
   #|macro:with-crypto-locks
   The `with-crypto-locks` macro acquires each internal resource lock in `(lock ...)`

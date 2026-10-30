@@ -193,7 +193,7 @@ The `sign-update-bytevector!` procedure appends a bytevector slice to a sign sta
       [(st bv start) (sign-update-bytevector! st bv start (bytevector-length bv))]
       [(st bv start stop)
        (pcheck ([sign-state? st] [bytevector? bv])
-               (with-mutex (sign-state-mutex st)
+               (with-crypto-mutex (sign-state-mutex st)
                  (check-sign-state-live who st)
                  (update-state! sign-state-chunks-set! sign-state-chunks
                                 (bytevector-length bv) who st bv start stop)))]))
@@ -207,7 +207,7 @@ The `sign-update-string!` procedure appends a string slice to a sign state.
       [(st str start) (sign-update-string! st str start (string-length str))]
       [(st str start stop)
        (pcheck ([sign-state? st] [string? str])
-               (with-mutex (sign-state-mutex st)
+               (with-crypto-mutex (sign-state-mutex st)
                  (check-sign-state-live who st)
                  (check-slice who (string-length str) start stop)
                  (sign-state-chunks-set! st
@@ -224,7 +224,7 @@ The `verify-update-bytevector!` procedure appends a bytevector slice to a verify
       [(st bv start) (verify-update-bytevector! st bv start (bytevector-length bv))]
       [(st bv start stop)
        (pcheck ([verify-state? st] [bytevector? bv])
-               (with-mutex (verify-state-mutex st)
+               (with-crypto-mutex (verify-state-mutex st)
                  (check-verify-state-live who st)
                  (update-state! verify-state-chunks-set! verify-state-chunks
                                 (bytevector-length bv) who st bv start stop)))]))
@@ -238,7 +238,7 @@ The `verify-update-string!` procedure appends a string slice to a verify state.
       [(st str start) (verify-update-string! st str start (string-length str))]
       [(st str start stop)
        (pcheck ([verify-state? st] [string? str])
-               (with-mutex (verify-state-mutex st)
+               (with-crypto-mutex (verify-state-mutex st)
                  (check-verify-state-live who st)
                  (check-slice who (string-length str) start stop)
                  (verify-state-chunks-set! st
@@ -252,7 +252,7 @@ The `sign-finalize!` procedure finalizes a sign state and returns the signature.
   (define-who sign-finalize!
     (lambda (st)
       (pcheck ([sign-state? st])
-              (with-mutex (sign-state-mutex st)
+              (with-crypto-mutex (sign-state-mutex st)
                 (check-sign-state-live who st)
                 (let ([ans (sign-message (sign-state-algorithm st)
                                          (sign-state-digest st)
@@ -267,7 +267,7 @@ The `verify-finalize?` procedure finalizes a verify state and checks `signature`
   (define-who verify-finalize?
     (lambda (st signature)
       (pcheck ([verify-state? st] [bytevector? signature])
-              (with-mutex (verify-state-mutex st)
+              (with-crypto-mutex (verify-state-mutex st)
                 (check-verify-state-live who st)
                 (let ([ans (verify-signature? (verify-state-algorithm st)
                                               (verify-state-digest st)
@@ -283,7 +283,7 @@ The `sign-destroy!` procedure releases buffered data owned by a sign state.
   (define-who sign-destroy!
     (lambda (st)
       (pcheck ([sign-state? st])
-              (with-mutex (sign-state-mutex st)
+              (with-crypto-mutex (sign-state-mutex st)
                 (unless (sign-state-destroyed? st)
                   (sign-state-chunks-set! st '())
                   (sign-state-destroyed?-set! st #t))
@@ -295,7 +295,7 @@ The `verify-destroy!` procedure releases buffered data owned by a verify state.
   (define-who verify-destroy!
     (lambda (st)
       (pcheck ([verify-state? st])
-              (with-mutex (verify-state-mutex st)
+              (with-crypto-mutex (verify-state-mutex st)
                 (unless (verify-state-destroyed? st)
                   (verify-state-chunks-set! st '())
                   (verify-state-destroyed?-set! st #t))

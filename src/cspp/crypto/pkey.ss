@@ -81,31 +81,33 @@
   (define-who generate-private-key
     (case-lambda
       [(alg)
-       (check-algorithm who alg)
-       (generate-private-key alg
-                             (case alg
-                               [(rsa) 2048]
-                               [(ecdsa ecdh) 'p-256]
-                               [else #f]))]
+       (pcheck ([symbol? alg])
+         (check-algorithm who alg)
+         (generate-private-key alg
+                               (case alg
+                                 [(rsa) 2048]
+                                 [(ecdsa ecdh) 'p-256]
+                                 [else #f])))]
       [(alg param)
-       (check-algorithm who alg)
-       (let ([handle
-              (cond
-               [(eq? alg 'rsa)
-                (unless (and (natural? param) (exact? param) (positive? param))
-                  (errorf who "RSA bit count must be an exact positive integer, given ~s" param))
-                (ffi-pkey-generate alg param #f)]
-               [(memq alg '(ecdsa ecdh))
-                (unless (symbol? param)
-                  (errorf who "EC curve must be a symbol, given ~s" param))
-                (ffi-pkey-generate alg 0 param)]
-               [else
-                (when param
-                  (errorf who "algorithm ~s does not accept a generation parameter" alg))
-                (ffi-pkey-generate alg 0 #f)])])
-         (when (eq? handle 0)
-           (errorf who "failed to generate private key for ~s" alg))
-         (raw->private-key who handle))]))
+       (pcheck ([symbol? alg])
+         (check-algorithm who alg)
+         (let ([handle
+                (cond
+                 [(eq? alg 'rsa)
+                  (unless (and (natural? param) (exact? param) (positive? param))
+                    (errorf who "RSA bit count must be an exact positive integer, given ~s" param))
+                  (ffi-pkey-generate alg param #f)]
+                 [(memq alg '(ecdsa ecdh))
+                  (unless (symbol? param)
+                    (errorf who "EC curve must be a symbol, given ~s" param))
+                  (ffi-pkey-generate alg 0 param)]
+                 [else
+                  (when param
+                    (errorf who "algorithm ~s does not accept a generation parameter" alg))
+                  (ffi-pkey-generate alg 0 #f)])])
+           (when (eq? handle 0)
+             (errorf who "failed to generate private key for ~s" alg))
+           (raw->private-key who handle)))]))
 
   #|proc:destroy-private-key!
 The `destroy-private-key!` procedure releases the foreign resources owned by `key`.
@@ -283,8 +285,8 @@ The `private-key=?` procedure compares two private keys by DER serialization.
     (lambda (a b)
       (pcheck ([private-key? a b])
               (with-crypto-locks ((crypto-private-key-lock a) (crypto-private-key-lock b))
-              (equal? (store-private-key a 'der)
-                      (store-private-key b 'der))))))
+                (equal? (store-private-key a 'der)
+                        (store-private-key b 'der))))))
 
   #|proc:public-key=?
 The `public-key=?` procedure compares two public keys by DER serialization.
@@ -293,6 +295,6 @@ The `public-key=?` procedure compares two public keys by DER serialization.
     (lambda (a b)
       (pcheck ([public-key? a b])
               (with-crypto-locks ((crypto-public-key-lock a) (crypto-public-key-lock b))
-              (equal? (store-public-key a 'der)
-                      (store-public-key b 'der))))))
+                (equal? (store-public-key a 'der)
+                        (store-public-key b 'der))))))
   )

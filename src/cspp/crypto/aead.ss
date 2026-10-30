@@ -204,15 +204,15 @@ The `aead-update-aad-bytevector!` procedure buffers an AAD bytevector slice into
     (case-lambda
       [(st bv)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-mutex (aead-state-mutex st)
+               (with-crypto-mutex (aead-state-mutex st)
                  (aead-update-aad-bytevector! st bv 0 (bytevector-length bv))))]
       [(st bv start)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-mutex (aead-state-mutex st)
+               (with-crypto-mutex (aead-state-mutex st)
                  (aead-update-aad-bytevector! st bv start (bytevector-length bv))))]
       [(st bv start stop)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-mutex (aead-state-mutex st)
+               (with-crypto-mutex (aead-state-mutex st)
                  (check-live-state who st)
                  (check-slice who (bytevector-length bv) start stop)
                  (aead-state-aad*-set! st (cons (subbytevector bv start stop) (aead-state-aad* st)))
@@ -225,15 +225,15 @@ The `aead-update-plaintext-bytevector!` procedure buffers plaintext into an encr
     (case-lambda
       [(st bv)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-mutex (aead-state-mutex st)
+               (with-crypto-mutex (aead-state-mutex st)
                  (aead-update-plaintext-bytevector! st bv 0 (bytevector-length bv))))]
       [(st bv start)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-mutex (aead-state-mutex st)
+               (with-crypto-mutex (aead-state-mutex st)
                  (aead-update-plaintext-bytevector! st bv start (bytevector-length bv))))]
       [(st bv start stop)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-mutex (aead-state-mutex st)
+               (with-crypto-mutex (aead-state-mutex st)
                  (check-live-state who st)
                  (unless (eq? (aead-state-mode st) 'encrypt)
                    (errorf who "state is not in encrypt mode"))
@@ -248,15 +248,15 @@ The `aead-update-ciphertext-bytevector!` procedure buffers ciphertext into a dec
     (case-lambda
       [(st bv)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-mutex (aead-state-mutex st)
+               (with-crypto-mutex (aead-state-mutex st)
                  (aead-update-ciphertext-bytevector! st bv 0 (bytevector-length bv))))]
       [(st bv start)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-mutex (aead-state-mutex st)
+               (with-crypto-mutex (aead-state-mutex st)
                  (aead-update-ciphertext-bytevector! st bv start (bytevector-length bv))))]
       [(st bv start stop)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-mutex (aead-state-mutex st)
+               (with-crypto-mutex (aead-state-mutex st)
                  (check-live-state who st)
                  (unless (eq? (aead-state-mode st) 'decrypt)
                    (errorf who "state is not in decrypt mode"))
@@ -270,7 +270,7 @@ The `aead-finalize-encrypt!` procedure finalizes an encryption state and returns
   (define-who aead-finalize-encrypt!
     (lambda (st)
       (pcheck ([aead-state? st])
-              (with-mutex (aead-state-mutex st)
+              (with-crypto-mutex (aead-state-mutex st)
                 (check-live-state who st)
                 (unless (eq? (aead-state-mode st) 'encrypt)
                   (errorf who "state is not in encrypt mode"))
@@ -293,7 +293,7 @@ The `aead-finalize-encrypt!` procedure finalizes an encryption state and returns
   (define-who aead-finalize-decrypt!
     (lambda (st tag)
       (pcheck ([aead-state? st] [bytevector? tag])
-              (with-mutex (aead-state-mutex st)
+              (with-crypto-mutex (aead-state-mutex st)
                 (check-live-state who st)
                 (unless (eq? (aead-state-mode st) 'decrypt)
                   (errorf who "state is not in decrypt mode"))
@@ -313,7 +313,7 @@ The `aead-destroy!` procedure marks an AEAD state as destroyed and releases buff
   (define-who aead-destroy!
     (lambda (st)
       (pcheck ([aead-state? st])
-              (with-mutex (aead-state-mutex st)
+              (with-crypto-mutex (aead-state-mutex st)
                 (unless (aead-state-destroyed? st)
                   (aead-state-aad*-set! st '())
                   (aead-state-data*-set! st '())

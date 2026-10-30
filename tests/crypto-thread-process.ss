@@ -51,6 +51,34 @@
               (void)])
       (proc))))
 
+(define check-error-handler-reentry
+  (lambda (resources fail! reuse! expected-who)
+    (let ([mutex (make-mutex)] [ready (make-condition)] [handlers 0])
+      (run-actions
+        (map
+          (lambda (resource)
+            (lambda ()
+              ;; Escape the noncontinuable error after exercising the caller's handler.
+              (call/1cc
+                (lambda (escape)
+                  (with-exception-handler
+                    (lambda (condition)
+                      (unless (and (who-condition? condition)
+                                   (eq? expected-who (condition-who condition)))
+                        (error 'crypto-threads "original error was not preserved"))
+                      (with-mutex mutex
+                        (set! handlers (fx1+ handlers))
+                        (condition-broadcast ready)
+                        (let loop ()
+                          (unless (fx= handlers (length resources))
+                            (condition-wait ready mutex) (loop))))
+                      (reuse!)
+                      (escape #t))
+                    (lambda ()
+                      (fail! resource)
+                      (error 'crypto-threads "expected failure unexpectedly returned")))))))
+          resources)))))
+
 (define check-state-lifetime-races
   (lambda (make-state update! get reset! finalize! destroy! bytes expected)
     (let ([state (make-state)] [results-mutex (make-mutex)] [winners 0])
@@ -281,4 +309,27 @@
                (lambda ()
                  (destroy-cert-store! store)
                  (for-each destroy-certificate! (list leaf root intermediate))))))))]
+    [(string=? mode "error-handlers")
+     (when (optional-library-available? (optional-library-info 'openssl))
+       (let ([left (generate-private-key 'ed25519)]
+             [right (generate-private-key 'ed25519)])
+         (dynamic-wind
+           void
+           (lambda ()
+             ;; Error case: synchronous handlers must run after resource locks unwind,
+             ;; allowing the handler to perform another crypto call without deadlock.
+             (check-error-handler-reentry (list left right)
+               (lambda (key) (sign-message 'ed25519 key 42))
+               (lambda () (private-key=? left right)) 'string/bytevector->utf8))
+           (lambda () (destroy-private-key! left) (destroy-private-key! right))))
+       (let ([left (make-hmac-state 'sha256 #vu8(1))]
+             [right (make-hmac-state 'sha256 #vu8(2))])
+         (dynamic-wind
+           void
+           (lambda ()
+             ;; Error case: the same reentry rule must hold for ordinary state locks.
+             (check-error-handler-reentry (list left right)
+               (lambda (state) (hmac-update-string! state "a" 2))
+               (lambda () (hmac-get left) (hmac-get right)) 'hmac-update-string!))
+           (lambda () (hmac-destroy! left) (hmac-destroy! right)))))]
     [else (error 'crypto-threads "unknown fixture mode" mode)]))

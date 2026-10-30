@@ -109,15 +109,15 @@ The `cipher-update-bytevector!` procedure transforms a bytevector slice and retu
     (case-lambda
       [(st bv)
        (pcheck ([cipher-state? st] [bytevector? bv])
-               (with-mutex (cipher-state-mutex st)
+               (with-crypto-mutex (cipher-state-mutex st)
                  (cipher-update-bytevector! st bv 0 (bytevector-length bv))))]
       [(st bv start)
        (pcheck ([cipher-state? st] [bytevector? bv])
-               (with-mutex (cipher-state-mutex st)
+               (with-crypto-mutex (cipher-state-mutex st)
                  (cipher-update-bytevector! st bv start (bytevector-length bv))))]
       [(st bv start stop)
        (pcheck ([cipher-state? st] [bytevector? bv])
-               (with-mutex (cipher-state-mutex st)
+               (with-crypto-mutex (cipher-state-mutex st)
                  (check-cipher-state-live who st)
                  (check-slice who (bytevector-length bv) start stop)
                  (let ([ans (ffi-cipher-state-update (cipher-state-handle st) bv start stop)])
@@ -131,7 +131,7 @@ The `cipher-finalize!` procedure finalizes a cipher state and returns the traili
   (define-who cipher-finalize!
     (lambda (st)
       (pcheck ([cipher-state? st])
-              (with-mutex (cipher-state-mutex st)
+              (with-crypto-mutex (cipher-state-mutex st)
                 (check-cipher-state-live who st)
                 (let ([ans (ffi-cipher-state-finalize (cipher-state-handle st))])
                   (when (eq? ans #f)
@@ -145,7 +145,7 @@ The `cipher-reset!` procedure reinitializes a cipher state with its original key
   (define-who cipher-reset!
     (lambda (st)
       (pcheck ([cipher-state? st])
-              (with-mutex (cipher-state-mutex st)
+              (with-crypto-mutex (cipher-state-mutex st)
                 (check-cipher-state-resettable who st)
                 (unless (fx= 1 (ffi-cipher-state-reset! (cipher-state-handle st)))
                   (errorf who "failed to reset cipher state for ~s" (cipher-state-algorithm st)))
@@ -158,7 +158,7 @@ The `cipher-destroy!` procedure releases foreign resources owned by `st`.
   (define-who cipher-destroy!
     (lambda (st)
       (pcheck ([cipher-state? st])
-              (with-mutex (cipher-state-mutex st)
+              (with-crypto-mutex (cipher-state-mutex st)
                 (unless (cipher-state-destroyed? st)
                   (ffi-cipher-state-destroy (cipher-state-handle st))
                   (cipher-state-handle-set! st 0)
