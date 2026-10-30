@@ -2233,7 +2233,8 @@
       (#f () ((value . 1) (value . 2)))))
 
   (let* ([state (benchmark-state 'custom 'suite '((value . 7)) '((type . fixnum)) 0 1 0)]
-         [descriptor (make-benchmark 'custom (lambda (state value) (void)) '())]
+         [descriptor (make-benchmark 'custom (lambda (state value) (void))
+                       '((args (value) (7))))]
          [result (benchmark-run-one (cons state descriptor) (benchmark-test-config))]
          [path (benchmark-temp-file)])
     (dynamic-wind
@@ -2415,3 +2416,45 @@
       (and (equal? (map benchmark-result-name results)
                    '(valid-name valid-fixture-name valid-template))
            (for-all (lambda (result) (not (benchmark-result-error result))) results)))))
+
+(mat benchmark-body-signatures-match-inputs
+  ;; Error: reject impossible body calls before setup, including empty argument domains.
+  (let ([setup? #f])
+    (and (for-all
+           (lambda (entry)
+             (guard (raised [else #t])
+               (make-benchmark 'invalid-body (car entry) (cdr entry))
+               #f))
+           (list (cons (lambda () #t) '())
+                 (cons (lambda (state) #t) '((args (value) (1))))
+                 (cons (lambda (state) #t) '((args (value))))
+                 (cons (lambda (state value) #t) '((args (x y) (1 2))))
+                 (cons (lambda (state) #t)
+                       `((setup . ,(lambda (state) (set! setup? #t) 'resource))))))
+         (not setup?)))
+
+  ;; Rest bodies and case-lambda bodies remain valid when they accept the effective call.
+  (for-all
+    (lambda (body)
+      (let* ([benchmark (make-benchmark 'valid-body body
+                          '((args (left) (3)) (args (right) (4))
+                            (setup . #f)))]
+             [results (benchmark-run benchmark (benchmark-test-config))])
+        (and (= (length results) 1) (not (benchmark-result-error (car results))))))
+    (list (lambda (state left right) (test-= (+ left right) 7))
+          (lambda (state . values) (test-equal values '(3 4)))
+          (case-lambda [() (error 'body "wrong arity chosen")]
+                       [(state left right) (test-= (+ left right) 7)])))
+
+  ;; A fixture always adds its setup value, including the default fixture's #f value.
+  (let ()
+    (define-benchmark-fixture body-signature-fixture ())
+    (and (guard (raised [else #t])
+           (make-benchmark 'invalid-fixture-body (lambda (state) #t)
+             `((fixture . ,body-signature-fixture)))
+           #f)
+         (let* ([benchmark (make-benchmark 'valid-setup-body
+                             (lambda (state value) (test-= value 7))
+                             `((setup . ,(lambda (state) 7))))]
+                [results (benchmark-run benchmark (benchmark-test-config))])
+           (not (benchmark-result-error (car results)))))))

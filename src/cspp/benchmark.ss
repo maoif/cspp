@@ -1076,6 +1076,8 @@ The `make-benchmark` procedure creates a benchmark descriptor named by symbol
 `benchmark-options`. Options include argument tables/ranges, sample setup/teardown,
 fixture and suite context, template arguments, and runner configuration defaults.
 Unknown options and invalid hooks/configuration values are rejected at construction.
+The body must accept state, one value per argument name, and a setup value when setup or
+a fixture is supplied. Invalid body signatures are rejected even for empty argument domains.
 Setup hooks must accept one argument and teardown hooks must accept two arguments.
 Singleton options cannot repeat; argument tables and ranges may repeat with distinct names.
 Setup has signature `(lambda (state) value)`; teardown has signature
@@ -1100,6 +1102,10 @@ traverses their Cartesian product incrementally, preserving option and row order
                     [fixture ($option-ref options 'fixture #f)])
                 (when (and fixture (or setup teardown))
                   (errorf 'make-benchmark "fixture conflicts with setup or teardown hooks"))
+                (let ([arity (+ 1 (if (or setup fixture) 1 0)
+                                (apply + (map (lambda (axis) (length (car axis))) args)))])
+                  (unless (logbit? arity (procedure-arity-mask body))
+                    (errorf 'make-benchmark "body must accept ~s arguments: ~s" arity body)))
                 ($mk-benchmark name
                                body
                                options
