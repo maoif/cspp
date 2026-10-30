@@ -483,7 +483,7 @@ static ptr hkdf_common(int mode, ptr which, ptr ikm, uint64_t ikm_start,
   ptr ans = Sfalse;
   const char *md_name = digest_name(which);
 
-  if (md_name == NULL) return Sfalse;
+  if (md_name == NULL || out_len < 0) return Sfalse;
 
   if (!cspp_openssl_require()) return Sfalse;
   kdf = EVP_KDF_fetch(NULL, "HKDF", NULL);
@@ -558,6 +558,7 @@ ptr crypto_pbkdf2(ptr which, ptr password, uint64_t pw_start, uint64_t pw_stop,
   int pw_len, salt_len;
 
   if (md == NULL) return Sfalse;
+  if (iterations <= 0 || out_len < 0) goto done;
   if (!uint64_to_int(pw_stop - pw_start, &pw_len)) goto done;
   if (!uint64_to_int(salt_stop - salt_start, &salt_len)) goto done;
   out_buf = malloc(out_len == 0 ? 1 : (size_t)out_len);
@@ -585,6 +586,8 @@ ptr crypto_scrypt(ptr password, uint64_t pw_start, uint64_t pw_stop, ptr salt,
   ptr ans = Sfalse;
 
   if (!cspp_openssl_require()) return Sfalse;
+  if (n < 2 || (n & (n - 1)) != 0 || r <= 0 || p <= 0 || out_len < 0)
+    return Sfalse;
   out_buf = malloc(out_len == 0 ? 1 : (size_t)out_len);
   if (out_buf == NULL) return Sfalse;
   if (EVP_PBE_scrypt((const char *)(Sbytevector_data(password) + (size_t)pw_start),

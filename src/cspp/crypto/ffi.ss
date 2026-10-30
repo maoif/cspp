@@ -362,28 +362,108 @@
                 (require-optional-library 'ffi-hmac-state-update-string! 'openssl)
                 (native ptr-st text start stop)))))
 
+  (define native-int-maximum
+    (- (expt 2 (- (* 8 (foreign-sizeof 'int)) 1)) 1))
+
+  (define check-kdf-int
+    (lambda (who value minimum)
+      (unless (and (integer? value) (exact? value) (<= minimum value native-int-maximum))
+        (errorf who "expected an exact integer in [~s, ~s], given ~s"
+                minimum native-int-maximum value))))
+
+  #|proc:ffi-hkdf
+  The `ffi-hkdf` procedure derives a bytevector with algorithm symbol `algorithm` from
+  bytevectors `key`, `salt`, and `info`. Their corresponding `*-start` and `*-stop`
+  arguments select half-open byte slices; callers validate bounds. `length` is an exact
+  nonnegative C-int-sized byte count. Native failures return `#f`; invalid lengths and
+  unavailable OpenSSL raise errors.
+  |#
   (define ffi-hkdf
-    (foreign-procedure "crypto_hkdf"
-                       (ptr ptr unsigned-64 unsigned-64
-                            ptr unsigned-64 unsigned-64
-                            ptr unsigned-64 unsigned-64 int)
-                       ptr))
+    (let ([native (foreign-procedure "crypto_hkdf"
+                    (ptr ptr unsigned-64 unsigned-64 ptr unsigned-64 unsigned-64
+                         ptr unsigned-64 unsigned-64 int) ptr)])
+      (lambda (algorithm key key-start key-stop salt salt-start salt-stop
+               info info-start info-stop length)
+        (pcheck ([symbol? algorithm] [bytevector? key salt info]
+                 [natural? key-start key-stop salt-start salt-stop info-start info-stop])
+          (check-kdf-int 'ffi-hkdf length 0)
+          (require-optional-library 'ffi-hkdf 'openssl)
+          (native algorithm key key-start key-stop salt salt-start salt-stop
+                  info info-start info-stop length)))))
+
+  #|proc:ffi-hkdf-extract
+  The `ffi-hkdf-extract` procedure returns a pseudorandom-key bytevector using algorithm
+  symbol `algorithm`, bytevectors `key` and `salt`, and their corresponding half-open
+  `*-start` and `*-stop` byte slices. Callers validate slice bounds. Native failures
+  return `#f`; unavailable OpenSSL raises an error.
+  |#
   (define ffi-hkdf-extract
-    (foreign-procedure "crypto_hkdf_extract"
-                       (ptr ptr unsigned-64 unsigned-64 ptr unsigned-64 unsigned-64)
-                       ptr))
+    (let ([native (foreign-procedure "crypto_hkdf_extract"
+                    (ptr ptr unsigned-64 unsigned-64 ptr unsigned-64 unsigned-64) ptr)])
+      (lambda (algorithm key key-start key-stop salt salt-start salt-stop)
+        (pcheck ([symbol? algorithm] [bytevector? key salt]
+                 [natural? key-start key-stop salt-start salt-stop])
+          (require-optional-library 'ffi-hkdf-extract 'openssl)
+          (native algorithm key key-start key-stop salt salt-start salt-stop)))))
+
+  #|proc:ffi-hkdf-expand
+  The `ffi-hkdf-expand` procedure returns an expanded-key bytevector using algorithm
+  symbol `algorithm`, bytevectors `key` and `info`, and their corresponding half-open
+  `*-start` and `*-stop` byte slices. Callers validate bounds. `length` is an exact
+  nonnegative C-int-sized byte count. Native failures return `#f`; invalid lengths and
+  unavailable OpenSSL raise errors.
+  |#
   (define ffi-hkdf-expand
-    (foreign-procedure "crypto_hkdf_expand"
-                       (ptr ptr unsigned-64 unsigned-64 ptr unsigned-64 unsigned-64 int)
-                       ptr))
+    (let ([native (foreign-procedure "crypto_hkdf_expand"
+                    (ptr ptr unsigned-64 unsigned-64 ptr unsigned-64 unsigned-64 int) ptr)])
+      (lambda (algorithm key key-start key-stop info info-start info-stop length)
+        (pcheck ([symbol? algorithm] [bytevector? key info]
+                 [natural? key-start key-stop info-start info-stop])
+          (check-kdf-int 'ffi-hkdf-expand length 0)
+          (require-optional-library 'ffi-hkdf-expand 'openssl)
+          (native algorithm key key-start key-stop info info-start info-stop length)))))
+
+  #|proc:ffi-pbkdf2
+  The `ffi-pbkdf2` procedure returns a derived-key bytevector using algorithm symbol
+  `algorithm`, bytevectors `password` and `salt`, and their corresponding half-open
+  `*-start` and `*-stop` byte slices. Callers validate bounds. `iterations` is a positive
+  exact C-int-sized count; `length` is a nonnegative exact C-int-sized byte count.
+  Native failures return `#f`; invalid counts and unavailable OpenSSL raise errors.
+  |#
   (define ffi-pbkdf2
-    (foreign-procedure "crypto_pbkdf2"
-                       (ptr ptr unsigned-64 unsigned-64 ptr unsigned-64 unsigned-64 int int)
-                       ptr))
+    (let ([native (foreign-procedure "crypto_pbkdf2"
+                    (ptr ptr unsigned-64 unsigned-64 ptr unsigned-64 unsigned-64 int int) ptr)])
+      (lambda (algorithm password password-start password-stop salt salt-start salt-stop
+               iterations length)
+        (pcheck ([symbol? algorithm] [bytevector? password salt]
+                 [natural? password-start password-stop salt-start salt-stop])
+          (check-kdf-int 'ffi-pbkdf2 iterations 1)
+          (check-kdf-int 'ffi-pbkdf2 length 0)
+          (require-optional-library 'ffi-pbkdf2 'openssl)
+          (native algorithm password password-start password-stop salt salt-start salt-stop
+                  iterations length)))))
+
+  #|proc:ffi-scrypt
+  The `ffi-scrypt` procedure derives a key from bytevectors `password` and `salt` with
+  corresponding half-open `*-start` and `*-stop` byte slices; callers validate bounds.
+  Cost `n` is an exact C-int-sized power of two greater than one; block size `r` and
+  parallelization `p` are positive exact C-int-sized integers. `length` is a nonnegative
+  exact C-int-sized byte count. Native failures return `#f`; invalid integer ranges and
+  unavailable OpenSSL raise errors.
+  |#
   (define ffi-scrypt
-    (foreign-procedure "crypto_scrypt"
-                       (ptr unsigned-64 unsigned-64 ptr unsigned-64 unsigned-64 int int int int)
-                       ptr))
+    (let ([native (foreign-procedure "crypto_scrypt"
+                    (ptr unsigned-64 unsigned-64 ptr unsigned-64 unsigned-64
+                         int int int int) ptr)])
+      (lambda (password password-start password-stop salt salt-start salt-stop n r p length)
+        (pcheck ([bytevector? password salt]
+                 [natural? password-start password-stop salt-start salt-stop])
+          (check-kdf-int 'ffi-scrypt n 2)
+          (check-kdf-int 'ffi-scrypt r 1)
+          (check-kdf-int 'ffi-scrypt p 1)
+          (check-kdf-int 'ffi-scrypt length 0)
+          (require-optional-library 'ffi-scrypt 'openssl)
+          (native password password-start password-stop salt salt-start salt-stop n r p length)))))
 
   (define ffi-aead-encrypt
     (foreign-procedure "crypto_aead_encrypt"

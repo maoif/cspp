@@ -129,3 +129,39 @@
                      (lambda () (derive-shared-secret (cadr entry) private public)))))
             (lambda () (destroy-public-key! public) (destroy-private-key! private)))))
       '((x25519 ecdh) (ecdh x25519)))))
+
+(mat crypto-kdf-integer-validation
+  ;; Error case: the low 32 bits must not turn a huge work factor into one iteration.
+  (mat-requires (openssl)
+    (crypto-rejects? (lambda () (pbkdf2 'sha256 "password" "salt" 4294967297 32))))
+
+  ;; Error case: work factors and output lengths must not truncate at the native boundary.
+  (mat-requires (openssl)
+    (for-all
+      crypto-rejects?
+      (list (lambda () (pbkdf2 'sha256 "password" "salt" 0 32))
+            (lambda () (pbkdf2 'sha256 "password" "salt" 1.0 32))
+            (lambda () (pbkdf2 'sha256 "password" "salt" 1 4294967328))
+            (lambda () (hkdf 'sha256 "key" "salt" "info" 4294967328))
+            (lambda () (hkdf-expand 'sha256 #vu8(1) "info" 4294967328))
+            (lambda () (scrypt "password" "salt" 4294967312 1 1 32))
+            (lambda () (scrypt "password" "salt" 16 4294967297 1 32))
+            (lambda () (scrypt "password" "salt" 16 1 4294967297 32))
+            (lambda () (scrypt "password" "salt" 16 1 1 4294967328))
+            (lambda () (password-hash/pbkdf2 "password" #vu8(1) 4294967297 32))
+            (lambda () (password-hash/scrypt "password" #vu8(1) 4294967312 1 1 32)))))
+
+  ;; Literal PBKDF2-HMAC-SHA256 vector verifies the valid path after range checks.
+  (mat-requires (openssl)
+    (string=? "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b"
+              (bytevector->hex (pbkdf2 'sha256 "password" "salt" 1 32)))))
+
+(mat crypto-kdf-optional-backend
+  ;; Error case: absent OpenSSL must raise instead of returning native sentinel vectors.
+  (or (optional-library-available? (optional-library-info 'openssl))
+      (for-all crypto-rejects?
+        (list (lambda () (hkdf 'sha256 "key" "salt" "info" 32))
+              (lambda () (hkdf-extract 'sha256 "key" "salt"))
+              (lambda () (hkdf-expand 'sha256 #vu8(1) "info" 32))
+              (lambda () (pbkdf2 'sha256 "password" "salt" 1 32))
+              (lambda () (scrypt "password" "salt" 16 1 1 32))))))
