@@ -20,3 +20,29 @@
                    "4350573101010000001000000001000000010000000000000000")])
     (and (not (password-hash? encoded))
          (not (password-verify? "wrong" encoded)))))
+
+(mat crypto-aead-full-authentication-tags
+  (mat-requires (openssl)
+    (for-all
+      (lambda (algorithm)
+        (let ([key (make-bytevector (aead-key-size algorithm) 7)]
+              [nonce (make-bytevector 12 9)]
+              [plaintext #vu8(1 2 3)])
+          (let-values ([(ciphertext tag) (aead-encrypt algorithm key nonce plaintext)])
+            (and (equal? plaintext (aead-decrypt algorithm key nonce ciphertext tag))
+                 ;; Error case: an otherwise correct truncated tag must not authenticate.
+                 (for-all
+                   (lambda (length)
+                     (let ([short-tag (make-bytevector length)])
+                       (bytevector-copy! tag 0 short-tag 0 length)
+                       (and (not (aead-decrypt algorithm key nonce ciphertext short-tag))
+                            (not (aead-decrypt/aad algorithm key nonce #vu8()
+                                                  ciphertext short-tag))
+                            (not (call-with-aead-decrypt-state algorithm key nonce
+                                   (lambda (state)
+                                     (aead-update-ciphertext-bytevector! state ciphertext)
+                                     (aead-finalize-decrypt! state short-tag)))))))
+                   '(0 1 15))
+                 ;; Error case: longer tags cannot change the required tag size either.
+                 (not (aead-decrypt algorithm key nonce ciphertext (make-bytevector 17)))))))
+      aead-algorithms)))

@@ -103,15 +103,13 @@
   (define do-aead-decrypt
     (lambda (who which key nonce aad ciphertext tag)
       (ensure-openssl who)
-      (let ([ans (ffi-aead-decrypt which
-                                   key 0 (bytevector-length key)
-                                   nonce 0 (bytevector-length nonce)
-                                   aad 0 (bytevector-length aad)
-                                   ciphertext 0 (bytevector-length ciphertext)
-                                   tag 0 (bytevector-length tag))])
-        (if (eq? ans #f)
-            #f
-            ans))))
+      (and (fx= (bytevector-length tag) (aead-tag-size which))
+           (ffi-aead-decrypt which
+                             key 0 (bytevector-length key)
+                             nonce 0 (bytevector-length nonce)
+                             aad 0 (bytevector-length aad)
+                             ciphertext 0 (bytevector-length ciphertext)
+                             tag 0 (bytevector-length tag)))))
 
   #|proc:aead-encrypt
 The `aead-encrypt` procedure encrypts `plaintext` and returns ciphertext and tag.
@@ -146,8 +144,11 @@ The `aead-encrypt/detached-aad` procedure is an alias for `aead-encrypt/aad`.
     aead-encrypt/aad)
 
   #|proc:aead-decrypt
-The `aead-decrypt` procedure returns the decrypted plaintext or `#f` if authentication fails.
-|#
+  The `aead-decrypt` procedure decrypts bytevector `ciphertext` using algorithm symbol
+  `which`, bytevector `key`, and bytevector `nonce`. It returns a plaintext bytevector
+  when bytevector `tag` authenticates the message, or `#f` on authentication failure.
+  The tag must have exactly `aead-tag-size` bytes; other lengths return `#f`.
+  |#
   (define-who aead-decrypt
     (lambda (which key nonce ciphertext tag)
       (pcheck ([bytevector? key nonce ciphertext tag])
@@ -156,8 +157,11 @@ The `aead-decrypt` procedure returns the decrypted plaintext or `#f` if authenti
               (do-aead-decrypt who which key nonce (bytevector-empty) ciphertext tag))))
 
   #|proc:aead-decrypt/aad
-The `aead-decrypt/aad` procedure returns the decrypted plaintext or `#f` if authentication fails.
-|#
+  The `aead-decrypt/aad` procedure decrypts bytevector `ciphertext` using algorithm symbol
+  `which`, bytevector `key`, bytevector `nonce`, and associated-data bytevector `aad`.
+  It returns a plaintext bytevector if bytevector `tag` authenticates both inputs, or
+  `#f` otherwise. The tag must have exactly `aead-tag-size` bytes.
+  |#
   (define-who aead-decrypt/aad
     (lambda (which key nonce aad ciphertext tag)
       (pcheck ([bytevector? key nonce aad ciphertext tag])
@@ -263,8 +267,11 @@ The `aead-finalize-encrypt!` procedure finalizes an encryption state and returns
                 (values ciphertext tag)))))
 
   #|proc:aead-finalize-decrypt!
-The `aead-finalize-decrypt!` procedure finalizes a decryption state and returns the plaintext or `#f`.
-|#
+  The `aead-finalize-decrypt!` procedure finalizes the live decryption state `st` using
+  authentication bytevector `tag`. It returns the plaintext bytevector or `#f` if
+  authentication fails, including when the tag has a length other than `aead-tag-size`.
+  The state becomes terminal after either result.
+  |#
   (define-who aead-finalize-decrypt!
     (lambda (st tag)
       (pcheck ([aead-state? st] [bytevector? tag])

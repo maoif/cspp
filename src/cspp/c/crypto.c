@@ -687,6 +687,8 @@ ptr crypto_aead_decrypt(ptr which, ptr key, uint64_t key_start, uint64_t key_sto
   if (cipher == NULL) return Sfalse;
   if (!uint64_to_int(nonce_stop - nonce_start, &nonce_len)) goto done;
   if (!uint64_to_int(tag_stop - tag_start, &tag_len)) goto done;
+  /* CSPP AEAD algorithms always use full 128-bit authentication tags. */
+  if (tag_len != 16) goto done;
   ctx = EVP_CIPHER_CTX_new();
   if (ctx == NULL) goto done;
   if (EVP_DecryptInit_ex(ctx, cipher, NULL, NULL, NULL) != 1) goto done;
