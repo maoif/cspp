@@ -170,24 +170,32 @@ The `aead-encrypt/detached-aad` procedure is an alias for `aead-encrypt/aad`.
               (do-aead-decrypt who which key nonce aad ciphertext tag))))
 
   #|proc:make-aead-encrypt-state
-The `make-aead-encrypt-state` procedure creates a buffered AEAD encryption state.
-|#
+  The `make-aead-encrypt-state` procedure returns a buffered encryption state for
+  algorithm symbol `which`, bytevector `key`, and bytevector `nonce`. The state owns
+  copies of the key and nonce, so later caller mutations do not change its parameters.
+  Operations on the state are serialized. Invalid algorithms or lengths raise errors.
+  |#
   (define-who make-aead-encrypt-state
     (lambda (which key nonce)
       (pcheck ([bytevector? key nonce])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
-              (%make-aead-state (make-mutex 'aead) 'encrypt which key nonce '() '() #f #f))))
+              (%make-aead-state (make-mutex 'aead) 'encrypt which
+                                (bytevector-copy key) (bytevector-copy nonce) '() '() #f #f))))
 
   #|proc:make-aead-decrypt-state
-The `make-aead-decrypt-state` procedure creates a buffered AEAD decryption state.
-|#
+  The `make-aead-decrypt-state` procedure returns a buffered decryption state for
+  algorithm symbol `which`, bytevector `key`, and bytevector `nonce`. The state owns
+  copies of the key and nonce, so later caller mutations do not change its parameters.
+  Operations on the state are serialized. Invalid algorithms or lengths raise errors.
+  |#
   (define-who make-aead-decrypt-state
     (lambda (which key nonce)
       (pcheck ([bytevector? key nonce])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
-              (%make-aead-state (make-mutex 'aead) 'decrypt which key nonce '() '() #f #f))))
+              (%make-aead-state (make-mutex 'aead) 'decrypt which
+                                (bytevector-copy key) (bytevector-copy nonce) '() '() #f #f))))
 
   #|proc:aead-update-aad-bytevector!
 The `aead-update-aad-bytevector!` procedure buffers an AAD bytevector slice into an AEAD state.

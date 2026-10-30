@@ -73,6 +73,32 @@
                  (not (aead-decrypt algorithm key nonce ciphertext (make-bytevector 17)))))))
       aead-algorithms)))
 
+(mat crypto-aead-owned-key-and-nonce
+  (mat-requires (openssl)
+    (for-all
+      (lambda (algorithm)
+        (let* ([key (make-bytevector (aead-key-size algorithm) 7)]
+               [nonce (make-bytevector 12 9)]
+               [original-key (bytevector-copy key)]
+               [original-nonce (bytevector-copy nonce)]
+               [plaintext #vu8(1 2 3)])
+          (call-with-aead-encrypt-state algorithm key nonce
+            (lambda (encryptor)
+              (aead-update-plaintext-bytevector! encryptor plaintext)
+              ;; Reusing caller buffers must not change an existing state's parameters.
+              (bytevector-u8-set! key 0 8)
+              (bytevector-u8-set! nonce 0 10)
+              (let-values ([(ciphertext tag) (aead-finalize-encrypt! encryptor)])
+                (and (equal? plaintext
+                        (aead-decrypt algorithm original-key original-nonce ciphertext tag))
+                     (call-with-aead-decrypt-state algorithm original-key original-nonce
+                       (lambda (decryptor)
+                         (aead-update-ciphertext-bytevector! decryptor ciphertext)
+                         (bytevector-u8-set! original-key 0 11)
+                         (bytevector-u8-set! original-nonce 0 12)
+                         (equal? plaintext (aead-finalize-decrypt! decryptor tag))))))))))
+      aead-algorithms)))
+
 (mat crypto-certificate-hostname-validation
   (mat-requires (openssl)
     (let* ([leaf (load-certificate (read-crypto-fixture "leaf.cert.pem"))]
