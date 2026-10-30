@@ -2095,15 +2095,6 @@ suffix.
 
   (define $current-suite-context (make-parameter #f))
 
-  (define $current-benchmark-report-collector (make-parameter #f))
-
-  (define $dispatch-benchmark-report
-    (lambda (results reporter out)
-      (let ([collector ($current-benchmark-report-collector)])
-        (if collector
-            (collector results reporter out)
-            (benchmark-report results reporter out)))))
-
   (define-record-type ($report-groups $make-report-groups $report-groups?)
     (fields index (mutable ordered $report-groups-ordered $report-groups-ordered-set!)))
 
@@ -2131,7 +2122,7 @@ suffix.
     (lambda (groups)
       (for-each
         (lambda (group)
-          ($dispatch-benchmark-report (reverse (cdr group)) (caar group) (cdar group)))
+          (benchmark-report (reverse (cdr group)) (caar group) (cdar group)))
         (reverse ($report-groups-ordered groups)))))
 
   (define $expand-benchmark-case
@@ -2337,6 +2328,8 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
   teardown after successful setup appends a suite error after completed child results.
   Reports are emitted after teardown, grouping children by their effective reporter
   and output. Suite errors join the configured reporter's group when enabled.
+  If child selection or coordination raises, completed child results and their report groups
+  are retained before the suite error. Selectors are called once per visited descriptor.
   |#
   (define benchmark-run-suite
     (lambda (suite config)
@@ -2354,21 +2347,22 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                     [failure #f]
                     [results '()]
                     [report-groups ($make-report-collector)])
-                (define collect-report!
-                  (lambda (results reporter out)
-                    ($collect-report! report-groups results reporter out)))
+                (define visit
+                  (lambda (result effective)
+                    (when result (set! results (cons result results)))
+                    ($collect-report! report-groups (if result (list result) '())
+                      (benchmark-config-reporter effective) (benchmark-config-output effective))))
                 (dynamic-wind
                   (lambda () (void))
                   (lambda ()
                     (guard (exn [else (set! failure ($captured-benchmark-error exn))])
                       (set! setup-value (($benchmark-suite-setup suite) suite-state))
-                      (set! results
-                        (parameterize ([$current-suite-context ($benchmark-suite-name suite)]
-                                       [$current-benchmark-report-collector collect-report!])
-                          (benchmark-run ($benchmark-suite-benchmarks suite) config)))))
+                      (parameterize ([$current-suite-context ($benchmark-suite-name suite)])
+                        ($walk-benchmarks ($benchmark-suite-benchmarks suite) config visit))))
                   (lambda ()
                     (guard (exn [else (unless failure (set! failure ($captured-benchmark-error exn)))])
                       (($benchmark-suite-teardown suite) suite-state setup-value))))
+                (set! results (reverse results))
                 (when failure
                   (let ([result ($mk-benchmark-result ($benchmark-suite-name suite)
                                                       '() '() '()
@@ -2377,7 +2371,7 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                         [reporter (benchmark-config-reporter config)]
                         [out (benchmark-config-output config)])
                     (when (and reporter out)
-                      (collect-report! (list result) reporter out))
+                      ($collect-report! report-groups (list result) reporter out))
                     (set! results (append results (list result)))))
                 ($dispatch-reports report-groups)
                 results))))
@@ -2393,45 +2387,48 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                (string=? selector (substring name 0 (string-length selector)))))]
        [else (selector benchmark)])))
 
-  (define $run-benchmarks
-    (lambda (benchmarks config)
-      (let ([report-groups ($make-report-collector)] [selected? #f])
-        (define record-report!
-          (lambda (results effective)
-            ($collect-report! report-groups results
-              (benchmark-config-reporter effective) (benchmark-config-output effective))))
+  ;; Visit each completed result immediately. #f reserves an empty report group for a
+  ;; selected descriptor, or for the run configuration when nothing is selected.
+  (define $walk-benchmarks
+    (lambda (benchmarks config visit)
+      (let ([selected? #f])
         (define finish
-          (lambda (results)
+          (lambda ()
             ;; With no selected descriptors, the run configuration owns the empty report.
-            (unless selected? (record-report! '() config))
-            ($dispatch-reports report-groups)
-            (reverse results)))
-        (let loop-benchmarks ([benchmarks benchmarks] [results '()])
+            (unless selected? (visit #f config))))
+        (let loop-benchmarks ([benchmarks benchmarks])
           (if (null? benchmarks)
-              (finish results)
+              (finish)
               (let* ([benchmark (car benchmarks)]
                      [effective ($effective-benchmark-config benchmark config)])
                 (if (not ($benchmark-matches-selector?
                           benchmark (benchmark-config-filter effective)))
-                    (loop-benchmarks (cdr benchmarks) results)
+                    (loop-benchmarks (cdr benchmarks))
                     (begin
                       ($check-reporter-output 'benchmark-run
                         (benchmark-config-reporter effective) (benchmark-config-output effective))
                       (set! selected? #t)
-                      (record-report! '() effective)
-                      (let* ([next-results results]
-                             [completed?
-                              ($walk-argument-axes ($benchmark-axes benchmark)
-                                (lambda (args)
-                                  (let ([result ($run-expanded
-                                                  ($expand-benchmark-case benchmark args) effective)])
-                                    (record-report! (list result) effective)
-                                    (set! next-results (cons result next-results))
-                                    (not (and ($benchmark-config-stop-on-error? effective)
-                                              (benchmark-result-error result))))))])
-                        (if completed?
-                            (loop-benchmarks (cdr benchmarks) next-results)
-                            (finish next-results)))))))))))
+                      (visit #f effective)
+                      (if ($walk-argument-axes ($benchmark-axes benchmark)
+                            (lambda (args)
+                              (let ([result ($run-expanded
+                                              ($expand-benchmark-case benchmark args) effective)])
+                                (visit result effective)
+                                (not (and ($benchmark-config-stop-on-error? effective)
+                                          (benchmark-result-error result))))))
+                          (loop-benchmarks (cdr benchmarks))
+                          (finish))))))))))
+
+  (define $run-benchmarks
+    (lambda (benchmarks config)
+      (let ([report-groups ($make-report-collector)] [results '()])
+        ($walk-benchmarks benchmarks config
+          (lambda (result effective)
+            (when result (set! results (cons result results)))
+            ($collect-report! report-groups (if result (list result) '())
+              (benchmark-config-reporter effective) (benchmark-config-output effective))))
+        ($dispatch-reports report-groups)
+        (reverse results))))
 
   #|proc:benchmark-run
   The `benchmark-run` procedure runs registered benchmarks, descriptors, or a

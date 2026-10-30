@@ -2458,3 +2458,42 @@
                              `((setup . ,(lambda (state) 7))))]
                 [results (benchmark-run benchmark (benchmark-test-config))])
            (not (benchmark-result-error (car results)))))))
+
+(mat benchmark-suite-retains-results-before-selector-failure
+  ;; Error: a later selector failure must preserve completed children and their reports.
+  (for-all
+    (lambda (reporting?)
+      (call-with-port (open-output-string)
+        (lambda (out)
+          (let* ([primary (condition (make-error) (make-message-condition "selector failed"))]
+                 [visited '()] [ran? #f] [cleaned? #f] [reported '()]
+                 [reporter (make-benchmark-reporter
+                             (lambda (results out)
+                               (unless cleaned? (error 'reporter "teardown has not run"))
+                               (set! reported (map benchmark-result-name results)))
+                             (lambda (result out) (void))
+                             (lambda (results out) (void)))]
+                 [first (make-benchmark 'completed (lambda (state) (set! ran? #t)) '())]
+                 [second (make-benchmark 'unselected (lambda (state) (void)) '())])
+            (define-benchmark-suite partial-suite
+              (:suite-teardown (lambda (state setup)
+                                 (set! cleaned? #t)
+                                 (error 'teardown "secondary failure")))
+              first second)
+            (let ([results
+                   (benchmark-run-suite partial-suite
+                     (benchmark-config-with (benchmark-test-config)
+                       `((reporter . ,(and reporting? reporter))
+                         (output . ,(and reporting? out))
+                         (filter . ,(lambda (benchmark)
+                                      (set! visited (cons (benchmark-name benchmark) visited))
+                                      (if (eq? (benchmark-name benchmark) 'unselected)
+                                          (raise primary)
+                                          #t))))))])
+              (and ran? cleaned?
+                   (equal? (reverse visited) '(completed unselected))
+                   (equal? (map benchmark-result-name results) '(completed partial-suite))
+                   (not (benchmark-result-error (car results)))
+                   (eq? (benchmark-result-error (cadr results)) primary)
+                   (equal? reported (if reporting? '(completed partial-suite) '()))))))))
+    '(#f #t)))
