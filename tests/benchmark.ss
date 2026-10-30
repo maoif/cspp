@@ -2219,3 +2219,29 @@
          [result (car (benchmark-run descriptor (benchmark-test-config)))])
     (and (not (benchmark-result-error result))
          (equal? (reverse calls) '(ready closed ready closed)))))
+
+(mat benchmark-state-enforces-model-invariants
+  ;; Error: public states must enforce the same suite and argument domains as descriptors/baselines.
+  (for-all
+    (lambda (fields)
+      (guard (raised [else #t])
+        (apply benchmark-state 'invalid (append fields '(0 1 0)))
+        #f))
+    '((42 () ()) (#f (invalid) ()) (#f () (invalid))
+      (#f ((42 . value)) ()) (#f () ((42 . value)))
+      (#f ((value . 1) (value . 2)) ())
+      (#f () ((value . 1) (value . 2)))))
+
+  (let* ([state (benchmark-state 'custom 'suite '((value . 7)) '((type . fixnum)) 0 1 0)]
+         [descriptor (make-benchmark 'custom (lambda (state value) (void)) '())]
+         [result (benchmark-run-one (cons state descriptor) (benchmark-test-config))]
+         [path (benchmark-temp-file)])
+    (dynamic-wind
+      (lambda () (void))
+      (lambda ()
+        (benchmark-save-baseline (list result) path)
+        (let ([loaded (car (benchmark-load-baseline path))])
+          (and (not (benchmark-result-error result))
+               (equal? (benchmark-result-args loaded) '((value . 7)))
+               (equal? (benchmark-result-template-args loaded) '((type . fixnum))))))
+      (lambda () (when (file-exists? path) (delete-file path))))))

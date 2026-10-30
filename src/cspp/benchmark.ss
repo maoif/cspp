@@ -133,6 +133,17 @@
 
   (define $identity (lambda (x) x))
 
+  (define $symbol-alist?
+    (lambda (value)
+      (and (list? value)
+           (let ([seen (make-eq-hashtable (length value))])
+             (for-all
+               (lambda (entry)
+                 (and (pair? entry) (symbol? (car entry))
+                      (not (hashtable-contains? seen (car entry)))
+                      (begin (hashtable-set! seen (car entry) #t) #t)))
+               value)))))
+
   (define $alist-ref
     (case-lambda
       [(alist key)
@@ -883,10 +894,13 @@ custom runners. `name` is the concrete run name, `suite` is a suite name or
 `#f`, `args` is an argument alist, `template-args` is a template argument alist,
 `iteration` is the current iteration index, `iterations` is the current sample's
 iteration count, and `sample` is the current sample index.
+Both argument alists must have unique symbolic keys; their values may be arbitrary objects.
 |#
   (define benchmark-state
     (lambda (name suite args template-args iteration iterations sample)
-      (pcheck ([symbol? name] [list? args template-args] [natural? iteration iterations sample])
+      (pcheck ([symbol? name]
+               [(lambda (value) (or (not value) (symbol? value))) suite]
+               [$symbol-alist? args template-args] [natural? iteration iterations sample])
               ($make-benchmark-state name suite args template-args iteration iterations sample '() '() #f))))
 
   #|proc:benchmark-state-name
@@ -1043,10 +1057,7 @@ The `benchmark-state-counter-add!` procedure adds numeric `value` to counter
                      (and (eq? who 'make-benchmark) (not value)))]
                 [(fixture) (or (not value) (benchmark-fixture? value))]
                 [(suite) (or (not value) (symbol? value))]
-                [(template-args)
-                 (and (list? value)
-                      (andmap (lambda (entry) (and (pair? entry) (symbol? (car entry)))) value)
-                      (not ($duplicate-symbol? (map car value))))]
+                [(template-args) ($symbol-alist? value)]
                 [(arg-range dense-arg-range)
                  (and (list? value) (= (length value) 4) (symbol? (car value)))]
                 [else #t])
@@ -1714,14 +1725,6 @@ cost-center measurement is enabled in runner `config`.
               (unless (> next value)
                 (errorf '$range-values "range step does not advance: ~s" value))
               (loop next (cons value out)))))))
-
-  (define $duplicate-symbol?
-    (lambda (names)
-      (let loop ([names names] [seen '()])
-        (cond
-         [(null? names) #f]
-         [(memq (car names) seen) (car names)]
-         [else (loop (cdr names) (cons (car names) seen))]))))
 
   (define $normalize-arguments
     (lambda (options)
