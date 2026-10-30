@@ -34,6 +34,23 @@
               #f)
       (error 'envelope-memory "expected failure from a low-order X25519 public key"))))
 
+(let* ([port (open-file-input-port "tests/data/crypto/leaf.cert.pem")]
+       [valid (dynamic-wind void (lambda () (get-bytevector-all port))
+                           (lambda () (close-port port)))]
+       [invalid (string->utf8
+                  "\n-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----\n")]
+       [chain (make-bytevector (fx+ (bytevector-length valid) (bytevector-length invalid)))])
+  (bytevector-copy! valid 0 chain 0 (bytevector-length valid))
+  (bytevector-copy! invalid 0 chain (bytevector-length valid) (bytevector-length invalid))
+  ;; Error case: failing on the second PEM certificate must release the valid first one.
+  (check-no-native-leak 'certificate-chain-load-error
+    (lambda ()
+      (unless (guard (condition [else (and (who-condition? condition)
+                                           (eq? (condition-who condition) 'load-cert-chain))])
+                (for-each destroy-certificate! (load-cert-chain chain))
+                #f)
+        (error 'certificate-chain-load-error "malformed second certificate accepted")))))
+
 (let* ([private (generate-private-key 'x25519)]
        [public (private-key->public-key private)]
        ;; RFC 8410 X25519 SubjectPublicKeyInfo containing the low-order all-zero key.

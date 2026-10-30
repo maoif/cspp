@@ -134,8 +134,13 @@ The `load-certificate` procedure loads a single certificate from a PEM or DER by
                (load-certificate/raw who bv start stop fmt))]))
 
   #|proc:load-cert-chain
-The `load-cert-chain` procedure loads a list of certificates from PEM or DER data.
-|#
+  The `load-cert-chain` procedure returns a list of owned certificates from bytevector
+  `bv`. Optional format symbol `fmt` is `pem` (default) or `der`. Optional `start` and
+  `stop` select a half-open byte slice, defaulting to zero and the bytevector length.
+  PEM certificates retain their input order; DER produces a one-element list.
+  If loading any certificate fails, all certificates loaded by this call are released.
+  The caller must release every returned certificate with `destroy-certificate!`.
+  |#
   (define-who load-cert-chain
     (case-lambda
       [(bv) (load-cert-chain bv 'pem 0 (bytevector-length bv))]
@@ -156,9 +161,22 @@ The `load-cert-chain` procedure loads a list of certificates from PEM or DER dat
                     (let ([blocks (split-pem-certificates slice)])
                       (when (null? blocks)
                         (errorf who "no PEM certificates found"))
-                      (map (lambda (block)
-                             (load-certificate/raw who block 0 (bytevector-length block) 'pem))
-                           blocks))]
+                      (let ([owned '()] [complete? #f])
+                        (dynamic-wind
+                          void
+                          (lambda ()
+                            (for-each
+                              (lambda (block)
+                                (let ([certificate (load-certificate/raw
+                                                     who block 0 (bytevector-length block) 'pem)])
+                                  (set! owned (cons certificate owned))))
+                              blocks)
+                            (let ([certificates (reverse owned)])
+                              (set! complete? #t)
+                              certificates))
+                          (lambda ()
+                            (unless complete?
+                              (for-each destroy-certificate! owned))))))]
                    [else (unreachable!)])))]))
 
   #|proc:destroy-certificate!
