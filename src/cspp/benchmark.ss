@@ -2448,9 +2448,11 @@ Generated symbol keys retain their identity independently of ambient printer set
                 (unless ($readback-equal? datum text)
                   (errorf 'benchmark-save-baseline
                     "results contain unreadable data; argument keys must be readable Scheme values"))
-                (call-with-output-file path
-                  (lambda (out) (display text out) (newline out))
-                  'replace)))))
+                (let ([out (open-output-file path 'replace)])
+                  (dynamic-wind
+                    (lambda () (void))
+                    (lambda () (display text out) (newline out))
+                    (lambda () (close-output-port out))))))))
 
   #|proc:benchmark-load-baseline
 The `benchmark-load-baseline` procedure reads benchmark results previously
@@ -2463,12 +2465,15 @@ historical summary-only records are preserved without synthesizing samples.
     (lambda (path)
       (pcheck ([string? path])
               (let ([datum (parameterize ([case-sensitive #t])
-                             (call-with-input-file path
-                               (lambda (in)
-                                 (let ([datum (read in)])
-                                   (unless (eof-object? (read in))
-                                     (errorf 'benchmark-load-baseline "unexpected trailing datum"))
-                                   datum))))])
+                             (let ([in (open-input-file path)])
+                               (dynamic-wind
+                                 (lambda () (void))
+                                 (lambda ()
+                                   (let ([datum (read in)])
+                                     (unless (eof-object? (read in))
+                                       (errorf 'benchmark-load-baseline "unexpected trailing datum"))
+                                     datum))
+                                 (lambda () (close-input-port in)))))])
                 ($baseline-alist datum 'baseline)
                 ($baseline-check list? ($alist-ref datum 'results '()) 'results)
                 (unless (eq? ($alist-ref datum 'format #f) 'cspp-benchmark-baseline)

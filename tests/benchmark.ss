@@ -2167,3 +2167,25 @@
          [expanded (benchmark-expand benchmark (benchmark-test-config))]
          [bytes (sstats-bytes (sstats-difference (statistics) before))])
     (and (null? expanded) (< bytes 1000000))))
+
+(mat benchmark-baseline-closes-ports-on-reader-errors
+  ;; Error: reader failures and trailing data must close the file before propagating.
+  (if (file-directory? "/proc/self/fd")
+      (let ([path (benchmark-temp-file)])
+        (dynamic-wind
+          (lambda () (void))
+          (lambda ()
+            (for-all
+              (lambda (text)
+                (call-with-output-file path (lambda (out) (display text out)) 'replace)
+                (collect)
+                (parameterize ([collect-trip-bytes (* 1024 1024 1024)])
+                  (let ([before (length (directory-list "/proc/self/fd"))])
+                    (and (for-all
+                           (lambda (_)
+                             (guard (raised [else #t]) (benchmark-load-baseline path) #f))
+                           (iota 8))
+                         (= before (length (directory-list "/proc/self/fd")))))))
+              '("(" "((format . cspp-benchmark-baseline) (version . 1) (results))\n42")))
+          (lambda () (when (file-exists? path) (delete-file path)))))
+      #t))

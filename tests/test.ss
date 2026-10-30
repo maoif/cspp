@@ -1981,3 +1981,26 @@
          [cases (test-expand-parameters descriptor)]
          [bytes (sstats-bytes (sstats-difference (statistics) before))])
     (and (null? cases) (< bytes 1000000))))
+
+(mat test-compile-closes-port-on-serialization-error
+  ;; Error: source serialization failures must close the temporary file before propagating.
+  (if (file-directory? "/proc/self/fd")
+      (let ()
+        (define-record-type faulty-compile-source (fields))
+        (record-writer (record-type-descriptor faulty-compile-source)
+          (lambda (value out write-object)
+            (error 'faulty-compile-source "expected serialization failure")))
+        (collect)
+        (parameterize ([collect-trip-bytes (* 1024 1024 1024)])
+          (let ([before (length (directory-list "/proc/self/fd"))])
+            (and (for-all
+                   (lambda (_)
+                     (eq? (test-result-status
+                            (car (test-run
+                                   (list (make-test-compile 'faulty-source
+                                           (list (make-faulty-compile-source)) '()))
+                                   (test-silent-config))))
+                          'errored))
+                   (iota 8))
+                 (= before (length (directory-list "/proc/self/fd")))))))
+      #t))
