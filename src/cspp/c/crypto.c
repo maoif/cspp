@@ -44,13 +44,6 @@ typedef struct {
   size_t iv_len;
 } cspp_cipher_state;
 
-typedef struct {
-  X509_STORE *store;
-  X509 *leaf;
-  STACK_OF(X509) *chain;
-  char *hostname;
-} cspp_cert_verify_state;
-
 ptr crypto_openssl_load_error(void) {
   const char *error;
 
@@ -1488,82 +1481,46 @@ int crypto_cert_store_load_defaults(void *ptr_store) {
   return X509_STORE_set_default_paths((X509_STORE *)ptr_store) == 1;
 }
 
-void *crypto_cert_verify_state_create(void *ptr_cert, void *ptr_store, ptr hostname) {
-  cspp_cert_verify_state *st = malloc(sizeof(cspp_cert_verify_state));
-  if (st == NULL) return NULL;
-  st->store = (X509_STORE *)ptr_store;
-  st->leaf = (X509 *)ptr_cert;
-  st->chain = (STACK_OF(X509) *)OPENSSL_sk_new_null();
-  st->hostname = NULL;
-  if (st->store == NULL || st->leaf == NULL || st->chain == NULL) goto fail;
-  if (hostname != Sfalse) {
-    st->hostname = copy_hostname(hostname);
-    if (st->hostname == NULL) goto fail;
-  }
-  return st;
-
-fail:
-  if (st->chain != NULL)
-    OPENSSL_sk_free((OPENSSL_STACK *)st->chain);
-  free(st->hostname);
-  free(st);
-  return NULL;
-}
-
-int crypto_cert_verify_state_add_chain_cert(void *ptr_st, void *ptr_cert) {
-  cspp_cert_verify_state *st = (cspp_cert_verify_state *)ptr_st;
-  X509 *cert = (X509 *)ptr_cert;
-
-  if (st == NULL || st->chain == NULL || cert == NULL) return 0;
-  if (X509_up_ref(cert) != 1) return 0;
-  if (OPENSSL_sk_push((OPENSSL_STACK *)st->chain, cert) == 0) {
-    X509_free(cert);
-    return 0;
-  }
-  return 1;
-}
-
-int crypto_cert_verify_state_verify(void *ptr_st) {
-  cspp_cert_verify_state *st = (cspp_cert_verify_state *)ptr_st;
+/* Resource locks in Scheme keep all borrowed certificate pointers live for this call. */
+int crypto_cert_verify_chain(void *ptr_cert, void *ptr_store, ptr chain, ptr hostname) {
+  X509 *leaf = (X509 *)ptr_cert;
+  X509_STORE *store = (X509_STORE *)ptr_store;
+  STACK_OF(X509) *certificates = NULL;
   X509_STORE_CTX *ctx = NULL;
   X509_VERIFY_PARAM *param;
-  int ok = 0;
+  char *host = NULL;
+  int ok = -1;
   struct in_addr addr4;
   struct in6_addr addr6;
 
-  if (st == NULL || st->store == NULL || st->leaf == NULL) return 0;
+  if (leaf == NULL || store == NULL) return -1;
+  if (hostname != Sfalse) {
+    host = copy_hostname(hostname);
+    if (host == NULL) goto done;
+  }
+  certificates = (STACK_OF(X509) *)OPENSSL_sk_new_null();
+  if (certificates == NULL) goto done;
+  for (iptr index = 0; index < Svector_length(chain); ++index) {
+    X509 *certificate = (X509 *)(uintptr_t)Sunsigned_value(Svector_ref(chain, index));
+    if (certificate == NULL ||
+        OPENSSL_sk_push((OPENSSL_STACK *)certificates, certificate) == 0) goto done;
+  }
   ctx = X509_STORE_CTX_new();
   if (ctx == NULL) goto done;
-  if (X509_STORE_CTX_init(ctx, st->store, st->leaf,
-                          OPENSSL_sk_num(
-                              (const OPENSSL_STACK *)st->chain) == 0
-                              ? NULL
-                              : st->chain) != 1) {
-    goto done;
-  }
+  if (X509_STORE_CTX_init(ctx, store, leaf, certificates) != 1) goto done;
   param = X509_STORE_CTX_get0_param(ctx);
-  if (st->hostname != NULL) {
-    if (inet_pton(AF_INET, st->hostname, &addr4) == 1 ||
-        inet_pton(AF_INET6, st->hostname, &addr6) == 1) {
-      if (X509_VERIFY_PARAM_set1_ip_asc(param, st->hostname) != 1) goto done;
+  if (host != NULL) {
+    if (inet_pton(AF_INET, host, &addr4) == 1 || inet_pton(AF_INET6, host, &addr6) == 1) {
+      if (X509_VERIFY_PARAM_set1_ip_asc(param, host) != 1) goto done;
     } else {
-      if (X509_VERIFY_PARAM_set1_host(param, st->hostname, 0) != 1) goto done;
+      if (X509_VERIFY_PARAM_set1_host(param, host, 0) != 1) goto done;
     }
   }
   ok = X509_verify_cert(ctx) == 1;
 
 done:
   if (ctx != NULL) X509_STORE_CTX_free(ctx);
+  if (certificates != NULL) OPENSSL_sk_free((OPENSSL_STACK *)certificates);
+  free(host);
   return ok;
-}
-
-void crypto_cert_verify_state_destroy(void *ptr_st) {
-  cspp_cert_verify_state *st = (cspp_cert_verify_state *)ptr_st;
-  if (st == NULL) return;
-  if (st->chain != NULL)
-    OPENSSL_sk_pop_free(
-        (OPENSSL_STACK *)st->chain,
-        (OPENSSL_sk_freefunc)X509_free);
-  free(st->hostname);
-  free(st);
 }

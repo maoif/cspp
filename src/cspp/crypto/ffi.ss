@@ -76,10 +76,7 @@
           ffi-cert-store-destroy
           ffi-cert-store-add
           ffi-cert-store-load-defaults
-          ffi-cert-verify-state-create
-          ffi-cert-verify-state-add-chain-cert
-          ffi-cert-verify-state-verify
-          ffi-cert-verify-state-destroy)
+          ffi-cert-verify-chain)
   (import (cspp utils) (cspp optional-library-check) (cspp chez))
 
   (define ffi-openssl-load-error
@@ -879,65 +876,29 @@
         (pcheck ([natural? ptr-store])
                 (require-optional-library 'ffi-cert-store-load-defaults 'openssl)
                 (native ptr-store)))))
-  #|proc:ffi-cert-verify-state-create
-  The `ffi-cert-verify-state-create` procedure calls the native openssl operation
-  `crypto_cert_verify_state_create`.
-  Parameters `ptr-cert`, `ptr-store`, `hostname` are passed to the native operation in that order.
-  `ptr-cert` is a native handle.
-  `ptr-store` is a native handle.
-  `hostname` is a UTF-8 hostname bytevector, or #f to omit hostname matching.
-  It returns an owned native handle, or zero on allocation, parsing, or initialization failure.
-  It raises an error when OpenSSL is unavailable.
+  #|proc:ffi-cert-verify-chain
+  The internal `ffi-cert-verify-chain` procedure verifies certificate handle `certificate`
+  using store handle `store` and vector `chain` of borrowed intermediate handles. The
+  caller must hold every resource lock for the duration of this call. `hostname` is a
+  UTF-8 bytevector or `#f` to omit identity checking. It returns 1 for success, 0 for
+  verification failure, or -1 for setup failure. Unavailable OpenSSL raises an error.
   |#
-  (define ffi-cert-verify-state-create
-    (let ([native (foreign-procedure "crypto_cert_verify_state_create" (void* void* ptr) void*)])
-      (lambda (ptr-cert ptr-store hostname)
-        (pcheck ([(lambda (value) (or (not value) (bytevector? value))) hostname] [natural? ptr-cert] [natural? ptr-store])
-                (require-optional-library 'ffi-cert-verify-state-create 'openssl)
-                (native ptr-cert ptr-store hostname)))))
-  #|proc:ffi-cert-verify-state-add-chain-cert
-  The `ffi-cert-verify-state-add-chain-cert` procedure calls the native openssl operation
-  `crypto_cert_verify_state_add_chain_cert`.
-  Parameters `ptr-st`, `ptr-cert` are passed to the native operation in that order.
-  `ptr-st` is a native handle.
-  `ptr-cert` is a native handle.
-  It returns 1 on success and 0 on failure.
-  It raises an error when OpenSSL is unavailable.
-  |#
-  (define ffi-cert-verify-state-add-chain-cert
-    (let ([native (foreign-procedure "crypto_cert_verify_state_add_chain_cert" (void* void*) int)])
-      (lambda (ptr-st ptr-cert)
-        (pcheck ([natural? ptr-st] [natural? ptr-cert])
-                (require-optional-library 'ffi-cert-verify-state-add-chain-cert 'openssl)
-                (native ptr-st ptr-cert)))))
-  #|proc:ffi-cert-verify-state-verify
-  The `ffi-cert-verify-state-verify` procedure calls the native openssl operation
-  `crypto_cert_verify_state_verify`.
-  Parameters `ptr-st` are passed to the native operation in that order.
-  `ptr-st` is a native handle.
-  It returns 1 on success and 0 on failure.
-  It raises an error when OpenSSL is unavailable.
-  |#
-  (define ffi-cert-verify-state-verify
-    (let ([native (foreign-procedure "crypto_cert_verify_state_verify" (void*) int)])
-      (lambda (ptr-st)
-        (pcheck ([natural? ptr-st])
-                (require-optional-library 'ffi-cert-verify-state-verify 'openssl)
-                (native ptr-st)))))
-  #|proc:ffi-cert-verify-state-destroy
-  The `ffi-cert-verify-state-destroy` procedure calls the native openssl operation
-  `crypto_cert_verify_state_destroy`.
-  Parameters `ptr-st` are passed to the native operation in that order.
-  `ptr-st` is a native handle.
-  It releases the native resource and returns unspecified values; a zero handle is ignored.
-  It raises an error when OpenSSL is unavailable.
-  |#
-  (define ffi-cert-verify-state-destroy
-    (let ([native (foreign-procedure "crypto_cert_verify_state_destroy" (void*) void)])
-      (lambda (ptr-st)
-        (pcheck ([natural? ptr-st])
-                (require-optional-library 'ffi-cert-verify-state-destroy 'openssl)
-                (native ptr-st)))))
+  (define ffi-cert-verify-chain
+    (let ([native (foreign-procedure "crypto_cert_verify_chain" (void* void* ptr ptr) int)])
+      (lambda (certificate store chain hostname)
+        (pcheck ([natural? certificate store] [vector? chain]
+                 [(lambda (value) (or (not value) (bytevector? value))) hostname])
+          (vector-for-each
+            (lambda (handle)
+              (pcheck ([(lambda (value)
+                          (and (integer? value) (exact? value)
+                               (<= 0 value (- (expt 2 (* 8 (foreign-sizeof 'void*))) 1))))
+                        handle])
+                (void)))
+            chain)
+          (require-optional-library 'ffi-cert-verify-chain 'openssl)
+          (native certificate store chain hostname)))))
+
   #|proc:ffi-blake3-bytevector
   The `ffi-blake3-bytevector` procedure returns the BLAKE3 digest of bytevector `bytes`
   between byte indices `start` (inclusive) and `stop` (exclusive). The caller validates

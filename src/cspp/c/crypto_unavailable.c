@@ -497,24 +497,10 @@ int crypto_cert_store_load_defaults(void *ptr_store) {
   return -1;
 }
 
-void * crypto_cert_verify_state_create(void *ptr_cert, void *ptr_store, ptr hostname) {
+int crypto_cert_verify_chain(void *ptr_cert, void *ptr_store, ptr chain, ptr hostname) {
   (void)ptr_cert;
   (void)ptr_store;
+  (void)chain;
   (void)hostname;
-  return 0;
-}
-
-int crypto_cert_verify_state_add_chain_cert(void *ptr_st, void *ptr_cert) {
-  (void)ptr_st;
-  (void)ptr_cert;
   return -1;
-}
-
-int crypto_cert_verify_state_verify(void *ptr_st) {
-  (void)ptr_st;
-  return -1;
-}
-
-void crypto_cert_verify_state_destroy(void *ptr_st) {
-  (void)ptr_st;
 }

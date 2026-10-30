@@ -383,24 +383,14 @@ The `cert-store-load-system-defaults!` procedure appends system trust anchors to
           (check-cert-store-live who store)
           (for-each (lambda (certificate) (check-certificate-live who certificate))
                     (cons cert chain))
-          (let ([state (ffi-cert-verify-state-create (crypto-certificate-handle cert)
-                                                     (crypto-cert-store-handle store)
-                                                     (if hostname (string->utf8 hostname) #f))])
-            (when (eq? state 0)
-              (errorf who "failed to create certificate verification state"))
-            (dynamic-wind
-              void
-              (lambda ()
-                (for-each
-                 (lambda (chain-cert)
-                   (check-certificate-live who chain-cert)
-                   (unless (fx= 1 (ffi-cert-verify-state-add-chain-cert state
-                                                                         (crypto-certificate-handle chain-cert)))
-                     (errorf who "failed to add certificate chain element for verification")))
-                 chain)
-                (not (fx= 0 (ffi-cert-verify-state-verify state))))
-              (lambda ()
-                (ffi-cert-verify-state-destroy state))))))))
+          (let ([result (ffi-cert-verify-chain
+                          (crypto-certificate-handle cert)
+                          (crypto-cert-store-handle store)
+                          (list->vector (map crypto-certificate-handle chain))
+                          (if hostname (string->utf8 hostname) #f))])
+            (when (fx< result 0)
+              (errorf who "failed to initialize certificate verification"))
+            (fx= result 1))))))
 
   #|proc:verify-certificate-chain
   The `verify-certificate-chain` procedure returns `#t` if the live certificate `cert`

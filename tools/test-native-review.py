@@ -67,7 +67,11 @@ def contracts():
         '(ffi-verify-message \'rsa \'sha256 0 #vu8() 0 0 "not-bytes" 0 0)',
         '(ffi-cert-load-pem "not-bytes" 0 0)', '(ffi-cert-load-der "not-bytes" 0 0)',
         '(ffi-cert-hostname-matches 0 "not-encoded")',
-        '(ffi-cert-verify-state-create 0 0 "not-encoded")',
+        '(ffi-cert-verify-chain 0 0 \'#() "not-encoded")',
+        '(ffi-cert-verify-chain 0 0 #vu8() #f)',
+        '(ffi-cert-verify-chain 0 0 \'#(1.0) #f)',
+        '(ffi-cert-verify-chain 0 0 \'#(-1) #f)',
+        '(ffi-cert-verify-chain 0 0 \'#(18446744073709551616) #f)',
     ]
     if '--enabled' in sys.argv:
         script = r'''
@@ -87,7 +91,7 @@ def contracts():
         for case in ['(ffi-pkey-generate \'rsa 2048 #f)',
                      '(ffi-verify-message \'ed25519 #f 0 #vu8() 0 0 #vu8() 0 0)',
                      '(ffi-cert-hostname-matches 0 #f)',
-                     '(ffi-cert-verify-state-create 0 0 #f)']:
+                     '(ffi-cert-verify-chain 0 0 \'#() #f)']:
             script += f"\n(unless (guard (condition [else (and (who-condition? condition) (eq? (condition-who condition) 'test-native-review))]) (eval '{case} evaluation-environment) #f) (error 'test-native-review \"valid optional object rejected\"))\n"
     for case in cases:
         script += f'\n;; Reject the invalid Scheme object before safe-stub native entry: {case}.\n'

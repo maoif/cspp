@@ -109,3 +109,33 @@
       (lambda (proc)
         (call-with-cipher-state 'encrypt 'aes-128-ctr
           (make-bytevector 16 0) (make-bytevector 16 0) proc)))))
+
+(let* ([port (open-file-input-port "tests/data/crypto/root.cert.pem")]
+       [encoded (dynamic-wind void (lambda () (get-bytevector-all port))
+                             (lambda () (close-port port)))]
+       [certificate (load-certificate encoded)]
+       [trusted (make-cert-store)]
+       [untrusted (make-cert-store)])
+  (dynamic-wind
+    (lambda () (cert-store-add! trusted certificate))
+    (lambda ()
+      (check-no-native-leak 'certificate-verification
+        (lambda ()
+          (unless (verify-certificate-chain certificate trusted)
+            (error 'certificate-verification "trusted certificate rejected"))
+          ;; Error case: an untrusted certificate must fail without retaining context.
+          (when (verify-certificate-chain certificate untrusted)
+            (error 'certificate-verification "untrusted certificate accepted"))
+          ;; Error case: a peer identity mismatch must release all temporary storage.
+          (when (verify-certificate-chain certificate trusted "wrong.invalid")
+            (error 'certificate-verification "wrong hostname accepted"))))
+      (check-no-native-leak 'abandoned-certificate-verification
+        (lambda ()
+          (do ([ticks 1 (fx1+ ticks)]) [(fx= ticks 161)]
+            ((make-engine (lambda () (verify-certificate-chain certificate trusted))) ticks
+             (lambda results (void))
+             (lambda (abandoned) (void)))))))
+    (lambda ()
+      (destroy-cert-store! untrusted)
+      (destroy-cert-store! trusted)
+      (destroy-certificate! certificate))))
