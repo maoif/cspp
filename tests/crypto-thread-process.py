@@ -3,10 +3,11 @@
 from pathlib import Path
 import resource
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-for mode in ['sha256', 'blake3', 'hmac', 'buffered', 'cipher', 'resources']:
+for mode in sys.argv[1:] or ['sha256', 'blake3', 'hmac', 'buffered', 'cipher', 'resources']:
     result = subprocess.run(
         [str(ROOT / 'cspp'), '--script=' + str(ROOT / 'tests/crypto-thread-process.ss'), mode],
         cwd=ROOT, capture_output=True, text=True, timeout=30)

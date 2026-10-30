@@ -139,4 +139,13 @@
                                 (private-key=? left left))
                      (error 'crypto-threads "concurrent key equality changed"))))))
            (lambda () (destroy-private-key! left) (destroy-private-key! right)))))]
+    [(string=? mode "rsa-parameters")
+     (when (optional-library-available? (optional-library-info 'openssl))
+       (for-each
+         (lambda (bits)
+           (unless (guard (condition [else #t])
+                     (destroy-private-key! (generate-private-key 'rsa bits))
+                     #f)
+             (error 'crypto-parameters "invalid RSA count accepted" bits)))
+         '(4294967808 512.0 0 -1)))]
     [else (error 'crypto-threads "unknown fixture mode" mode)]))

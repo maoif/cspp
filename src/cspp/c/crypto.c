@@ -957,6 +957,7 @@ void *crypto_pkey_generate(ptr alg, int bits, ptr curve) {
   if (EVP_PKEY_keygen_init(ctx) != 1) goto done;
 
   if (alg == Sstring_to_symbol("rsa")) {
+    if (bits <= 0) goto done;
     params[idx++] = OSSL_PARAM_construct_int(OSSL_PKEY_PARAM_BITS, &bits_copy);
   } else if (alg == Sstring_to_symbol("ecdsa") || alg == Sstring_to_symbol("ecdh")) {
     curve_mut = (char *)curve_name(curve);

@@ -365,7 +365,7 @@
   (define native-int-maximum
     (- (expt 2 (- (* 8 (foreign-sizeof 'int)) 1)) 1))
 
-  (define check-kdf-int
+  (define check-native-int
     (lambda (who value minimum)
       (unless (and (integer? value) (exact? value) (<= minimum value native-int-maximum))
         (errorf who "expected an exact integer in [~s, ~s], given ~s"
@@ -386,7 +386,7 @@
                info info-start info-stop length)
         (pcheck ([symbol? algorithm] [bytevector? key salt info]
                  [natural? key-start key-stop salt-start salt-stop info-start info-stop])
-          (check-kdf-int 'ffi-hkdf length 0)
+          (check-native-int 'ffi-hkdf length 0)
           (require-optional-library 'ffi-hkdf 'openssl)
           (native algorithm key key-start key-stop salt salt-start salt-stop
                   info info-start info-stop length)))))
@@ -419,7 +419,7 @@
       (lambda (algorithm key key-start key-stop info info-start info-stop length)
         (pcheck ([symbol? algorithm] [bytevector? key info]
                  [natural? key-start key-stop info-start info-stop])
-          (check-kdf-int 'ffi-hkdf-expand length 0)
+          (check-native-int 'ffi-hkdf-expand length 0)
           (require-optional-library 'ffi-hkdf-expand 'openssl)
           (native algorithm key key-start key-stop info info-start info-stop length)))))
 
@@ -437,8 +437,8 @@
                iterations length)
         (pcheck ([symbol? algorithm] [bytevector? password salt]
                  [natural? password-start password-stop salt-start salt-stop])
-          (check-kdf-int 'ffi-pbkdf2 iterations 1)
-          (check-kdf-int 'ffi-pbkdf2 length 0)
+          (check-native-int 'ffi-pbkdf2 iterations 1)
+          (check-native-int 'ffi-pbkdf2 length 0)
           (require-optional-library 'ffi-pbkdf2 'openssl)
           (native algorithm password password-start password-stop salt salt-start salt-stop
                   iterations length)))))
@@ -458,10 +458,10 @@
       (lambda (password password-start password-stop salt salt-start salt-stop n r p length)
         (pcheck ([bytevector? password salt]
                  [natural? password-start password-stop salt-start salt-stop])
-          (check-kdf-int 'ffi-scrypt n 2)
-          (check-kdf-int 'ffi-scrypt r 1)
-          (check-kdf-int 'ffi-scrypt p 1)
-          (check-kdf-int 'ffi-scrypt length 0)
+          (check-native-int 'ffi-scrypt n 2)
+          (check-native-int 'ffi-scrypt r 1)
+          (check-native-int 'ffi-scrypt p 1)
+          (check-native-int 'ffi-scrypt length 0)
           (require-optional-library 'ffi-scrypt 'openssl)
           (native password password-start password-stop salt salt-start salt-stop n r p length)))))
 
@@ -585,7 +585,7 @@
   The `ffi-pkey-generate` procedure calls the native openssl operation `crypto_pkey_generate`.
   Parameters `alg`, `bits`, `curve` are passed to the native operation in that order.
   `alg` is the asymmetric algorithm symbol.
-  `bits` is the RSA key size in bits, or zero for other key algorithms.
+  `bits` is the positive exact C-int-sized RSA bit count, or zero for other algorithms.
   `curve` is an EC curve symbol, or #f for algorithms that do not use a curve.
   It returns an owned native handle, or zero on allocation, parsing, or initialization failure.
   It raises an error when OpenSSL is unavailable.
@@ -594,6 +594,7 @@
     (let ([native (foreign-procedure "crypto_pkey_generate" (ptr int ptr) void*)])
       (lambda (alg bits curve)
         (pcheck ([symbol? alg] [(lambda (value) (or (not value) (symbol? value))) curve] [integer? bits])
+                (check-native-int 'ffi-pkey-generate bits (if (eq? alg 'rsa) 1 0))
                 (require-optional-library 'ffi-pkey-generate 'openssl)
                 (native alg bits curve)))))
   #|proc:ffi-pkey-free

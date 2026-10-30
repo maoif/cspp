@@ -12,6 +12,12 @@
       (thunk)
       #f)))
 
+(mat crypto-rsa-bit-count-validation
+  ;; Error case: invalid counts must not wrap into small keys or trigger huge allocations.
+  (= 0 (system (if (file-exists? "crypto-thread-process.py")
+                   "python3 -I crypto-thread-process.py rsa-parameters"
+                   "python3 -I tests/crypto-thread-process.py rsa-parameters"))))
+
 (define read-crypto-fixture
   (lambda (name)
     (let* ([root (if (file-exists? "data/crypto") "data/crypto/" "tests/data/crypto/")]

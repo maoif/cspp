@@ -72,8 +72,12 @@
         (make-crypto-public-key handle alg bits #f))))
 
   #|proc:generate-private-key
-The `generate-private-key` procedure generates a private key for `alg`.
-|#
+  The `generate-private-key` procedure returns an owned private key for symbol `alg`.
+  Optional `param` is an exact positive signed-C-int-sized bit count for RSA (default
+  2048), an EC curve symbol for ECDSA/ECDH (default `p-256`), or `#f` for Ed25519/X25519.
+  Invalid parameters and native failures raise errors. Release the result with
+  `destroy-private-key!` when finished.
+  |#
   (define-who generate-private-key
     (case-lambda
       [(alg)
@@ -88,8 +92,8 @@ The `generate-private-key` procedure generates a private key for `alg`.
        (let ([handle
               (cond
                [(eq? alg 'rsa)
-                (unless (natural? param)
-                  (errorf who "RSA key size must be a natural number, given ~s" param))
+                (unless (and (natural? param) (exact? param) (positive? param))
+                  (errorf who "RSA bit count must be an exact positive integer, given ~s" param))
                 (ffi-pkey-generate alg param #f)]
                [(memq alg '(ecdsa ecdh))
                 (unless (symbol? param)
