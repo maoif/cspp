@@ -3364,3 +3364,62 @@
     (guard (condition [else #t])
       (nav-select nav/first source)
       #f)))
+
+(define tagged-indexed-pair?
+  (lambda (value)
+    (and (pair? value) (eq? (car value) 'tagged-indexed-pair) (vector? (cdr value)))))
+
+(nav-register-indexed!
+ tagged-indexed-pair?
+ (lambda (container) (vector-length (cdr container)))
+ (lambda (container index) (vector-ref (cdr container) index))
+ (lambda (container index value)
+   (let ([copy (vector-copy (cdr container))])
+     (vector-set! copy index value)
+     (cons 'tagged-indexed-pair copy)))
+ (lambda (container index value) (vector-set! (cdr container) index value)))
+
+(define tagged-keyed-pair?
+  (lambda (value)
+    (and (pair? value) (eq? (car value) 'tagged-keyed-pair) (hashtable? (cdr value)))))
+
+(nav-register-keyed!
+ tagged-keyed-pair?
+ (lambda (container key default) (hashtable-ref (cdr container) key default))
+ (lambda (container key value)
+   (let ([copy (hashtable-copy (cdr container) #t)])
+     (hashtable-set! copy key value)
+     (cons 'tagged-keyed-pair copy)))
+ (lambda (container key value) (hashtable-set! (cdr container) key value))
+ (lambda (container key)
+   (let ([copy (hashtable-copy (cdr container) #t)])
+     (hashtable-delete! copy key)
+     (cons 'tagged-keyed-pair copy)))
+ (lambda (container key) (hashtable-delete! (cdr container) key))
+ (lambda (container)
+   (let-values ([(keys values) (hashtable-entries (cdr container))])
+     (map cons (vector->list keys) (vector->list values)))))
+
+(mat navigator-recursive-pair-adapters
+  (let ([source (cons 'tagged-indexed-pair (vector 1 (vector 2)))])
+    (and (equal? '(1 #(2)) (nav-select nav/all source))
+         (equal? '(1 #(2)) (nav-select (nav/path nav/children nav/stay) source))
+         (equal? '(1 2) (nav-select nav/leaves source))
+         (equal? '(1 2) (nav-select (nav/walker number?) source))
+         (equal? '(1 2) (iter->list (nav-traverse->iter nav/leaves source)))
+         (equal? '(2 #(2))
+                 (nav-select nav/all
+                             (nav-transform (nav/path nav/children (nav/pred number?))
+                                            add1 source)))))
+
+  (let* ([table (make-eq-hashtable)]
+         [source (cons 'tagged-keyed-pair table)])
+    (hashtable-set! table 'items (vector 1 (vector 2)))
+    (and (equal? '(#(1 #(2))) (nav-select nav/all source))
+         (equal? '(#(1 #(2))) (nav-select (nav/path nav/children nav/stay) source))
+         (equal? '(1 2) (nav-select nav/leaves source))
+         (equal? '(1 2) (nav-select (nav/walker number?) source))))
+
+  ;; Unregistered improper pairs remain atomic leaves rather than implicit containers.
+  (and (null? (nav-select (nav/path nav/children nav/stay) '(1 . 2)))
+       (equal? '((1 . 2)) (nav-select nav/leaves '(1 . 2)))))

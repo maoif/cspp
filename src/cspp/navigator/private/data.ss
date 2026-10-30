@@ -320,13 +320,11 @@
   (define child-container?
     (lambda (value)
       (cond [(list? value) (pair? value)]
-            [(pair? value) #f]
             [else (or (indexed-supported? value) (keyed-supported? value))])))
 
   (define emit-children
     (lambda (value emit)
       (cond [(list? value) (for-each emit value)]
-            [(pair? value) (void)]
             [(indexed-supported? value)
              (indexed-walk value 0 (indexed-length value) 1
                            (lambda (index child) (emit child)))]
