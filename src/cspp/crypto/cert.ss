@@ -44,6 +44,16 @@
       (when (crypto-cert-store-destroyed? store)
         (errorf who "certificate store is destroyed"))))
 
+  (define check-hostname
+    (lambda (who hostname)
+      (when (fx= (string-length hostname) 0)
+        (errorf who "hostname must not be empty"))
+      (let loop ([index 0])
+        (unless (fx= index (string-length hostname))
+          (when (char=? (string-ref hostname index) #\nul)
+            (errorf who "hostname must not contain NUL characters"))
+          (loop (fx1+ index))))))
+
   (define raw->certificate
     (lambda (who handle)
       (when (eq? handle 0)
@@ -222,12 +232,15 @@ The `certificate-subject-alt-names` procedure returns SAN entries as typed pairs
                 (if (eq? ans #f) '() ans)))))
 
   #|proc:certificate-hostname-matches?
-The `certificate-hostname-matches?` procedure returns `#t` when `hostname` matches the certificate SAN/CN rules.
-|#
+  The `certificate-hostname-matches?` procedure returns `#t` if string `hostname` matches
+  the live certificate `cert` under SAN/CN rules, or `#f` for a mismatch. Hostnames must
+  be nonempty and contain no NUL characters; malformed hostnames raise an error.
+  |#
   (define-who certificate-hostname-matches?
     (lambda (cert hostname)
       (pcheck ([certificate? cert] [string? hostname])
               (check-certificate-live who cert)
+              (check-hostname who hostname)
               (not (fx= 0 (ffi-cert-hostname-matches (crypto-certificate-handle cert)
                                                      (string->utf8 hostname)))))))
 
@@ -325,6 +338,7 @@ The `cert-store-load-system-defaults!` procedure appends system trust anchors to
   (define verify-certificate-chain*
     (lambda (who cert chain store hostname)
       (check-certificate-chain who chain)
+      (when hostname (check-hostname who hostname))
       (let ([state (ffi-cert-verify-state-create (crypto-certificate-handle cert)
                                                  (crypto-cert-store-handle store)
                                                  (if hostname (string->utf8 hostname) #f))])
@@ -345,8 +359,13 @@ The `cert-store-load-system-defaults!` procedure appends system trust anchors to
             (ffi-cert-verify-state-destroy state))))))
 
   #|proc:verify-certificate-chain
-The `verify-certificate-chain` procedure verifies `cert` against `store`, optionally with a peer chain and hostname.
-|#
+  The `verify-certificate-chain` procedure returns `#t` if the live certificate `cert`
+  verifies against the live trust `store`, and `#f` on verification failure. Optional
+  `chain` is a list of live intermediate certificates; it defaults to the empty list.
+  An optional string `hostname` enables peer identity checking. It must be nonempty and
+  contain no NUL characters; malformed names raise an error. Omitting the hostname
+  verifies the chain without checking a peer identity.
+  |#
   (define-who verify-certificate-chain
     (case-lambda
       [(cert store)

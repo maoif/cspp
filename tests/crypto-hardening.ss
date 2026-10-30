@@ -1,5 +1,19 @@
 (import (cspp))
 
+(define crypto-rejects?
+  (lambda (thunk)
+    (guard (condition [else (or (error? condition) (violation? condition))])
+      (thunk)
+      #f)))
+
+(define read-crypto-fixture
+  (lambda (name)
+    (let* ([root (if (file-exists? "data/crypto") "data/crypto/" "tests/data/crypto/")]
+           [port (open-file-input-port (string-append root name))])
+      (dynamic-wind void
+                    (lambda () (get-bytevector-all port))
+                    (lambda () (close-port port))))))
+
 (mat crypto-password-empty-derived-key
   ;; Error case: empty PBKDF2 output contains no information about the password.
   (mat-requires (openssl)
@@ -46,3 +60,30 @@
                  ;; Error case: longer tags cannot change the required tag size either.
                  (not (aead-decrypt algorithm key nonce ciphertext (make-bytevector 17)))))))
       aead-algorithms)))
+
+(mat crypto-certificate-hostname-validation
+  (mat-requires (openssl)
+    (let* ([leaf (load-certificate (read-crypto-fixture "leaf.cert.pem"))]
+           [root (load-certificate (read-crypto-fixture "root.cert.pem"))]
+           [intermediate (load-certificate (read-crypto-fixture "intermediate.cert.pem"))]
+           [store (make-cert-store)])
+      (dynamic-wind
+        (lambda () (cert-store-add! store root))
+        (lambda ()
+          (and (certificate-hostname-matches? leaf "example.com")
+               (verify-certificate-chain leaf (list intermediate) store "example.com")
+               ;; Error case: malformed names must not truncate or disable hostname checks.
+               (for-all
+                 (lambda (hostname)
+                   (and (crypto-rejects?
+                          (lambda () (certificate-hostname-matches? leaf hostname)))
+                        (crypto-rejects?
+                          (lambda () (verify-certificate-chain leaf store hostname)))
+                        (crypto-rejects?
+                          (lambda () (verify-certificate-chain
+                                       leaf (list intermediate) store hostname)))))
+                 (list "" (string #\nul)
+                       (string-append "example.com" (string #\nul) ".evil")))))
+        (lambda ()
+          (destroy-cert-store! store)
+          (for-each destroy-certificate! (list leaf root intermediate)))))))

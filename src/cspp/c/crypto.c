@@ -1216,11 +1216,14 @@ done:
   return ans;
 }
 
-static char *copy_bytevector_to_cstring(ptr bv) {
+static char *copy_hostname(ptr bv) {
   char *s;
   iptr len;
   if (bv == Sfalse) return NULL;
   len = Sbytevector_length(bv);
+  /* Empty hostnames disable OpenSSL identity checking; NUL truncates the name. */
+  if (len == 0 || memchr(Sbytevector_data(bv), '\0', (size_t)len) != NULL)
+    return NULL;
   s = malloc((size_t)len + 1);
   if (s == NULL) return NULL;
   if (len != 0) {
@@ -1357,7 +1360,7 @@ int crypto_cert_hostname_matches(void *ptr_cert, ptr hostname) {
   struct in6_addr addr6;
 
   if (cert == NULL || hostname == Sfalse) return 0;
-  host = copy_bytevector_to_cstring(hostname);
+  host = copy_hostname(hostname);
   if (host == NULL) return 0;
 
   if (inet_pton(AF_INET, host, &addr4) == 1 || inet_pton(AF_INET6, host, &addr6) == 1) {
@@ -1456,7 +1459,7 @@ void *crypto_cert_verify_state_create(void *ptr_cert, void *ptr_store, ptr hostn
   st->hostname = NULL;
   if (st->store == NULL || st->leaf == NULL || st->chain == NULL) goto fail;
   if (hostname != Sfalse) {
-    st->hostname = copy_bytevector_to_cstring(hostname);
+    st->hostname = copy_hostname(hostname);
     if (st->hostname == NULL) goto fail;
   }
   return st;
