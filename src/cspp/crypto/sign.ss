@@ -247,8 +247,10 @@ The `verify-update-string!` procedure appends a string slice to a verify state.
                  st))]))
 
   #|proc:sign-finalize!
-The `sign-finalize!` procedure finalizes a sign state and returns the signature.
-|#
+  The `sign-finalize!` procedure signs the buffered message of live state `st` and
+  returns a signature bytevector. The state becomes terminal and releases its buffered
+  message. Further updates or finalization raise errors; the caller still owns the key.
+  |#
   (define-who sign-finalize!
     (lambda (st)
       (pcheck ([sign-state? st])
@@ -258,12 +260,16 @@ The `sign-finalize!` procedure finalizes a sign state and returns the signature.
                                          (sign-state-digest st)
                                          (sign-state-key st)
                                          (concat-chunks (sign-state-chunks st)))])
+                  (sign-state-chunks-set! st '())
                   (sign-state-finalized?-set! st #t)
                   ans)))))
 
   #|proc:verify-finalize?
-The `verify-finalize?` procedure finalizes a verify state and checks `signature`.
-|#
+  The `verify-finalize?` procedure verifies bytevector `signature` against the buffered
+  message of live state `st`, returning `#t` for a valid signature or `#f` otherwise.
+  The state becomes terminal and releases its message after either result. Further
+  updates or finalization raise errors; the caller still owns the key.
+  |#
   (define-who verify-finalize?
     (lambda (st signature)
       (pcheck ([verify-state? st] [bytevector? signature])
@@ -274,6 +280,7 @@ The `verify-finalize?` procedure finalizes a verify state and checks `signature`
                                               (verify-state-key st)
                                               (concat-chunks (verify-state-chunks st))
                                               signature)])
+                  (verify-state-chunks-set! st '())
                   (verify-state-finalized?-set! st #t)
                   ans)))))
 

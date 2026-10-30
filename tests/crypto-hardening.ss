@@ -336,3 +336,51 @@
        (crypto-rejects? (lambda () (hkdf-expand 'unknown #vu8(1) "info" 0)))
        (crypto-rejects? (lambda () (hkdf-expand 'sha256 #f "info" 0)))
        (crypto-rejects? (lambda () (hkdf-expand 'sha256 #vu8(1) "info" 0.0)))))
+
+(define crypto-buffer-retained-size?
+  (lambda (create update! finish! destroy!)
+    (let ([state (create)])
+      (dynamic-wind
+        void
+        (lambda ()
+          (let ([empty-size (compute-size state)])
+            (update! state (make-bytevector 131072 7))
+            (let ([buffered-size (compute-size state)])
+              (finish! state)
+              ;; A terminal state cannot use the message again. Keeping the state
+              ;; must not retain its large input copies, whether verification passed.
+              (and (> buffered-size (+ empty-size 131072))
+                   (< (compute-size state) (+ empty-size 8192))))))
+        (lambda () (destroy! state))))))
+
+(mat crypto-finalized-buffer-retention
+  (mat-requires (openssl)
+    (crypto-buffer-retained-size?
+      (lambda () (make-aead-encrypt-state 'aes-128-gcm
+                   (make-bytevector 16) (make-bytevector 12)))
+      aead-update-plaintext-bytevector! aead-finalize-encrypt! aead-destroy!))
+
+  ;; Error case: authentication failure is also terminal and must release input copies.
+  (mat-requires (openssl)
+    (crypto-buffer-retained-size?
+      (lambda () (make-aead-decrypt-state 'aes-128-gcm
+                   (make-bytevector 16) (make-bytevector 12)))
+      aead-update-ciphertext-bytevector!
+      (lambda (state) (aead-finalize-decrypt! state #vu8())) aead-destroy!))
+
+  (mat-requires (openssl)
+    (let* ([private (generate-private-key 'ed25519)]
+           [public (private-key->public-key private)])
+      (dynamic-wind
+        void
+        (lambda ()
+          (and
+            (crypto-buffer-retained-size?
+              (lambda () (make-sign-state 'ed25519 private))
+              sign-update-bytevector! sign-finalize! sign-destroy!)
+            ;; Error case: an invalid signature must not retain the buffered message.
+            (crypto-buffer-retained-size?
+              (lambda () (make-verify-state 'ed25519 public))
+              verify-update-bytevector!
+              (lambda (state) (verify-finalize? state #vu8())) verify-destroy!)))
+        (lambda () (destroy-public-key! public) (destroy-private-key! private))))))

@@ -77,10 +77,6 @@
         (errorf who "invalid nonce length ~a for ~s, expected ~a"
                 (bytevector-length nonce) which (aead-default-nonce-size which)))))
 
-  (define list->concat
-    (lambda (ls)
-      (bytevector-append (apply values ls))))
-
   (define concat*
     (lambda (ls)
       (if (null? ls)
@@ -204,12 +200,10 @@ The `aead-update-aad-bytevector!` procedure buffers an AAD bytevector slice into
     (case-lambda
       [(st bv)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-crypto-mutex (aead-state-mutex st)
-                 (aead-update-aad-bytevector! st bv 0 (bytevector-length bv))))]
+               (aead-update-aad-bytevector! st bv 0 (bytevector-length bv)))]
       [(st bv start)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-crypto-mutex (aead-state-mutex st)
-                 (aead-update-aad-bytevector! st bv start (bytevector-length bv))))]
+               (aead-update-aad-bytevector! st bv start (bytevector-length bv)))]
       [(st bv start stop)
        (pcheck ([aead-state? st] [bytevector? bv])
                (with-crypto-mutex (aead-state-mutex st)
@@ -225,12 +219,10 @@ The `aead-update-plaintext-bytevector!` procedure buffers plaintext into an encr
     (case-lambda
       [(st bv)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-crypto-mutex (aead-state-mutex st)
-                 (aead-update-plaintext-bytevector! st bv 0 (bytevector-length bv))))]
+               (aead-update-plaintext-bytevector! st bv 0 (bytevector-length bv)))]
       [(st bv start)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-crypto-mutex (aead-state-mutex st)
-                 (aead-update-plaintext-bytevector! st bv start (bytevector-length bv))))]
+               (aead-update-plaintext-bytevector! st bv start (bytevector-length bv)))]
       [(st bv start stop)
        (pcheck ([aead-state? st] [bytevector? bv])
                (with-crypto-mutex (aead-state-mutex st)
@@ -248,12 +240,10 @@ The `aead-update-ciphertext-bytevector!` procedure buffers ciphertext into a dec
     (case-lambda
       [(st bv)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-crypto-mutex (aead-state-mutex st)
-                 (aead-update-ciphertext-bytevector! st bv 0 (bytevector-length bv))))]
+               (aead-update-ciphertext-bytevector! st bv 0 (bytevector-length bv)))]
       [(st bv start)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (with-crypto-mutex (aead-state-mutex st)
-                 (aead-update-ciphertext-bytevector! st bv start (bytevector-length bv))))]
+               (aead-update-ciphertext-bytevector! st bv start (bytevector-length bv)))]
       [(st bv start stop)
        (pcheck ([aead-state? st] [bytevector? bv])
                (with-crypto-mutex (aead-state-mutex st)
@@ -265,8 +255,10 @@ The `aead-update-ciphertext-bytevector!` procedure buffers ciphertext into a dec
                  st))]))
 
   #|proc:aead-finalize-encrypt!
-The `aead-finalize-encrypt!` procedure finalizes an encryption state and returns ciphertext and tag.
-|#
+  The `aead-finalize-encrypt!` procedure finalizes live encryption state `st` and returns
+  ciphertext and tag as two bytevectors. The state becomes terminal and releases its
+  buffered associated data and plaintext. Further updates or finalization raise errors.
+  |#
   (define-who aead-finalize-encrypt!
     (lambda (st)
       (pcheck ([aead-state? st])
@@ -281,6 +273,8 @@ The `aead-finalize-encrypt!` procedure finalizes an encryption state and returns
                                                (aead-state-nonce st)
                                                (concat* (aead-state-aad* st))
                                                (concat* (aead-state-data* st)))])
+                  (aead-state-aad*-set! st '())
+                  (aead-state-data*-set! st '())
                   (aead-state-finalized?-set! st #t)
                   (values ciphertext tag))))))
 
@@ -288,7 +282,8 @@ The `aead-finalize-encrypt!` procedure finalizes an encryption state and returns
   The `aead-finalize-decrypt!` procedure finalizes the live decryption state `st` using
   authentication bytevector `tag`. It returns the plaintext bytevector or `#f` if
   authentication fails, including when the tag has a length other than `aead-tag-size`.
-  The state becomes terminal after either result.
+  The state becomes terminal and releases its buffered associated data and ciphertext
+  after either result.
   |#
   (define-who aead-finalize-decrypt!
     (lambda (st tag)
@@ -304,6 +299,8 @@ The `aead-finalize-encrypt!` procedure finalizes an encryption state and returns
                                             (concat* (aead-state-aad* st))
                                             (concat* (aead-state-data* st))
                                             tag)])
+                  (aead-state-aad*-set! st '())
+                  (aead-state-data*-set! st '())
                   (aead-state-finalized?-set! st #t)
                   ans)))))
 

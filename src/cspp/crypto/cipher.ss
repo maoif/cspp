@@ -110,12 +110,10 @@ The `cipher-update-bytevector!` procedure transforms a bytevector slice and retu
     (case-lambda
       [(st bv)
        (pcheck ([cipher-state? st] [bytevector? bv])
-               (with-crypto-mutex (cipher-state-mutex st)
-                 (cipher-update-bytevector! st bv 0 (bytevector-length bv))))]
+               (cipher-update-bytevector! st bv 0 (bytevector-length bv)))]
       [(st bv start)
        (pcheck ([cipher-state? st] [bytevector? bv])
-               (with-crypto-mutex (cipher-state-mutex st)
-                 (cipher-update-bytevector! st bv start (bytevector-length bv))))]
+               (cipher-update-bytevector! st bv start (bytevector-length bv)))]
       [(st bv start stop)
        (pcheck ([cipher-state? st] [bytevector? bv])
                (with-crypto-mutex (cipher-state-mutex st)

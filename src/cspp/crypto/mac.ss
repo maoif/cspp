@@ -73,12 +73,10 @@ The `hmac-update-bytevector!` procedure updates an HMAC state with a bytevector 
     (case-lambda
       [(st bv)
        (pcheck ([hmac-state? st] [bytevector? bv])
-               (with-crypto-mutex (hmac-state-mutex st)
-                 (hmac-update-bytevector! st bv 0 (bytevector-length bv))))]
+               (hmac-update-bytevector! st bv 0 (bytevector-length bv)))]
       [(st bv start)
        (pcheck ([hmac-state? st] [bytevector? bv])
-               (with-crypto-mutex (hmac-state-mutex st)
-                 (hmac-update-bytevector! st bv start (bytevector-length bv))))]
+               (hmac-update-bytevector! st bv start (bytevector-length bv)))]
       [(st bv start stop)
        (pcheck ([hmac-state? st] [bytevector? bv])
                (with-crypto-mutex (hmac-state-mutex st)
@@ -99,12 +97,10 @@ The `hmac-update-bytevector!` procedure updates an HMAC state with a bytevector 
     (case-lambda
       [(st str)
        (pcheck ([hmac-state? st] [string? str])
-               (with-crypto-mutex (hmac-state-mutex st)
-                 (hmac-update-string! st str 0 (string-length str))))]
+               (hmac-update-string! st str 0 (string-length str)))]
       [(st str start)
        (pcheck ([hmac-state? st] [string? str])
-               (with-crypto-mutex (hmac-state-mutex st)
-                 (hmac-update-string! st str start (string-length str))))]
+               (hmac-update-string! st str start (string-length str)))]
       [(st str start stop)
        (pcheck ([hmac-state? st] [string? str])
                (with-crypto-mutex (hmac-state-mutex st)
