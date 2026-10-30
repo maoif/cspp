@@ -2004,3 +2004,58 @@
                    (iota 8))
                  (= before (length (directory-list "/proc/self/fd")))))))
       #t))
+
+(mat test-built-in-reporter-output-contract
+  ;; Error: built-in reporters reject binary output ports before any case body executes.
+  (for-all
+    (lambda (reporter)
+      (call-with-values open-bytevector-output-port
+        (lambda (out extract)
+          (dynamic-wind
+            (lambda () (void))
+            (lambda ()
+              (let ([ran? #f])
+                (guard (raised [else (not ran?)])
+                  (test-run (list (make-test-case 'invalid-output
+                                    (lambda () (set! ran? #t)) '()))
+                    (make-test-config reporter out #f #f 'never))
+                  #f)))
+            (lambda () (close-port out))))))
+    (list (test-text-reporter) (test-datum-reporter) (test-progress-reporter 'never)))
+
+  ;; Error: closing a previously valid report port must reject before a body runs.
+  (let* ([out (open-output-string)]
+         [config (make-test-config (test-text-reporter) out #f #f 'never)]
+         [ran? #f])
+    (close-port out)
+    (guard (raised [else (not ran?)])
+      (test-run (list (make-test-case 'closed-output (lambda () (set! ran? #t)) '())) config)
+      #f))
+
+  ;; Error: direct reporting validates built-in port requirements even for empty summaries.
+  (call-with-values open-bytevector-output-port
+    (lambda (out extract)
+      (dynamic-wind
+        (lambda () (void))
+        (lambda ()
+          (guard (raised [else #t])
+            (test-report (test-text-reporter) out (test-summarize '()))
+            #f))
+        (lambda () (close-port out))))))
+
+(mat test-custom-binary-reporters-and-config-updates
+  ;; A custom reporter's label does not imply the built-in reporter's textual requirements.
+  (call-with-values open-bytevector-output-port
+    (lambda (out extract)
+      (dynamic-wind
+        (lambda () (void))
+        (lambda ()
+          (let* ([reporter (make-test-reporter 'text (lambda (out summary) (put-u8 out 7)))]
+                 [base (make-test-config (test-text-reporter) (current-output-port) #f #f 'never)])
+            (for-each
+              (lambda (options)
+                (test-run '() (test-config-with base options)))
+              (list `((output . ,out) (reporter . ,reporter))
+                    `((reporter . ,reporter) (output . ,out))))
+            (equal? (extract) #vu8(7 7))))
+        (lambda () (close-port out))))))

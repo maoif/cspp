@@ -98,7 +98,7 @@ parameters, source, conditions, assertion operands and captured output when pres
 |#
   (define test-text-reporter
     (lambda ()
-      (make-test-reporter 'text $write-text-summary)))
+      (test-make-textual-reporter 'text $write-text-summary)))
 
   (define $write-datum-summary
     (lambda (out summary)
@@ -121,7 +121,7 @@ datum summary, independent of diagnostic printer length and level limits.
 |#
   (define test-datum-reporter
     (lambda ()
-      (make-test-reporter 'datum $write-datum-summary)))
+      (test-make-textual-reporter 'datum $write-datum-summary)))
 
   #|proc:test-progress-reporter
 The `test-progress-reporter` procedure returns a reporter that writes one
@@ -132,7 +132,7 @@ explicit color configuration overrides this default while it reports results.
   (define test-progress-reporter
     (lambda (color)
       (pcheck ([test-color-mode? color])
-              (make-test-reporter
+              (test-make-textual-reporter
                'progress
                (lambda (out summary)
                  (let* ([override (test-current-report-color)]
@@ -146,10 +146,12 @@ explicit color configuration overrides this default while it reports results.
 
   #|proc:test-report
 The `test-report` procedure writes `summary` to `output-port` using `reporter`.
+Built-in reporters require an open textual port; custom reporters define their own port usage.
 |#
   (define test-report
     (lambda (reporter output-port summary)
       (pcheck ([test-reporter? reporter] [output-port? output-port] [test-summary? summary])
+              (test-check-reporter-output 'test-report reporter output-port)
               ((test-reporter-write reporter) output-port summary))))
 
   )

@@ -1,6 +1,7 @@
 #!chezscheme
 (library (cspp test private common)
   (export test-reporter? make-test-reporter test-reporter-write
+          test-make-textual-reporter test-check-reporter-output
           test-alist-ref test-alist-set test-remove-key test-metadata-ref
           test-natural-version-list?
           test-check-parameter-tables test-check-fixture-names test-check-metadata
@@ -12,7 +13,13 @@
           (cspp utils))
 
   (define-record-type ($test-reporter $make-test-reporter test-reporter?)
-    (fields kind write))
+    (fields kind write textual-output?))
+
+  (define $make-checked-reporter
+    (lambda (kind write textual-output?)
+      (unless (test-callback-accepts? write 2)
+        (errorf 'make-test-reporter "write must accept output and summary"))
+      ($make-test-reporter kind write textual-output?)))
 
   #|proc:test-color-mode?
   The internal `test-color-mode?` procedure returns whether `value` is a supported
@@ -36,13 +43,37 @@
   The `make-test-reporter` procedure creates a reporter. `kind` is a symbol
   naming the reporter, and `write` is a procedure with signature
   `(lambda (output-port summary) unspecified)`.
+  Custom reporters may use binary output ports when their callbacks support them.
   |#
   (define make-test-reporter
     (lambda (kind write)
       (pcheck ([symbol? kind] [procedure? write])
-              (unless (test-callback-accepts? write 2)
-                (errorf 'make-test-reporter "write must accept output and summary"))
-              ($make-test-reporter kind write))))
+              ($make-checked-reporter kind write #f))))
+
+  #|proc:test-make-textual-reporter
+  The internal `test-make-textual-reporter` procedure creates a reporter named by symbol `kind`.
+  Its `write` callback has signature `(lambda (output-port summary) unspecified)`.
+  The returned reporter requires an open textual output port when reporting is enabled.
+  |#
+  (define test-make-textual-reporter
+    (lambda (kind write)
+      (pcheck ([symbol? kind] [procedure? write])
+              ($make-checked-reporter kind write #t))))
+
+  #|proc:test-check-reporter-output
+  The internal `test-check-reporter-output` procedure validates `output` for `reporter`.
+  `reporter` is a reporter or `#f`; `output` is an output port or `#f`. Disabled reporting
+  requires no port compatibility check. Errors name symbol `who`; success returns unspecified
+  values.
+  |#
+  (define test-check-reporter-output
+    (lambda (who reporter output)
+      (pcheck ([symbol? who]
+               [(lambda (value) (or (not value) (test-reporter? value))) reporter]
+               [(lambda (value) (or (not value) (output-port? value))) output])
+              (when (and reporter output ($test-reporter-textual-output? reporter))
+                (unless (and (textual-port? output) (not (port-closed? output)))
+                  (errorf who "built-in reporter requires an open textual output port"))))))
 
   #|proc:test-reporter-write
   The `test-reporter-write` procedure returns the callback stored in `reporter`.

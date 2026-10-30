@@ -2245,3 +2245,85 @@
                (equal? (benchmark-result-args loaded) '((value . 7)))
                (equal? (benchmark-result-template-args loaded) '((type . fixnum))))))
       (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat benchmark-built-in-reporter-output-contract
+  ;; Error: all built-in reporters require textual ports before setup or body side effects.
+  (for-all
+    (lambda (reporter)
+      (call-with-values open-bytevector-output-port
+        (lambda (out extract)
+          (dynamic-wind
+            (lambda () (void))
+            (lambda ()
+              (let ([ran? #f])
+                (guard (raised [else (not ran?)])
+                  (benchmark-run
+                    (make-benchmark 'invalid-output (lambda (state) (set! ran? #t)) '())
+                    (make-benchmark-config 0 1 0 1 out #f reporter #f #f))
+                  #f)))
+            (lambda () (close-port out))))))
+    (list (benchmark-text-reporter) (benchmark-datum-reporter) (benchmark-csv-reporter)
+          (benchmark-json-reporter) (benchmark-rich-reporter)))
+
+  ;; Error: a port closed after configuration must reject before sample setup.
+  (let* ([out (open-output-string)]
+         [config (make-benchmark-config 0 1 0 1 out #f (benchmark-text-reporter) #f #f)]
+         [ran? #f]
+         [descriptor (make-benchmark 'closed-output (lambda (state value) (void))
+                       `((setup . ,(lambda (state) (set! ran? #t) #f))))])
+    (close-port out)
+    (guard (raised [else (not ran?)]) (benchmark-run descriptor config) #f))
+
+  ;; Error: suite setup must also be protected when a previously valid port is closed.
+  (let* ([out (open-output-string)]
+         [config (make-benchmark-config 0 1 0 1 out #f (benchmark-text-reporter) #f #f)]
+         [ran? #f])
+    (define-benchmark-suite closed-output-suite
+      (:suite-setup (lambda (state) (set! ran? #t))))
+    (close-port out)
+    (guard (raised [else (not ran?)]) (benchmark-run-suite closed-output-suite config) #f)))
+
+(mat benchmark-custom-binary-reporters
+  (call-with-values open-bytevector-output-port
+    (lambda (out extract)
+      (dynamic-wind
+        (lambda () (void))
+        (lambda ()
+          (let* ([reporter (make-benchmark-reporter
+                            (lambda (results out) (put-u8 out 1))
+                            (lambda (result out) (put-u8 out 2))
+                            (lambda (results out) (put-u8 out 3)))]
+                 [config (benchmark-config-with (default-benchmark-config)
+                           `((output . ,out) (reporter . ,reporter)))])
+            (benchmark-run '() config)
+            (equal? (extract) #vu8(1 3))))
+        (lambda () (close-port out))))))
+
+(mat benchmark-binary-descriptor-output-with-runtime-reporter
+  ;; Descriptor defaults must compose with a custom binary reporter supplied by the run.
+  (call-with-values open-bytevector-output-port
+    (lambda (out extract)
+      (dynamic-wind
+        (lambda () (void))
+        (lambda ()
+          (let* ([descriptor (make-benchmark 'binary-default (lambda (state) (void))
+                               `((output . ,out)))]
+                 [reporter (make-benchmark-reporter
+                             (lambda (results out) (put-u8 out 1))
+                             (lambda (result out) (put-u8 out 2))
+                             (lambda (results out) (put-u8 out 3)))]
+                 [config (benchmark-config-with (default-benchmark-config)
+                           `((warmup . 0) (samples . 0) (reporter . ,reporter)))])
+            (benchmark-run descriptor config)
+            (equal? (extract) #vu8(1 2 3))))
+        (lambda () (close-port out))))))
+
+(mat benchmark-direct-report-validates-empty-output
+  ;; Error: a datum reporter otherwise only flushes an empty report and can hide an invalid port.
+  (call-with-values open-bytevector-output-port
+    (lambda (out extract)
+      (dynamic-wind
+        (lambda () (void))
+        (lambda ()
+          (guard (raised [else #t]) (benchmark-report '() (benchmark-datum-reporter) out) #f))
+        (lambda () (close-port out))))))

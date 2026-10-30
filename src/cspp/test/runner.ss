@@ -502,6 +502,8 @@ association-list filters as `test-select`.
   (define test-run
     (lambda (tests config)
       (pcheck ([list? tests] [test-config? config])
+              (test-check-reporter-output 'test-run
+                (test-config-reporter config) (test-config-output config))
               (parameterize ([$current-predicate-cache (make-eq-hashtable)])
                 (let* ([concrete? (andmap test-concrete-case? tests)]
                        [prepared (cond

@@ -110,7 +110,7 @@
             explicit-options))
 
   (define-record-type ($benchmark-reporter $mk-benchmark-reporter benchmark-reporter?)
-    (fields start result finish))
+    (fields start result finish textual-output?))
 
   (define-record-type ($benchmark-comparison $mk-benchmark-comparison benchmark-comparison?)
     (fields name metric baseline current baseline-value current-value absolute-difference
@@ -1308,6 +1308,7 @@ stored in sample `sample`.
 The `make-benchmark-reporter` procedure creates a reporter descriptor from
 callbacks. `start` receives `(results output-port)`, `result` receives
 `(result output-port)`, and `finish` receives `(results output-port)`.
+Custom reporters may use binary output ports when their callbacks support them.
 |#
   (define make-benchmark-reporter
     (lambda (start result finish)
@@ -1315,7 +1316,17 @@ callbacks. `start` receives `(results output-port)`, `result` receives
               (unless (andmap (lambda (callback) (logbit? 2 (procedure-arity-mask callback)))
                               (list start result finish))
                 (errorf 'make-benchmark-reporter "callbacks must accept two arguments"))
-              ($mk-benchmark-reporter start result finish))))
+              ($mk-benchmark-reporter start result finish #f))))
+
+  (define $make-textual-benchmark-reporter
+    (lambda (start result finish)
+      ($mk-benchmark-reporter start result finish #t)))
+
+  (define $check-reporter-output
+    (lambda (who reporter out)
+      (when (and reporter out ($benchmark-reporter-textual-output? reporter))
+        (unless (and (textual-port? out) (not (port-closed? out)))
+          (errorf who "built-in reporter requires an open textual output port")))))
 
   #|proc:benchmark-comparison-name
 The `benchmark-comparison-name` procedure returns the benchmark name associated
@@ -1414,7 +1425,7 @@ The `benchmark-comparison-improvement?` procedure returns whether comparison
   |#
   (define benchmark-text-reporter
     (lambda ()
-      (make-benchmark-reporter
+      ($make-textual-benchmark-reporter
        (lambda (results out)
          (for-each (lambda (line)
                      (display line out)
@@ -1432,7 +1443,7 @@ Generated symbols retain their identity regardless of the ambient gensym printer
 |#
   (define benchmark-datum-reporter
     (lambda ()
-      (make-benchmark-reporter
+      ($make-textual-benchmark-reporter
        $void-procedure
        (lambda (result out)
          ($write-readable-datum
@@ -1455,7 +1466,7 @@ error. Missing metrics or means in legacy summaries are reported as zero.
 |#
   (define benchmark-csv-reporter
     (lambda ()
-      (make-benchmark-reporter
+      ($make-textual-benchmark-reporter
        (lambda (results out)
          (fprintf out "name,args,template_args,cpu_ns_mean,real_ns_mean,bytes_mean,counters,error~%"))
        (lambda (result out)
@@ -1486,7 +1497,7 @@ nonzero finite flonum range use exact Scheme strings; other fractions use decima
   (define benchmark-json-reporter
     (lambda ()
       (let ([first? #t])
-        (make-benchmark-reporter
+        ($make-textual-benchmark-reporter
          (lambda (results out)
            (set! first? #t)
            (display "{\"results\":[" out))
@@ -1527,7 +1538,7 @@ result fields and whose values are column labels; supported field keys are
                    (errorf 'benchmark-rich-reporter "invalid columns: ~s" columns)))
                ;; Reuse the rich table's own field validators before any benchmark runs.
                ($benchmark-rich-table '() options)
-               (make-benchmark-reporter
+               ($make-textual-benchmark-reporter
                 $void-procedure
                 $void-procedure
                 (lambda (results out)
@@ -2259,6 +2270,8 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
 
   (define $run-expanded
     (lambda (expanded config)
+      ($check-reporter-output 'benchmark-run-one
+        (benchmark-config-reporter config) (benchmark-config-output config))
       (let* ([state (car expanded)]
              [benchmark (cdr expanded)]
              ;; Expansion preserves positional argument order in the state alist.
@@ -2310,6 +2323,8 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
   (define benchmark-run-suite
     (lambda (suite config)
       (pcheck ([benchmark-suite? suite] [benchmark-config? config])
+              ($check-reporter-output 'benchmark-run-suite
+                (benchmark-config-reporter config) (benchmark-config-output config))
               (let ([suite-state (benchmark-state ($benchmark-suite-name suite)
                                                   ($benchmark-suite-name suite)
                                                   '()
@@ -2378,6 +2393,8 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
               (finish results)
               (let* ([benchmark (car benchmarks)]
                      [effective ($effective-benchmark-config benchmark config)])
+                ($check-reporter-output 'benchmark-run
+                  (benchmark-config-reporter effective) (benchmark-config-output effective))
                 (if (not ($benchmark-matches-selector?
                           benchmark (benchmark-config-filter effective)))
                     (loop-benchmarks (cdr benchmarks) results)
@@ -2407,6 +2424,7 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
   reporter and output port. Enabled stopping returns results through the first error
   and skips all later argument cases and descriptors. Empty or fully filtered runs
   emit an empty report through the configured reporter and output when both are enabled.
+  Built-in reporter ports must be open and textual; effective ports are checked before execution.
   |#
   (define benchmark-run
     (case-lambda
@@ -2667,12 +2685,14 @@ flush CPU caches or enforce hardware memory ordering.
 The `benchmark-report` procedure writes existing benchmark `results` through
 `reporter` to output port `out`. Every result must be a benchmark result record;
 invalid collections are rejected before any reporter callback runs.
+Built-in reporters require an open textual port; custom reporters define their own port usage.
 |#
   (define benchmark-report
     (lambda (results reporter out)
       (pcheck ([list? results] [benchmark-reporter? reporter] [output-port? out])
               (unless (andmap benchmark-result? results)
                 (errorf 'benchmark-report "expected a list of benchmark results"))
+              ($check-reporter-output 'benchmark-report reporter out)
               (($benchmark-reporter-start reporter) results out)
               (for-each (lambda (result)
                           (($benchmark-reporter-result reporter) result out))
