@@ -586,12 +586,11 @@
        (and (eq? v (nav-setval! (nav/nth 1) 9.5 v))
             (equal? '(1.5 9.5 3.5) (flvector->list* v))))
      (let ([selected (nav-select nav/children (list (fxvector 1 2) (flvector 1.5 2.5)))])
-       (and (= 6 (length selected))
+       (and (= 2 (length selected))
             (fxvector? (car selected))
             (flvector? (cadr selected))
             (equal? '(1 2) (fxvector->list* (car selected)))
-            (equal? '(1.5 2.5) (flvector->list* (cadr selected)))
-            (equal? '(1 2 1.5 2.5) (cddr selected))))
+            (equal? '(1.5 2.5) (flvector->list* (cadr selected)))))
      (equal? '(1 2 1.5 2.5)
              (nav-select nav/leaves (list (fxvector 1 2) (flvector 1.5 2.5))))
      ;; negative: pure fxvector transform must return fixnums.
@@ -725,7 +724,7 @@
             (equal? '((name . Ada)) (kvbox-entries box)))))
 
 (mat navigator-recursive
-     (equal? '((1 b) #(2 (c 3)) 1 b 2 (c 3) c 3)
+     (equal? '(a (1 b) #(2 (c 3)))
              (nav-select (nav/path nav/children)
                          '(a (1 b) #(2 (c 3)))))
      (equal? '(a b c)
@@ -1060,10 +1059,10 @@
              (nav-select (nav/walker number?) (deep-mixed-data)))
      (let ([selected (nav-select (nav/path (nav/key 'root) nav/children)
                                  (deep-mixed-data))])
-       (and (pair? selected)
-            (any? vector? selected)
-            (any? list? selected)
-            (any? hashtable? selected)))
+       (and (= 3 (length selected))
+            (list? (car selected))
+            (eq? 'atom (cadr selected))
+            (list? (caddr selected))))
      (same-items? '(branch 10 20 30 1 2 3 1.5 2.5 3.5 done atom 7 8 4 5 4.5 5.5)
              (nav-select nav/leaves (deep-mixed-data)))
      (let ([numbers-anywhere
@@ -1593,7 +1592,7 @@
          (not (hashtable-contains? (vector-ref data 0) 'x))
          (= 2 (ht-ref (vector-ref data 0) 'y))))
 
-  (equal? '(#(2 3) 2 3)
+  (equal? '((a . 1) #(2 3))
           (nav-select nav/children (vector (cons 'a 1) (vector 2 3))))
 
   (let ([custom (make-nav 'nav/children
@@ -1701,9 +1700,9 @@
          (= 2 (ht-ref data 'b)))))
 
 (mat navigator-review-terminal-recursive-children
-  (equal? '(#(b) b) (nav-select (nav/rec visit nav/children) '#(a #(b))))
+  (equal? '(a #(b)) (nav-select (nav/rec visit nav/children) '#(a #(b))))
 
-  (equal? '(#(b) b)
+  (equal? '(a #(b))
           (nav-select (nav/letrec ([visit nav/children]) visit) '#(a #(b))))
 
   (null? (nav-select (nav/path (nav/rec visit nav/children) nav/none) '#(a #(b)))))
@@ -1852,7 +1851,7 @@
          (lambda (path) (nav/multi-path path))
          (lambda (path) (nav/if nav/stay path nav/none))))
 
-  (equal? '(#(2) 2)
+  (equal? '(1 #(2))
           (nav-select (nav/path (nav/maybe nav/stay) nav/children) '#(1 #(2))))
 
   (equal? '(1)
@@ -1868,12 +1867,12 @@
                                          #t)))
                             nav/children (nav/pred number?))
                   '#(1 #(2))))
-         (equal? '(#(3) 3) inner)))
+         (equal? '(#(3)) inner)))
 
-  (equal? '(#(1) 1)
+  (equal? '(#(1))
           (nav-select nav/children (make-ixbox '#(#(1)))))
 
-  (equal? '(#(1) 1)
+  (equal? '(#(1))
           (nav-select nav/children (make-kvbox '((a . #(1)))))))
 
 (mat navigator-review-required-operation-single-pass
@@ -3423,3 +3422,29 @@
   ;; Unregistered improper pairs remain atomic leaves rather than implicit containers.
   (and (null? (nav-select (nav/path nav/children nav/stay) '(1 . 2)))
        (equal? '((1 . 2)) (nav-select nav/leaves '(1 . 2)))))
+
+
+(mat navigator-immediate-children-composition
+  (andmap
+   (lambda (path)
+     (equal? '(a () (b) #(c)) (nav-select path '(a () (b) #(c)))))
+   (list nav/children
+         (nav/path nav/children nav/stay)
+         (nav/path nav/stay nav/children)
+         (nav/maybe nav/children)
+         (nav/must nav/children)
+         (nav/choice nav/children nav/stay)
+         (nav/multi-path nav/children)
+         (nav/if nav/stay nav/children nav/none)
+         (nav/rec visit nav/children)))
+
+  (equal? '(a () (b) #(c))
+          (iter->list (nav-traverse->iter nav/children '(a () (b) #(c)))))
+
+  (equal? '((1 . 2)) (nav-select nav/children (vector (cons 1 2))))
+
+  (null? (nav-select nav/children '()))
+
+  (null? (nav-select nav/children '#()))
+
+  (null? (nav-select nav/children 42)))

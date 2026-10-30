@@ -56,3 +56,10 @@
      (measure (list 'treeset-clear size) 1 (lambda () (nav-clearval nav/all ordered)))
      (measure (list 'treemap-all size) 1 (lambda () (nav-transform nav/all add1 mapping)))))
  '(500 1000 2000))
+
+
+;; Identity suffixes and wrappers keep immediate-child selection unchanged.
+(define children-path (nav/path nav/children nav/stay))
+(define wrapped-children (nav/path (nav/maybe nav/children) nav/stay))
+(measure 'children-identity-3000 30 (lambda () (nav-select children-path vec)))
+(measure 'wrapped-children-3000 30 (lambda () (nav-select wrapped-children vec)))

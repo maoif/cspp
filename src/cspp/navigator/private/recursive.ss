@@ -79,10 +79,12 @@
         (nav-error 'nav-clearval! "recursive navigator ~s does not support clear! yet" name))))
 
   #|proc:nav/children
-  The `nav/children` navigator focuses immediate children of supported nested
-  values when composed with later path steps. As a final selection step, it
-  focuses collection descendants in tree order. Both modes support registered indexed
-  and keyed containers as well as built-in containers.
+  The `nav/children` navigator focuses immediate children of supported nested values,
+  in container traversal order. Selection, transformation, and clearing use the same
+  child locations, including when this is the final path step. Appending `nav/stay`
+  does not change the selection. Built-in and registered indexed/keyed containers are
+  supported; other values have no children. Use `nav/leaves` or `nav/walker` for recursive
+  selection, or compose this step with `nav/rec` / `nav/letrec` for recursive updates.
   Kind: Reusable tree traversal step.
   |#
   (define nav/children

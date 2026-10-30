@@ -5,7 +5,7 @@
           keyed-update-values keyed-update-values! keyed-rebuild-entries
           keyed-canonical-key
           keyed-transform-entries!
-          child-container? emit-children
+          emit-children
           keyed-supported? keyed-ref/missing keyed-set keyed-set!
           keyed-delete keyed-delete! keyed-entries keyed-keys keyed-values
           set-supported? set-values set-replace set-replace!
@@ -316,12 +316,7 @@
     (lambda (value)
       (and (indexed-length value) #t)))
 
-  ;; Recursive traversal and terminal selection share the same container dispatch.
-  (define child-container?
-    (lambda (value)
-      (cond [(list? value) (pair? value)]
-            [else (or (indexed-supported? value) (keyed-supported? value))])))
-
+  ;; Recursive steps and immediate-child selection share adapter dispatch.
   (define emit-children
     (lambda (value emit)
       (cond [(list? value) (for-each emit value)]

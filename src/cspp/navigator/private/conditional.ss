@@ -22,7 +22,7 @@
         ;; Use a one-shot continuation to stop traversal after the first focus.
         (call/1cc
          (lambda (return)
-           (select-path path value (lambda (child) (return #t)) #t)
+           (select-path path value (lambda (child) (return #t)))
            #f)))))
 
   ;; Only steps inside the wrapped traversal are optional. Its continuation belongs

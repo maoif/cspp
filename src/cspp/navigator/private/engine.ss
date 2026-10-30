@@ -10,19 +10,12 @@
           (cspp list)
           (cspp transducer)
           (cspp utils)
-          (cspp navigator private core)
-          (cspp navigator private data))
+          (cspp navigator private core))
 
   ;; An environment is a stack of recursive-name binding frames. Each resolved
   ;; reference uses its defining (lexical) environment, rather than whichever group
   ;; happens to be active when an outer suffix or delegated callback resumes.
   (define current-recursive-env (make-nav-scope-parameter '()))
-
-  ;; Wrapped paths inherit whether their result has an outer selection suffix.
-  ;; Public selection entry points start a fresh context, including nested public calls.
-  ;; Terminal means no suffix remains anywhere in the composed traversal. This
-  ;; affects nav/children's terminal tree selection, rather than just the current path.
-  (define current-selection-terminal? (make-nav-scope-parameter #t))
 
   ;; A custom step may delegate through a fresh public operation. Its engine
   ;; continuation still belongs to the defining traversal, including optional
@@ -41,8 +34,7 @@
       (let ([env (current-recursive-env)]
             [optional? (current-optional-focus?)]
             [counter (current-update-count)]
-            [focus-scope (current-focus-scope)]
-            [terminal? (current-selection-terminal?)])
+            [focus-scope (current-focus-scope)])
         (lambda (value)
           (let* ([active (current-focus-scope)]
                  ;; Inner conditions in this operation remain active until this
@@ -52,44 +44,14 @@
             (if (and (eq? env (current-recursive-env))
                      (eq? optional? (current-optional-focus?))
                      (eq? counter (current-update-count))
-                     (eq? scope active)
-                     (eq? terminal? (current-selection-terminal?)))
+                     (eq? scope active))
                 (nav-with-evidence-checkpoint counter '() (lambda () (continue value)))
                 (parameterize ([current-recursive-env env]
                                [current-optional-focus? optional?]
                                [current-update-count counter]
-                               [current-focus-scope scope]
-                               [current-selection-terminal? terminal?])
+                               [current-focus-scope scope])
                   (nav-with-evidence-checkpoint counter '()
                                                 (lambda () (continue value))))))))))
-
-  (define emit-descendant-children
-    (lambda (value emit)
-      (emit-children
-       value
-       (lambda (child)
-         (emit child)
-         (when (child-container? child)
-           (emit-descendant-children child emit))))))
-
-  (define emit-nav-children-tree
-    (lambda (value emit)
-      (emit-children
-       value
-       (lambda (child)
-         (when (child-container? child)
-           (emit child))))
-      (emit-children
-       value
-       (lambda (child)
-         (when (child-container? child)
-           (emit-descendant-children child emit))))))
-
-  (define nav-children-step?
-    (lambda (step)
-      (and ($navigator? step)
-           (eq? ($navigator-kind step) 'recursive)
-           (eq? ($navigator-name step) 'nav/children))))
 
   ;; Bound references carry a compiled body and its defining lexical environment.
   ;; Symbolic references search captured frames, whose entries are stable references.
@@ -125,19 +87,11 @@
                 (run-select (cdar tails) (cdr tails) value emit)))
           (let ([step (car steps)] [rest (cdr steps)])
             (cond [($navigator? step)
-                   (let* ([outer-terminal? (current-selection-terminal?)]
-                          [terminal? (and outer-terminal? (null? rest)
-                                          (for-all (lambda (tail) (null? (cdr tail))) tails))])
-                     (if (and terminal? (nav-children-step? step))
-                         (emit-nav-children-tree value emit)
-                         (nav-with-scope ([current-selection-terminal? terminal?])
-                           (nav-call-step
-                            ($navigator-select-proc step) value
-                            (bind-continuation
-                             (lambda (child)
-                               (nav-with-scope ([current-selection-terminal? outer-terminal?])
-                                 (run-select rest tails child emit))))
-                            (void)))))]
+                   (nav-call-step ($navigator-select-proc step)
+                    value
+                    (bind-continuation
+                     (lambda (child)
+                       (run-select rest tails child emit))) (void))]
                   [($recursive-nav-group? step)
                    (let ([tails (push-tail rest tails)])
                      (parameterize ([current-recursive-env ($recursive-nav-group-env step)])
@@ -157,14 +111,10 @@
                   [else (nav-error 'nav-select "unsupported path step: ~s" step)])))))
 
   (define select-path
-    (case-lambda
-      [(path data emit)
-       (nav-with-evidence-checkpoint
-        (current-update-count) (cdr (current-focus-scope))
-        (lambda () (run-select (nav-path-steps (nav-compile-path path)) '() data emit)))]
-      [(path data emit terminal?)
-       (nav-with-scope ([current-selection-terminal? terminal?])
-         (select-path path data emit))]))
+    (lambda (path data emit)
+      (nav-with-evidence-checkpoint
+       (current-update-count) (cdr (current-focus-scope))
+       (lambda () (run-select (nav-path-steps (nav-compile-path path)) '() data emit)))))
 
   (define run-transform
     (lambda (steps tails value update)
@@ -331,7 +281,7 @@
                              [current-focus-scope (make-nav-focus-scope)]
                              [current-update-count #f]
                              [current-optional-focus? #f])
-                (select-path path data proc #t)))))
+                (select-path path data proc)))))
 
   #|proc:nav-traverse/i
   The `nav-traverse/i` procedure calls `proc` with the selected-value index and
@@ -493,7 +443,7 @@
                            (call/1cc
                             (lambda (continue)
                               (set! resume continue)
-                              (return-to-consumer value)))) #t))
+                              (return-to-consumer value))))))
                       (set! done? #t)
                       (set! resume #f)
                       (return-to-consumer iter-end))))))

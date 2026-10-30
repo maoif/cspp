@@ -63,6 +63,13 @@ A pure path does not make `nav-transform!` pure: concurrent mutations still requ
 targets or caller synchronization. A predicate that updates a captured counter introduces
 caller-owned shared state, even when the inputs differ.
 
+`nav/children` always focuses immediate children, including when it ends a path. For example,
+both `nav/children` and `(nav/path nav/children nav/stay)` select `(a (b))` from `'(a (b))`.
+Earlier versions selected descendants when this step was terminal; callers relying on that
+behavior must use an explicit recursive path. Use `nav/leaves` for leaf selection,
+`nav/walker` for recursive predicate selection, and `nav/rec` or `nav/letrec` with
+`nav/children` for recursive updates.
+
 ### Iterator resources and terminal operations
 
 An **iterator** is a destructive cursor. A **pass** runs from construction or reset until
