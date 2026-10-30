@@ -175,16 +175,14 @@ The `hmac-destroy!` procedure releases the foreign resources owned by an HMAC st
   The `call-with-hmac-state` procedure creates an HMAC state for digest symbol `which`
   and bytevector `key`, calls `(proc state)`, and returns the callback's values.
   The callback runs without holding a state lock. The state is destroyed on every exit,
-  including errors and continuation escapes. Invalid inputs or native failures raise errors.
+  including errors and continuation escapes. Reentry after exit raises an error.
+  Invalid inputs or native failures raise errors.
   |#
   (define-who call-with-hmac-state
     (lambda (which key proc)
       (pcheck ([procedure? proc] [bytevector? key])
-              (let ([st (make-hmac-state which key)])
-                (dynamic-wind
-                  void
-                  (lambda () (proc st))
-                  (lambda () (hmac-destroy! st)))))))
+              (call-with-crypto-resource who
+                (lambda () (make-hmac-state which key)) hmac-destroy! proc))))
 
   #|proc:hmac
   The `hmac` procedure returns an HMAC bytevector for string or bytevector `data`, using

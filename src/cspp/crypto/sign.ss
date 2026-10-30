@@ -302,30 +302,32 @@ The `verify-destroy!` procedure releases buffered data owned by a verify state.
                 st))))
 
   #|proc:call-with-sign-state
-The `call-with-sign-state` procedure creates a sign state, passes it to `proc`, and always destroys it afterwards.
-|#
+  The `call-with-sign-state` procedure creates a buffered sign state for algorithm
+  symbol `alg`, live `key`, and optional `digest`, as in `make-sign-state`. It calls
+  `(proc state)` with the caller's interrupt settings and returns its values. The state
+  is destroyed on every exit; reentry after exit raises an error. The caller owns `key`.
+  |#
   (define-who call-with-sign-state
     (case-lambda
       [(alg key proc)
        (call-with-sign-state alg (default-digest alg) key proc)]
       [(alg digest key proc)
        (pcheck ([procedure? proc])
-               (let ([st (make-sign-state alg digest key)])
-                 (dynamic-wind void
-                               (lambda () (proc st))
-                               (lambda () (sign-destroy! st)))))]))
+               (call-with-crypto-resource who
+                 (lambda () (make-sign-state alg digest key)) sign-destroy! proc))]))
 
   #|proc:call-with-verify-state
-The `call-with-verify-state` procedure creates a verify state, passes it to `proc`, and always destroys it afterwards.
-|#
+  The `call-with-verify-state` procedure creates a buffered verify state for algorithm
+  symbol `alg`, live `key`, and optional `digest`, as in `make-verify-state`. It calls
+  `(proc state)` with the caller's interrupt settings and returns its values. The state
+  is destroyed on every exit; reentry after exit raises an error. The caller owns `key`.
+  |#
   (define-who call-with-verify-state
     (case-lambda
       [(alg key proc)
        (call-with-verify-state alg (default-digest alg) key proc)]
       [(alg digest key proc)
        (pcheck ([procedure? proc])
-               (let ([st (make-verify-state alg digest key)])
-                 (dynamic-wind void
-                               (lambda () (proc st))
-                               (lambda () (verify-destroy! st)))))]))
+               (call-with-crypto-resource who
+                 (lambda () (make-verify-state alg digest key)) verify-destroy! proc))]))
   )

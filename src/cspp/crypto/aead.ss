@@ -321,26 +321,26 @@ The `aead-destroy!` procedure marks an AEAD state as destroyed and releases buff
                 st))))
 
   #|proc:call-with-aead-encrypt-state
-The `call-with-aead-encrypt-state` procedure creates an AEAD encryption state, passes it to `proc`, and always destroys it afterwards.
-|#
+  The `call-with-aead-encrypt-state` procedure creates a buffered encryption state for
+  algorithm symbol `which` and bytevectors `key` and `nonce`. It calls `(proc state)`
+  with the caller's interrupt settings and returns its values. The state is destroyed
+  on every exit; reentry after exit raises an error.
+  |#
   (define-who call-with-aead-encrypt-state
     (lambda (which key nonce proc)
       (pcheck ([bytevector? key nonce] [procedure? proc])
-              (let ([st (make-aead-encrypt-state which key nonce)])
-                (dynamic-wind
-                  void
-                  (lambda () (proc st))
-                  (lambda () (aead-destroy! st)))))))
+              (call-with-crypto-resource who
+                (lambda () (make-aead-encrypt-state which key nonce)) aead-destroy! proc))))
 
   #|proc:call-with-aead-decrypt-state
-The `call-with-aead-decrypt-state` procedure creates an AEAD decryption state, passes it to `proc`, and always destroys it afterwards.
-|#
+  The `call-with-aead-decrypt-state` procedure creates a buffered decryption state for
+  algorithm symbol `which` and bytevectors `key` and `nonce`. It calls `(proc state)`
+  with the caller's interrupt settings and returns its values. The state is destroyed
+  on every exit; reentry after exit raises an error.
+  |#
   (define-who call-with-aead-decrypt-state
     (lambda (which key nonce proc)
       (pcheck ([bytevector? key nonce] [procedure? proc])
-              (let ([st (make-aead-decrypt-state which key nonce)])
-                (dynamic-wind
-                  void
-                  (lambda () (proc st))
-                  (lambda () (aead-destroy! st)))))))
+              (call-with-crypto-resource who
+                (lambda () (make-aead-decrypt-state which key nonce)) aead-destroy! proc))))
   )

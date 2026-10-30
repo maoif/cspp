@@ -166,7 +166,14 @@
                    ;; Error case: callback escape destroys its state. Reentry must
                    ;; either reject the scope or reject subsequent state operations.
                    (let ([result
-                          (guard (condition [else 'blocked])
+                          (guard (condition
+                                   [else
+                                    (let ([count (disable-interrupts)])
+                                      (enable-interrupts)
+                                      (unless (fx= count 1)
+                                        (error 'crypto-continuations
+                                          "scope error handler interrupts disabled")))
+                                    'blocked])
                             ;; Capture both exit and resumption to test resource winders.
                             (call/cc
                               (lambda (escape)

@@ -20,7 +20,7 @@
           (only (cspp file) file-size)
           (cspp optional-library-check)
           (only (cspp crypto private)
-                with-crypto-mutex with-crypto-operation)
+                with-crypto-mutex with-crypto-operation call-with-crypto-resource)
           (cspp crypto ffi))
 
   #|proc:digest-algorithms
@@ -314,11 +314,8 @@
 
   (define call-with-owned-digester
     (lambda (algorithm proc)
-      (let ([state (make-digester algorithm)])
-        (dynamic-wind
-          (lambda () (check-live 'call-with-digester state))
-          (lambda () (proc state))
-          (lambda () (digester-destroy! state))))))
+      (call-with-crypto-resource 'call-with-digester
+        (lambda () (make-digester algorithm)) digester-destroy! proc)))
 
   #|proc:call-with-digester
   The `call-with-digester` procedure creates a digester for the algorithm symbol

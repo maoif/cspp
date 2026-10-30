@@ -5,6 +5,7 @@
           with-crypto-locks
           with-crypto-mutex
           with-crypto-operation
+          call-with-crypto-resource
           ensure-openssl
           bytevector-append
           subbytevector
@@ -94,6 +95,35 @@
       [(_ mutex body ...)
        (with-crypto-operation
          (with-mutex mutex body ...))]))
+
+  #|proc:call-with-crypto-resource
+  The internal `call-with-crypto-resource` procedure installs cleanup before calling
+  the zero-argument constructor `create`, then calls `(proc resource)` and returns its
+  values. Constructor and `(destroy! resource)` must be internal procedures without
+  user callbacks. Construction and ownership assignment are indivisible; `proc` runs
+  with the caller's interrupt settings. Every exit releases the resource, and reentry
+  raises an error attributed to symbol `who`. No resource is released if creation fails.
+  |#
+  (define call-with-crypto-resource
+    (lambda (who create destroy! proc)
+      (pcheck ([symbol? who] [procedure? create destroy! proc])
+        (let ([resource #f] [exited? #f])
+          (dynamic-wind
+            (lambda ()
+              (when exited? (error who "cannot reenter an exited resource scope")))
+            (lambda ()
+              ;; The critical cleanup cannot itself be abandoned before destruction.
+              ;; Keep the reentry check in the outer, noncritical winder so errors
+              ;; reach caller handlers with their original interrupt settings.
+              (dynamic-wind #t
+                void
+                (lambda ()
+                  (with-crypto-operation (set! resource (create)))
+                  (proc resource))
+                (lambda ()
+                  (set! exited? #t)
+                  (when resource (destroy! resource)))))
+            void)))))
 
   #|proc:make-crypto-lock
   The `make-crypto-lock` procedure returns a new internal resource lock with a unique

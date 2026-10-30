@@ -89,3 +89,23 @@
       (destroy-public-key! zero-public)
       (destroy-public-key! public)
       (destroy-private-key! private))))
+
+;; Error case: an engine may suspend after construction but before a scope installs
+;; its cleanup. Dropping that engine must release the native state without resumption.
+(for-each
+  (lambda (entry)
+    (let ([name (car entry)] [with-state (cdr entry)])
+      (check-no-native-leak name
+        (lambda ()
+          (do ([ticks 1 (fx1+ ticks)]) [(fx= ticks 161)]
+            ((make-engine (lambda () (with-state (lambda (state) (void))))) ticks
+             (lambda results (void))
+             (lambda (abandoned) (void))))))))
+  (list
+    (cons 'abandoned-digester (lambda (proc) (call-with-digester 'sha256 proc)))
+    (cons 'abandoned-hmac
+      (lambda (proc) (call-with-hmac-state 'sha256 #vu8(1) proc)))
+    (cons 'abandoned-cipher
+      (lambda (proc)
+        (call-with-cipher-state 'encrypt 'aes-128-ctr
+          (make-bytevector 16 0) (make-bytevector 16 0) proc)))))

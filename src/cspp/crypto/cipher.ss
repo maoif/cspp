@@ -167,14 +167,14 @@ The `cipher-destroy!` procedure releases foreign resources owned by `st`.
                 st))))
 
   #|proc:call-with-cipher-state
-The `call-with-cipher-state` procedure creates a cipher state, passes it to `proc`, and always destroys it afterwards.
-|#
+  The `call-with-cipher-state` procedure creates a cipher state for mode symbol `mode`,
+  algorithm symbol `which`, and bytevectors `key` and `iv`. It calls `(proc state)`
+  with the caller's interrupt settings and returns its values. The state is destroyed
+  on every exit; reentry after exit raises an error.
+  |#
   (define-who call-with-cipher-state
     (lambda (mode which key iv proc)
       (pcheck ([bytevector? key iv] [procedure? proc])
-              (let ([st (make-cipher-state mode which key iv)])
-                (dynamic-wind
-                  void
-                  (lambda () (proc st))
-                  (lambda () (cipher-destroy! st)))))))
+              (call-with-crypto-resource who
+                (lambda () (make-cipher-state mode which key iv)) cipher-destroy! proc))))
   )
