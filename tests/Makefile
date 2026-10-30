@@ -110,6 +110,7 @@ crypto-hardening.so: crypto-memory-fixture.so
 endif
 
 crypto-hardening.so: crypto-envelope-memory.py crypto-envelope-memory.ss
+crypto-hardening.so: crypto-thread-process.py crypto-thread-process.ss
 
 file.so: fswatcher-blocking-process.ss
 

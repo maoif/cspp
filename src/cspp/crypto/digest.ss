@@ -156,7 +156,7 @@
 
   (define-record-type (digester %make-digester %digester?)
     (opaque #t)
-    (fields algorithm (mutable handle) (mutable finalized?) (mutable destroyed?)))
+    (fields mutex algorithm (mutable handle) (mutable finalized?) (mutable destroyed?)))
 
   #|proc:digester?
   The `digester?` procedure returns `#t` if `object` is a digester, including a finalized or
@@ -190,7 +190,7 @@
                            (ffi-blake3-create)
                            (ffi-digest-state-create algorithm))])
            (when (= handle 0) (errorf who "failed to create digester for ~s" algorithm))
-           (%make-digester algorithm handle #f #f)))]))
+           (%make-digester (make-mutex 'digester) algorithm handle #f #f)))]))
 
   #|proc:digester-update-bytevector!
   The `digester-update-bytevector!` procedure feeds `bytes` into the live digester `state`
@@ -208,13 +208,14 @@
          (digester-update-bytevector! state bytes start (bytevector-length bytes)))]
       [(state bytes start stop)
        (pcheck ([digester? state] [bytevector? bytes])
-         (check-live who state)
-         (check-slice who (bytevector-length bytes) start stop)
-         (unless (= 1 ((if (blake3-state? state)
-                           ffi-blake3-update-bytevector! ffi-digest-state-update-bytevector!)
-                       (digester-handle state) bytes start stop))
-           (errorf who "failed to update digester"))
-         state)]))
+         (with-mutex (digester-mutex state)
+           (check-live who state)
+           (check-slice who (bytevector-length bytes) start stop)
+           (unless (= 1 ((if (blake3-state? state)
+                             ffi-blake3-update-bytevector! ffi-digest-state-update-bytevector!)
+                         (digester-handle state) bytes start stop))
+             (errorf who "failed to update digester"))
+           state))]))
 
   #|proc:digester-update-string!
   The `digester-update-string!` procedure feeds `text` into the live digester `state` and
@@ -233,13 +234,14 @@
          (digester-update-string! state text start (string-length text)))]
       [(state text start stop)
        (pcheck ([digester? state] [string? text])
-         (check-live who state)
-         (check-slice who (string-length text) start stop)
-         (unless (= 1 ((if (blake3-state? state)
-                           ffi-blake3-update-string! ffi-digest-state-update-string!)
-                       (digester-handle state) text start stop))
-           (errorf who "failed to update digester"))
-         state)]))
+         (with-mutex (digester-mutex state)
+           (check-live who state)
+           (check-slice who (string-length text) start stop)
+           (unless (= 1 ((if (blake3-state? state)
+                             ffi-blake3-update-string! ffi-digest-state-update-string!)
+                         (digester-handle state) text start stop))
+             (errorf who "failed to update digester"))
+           state))]))
 
   #|proc:digester-get
   The `digester-get` procedure returns a fresh digest bytevector for the input accumulated
@@ -249,10 +251,11 @@
   (define-who digester-get
     (lambda (state)
       (pcheck ([digester? state])
-        (check-live who state)
-        (check-result who
-          ((if (blake3-state? state) ffi-blake3-get ffi-digest-state-get)
-           (digester-handle state))))))
+        (with-mutex (digester-mutex state)
+          (check-live who state)
+          (check-result who
+            ((if (blake3-state? state) ffi-blake3-get ffi-digest-state-get)
+             (digester-handle state)))))))
 
   (define release-handle!
     (lambda (state)
@@ -270,11 +273,12 @@
   (define-who digester-finalize!
     (lambda (state)
       (pcheck ([digester? state])
-        (check-live who state)
-        (let ([result (digester-get state)])
-          (release-handle! state)
-          (digester-finalized?-set! state #t)
-          result))))
+        (with-mutex (digester-mutex state)
+          (check-live who state)
+          (let ([result (digester-get state)])
+            (release-handle! state)
+            (digester-finalized?-set! state #t)
+            result)))))
 
   #|proc:digester-reset!
   The `digester-reset!` procedure clears the accumulated input of the live digester
@@ -284,11 +288,12 @@
   (define-who digester-reset!
     (lambda (state)
       (pcheck ([digester? state])
-        (check-live who state)
-        (unless (= 1 ((if (blake3-state? state) ffi-blake3-reset! ffi-digest-state-reset!)
-                      (digester-handle state)))
-          (errorf who "failed to reset digester"))
-        state)))
+        (with-mutex (digester-mutex state)
+          (check-live who state)
+          (unless (= 1 ((if (blake3-state? state) ffi-blake3-reset! ffi-digest-state-reset!)
+                        (digester-handle state)))
+            (errorf who "failed to reset digester"))
+          state))))
 
   #|proc:digester-destroy!
   The `digester-destroy!` procedure releases the native resources of `state`, discards its
@@ -298,10 +303,11 @@
   (define-who digester-destroy!
     (lambda (state)
       (pcheck ([digester? state])
-        (unless (digester-destroyed? state)
-          (release-handle! state)
-          (digester-destroyed?-set! state #t))
-        state)))
+        (with-mutex (digester-mutex state)
+          (unless (digester-destroyed? state)
+            (release-handle! state)
+            (digester-destroyed?-set! state #t))
+          state))))
 
   (define call-with-owned-digester
     (lambda (algorithm proc)

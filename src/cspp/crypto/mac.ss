@@ -29,7 +29,7 @@
 
   (define-record-type (hmac-state %make-hmac-state hmac-state?)
     (opaque #t)
-    (fields (mutable handle)
+    (fields mutex (mutable handle)
             algorithm
             (mutable destroyed?)
             (mutable finalized?)))
@@ -59,7 +59,7 @@ The `make-hmac-state` procedure creates an incremental HMAC state.
                (let ([handle (ffi-hmac-state-create which key start stop)])
                  (when (eq? handle 0)
                    (errorf who "failed to create HMAC state for ~s" which))
-                 (%make-hmac-state handle which #f #f)))]))
+                 (%make-hmac-state (make-mutex 'hmac) handle which #f #f)))]))
 
   #|proc:hmac-update-bytevector!
 The `hmac-update-bytevector!` procedure updates an HMAC state with a bytevector slice.
@@ -68,17 +68,20 @@ The `hmac-update-bytevector!` procedure updates an HMAC state with a bytevector 
     (case-lambda
       [(st bv)
        (pcheck ([hmac-state? st] [bytevector? bv])
-               (hmac-update-bytevector! st bv 0 (bytevector-length bv)))]
+               (with-mutex (hmac-state-mutex st)
+                 (hmac-update-bytevector! st bv 0 (bytevector-length bv))))]
       [(st bv start)
        (pcheck ([hmac-state? st] [bytevector? bv])
-               (hmac-update-bytevector! st bv start (bytevector-length bv)))]
+               (with-mutex (hmac-state-mutex st)
+                 (hmac-update-bytevector! st bv start (bytevector-length bv))))]
       [(st bv start stop)
        (pcheck ([hmac-state? st] [bytevector? bv])
-               (check-live-state who st)
-               (check-slice who (bytevector-length bv) start stop)
-               (when (fx= 0 (ffi-hmac-state-update-bytevector! (hmac-state-handle st) bv start stop))
-                 (errorf who "failed to update HMAC state"))
-               st)]))
+               (with-mutex (hmac-state-mutex st)
+                 (check-live-state who st)
+                 (check-slice who (bytevector-length bv) start stop)
+                 (when (fx= 0 (ffi-hmac-state-update-bytevector! (hmac-state-handle st) bv start stop))
+                   (errorf who "failed to update HMAC state"))
+                 st))]))
 
   #|proc:hmac-update-string!
 The `hmac-update-string!` procedure updates an HMAC state with a string slice.
@@ -87,17 +90,20 @@ The `hmac-update-string!` procedure updates an HMAC state with a string slice.
     (case-lambda
       [(st str)
        (pcheck ([hmac-state? st] [string? str])
-               (hmac-update-string! st str 0 (string-length str)))]
+               (with-mutex (hmac-state-mutex st)
+                 (hmac-update-string! st str 0 (string-length str))))]
       [(st str start)
        (pcheck ([hmac-state? st] [string? str])
-               (hmac-update-string! st str start (string-length str)))]
+               (with-mutex (hmac-state-mutex st)
+                 (hmac-update-string! st str start (string-length str))))]
       [(st str start stop)
        (pcheck ([hmac-state? st] [string? str])
-               (check-live-state who st)
-               (check-slice who (string-length str) start stop)
-               (when (fx= 0 (ffi-hmac-state-update-string! (hmac-state-handle st) str start stop))
-                 (errorf who "failed to update HMAC state"))
-               st)]))
+               (with-mutex (hmac-state-mutex st)
+                 (check-live-state who st)
+                 (check-slice who (string-length str) start stop)
+                 (when (fx= 0 (ffi-hmac-state-update-string! (hmac-state-handle st) str start stop))
+                   (errorf who "failed to update HMAC state"))
+                 st))]))
 
   #|proc:hmac-get
 The `hmac-get` procedure returns the current MAC without finalizing the state.
@@ -105,11 +111,12 @@ The `hmac-get` procedure returns the current MAC without finalizing the state.
   (define-who hmac-get
     (lambda (st)
       (pcheck ([hmac-state? st])
-              (check-live-state who st)
-              (let ([ans (ffi-hmac-state-get (hmac-state-handle st))])
-                (when (eq? ans #f)
-                  (errorf who "failed to obtain HMAC value"))
-                ans))))
+              (with-mutex (hmac-state-mutex st)
+                (check-live-state who st)
+                (let ([ans (ffi-hmac-state-get (hmac-state-handle st))])
+                  (when (eq? ans #f)
+                    (errorf who "failed to obtain HMAC value"))
+                  ans)))))
 
   #|proc:hmac-finalize!
 The `hmac-finalize!` procedure finalizes an HMAC state and returns the MAC value.
@@ -117,14 +124,15 @@ The `hmac-finalize!` procedure finalizes an HMAC state and returns the MAC value
   (define-who hmac-finalize!
     (lambda (st)
       (pcheck ([hmac-state? st])
-              (check-live-state who st)
-              (let ([ans (ffi-hmac-state-finalize (hmac-state-handle st))])
-                (when (eq? ans #f)
-                  (errorf who "failed to finalize HMAC state"))
-                (ffi-hmac-state-destroy (hmac-state-handle st))
-                (hmac-state-handle-set! st 0)
-                (hmac-state-finalized?-set! st #t)
-                ans))))
+              (with-mutex (hmac-state-mutex st)
+                (check-live-state who st)
+                (let ([ans (ffi-hmac-state-finalize (hmac-state-handle st))])
+                  (when (eq? ans #f)
+                    (errorf who "failed to finalize HMAC state"))
+                  (ffi-hmac-state-destroy (hmac-state-handle st))
+                  (hmac-state-handle-set! st 0)
+                  (hmac-state-finalized?-set! st #t)
+                  ans)))))
 
   #|proc:hmac-reset!
 The `hmac-reset!` procedure resets an HMAC state to accept a new message with the same key.
@@ -132,10 +140,11 @@ The `hmac-reset!` procedure resets an HMAC state to accept a new message with th
   (define-who hmac-reset!
     (lambda (st)
       (pcheck ([hmac-state? st])
-              (check-live-state who st)
-              (when (fx= 0 (ffi-hmac-state-reset! (hmac-state-handle st)))
-                (errorf who "failed to reset HMAC state"))
-              st)))
+              (with-mutex (hmac-state-mutex st)
+                (check-live-state who st)
+                (when (fx= 0 (ffi-hmac-state-reset! (hmac-state-handle st)))
+                  (errorf who "failed to reset HMAC state"))
+                st))))
 
   #|proc:hmac-destroy!
 The `hmac-destroy!` procedure releases the foreign resources owned by an HMAC state.
@@ -143,12 +152,13 @@ The `hmac-destroy!` procedure releases the foreign resources owned by an HMAC st
   (define-who hmac-destroy!
     (lambda (st)
       (pcheck ([hmac-state? st])
-              (unless (hmac-state-destroyed? st)
-                (unless (eq? (hmac-state-handle st) 0)
-                  (ffi-hmac-state-destroy (hmac-state-handle st))
-                  (hmac-state-handle-set! st 0))
-                (hmac-state-destroyed?-set! st #t))
-              st)))
+              (with-mutex (hmac-state-mutex st)
+                (unless (hmac-state-destroyed? st)
+                  (unless (eq? (hmac-state-handle st) 0)
+                    (ffi-hmac-state-destroy (hmac-state-handle st))
+                    (hmac-state-handle-set! st 0))
+                  (hmac-state-destroyed?-set! st #t))
+                st))))
 
   #|proc:call-with-hmac-state
 The `call-with-hmac-state` procedure creates an HMAC state, passes it to `proc`, and always destroys it afterwards.

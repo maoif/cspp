@@ -1,5 +1,11 @@
 (import (cspp))
 
+(mat crypto-thread-safety
+  ;; Error case: shared updates and destruction must be serialized without native corruption.
+  (= 0 (system (if (file-exists? "crypto-thread-process.py")
+                   "python3 -I crypto-thread-process.py"
+                   "python3 -I tests/crypto-thread-process.py"))))
+
 (define crypto-rejects?
   (lambda (thunk)
     (guard (condition [else (or (error? condition) (violation? condition))])

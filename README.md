@@ -40,6 +40,10 @@ exclusive. To hash UTF-8 text, use `(digest-bytevector 'sha256 (string->utf8 tex
 OpenSSL supplies MD5, SHA-2, SHA-3, and BLAKE2; BLAKE3 uses its independently optional library.
 MD5 is retained for legacy interoperability and is unsuitable for security-sensitive hashing.
 
+Digest, HMAC, cipher, AEAD, signing, and verification states serialize individual operations
+on a shared state. Concurrent updates take effect in lock-acquisition order; use separate states
+for independent messages. User callbacks run without holding a state lock.
+
 The old `(cspp digest)` and `(cspp crypto hash)` imports have been removed. Replace them with
 `(cspp crypto digest)` and replace the former crypto `hash-*` names with `digest-*` or
 `digester-*` as appropriate. Algorithm-specific helpers retain their names. Noncryptographic

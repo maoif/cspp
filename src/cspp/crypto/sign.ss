@@ -42,7 +42,7 @@
 
   (define-record-type (sign-state %make-sign-state sign-state?)
     (opaque #t)
-    (fields algorithm
+    (fields mutex algorithm
             digest
             key
             (mutable chunks)
@@ -51,7 +51,7 @@
 
   (define-record-type (verify-state %make-verify-state verify-state?)
     (opaque #t)
-    (fields algorithm
+    (fields mutex algorithm
             digest
             key
             (mutable chunks)
@@ -138,7 +138,7 @@
                (check-signing-algorithm who alg)
                (check-signing-key who alg (crypto-private-key-algorithm key)
                                   (crypto-private-key-destroyed? key))
-               (%make-sign-state alg digest key '() #f #f))]))
+               (%make-sign-state (make-mutex 'sign) alg digest key '() #f #f))]))
 
   #|proc:make-verify-state
   The `make-verify-state` procedure returns a buffered verification state for algorithm
@@ -155,7 +155,7 @@
                (check-signing-algorithm who alg)
                (check-signing-key who alg (crypto-public-key-algorithm key)
                                   (crypto-public-key-destroyed? key))
-               (%make-verify-state alg digest key '() #f #f))]))
+               (%make-verify-state (make-mutex 'verify) alg digest key '() #f #f))]))
 
   (define update-state!
     (lambda (setter getter len who st bv start stop)
@@ -172,9 +172,10 @@ The `sign-update-bytevector!` procedure appends a bytevector slice to a sign sta
       [(st bv start) (sign-update-bytevector! st bv start (bytevector-length bv))]
       [(st bv start stop)
        (pcheck ([sign-state? st] [bytevector? bv])
-               (check-sign-state-live who st)
-               (update-state! sign-state-chunks-set! sign-state-chunks
-                              (bytevector-length bv) who st bv start stop))]))
+               (with-mutex (sign-state-mutex st)
+                 (check-sign-state-live who st)
+                 (update-state! sign-state-chunks-set! sign-state-chunks
+                                (bytevector-length bv) who st bv start stop)))]))
 
   #|proc:sign-update-string!
 The `sign-update-string!` procedure appends a string slice to a sign state.
@@ -185,12 +186,13 @@ The `sign-update-string!` procedure appends a string slice to a sign state.
       [(st str start) (sign-update-string! st str start (string-length str))]
       [(st str start stop)
        (pcheck ([sign-state? st] [string? str])
-               (check-sign-state-live who st)
-               (check-slice who (string-length str) start stop)
-               (sign-state-chunks-set! st
-                                       (cons (string->utf8 (substring str start stop))
-                                             (sign-state-chunks st)))
-               st)]))
+               (with-mutex (sign-state-mutex st)
+                 (check-sign-state-live who st)
+                 (check-slice who (string-length str) start stop)
+                 (sign-state-chunks-set! st
+                                         (cons (string->utf8 (substring str start stop))
+                                               (sign-state-chunks st)))
+                 st))]))
 
   #|proc:verify-update-bytevector!
 The `verify-update-bytevector!` procedure appends a bytevector slice to a verify state.
@@ -201,9 +203,10 @@ The `verify-update-bytevector!` procedure appends a bytevector slice to a verify
       [(st bv start) (verify-update-bytevector! st bv start (bytevector-length bv))]
       [(st bv start stop)
        (pcheck ([verify-state? st] [bytevector? bv])
-               (check-verify-state-live who st)
-               (update-state! verify-state-chunks-set! verify-state-chunks
-                              (bytevector-length bv) who st bv start stop))]))
+               (with-mutex (verify-state-mutex st)
+                 (check-verify-state-live who st)
+                 (update-state! verify-state-chunks-set! verify-state-chunks
+                                (bytevector-length bv) who st bv start stop)))]))
 
   #|proc:verify-update-string!
 The `verify-update-string!` procedure appends a string slice to a verify state.
@@ -214,12 +217,13 @@ The `verify-update-string!` procedure appends a string slice to a verify state.
       [(st str start) (verify-update-string! st str start (string-length str))]
       [(st str start stop)
        (pcheck ([verify-state? st] [string? str])
-               (check-verify-state-live who st)
-               (check-slice who (string-length str) start stop)
-               (verify-state-chunks-set! st
-                                         (cons (string->utf8 (substring str start stop))
-                                               (verify-state-chunks st)))
-               st)]))
+               (with-mutex (verify-state-mutex st)
+                 (check-verify-state-live who st)
+                 (check-slice who (string-length str) start stop)
+                 (verify-state-chunks-set! st
+                                           (cons (string->utf8 (substring str start stop))
+                                                 (verify-state-chunks st)))
+                 st))]))
 
   #|proc:sign-finalize!
 The `sign-finalize!` procedure finalizes a sign state and returns the signature.
@@ -227,13 +231,14 @@ The `sign-finalize!` procedure finalizes a sign state and returns the signature.
   (define-who sign-finalize!
     (lambda (st)
       (pcheck ([sign-state? st])
-              (check-sign-state-live who st)
-              (let ([ans (sign-message (sign-state-algorithm st)
-                                       (sign-state-digest st)
-                                       (sign-state-key st)
-                                       (concat-chunks (sign-state-chunks st)))])
-                (sign-state-finalized?-set! st #t)
-                ans))))
+              (with-mutex (sign-state-mutex st)
+                (check-sign-state-live who st)
+                (let ([ans (sign-message (sign-state-algorithm st)
+                                         (sign-state-digest st)
+                                         (sign-state-key st)
+                                         (concat-chunks (sign-state-chunks st)))])
+                  (sign-state-finalized?-set! st #t)
+                  ans)))))
 
   #|proc:verify-finalize?
 The `verify-finalize?` procedure finalizes a verify state and checks `signature`.
@@ -241,14 +246,15 @@ The `verify-finalize?` procedure finalizes a verify state and checks `signature`
   (define-who verify-finalize?
     (lambda (st signature)
       (pcheck ([verify-state? st] [bytevector? signature])
-              (check-verify-state-live who st)
-              (let ([ans (verify-signature? (verify-state-algorithm st)
-                                            (verify-state-digest st)
-                                            (verify-state-key st)
-                                            (concat-chunks (verify-state-chunks st))
-                                            signature)])
-                (verify-state-finalized?-set! st #t)
-                ans))))
+              (with-mutex (verify-state-mutex st)
+                (check-verify-state-live who st)
+                (let ([ans (verify-signature? (verify-state-algorithm st)
+                                              (verify-state-digest st)
+                                              (verify-state-key st)
+                                              (concat-chunks (verify-state-chunks st))
+                                              signature)])
+                  (verify-state-finalized?-set! st #t)
+                  ans)))))
 
   #|proc:sign-destroy!
 The `sign-destroy!` procedure releases buffered data owned by a sign state.
@@ -256,10 +262,11 @@ The `sign-destroy!` procedure releases buffered data owned by a sign state.
   (define-who sign-destroy!
     (lambda (st)
       (pcheck ([sign-state? st])
-              (unless (sign-state-destroyed? st)
-                (sign-state-chunks-set! st '())
-                (sign-state-destroyed?-set! st #t))
-              st)))
+              (with-mutex (sign-state-mutex st)
+                (unless (sign-state-destroyed? st)
+                  (sign-state-chunks-set! st '())
+                  (sign-state-destroyed?-set! st #t))
+                st))))
 
   #|proc:verify-destroy!
 The `verify-destroy!` procedure releases buffered data owned by a verify state.
@@ -267,10 +274,11 @@ The `verify-destroy!` procedure releases buffered data owned by a verify state.
   (define-who verify-destroy!
     (lambda (st)
       (pcheck ([verify-state? st])
-              (unless (verify-state-destroyed? st)
-                (verify-state-chunks-set! st '())
-                (verify-state-destroyed?-set! st #t))
-              st)))
+              (with-mutex (verify-state-mutex st)
+                (unless (verify-state-destroyed? st)
+                  (verify-state-chunks-set! st '())
+                  (verify-state-destroyed?-set! st #t))
+                st))))
 
   #|proc:call-with-sign-state
 The `call-with-sign-state` procedure creates a sign state, passes it to `proc`, and always destroys it afterwards.

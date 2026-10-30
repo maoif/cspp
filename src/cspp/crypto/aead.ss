@@ -34,7 +34,7 @@
 
   (define-record-type (aead-state %make-aead-state aead-state?)
     (opaque #t)
-    (fields mode
+    (fields mutex mode
             algorithm
             key
             nonce
@@ -177,7 +177,7 @@ The `make-aead-encrypt-state` procedure creates a buffered AEAD encryption state
       (pcheck ([bytevector? key nonce])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
-              (%make-aead-state 'encrypt which key nonce '() '() #f #f))))
+              (%make-aead-state (make-mutex 'aead) 'encrypt which key nonce '() '() #f #f))))
 
   #|proc:make-aead-decrypt-state
 The `make-aead-decrypt-state` procedure creates a buffered AEAD decryption state.
@@ -187,7 +187,7 @@ The `make-aead-decrypt-state` procedure creates a buffered AEAD decryption state
       (pcheck ([bytevector? key nonce])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
-              (%make-aead-state 'decrypt which key nonce '() '() #f #f))))
+              (%make-aead-state (make-mutex 'aead) 'decrypt which key nonce '() '() #f #f))))
 
   #|proc:aead-update-aad-bytevector!
 The `aead-update-aad-bytevector!` procedure buffers an AAD bytevector slice into an AEAD state.
@@ -196,16 +196,19 @@ The `aead-update-aad-bytevector!` procedure buffers an AAD bytevector slice into
     (case-lambda
       [(st bv)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (aead-update-aad-bytevector! st bv 0 (bytevector-length bv)))]
+               (with-mutex (aead-state-mutex st)
+                 (aead-update-aad-bytevector! st bv 0 (bytevector-length bv))))]
       [(st bv start)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (aead-update-aad-bytevector! st bv start (bytevector-length bv)))]
+               (with-mutex (aead-state-mutex st)
+                 (aead-update-aad-bytevector! st bv start (bytevector-length bv))))]
       [(st bv start stop)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (check-live-state who st)
-               (check-slice who (bytevector-length bv) start stop)
-               (aead-state-aad*-set! st (cons (subbytevector bv start stop) (aead-state-aad* st)))
-               st)]))
+               (with-mutex (aead-state-mutex st)
+                 (check-live-state who st)
+                 (check-slice who (bytevector-length bv) start stop)
+                 (aead-state-aad*-set! st (cons (subbytevector bv start stop) (aead-state-aad* st)))
+                 st))]))
 
   #|proc:aead-update-plaintext-bytevector!
 The `aead-update-plaintext-bytevector!` procedure buffers plaintext into an encryption state.
@@ -214,18 +217,21 @@ The `aead-update-plaintext-bytevector!` procedure buffers plaintext into an encr
     (case-lambda
       [(st bv)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (aead-update-plaintext-bytevector! st bv 0 (bytevector-length bv)))]
+               (with-mutex (aead-state-mutex st)
+                 (aead-update-plaintext-bytevector! st bv 0 (bytevector-length bv))))]
       [(st bv start)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (aead-update-plaintext-bytevector! st bv start (bytevector-length bv)))]
+               (with-mutex (aead-state-mutex st)
+                 (aead-update-plaintext-bytevector! st bv start (bytevector-length bv))))]
       [(st bv start stop)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (check-live-state who st)
-               (unless (eq? (aead-state-mode st) 'encrypt)
-                 (errorf who "state is not in encrypt mode"))
-               (check-slice who (bytevector-length bv) start stop)
-               (aead-state-data*-set! st (cons (subbytevector bv start stop) (aead-state-data* st)))
-               st)]))
+               (with-mutex (aead-state-mutex st)
+                 (check-live-state who st)
+                 (unless (eq? (aead-state-mode st) 'encrypt)
+                   (errorf who "state is not in encrypt mode"))
+                 (check-slice who (bytevector-length bv) start stop)
+                 (aead-state-data*-set! st (cons (subbytevector bv start stop) (aead-state-data* st)))
+                 st))]))
 
   #|proc:aead-update-ciphertext-bytevector!
 The `aead-update-ciphertext-bytevector!` procedure buffers ciphertext into a decryption state.
@@ -234,18 +240,21 @@ The `aead-update-ciphertext-bytevector!` procedure buffers ciphertext into a dec
     (case-lambda
       [(st bv)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (aead-update-ciphertext-bytevector! st bv 0 (bytevector-length bv)))]
+               (with-mutex (aead-state-mutex st)
+                 (aead-update-ciphertext-bytevector! st bv 0 (bytevector-length bv))))]
       [(st bv start)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (aead-update-ciphertext-bytevector! st bv start (bytevector-length bv)))]
+               (with-mutex (aead-state-mutex st)
+                 (aead-update-ciphertext-bytevector! st bv start (bytevector-length bv))))]
       [(st bv start stop)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (check-live-state who st)
-               (unless (eq? (aead-state-mode st) 'decrypt)
-                 (errorf who "state is not in decrypt mode"))
-               (check-slice who (bytevector-length bv) start stop)
-               (aead-state-data*-set! st (cons (subbytevector bv start stop) (aead-state-data* st)))
-               st)]))
+               (with-mutex (aead-state-mutex st)
+                 (check-live-state who st)
+                 (unless (eq? (aead-state-mode st) 'decrypt)
+                   (errorf who "state is not in decrypt mode"))
+                 (check-slice who (bytevector-length bv) start stop)
+                 (aead-state-data*-set! st (cons (subbytevector bv start stop) (aead-state-data* st)))
+                 st))]))
 
   #|proc:aead-finalize-encrypt!
 The `aead-finalize-encrypt!` procedure finalizes an encryption state and returns ciphertext and tag.
@@ -253,18 +262,19 @@ The `aead-finalize-encrypt!` procedure finalizes an encryption state and returns
   (define-who aead-finalize-encrypt!
     (lambda (st)
       (pcheck ([aead-state? st])
-              (check-live-state who st)
-              (unless (eq? (aead-state-mode st) 'encrypt)
-                (errorf who "state is not in encrypt mode"))
-              (let-values ([(ciphertext tag)
-                            (do-aead-encrypt who
-                                             (aead-state-algorithm st)
-                                             (aead-state-key st)
-                                             (aead-state-nonce st)
-                                             (concat* (aead-state-aad* st))
-                                             (concat* (aead-state-data* st)))])
-                (aead-state-finalized?-set! st #t)
-                (values ciphertext tag)))))
+              (with-mutex (aead-state-mutex st)
+                (check-live-state who st)
+                (unless (eq? (aead-state-mode st) 'encrypt)
+                  (errorf who "state is not in encrypt mode"))
+                (let-values ([(ciphertext tag)
+                              (do-aead-encrypt who
+                                               (aead-state-algorithm st)
+                                               (aead-state-key st)
+                                               (aead-state-nonce st)
+                                               (concat* (aead-state-aad* st))
+                                               (concat* (aead-state-data* st)))])
+                  (aead-state-finalized?-set! st #t)
+                  (values ciphertext tag))))))
 
   #|proc:aead-finalize-decrypt!
   The `aead-finalize-decrypt!` procedure finalizes the live decryption state `st` using
@@ -275,18 +285,19 @@ The `aead-finalize-encrypt!` procedure finalizes an encryption state and returns
   (define-who aead-finalize-decrypt!
     (lambda (st tag)
       (pcheck ([aead-state? st] [bytevector? tag])
-              (check-live-state who st)
-              (unless (eq? (aead-state-mode st) 'decrypt)
-                (errorf who "state is not in decrypt mode"))
-              (let ([ans (do-aead-decrypt who
-                                          (aead-state-algorithm st)
-                                          (aead-state-key st)
-                                          (aead-state-nonce st)
-                                          (concat* (aead-state-aad* st))
-                                          (concat* (aead-state-data* st))
-                                          tag)])
-                (aead-state-finalized?-set! st #t)
-                ans))))
+              (with-mutex (aead-state-mutex st)
+                (check-live-state who st)
+                (unless (eq? (aead-state-mode st) 'decrypt)
+                  (errorf who "state is not in decrypt mode"))
+                (let ([ans (do-aead-decrypt who
+                                            (aead-state-algorithm st)
+                                            (aead-state-key st)
+                                            (aead-state-nonce st)
+                                            (concat* (aead-state-aad* st))
+                                            (concat* (aead-state-data* st))
+                                            tag)])
+                  (aead-state-finalized?-set! st #t)
+                  ans)))))
 
   #|proc:aead-destroy!
 The `aead-destroy!` procedure marks an AEAD state as destroyed and releases buffered data.
@@ -294,11 +305,12 @@ The `aead-destroy!` procedure marks an AEAD state as destroyed and releases buff
   (define-who aead-destroy!
     (lambda (st)
       (pcheck ([aead-state? st])
-              (unless (aead-state-destroyed? st)
-                (aead-state-aad*-set! st '())
-                (aead-state-data*-set! st '())
-                (aead-state-destroyed?-set! st #t))
-              st)))
+              (with-mutex (aead-state-mutex st)
+                (unless (aead-state-destroyed? st)
+                  (aead-state-aad*-set! st '())
+                  (aead-state-data*-set! st '())
+                  (aead-state-destroyed?-set! st #t))
+                st))))
 
   #|proc:call-with-aead-encrypt-state
 The `call-with-aead-encrypt-state` procedure creates an AEAD encryption state, passes it to `proc`, and always destroys it afterwards.

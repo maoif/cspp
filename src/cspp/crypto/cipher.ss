@@ -29,7 +29,7 @@
 
   (define-record-type (cipher-state %make-cipher-state cipher-state?)
     (opaque #t)
-    (fields algorithm
+    (fields mutex algorithm
             mode
             (mutable handle)
             (mutable destroyed?)
@@ -100,7 +100,7 @@ The `make-cipher-state` procedure creates a lower-level cipher state in `mode` f
                                                     iv 0 (bytevector-length iv))])
                 (when (eq? handle 0)
                   (errorf who "failed to create cipher state for ~s" which))
-                (%make-cipher-state which mode handle #f #f)))))
+                (%make-cipher-state (make-mutex 'cipher) which mode handle #f #f)))))
 
   #|proc:cipher-update-bytevector!
 The `cipher-update-bytevector!` procedure transforms a bytevector slice and returns the output chunk.
@@ -109,18 +109,21 @@ The `cipher-update-bytevector!` procedure transforms a bytevector slice and retu
     (case-lambda
       [(st bv)
        (pcheck ([cipher-state? st] [bytevector? bv])
-               (cipher-update-bytevector! st bv 0 (bytevector-length bv)))]
+               (with-mutex (cipher-state-mutex st)
+                 (cipher-update-bytevector! st bv 0 (bytevector-length bv))))]
       [(st bv start)
        (pcheck ([cipher-state? st] [bytevector? bv])
-               (cipher-update-bytevector! st bv start (bytevector-length bv)))]
+               (with-mutex (cipher-state-mutex st)
+                 (cipher-update-bytevector! st bv start (bytevector-length bv))))]
       [(st bv start stop)
        (pcheck ([cipher-state? st] [bytevector? bv])
-               (check-cipher-state-live who st)
-               (check-slice who (bytevector-length bv) start stop)
-               (let ([ans (ffi-cipher-state-update (cipher-state-handle st) bv start stop)])
-                 (when (eq? ans #f)
-                   (errorf who "cipher update failed for ~s" (cipher-state-algorithm st)))
-                 ans))]))
+               (with-mutex (cipher-state-mutex st)
+                 (check-cipher-state-live who st)
+                 (check-slice who (bytevector-length bv) start stop)
+                 (let ([ans (ffi-cipher-state-update (cipher-state-handle st) bv start stop)])
+                   (when (eq? ans #f)
+                     (errorf who "cipher update failed for ~s" (cipher-state-algorithm st)))
+                   ans)))]))
 
   #|proc:cipher-finalize!
 The `cipher-finalize!` procedure finalizes a cipher state and returns the trailing output chunk.
@@ -128,12 +131,13 @@ The `cipher-finalize!` procedure finalizes a cipher state and returns the traili
   (define-who cipher-finalize!
     (lambda (st)
       (pcheck ([cipher-state? st])
-              (check-cipher-state-live who st)
-              (let ([ans (ffi-cipher-state-finalize (cipher-state-handle st))])
-                (when (eq? ans #f)
-                  (errorf who "cipher finalization failed for ~s" (cipher-state-algorithm st)))
-                (cipher-state-finalized?-set! st #t)
-                ans))))
+              (with-mutex (cipher-state-mutex st)
+                (check-cipher-state-live who st)
+                (let ([ans (ffi-cipher-state-finalize (cipher-state-handle st))])
+                  (when (eq? ans #f)
+                    (errorf who "cipher finalization failed for ~s" (cipher-state-algorithm st)))
+                  (cipher-state-finalized?-set! st #t)
+                  ans)))))
 
   #|proc:cipher-reset!
 The `cipher-reset!` procedure reinitializes a cipher state with its original key and IV.
@@ -141,11 +145,12 @@ The `cipher-reset!` procedure reinitializes a cipher state with its original key
   (define-who cipher-reset!
     (lambda (st)
       (pcheck ([cipher-state? st])
-              (check-cipher-state-resettable who st)
-              (unless (fx= 1 (ffi-cipher-state-reset! (cipher-state-handle st)))
-                (errorf who "failed to reset cipher state for ~s" (cipher-state-algorithm st)))
-              (cipher-state-finalized?-set! st #f)
-              st)))
+              (with-mutex (cipher-state-mutex st)
+                (check-cipher-state-resettable who st)
+                (unless (fx= 1 (ffi-cipher-state-reset! (cipher-state-handle st)))
+                  (errorf who "failed to reset cipher state for ~s" (cipher-state-algorithm st)))
+                (cipher-state-finalized?-set! st #f)
+                st))))
 
   #|proc:cipher-destroy!
 The `cipher-destroy!` procedure releases foreign resources owned by `st`.
@@ -153,11 +158,12 @@ The `cipher-destroy!` procedure releases foreign resources owned by `st`.
   (define-who cipher-destroy!
     (lambda (st)
       (pcheck ([cipher-state? st])
-              (unless (cipher-state-destroyed? st)
-                (ffi-cipher-state-destroy (cipher-state-handle st))
-                (cipher-state-handle-set! st 0)
-                (cipher-state-destroyed?-set! st #t))
-              st)))
+              (with-mutex (cipher-state-mutex st)
+                (unless (cipher-state-destroyed? st)
+                  (ffi-cipher-state-destroy (cipher-state-handle st))
+                  (cipher-state-handle-set! st 0)
+                  (cipher-state-destroyed?-set! st #t))
+                st))))
 
   #|proc:call-with-cipher-state
 The `call-with-cipher-state` procedure creates a cipher state, passes it to `proc`, and always destroys it afterwards.
