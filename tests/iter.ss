@@ -1143,3 +1143,23 @@
     (and (equal? '((0 1 2) (3 4 5)) (collect-iter cursor))
          (begin (iter-reset! cursor) #t)
          (equal? '((0 1 2) (3 4 5)) (iter->list cursor)))))
+
+(mat iter-list-relative-bounds
+  (equal? '(2 3) (iter->list (list->iter '(0 1 2 3) -2 4)))
+
+  (equal? '(0 1 2) (iter->list (list->iter '(0 1 2 3) -1)))
+
+  (equal? '(1 3) (iter->list (list->iter '(0 1 2 3 4) -4 -1 2)))
+
+  (equal? '(0 2) (iter->list (list->iter '(0 1 2 3) -100 100 2)))
+
+  (equal? '() (iter->list (list->iter '(0 1 2 3) -1 -3)))
+
+  (equal? '(1 3) (iter->list (list->iter '(0 1 2 3 4) 1.0 4.0 2.0)))
+
+  (let* ([source (list 0 1 2)] [cursor (list->iter source -2 -1)])
+    (and (equal? '(1) (collect-iter cursor))
+         (begin
+           (set-cdr! (cddr source) (list 3 4))
+           (iter-reset! cursor)
+           (equal? '(3) (iter->list cursor))))))

@@ -295,10 +295,14 @@
   The `list->iter` procedure returns a forward iterator over `source`. The optional integer
   `start` and `stop` parameters select a half-open range, and positive `step` selects the
   distance between values. The iterator returns each selected value until it reaches its end.
+  Negative bounds count from the current source end and are clipped at zero. Integer-valued
+  inexact bounds and steps are normalized to exact integers. Omitted `start` is zero and
+  omitted `step` is one; with no bounds, traverse the whole source.
   Reset resolves the selected start from the current source again, so changes between
   passes are visible. Mutation during a pass is unspecified. The final pull does not seek
   past the selected range, even when `step` is larger than the remaining range.
-  An empty configured range (`start >= stop`) does not seek through the source on reset.
+  After bounds are normalized, an empty range (`start >= stop`) does not seek a source
+  prefix. Resolving negative bounds still reads the source length on reset.
   Kind: resource-free cursor constructor; each call creates independent producer state.
   |#
   (define-who list->iter
@@ -322,17 +326,27 @@
        (pcheck ([list? source] [integer? start stop step])
                (when (<= step 0)
                  (errorf who "step must be positive"))
-               (let ([index start] [remaining '()])
+               (let ([original-start (exact start)] [original-stop (exact stop)]
+                     [step (exact step)] [index 0] [stop 0] [remaining '()])
                  (define reset!
                    (lambda ()
-                     (set! index start)
-                     (set! remaining
-                           ;; An empty interval needs no source prefix, on any pass.
-                           (if (>= start stop) '()
-                               (let loop ([tail source] [count start])
-                                 (cond [(null? tail) '()]
-                                       [(= count 0) tail]
-                                       [else (loop (cdr tail) (sub1 count))]))))))
+                     ;; Ordinary forward bounds need no extra full-spine traversal.
+                     ;; Relative bounds use the current length on every reset.
+                     (let* ([length (and (or (negative? original-start)
+                                            (negative? original-stop))
+                                        (length source))]
+                            [start (if (negative? original-start)
+                                       (max 0 (+ length original-start)) original-start)])
+                       (set! stop (if (negative? original-stop)
+                                      (max 0 (+ length original-stop)) original-stop))
+                       (set! index start)
+                       (set! remaining
+                             ;; An empty interval needs no source prefix, on any pass.
+                             (if (>= start stop) '()
+                                 (let loop ([tail source] [count start])
+                                   (cond [(null? tail) '()]
+                                         [(= count 0) tail]
+                                         [else (loop (cdr tail) (sub1 count))])))))))
                  (reset!)
                  (mk-$iter
                   (lambda ()
