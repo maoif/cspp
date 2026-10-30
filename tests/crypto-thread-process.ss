@@ -220,7 +220,13 @@
      (when (optional-library-available? (optional-library-info 'openssl))
        (check-state-lifetime-races (lambda () (make-hmac-state 'sha256 #vu8(1 2 3)))
          hmac-update-bytevector! hmac-get hmac-reset! hmac-finalize! hmac-destroy! bytes
-         (hmac 'sha256 #vu8(1 2 3) bytes)))]
+         (hmac 'sha256 #vu8(1 2 3) bytes))
+       (check-state-lifetime-races
+         (lambda () (make-cipher-state 'encrypt 'aes-256-ctr
+                                      (make-bytevector 32 7) (make-bytevector 16 9)))
+         cipher-update-bytevector!
+         (lambda (state) (cipher-update-bytevector! state #vu8()))
+         cipher-reset! cipher-finalize! cipher-destroy! bytes #vu8()))]
     [(string=? mode "resource-lifetimes")
      (when (optional-library-available? (optional-library-info 'openssl))
        (do ([round 0 (fx1+ round)]) [(fx= round 20)]

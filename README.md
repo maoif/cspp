@@ -56,6 +56,8 @@ for independent messages. User callbacks run without holding a state lock.
 Keys, certificates, and trust stores also serialize use and destruction. Multi-resource
 operations acquire their locks in a fixed order. A call racing with destruction either
 finishes before destruction or raises a destroyed-resource error.
+Callers must keep mutable input buffers unchanged until an operation returns. AEAD state
+constructors copy their key and nonce buffers, matching the ownership of cipher and HMAC states.
 
 The old `(cspp digest)` and `(cspp crypto hash)` imports have been removed. Replace them with
 `(cspp crypto digest)` and replace the former crypto `hash-*` names with `digest-*` or
