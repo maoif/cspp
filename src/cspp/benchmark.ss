@@ -291,16 +291,39 @@
                       (list-ref sorted mid))
                    2))))))
 
+  (define $range-safe-sqrt
+    (lambda (value)
+      (let ([root (sqrt value)]
+            [exponent (- (integer-length (numerator value))
+                         (integer-length (denominator value)))])
+        (if (or (exact? root)
+                ;; Ordinary inexact roots retain their existing representation.
+                (<= -1022 exponent 1022))
+            root
+            ;; Normalize an exact rational before taking an approximate root. Scaling the
+            ;; approximation back with exact arithmetic preserves values outside flonum range.
+            (let* ([scale (expt 2 (floor (/ exponent 2)))]
+                   [normalized (/ value (* scale scale))])
+              (* (inexact->exact (sqrt (exact->inexact normalized))) scale))))))
+
+  (define $range-safe-inexact
+    (lambda (value)
+      (let ([approximation (exact->inexact value)])
+        (if (and (finite? approximation) (or (zero? value) (not (zero? approximation))))
+            approximation
+            value))))
+
   (define $stddev
     (lambda (xs)
       (if (or (null? xs) (null? (cdr xs)))
           0
           (let ([mean ($mean xs)])
-            (sqrt (/ (apply + (map (lambda (x)
-                                     (let ([delta (- x mean)])
-                                       (* delta delta)))
-                                   xs))
-                     (length xs)))))))
+            ($range-safe-sqrt
+              (/ (apply + (map (lambda (x)
+                                 (let ([delta (- x mean)])
+                                   (* delta delta)))
+                               xs))
+                 (length xs)))))))
 
   (define $summary-values
     (lambda (xs)
@@ -311,13 +334,17 @@
                  [stddev ($stddev xs)]
                  [margin (if (null? (cdr xs))
                              0
-                             (* 1.96 (/ stddev (sqrt (length xs)))))])
+                             (* 49/25 (/ (inexact->exact stddev)
+                                         (inexact->exact (sqrt (length xs))))))])
             `((median . ,($median xs))
               (mean . ,mean)
               (min . ,(apply min xs))
               (max . ,(apply max xs))
               (stddev . ,stddev)
-              (confidence-interval . ,(list (- mean margin) (+ mean margin))))))))
+              (confidence-interval . ,(if (null? (cdr xs))
+                                         (list mean mean)
+                                         (list ($range-safe-inexact (- mean margin))
+                                               ($range-safe-inexact (+ mean margin))))))))))
 
   (define $merge-counters
     (lambda (samples)
@@ -2463,6 +2490,8 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
 The `benchmark-summarize` procedure computes CPU nanosecond, real nanosecond,
 and allocated-byte per-iteration summary alists from measured `samples`.
 Division by iteration counts preserves exact fractional measurements.
+Approximate deviations and confidence bounds use exact rational representations when needed
+to preserve finite nonzero values outside flonum range.
 |#
   (define benchmark-summarize
     (lambda (samples)

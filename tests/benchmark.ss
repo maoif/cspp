@@ -2497,3 +2497,56 @@
                    (eq? (benchmark-result-error (cadr results)) primary)
                    (equal? reported (if reporting? '(completed partial-suite) '()))))))))
     '(#f #t)))
+
+(mat benchmark-summary-preserves-extreme-exact-range
+  ;; Error: finite exact variance and confidence limits must not overflow or underflow.
+  (for-all
+    (lambda (scale)
+      (for-all
+        (lambda (row)
+          (let* ([samples (map (lambda (value)
+                                 `((iterations . ,(if (< scale 1) (denominator scale) 1))
+                                   (bytes . ,(* value (if (< scale 1) 1 scale)))))
+                               (car row))]
+                 [result (car (benchmark-results-from-data
+                                `(((name . extreme-summary) (samples . ,samples)))))]
+                 [summary (cdr (assq 'bytes
+                                  (benchmark-summarize (benchmark-result-samples result))))]
+                 [deviation (cdr (assq 'stddev summary))]
+                 [bounds (cdr (assq 'confidence-interval summary))]
+                 [normalized (map (lambda (value) (/ value scale)) bounds)])
+            (and (= (cdr (assq 'mean summary)) scale)
+                 (finite? deviation) (> deviation 0)
+                 (< (abs (- (/ deviation scale) (cadr row))) 1e-14)
+                 (for-all finite? bounds)
+                 (for-all (lambda (actual expected) (< (abs (- actual expected)) 1e-14))
+                          normalized (caddr row)))))
+        '(((0 2) 1 (-0.3859292911256331 2.385929291125633))
+          ((0 1 2) 0.816496580927726 (0.07604713924957796 1.923952860750422)))))
+    (list (expt 10 400) (/ 1 (expt 10 400))
+          (expt 10 160) (/ 1 (expt 10 160)))))
+
+(mat benchmark-extreme-summaries-survive-persistence-and-reporting
+  (let* ([huge (expt 10 400)]
+         [sample-data `(((iterations . 1) (bytes . 0))
+                        ((iterations . 1) (bytes . ,huge))
+                        ((iterations . 1) (bytes . ,(* huge 2))))]
+         [original (car (benchmark-results-from-data
+                          `(((name . extreme) (samples . ,sample-data)))))]
+         [summary (benchmark-summarize (benchmark-result-samples original))]
+         [results (benchmark-results-from-data
+                    `(((name . extreme) (samples . ,sample-data) (summary . ,summary))))]
+         [path (benchmark-temp-file)])
+    (dynamic-wind
+      (lambda () (void))
+      (lambda ()
+        (benchmark-save-baseline results path)
+        (let* ([loaded (benchmark-load-baseline path)]
+               [text (call-with-string-output-port
+                       (lambda (out) (benchmark-report loaded (benchmark-json-reporter) out)))])
+          (and (equal? (benchmark-result-summary (car loaded)) summary)
+               (for-all finite?
+                 (cdr (assq 'confidence-interval (cdr (assq 'bytes summary)))))
+               (json5-document? (parse-json5 text))
+               (not (benchmark-string-contains? text "inf.0")))))
+      (lambda () (when (file-exists? path) (delete-file path))))))
