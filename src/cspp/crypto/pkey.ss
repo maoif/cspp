@@ -213,8 +213,13 @@ The `store-public-key` procedure serializes `key` to PEM or DER as a bytevector.
         [else (unreachable!)])))
 
   #|proc:load-private-key
-The `load-private-key` procedure loads a private key from a PEM or DER bytevector slice.
-|#
+  The `load-private-key` procedure returns an owned private key loaded from bytevector
+  `bv`. Optional format symbol `fmt` is `pem` (default) or `der`; optional nonnegative
+  fixnums `start` and `stop` select a half-open byte slice, defaulting to the whole input.
+  Encrypted PEM is unsupported and raises an error without prompting for a password.
+  Invalid input, unsupported keys, or native failures raise errors. Release the result
+  with `destroy-private-key!`.
+  |#
   (define-who load-private-key
     (case-lambda
       [(bv) (load-private-key bv 'pem 0 (bytevector-length bv))]
@@ -253,8 +258,10 @@ The `load-public-key` procedure loads a public key from a PEM or DER bytevector 
                  (raw->public-key who handle)))]))
 
   #|proc:pem->private-key
-The `pem->private-key` procedure loads a PEM private key from `bv`.
-|#
+  The `pem->private-key` procedure returns an owned private key loaded from PEM bytevector
+  `bv`, as in `load-private-key`. Encrypted PEM raises an error without password prompts.
+  Release the result with `destroy-private-key!`.
+  |#
   (define pem->private-key
     (lambda (bv)
       (load-private-key bv 'pem)))

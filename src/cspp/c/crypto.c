@@ -1061,6 +1061,16 @@ done:
   return ans;
 }
 
+/* No password API is exposed: encrypted PEM must fail without terminal I/O. */
+static int reject_pem_password(char *buffer, int size, int writing, void *userdata) {
+  (void)buffer;
+  (void)size;
+  (void)writing;
+  (void)userdata;
+  /* Zero denotes an empty password; a negative result rejects every request. */
+  return -1;
+}
+
 void *crypto_pkey_load_private_pem(ptr bv, uint64_t start, uint64_t stop) {
   int len;
   if (!cspp_openssl_require()) return NULL;
@@ -1068,7 +1078,7 @@ void *crypto_pkey_load_private_pem(ptr bv, uint64_t start, uint64_t stop) {
   BIO *bio = BIO_new_mem_buf(Sbytevector_data(bv) + (size_t)start, len);
   EVP_PKEY *pkey = NULL;
   if (bio == NULL) return NULL;
-  pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+  pkey = PEM_read_bio_PrivateKey(bio, NULL, reject_pem_password, NULL);
   BIO_free(bio);
   return pkey;
 }
