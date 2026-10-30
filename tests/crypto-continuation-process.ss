@@ -67,7 +67,7 @@
                          (eq? (condition-who condition) 'with-crypto-operation))
                     (void)])
             (resume-engine pending (lambda (fuel object) (set! second object)))))
-        (when (and second (not (eq? first second)) (= (handle first) (handle second)))
+        (when (and handle second (not (eq? first second)) (= (handle first) (handle second)))
           (destroy! first)
           (error 'crypto-continuations "constructor duplicated native ownership"))
         (destroy! first)
@@ -238,7 +238,18 @@
               (unless (eq? result 'blocked)
                 (error 'crypto-continuations "reentered failed native operation"))]))))]
     [(string=? mode "constructors")
+     (when blake3?
+       (check-constructor-resumption (lambda () (make-digester 'blake3)) #f digester-destroy!))
      (when openssl?
+       ;; Opaque state records expose no native handle; destroying both returned
+       ;; records still detects duplicated native ownership in this isolated process.
+       (check-constructor-resumption make-digester #f digester-destroy!)
+       (check-constructor-resumption (lambda () (make-hmac-state 'sha256 #vu8(1)))
+         #f hmac-destroy!)
+       (check-constructor-resumption
+         (lambda () (make-cipher-state 'encrypt 'aes-128-ctr
+                      (make-bytevector 16 0) (make-bytevector 16 0)))
+         #f cipher-destroy!)
        (check-constructor-resumption (lambda () (generate-private-key 'ed25519))
          crypto-private-key-handle destroy-private-key!)
        (check-constructor-resumption make-cert-store
@@ -246,7 +257,8 @@
        (let* ([private (generate-private-key 'ed25519)]
               [public (private-key->public-key private)]
               [private-pem (store-private-key private)]
-              [public-pem (store-public-key public)])
+              [public-pem (store-public-key public)]
+              [certificate-pem (read-fixture "root.cert.pem")])
          (dynamic-wind
            void
            (lambda ()
@@ -254,6 +266,8 @@
                crypto-private-key-handle destroy-private-key!)
              (check-constructor-resumption (lambda () (load-public-key public-pem))
                crypto-public-key-handle destroy-public-key!)
+             (check-constructor-resumption (lambda () (load-certificate certificate-pem))
+               crypto-certificate-handle destroy-certificate!)
              (check-constructor-resumption (lambda () (private-key->public-key private))
                crypto-public-key-handle destroy-public-key!))
            (lambda () (destroy-public-key! public) (destroy-private-key! private)))))]
