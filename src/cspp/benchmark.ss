@@ -2478,7 +2478,14 @@ Generated symbol keys retain their identity independently of ambient printer set
                   (dynamic-wind
                     (lambda () (void))
                     (lambda () (display text out) (newline out))
-                    (lambda () (close-output-port out))))))))
+                    (lambda ()
+                      (guard (raised
+                              [else
+                               ;; Discard pending data after a failed flush so the port can close.
+                               (clear-output-port out)
+                               (close-output-port out)
+                               (raise raised)])
+                        (close-output-port out)))))))))
 
   #|proc:benchmark-load-baseline
 The `benchmark-load-baseline` procedure reads benchmark results previously

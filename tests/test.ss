@@ -2059,3 +2059,12 @@
                     `((reporter . ,reporter) (output . ,out))))
             (equal? (extract) #vu8(7 7))))
         (lambda () (close-port out))))))
+
+(mat test-and-benchmark-close-after-flush-errors
+  ;; Error: buffered write failure during close must not leak file descriptors in either library.
+  (if (and (file-directory? "/proc/self/fd")
+           (= 0 (system "bash -c 'ulimit -f 0'")))
+      (= 0 (system
+             (string-append "bash -c 'ulimit -f 0; trap \"\" XFSZ; "
+                            "exec ../cspp --script=test-benchmark-close-error-process.ss'")))
+      #t))

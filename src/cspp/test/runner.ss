@@ -465,7 +465,14 @@ association-list filters as `test-select`.
                                  [print-gensym #t] [case-sensitive #t])
                     (for-each (lambda (form) (write form out) (newline out))
                               (test-descriptor-body descriptor))))
-                (lambda () (close-output-port out))))
+                (lambda ()
+                  (guard (raised
+                          [else
+                           ;; Discard pending data after a failed flush so the port can close.
+                           (clear-output-port out)
+                           (close-output-port out)
+                           (raise raised)])
+                    (close-output-port out)))))
             ($run-with-expected-condition metadata
               (lambda ()
                 (parameterize ([compile-file-message #f] [generate-wpo-files #f]

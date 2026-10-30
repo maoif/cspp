@@ -118,7 +118,7 @@ file.so: fswatcher-blocking-process.ss
 
 fiber.so: fiber-quantum-process.ss fiber-inherited-timer-process.ss
 
-test.so: mat-requires-fixture.ss
+test.so: mat-requires-fixture.ss test-benchmark-close-error-process.ss
 
 net-ftp.so: net-ftp-startup-process.ss
 
