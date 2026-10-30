@@ -3190,3 +3190,107 @@
     (nav-traverse (nav/choice nav/all nav/stay) '(1 2)
                   (lambda (value) (set! calls (+ calls 1)) (values 'a 'b)))
     (= calls 2)))
+
+;; The setter runs after the terminal callback. Resuming it must retain that
+;; successful update, including when no nav/must or nav/choice cell is active.
+(define navigator-default-setter-resumption-results
+  (lambda (prefix wrap source suspend)
+    (let ([saved #f] [pending '(9 11 13)] [results '()] [updates 0])
+      (let ([result
+             (nav-transform
+              (nav/path
+               prefix
+               (wrap
+                (nav/getter-setter
+                 'identity values
+                 (lambda (parent child)
+                   (suspend)
+                   ;; Complete every pass before resuming the same setter continuation.
+                   (call/cc (lambda (resume) (set! saved resume) child))))))
+              (lambda (value) (set! updates (+ updates 1)) (add1 value)) source)])
+        (set! results (cons result results))
+        (if (null? pending)
+            (list (reverse results) updates)
+            (let ([replacement (car pending)])
+              (set! pending (cdr pending))
+              (suspend)
+              (saved replacement)))))))
+
+(mat navigator-default-setter-resumption
+  (andmap
+   (lambda (wrap)
+     (equal? '((((x . 1)) ((x . 9)) ((x . 11)) ((x . 13))) 1)
+             (navigator-default-setter-resumption-results
+              (nav/key/default 'x 0) wrap '() void)))
+   (list values nav/must (lambda (path) (nav/choice path nav/stay))))
+
+  (equal? '((#(7 0 1) #(7 0 9) #(7 0 11) #(7 0 13)) 1)
+          (navigator-default-setter-resumption-results
+           (nav/nth/default 2 0) values '#(7) void))
+
+  (andmap
+   (lambda (workers)
+     (run-fibers
+      (lambda ()
+        (equal? '((((x . 1)) ((x . 9)) ((x . 11)) ((x . 13))) 1)
+                (navigator-default-setter-resumption-results
+                 (nav/key/default 'x 0) nav/must '() fiber-yield)))
+      workers 100))
+   '(1 4)))
+
+(mat navigator-scope-timer-migration
+  (andmap
+   (lambda (workers)
+     (let ([done (make-channel)]
+           [recursive (nav/letrec ([leaf nav/stay]) (make-nav-ref 'leaf))]
+           [default (nav/key/default 'x 0)]
+           [conditional (nav/must (nav/path nav/all (nav/not-pred negative?)))])
+       (run-fibers
+        (lambda ()
+          (do ([task 0 (+ task 1)]) ((= task 16))
+            (spawn-fiber
+             (lambda ()
+               (channel-put!
+                done
+                ;; Lost private scope can raise unresolved-reference/required-focus errors.
+                (guard (condition [else #f])
+                  (let loop ([remaining 10000])
+                    (or (= remaining 0)
+                        (and (equal? '(7) (nav-select recursive 7))
+                             (equal? '((x . 1)) (nav-transform default add1 '()))
+                             (equal? '(2 -2 4)
+                                     (nav-transform conditional add1 '(1 -2 3)))
+                             (loop (- remaining 1))))))))))
+          (let loop ([remaining 16] [correct? #t])
+            (if (= remaining 0) correct?
+                (let ([result (channel-get done)])
+                  (loop (- remaining 1) (and correct? result))))))
+        workers 100)))
+   '(1 4)))
+
+(mat navigator-not-pred-resumption
+  (let ([saved #f] [pending '(#f #f #t)] [results '()])
+    (let ([result
+           ;; An initially true predicate leaves nav/must empty; false replays select.
+           (guard (condition
+                   [(and (who-condition? condition)
+                         (eq? 'nav/must (condition-who condition))) 'required-focus-error])
+             (nav-transform
+              (nav/must
+               (nav/not-pred
+                (lambda (value)
+                  ;; Resume the predicate itself through the single negation boundary.
+                  (call/cc (lambda (resume) (set! saved resume) #t)))))
+              add1 7))])
+      (set! results (cons result results))
+      (if (null? pending)
+          (equal? '(required-focus-error 8 8 required-focus-error) (reverse results))
+          (let ([decision (car pending)])
+            (set! pending (cdr pending))
+            (saved decision)))))
+
+  ;; Negative: a predicate-origin focus error must propagate through nav/maybe.
+  (error? (nav-select (nav/maybe
+                      (nav/not-pred
+                       (lambda (value) (nav-select-one (nav/key 'missing) '()))))
+                     7)))

@@ -85,6 +85,12 @@
   ;; The owner ID records the thread that installed a binding, NOT fiber identity.
   ;; A newly forked thread inherits a value but not its scope: an owner mismatch
   ;; reads the default, preventing inherited mutable counters or construction scopes.
+  ;; Reading a binding and its owner must be indivisible with respect to timer
+  ;; preemption: migration between the two reads would compare workers A and B.
+  ;; Likewise, tag and install a value on the same worker. These short regions use
+  ;; only private primitives; they neither call user code nor yield. Interrupt
+  ;; masking prevents migration here, not simultaneous execution on other threads;
+  ;; make-thread-parameter already isolates those threads' binding slots.
   #|proc:make-nav-scope-parameter
   Return a private scope parameter with initial value `default`. Calling it without an
   argument reads the active scope; calling it with one value installs a binding owned by
@@ -94,11 +100,19 @@
     (lambda (default)
       (let ([binding (make-thread-parameter #f)])
         (case-lambda
-          [() (let ([entry (binding)])
-                (if (and entry (eqv? (car entry) (get-thread-id)))
-                    (cdr entry)
-                    default))]
-          [(value) (binding (cons (get-thread-id) value))]))))
+          [()
+           ;; This fixed read sequence cannot allocate, raise, or call user code.
+           ;; Pair the primitives directly to avoid a dynamic-wind frame on every
+           ;; scope lookup. Keep allocating writes in the exception-safe form below.
+           (disable-interrupts)
+           (let* ([entry (binding)]
+                  [value (if (and entry (eqv? (car entry) (get-thread-id)))
+                             (cdr entry)
+                             default)])
+             (enable-interrupts)
+             value)]
+          [(value) (with-interrupts-disabled
+                     (binding (cons (get-thread-id) value)))]))))
 
   ;; Native thread-parameter setters synchronize with thread creation in Chez.
   ;; Avoid redundant installations while preserving wind hooks for real changes.
@@ -148,9 +162,11 @@
   ;; restore their later prefixes, retaining earlier siblings. Live fiber suspension
   ;; does not rewind evidence: only normal return marks completion. Checkpoints
   ;; allocate only inside conditionals or virtual defaults. Focus evidence needs
-  ;; checkpoints at wrapped-path entry and ordinary user callbacks (predicates/getters),
+  ;; checkpoints at wrapped-path entry and ordinary user callbacks (predicates/getters/setters),
   ;; not every engine child: returning from the conditional callback reasserts its
-  ;; reached focus. Defaults still need per-suffix terminal-evidence checkpoints.
+  ;; reached focus. Defaults need terminal-evidence checkpoints at suffix and
+  ;; ordinary callback boundaries: a setter runs after the terminal return and
+  ;; must preserve that later prefix when an enclosing suffix restores its own.
   ;; Example: nav/must around a predicate saves #f on entry. An initial true
   ;; decision reaches a callback that sets #t on return; replaying the predicate
   ;; as false restores #f, so nav/must
@@ -293,21 +309,22 @@
                    (raise (condition exn (make-nav-callback-error)))])
         (apply proc args))))
 
-  ;; Ordinary user callbacks are supported capture points. Save the evidence from
-  ;; earlier siblings here, where it is precise, rather than at every engine child.
+  ;; Ordinary user callbacks are supported capture points. Save both evidence kinds
+  ;; here, including a setter's successful terminal prefix. An enclosing suffix's
+  ;; checkpoint predates the updater and cannot by itself restore that later prefix.
   #|proc:nav-call-user
   Apply user procedure `proc` to the supplied arguments, protecting its absent-focus
   errors and returning its values unchanged. `proc` accepts those arguments and may return
-  any number of values. Checkpoint active conditional evidence at this callback boundary.
+  any number of values. Checkpoint active conditional and virtual-default evidence here.
   Kind: private ordinary-callback boundary; opaque traversal callbacks use separate protection.
   |#
   (define nav-call-user
     (lambda (proc . args)
-      (let ([focuses (cdr (current-focus-scope))])
-        (if (null? focuses)
+      (let ([counter (current-update-count)] [focuses (cdr (current-focus-scope))])
+        (if (and (null? focuses) (or (not counter) (zero? (cdr counter))))
             (apply nav-call-protected proc args)
             (nav-with-evidence-checkpoint
-             #f focuses (lambda () (apply nav-call-protected proc args)))))))
+             counter focuses (lambda () (apply nav-call-protected proc args)))))))
 
   (define nav-protect-callback
     (lambda (proc)

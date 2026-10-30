@@ -69,7 +69,10 @@
   (define nav/not-pred
     (lambda (predicate)
       (pcheck ([procedure? predicate])
-              (nav/pred (lambda (value) (not (nav-call-user predicate value)))))))
+              ;; nav/pred protects and checkpoints the whole negation callback.
+              ;; Nothing changes the evidence before predicate, so a second
+              ;; boundary would duplicate the same snapshot and error handler.
+              (nav/pred (lambda (value) (not (predicate value)))))))
 
   #|proc:nav/maybe
   The `nav/maybe` procedure wraps `path` so each absent or unsupported focus is skipped.
