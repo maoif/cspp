@@ -1958,9 +1958,22 @@ cost-center measurement is enabled in runner `config`.
          #`(list #,@(parse-options (split-options #'(item ...))))]
         [_ (syntax-error stx "invalid benchmark-options form")])))
 
+  (define-syntax $define-benchmark-value
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ name value)
+         (begin
+           (unless (identifier? #'name)
+             (syntax-error #'name "benchmark name must be an identifier"))
+           (let ([text (symbol->string (syntax->datum #'name))])
+             (when (and (positive? (string-length text))
+                        (char=? (string-ref text 0) #\:))
+               (syntax-error #'name "benchmark name must not be an option keyword")))
+           #'(define name value))])))
+
   #|macro:define-benchmark
 The `define-benchmark` macro defines and registers a benchmark descriptor named
-by `name`. `options` configures arguments, lifecycle hooks, and runner defaults;
+by identifier `name`. `options` configures arguments, lifecycle hooks, and runner defaults;
 `body` is a procedure that receives state, argument values in option order, and
 optional setup value. Runtime arguments are configured with grouped `:args`
 tables such as `(:args ([size start] [1024 0] [2048 128]))`; repeated `:args`
@@ -1970,14 +1983,14 @@ the body condition takes precedence.
   (define-syntax define-benchmark
     (syntax-rules ()
       [(_ name options body)
-       (define name
+       ($define-benchmark-value name
          (let ([benchmark (make-benchmark 'name body (benchmark-options options))])
            (benchmark-register! (current-benchmark-registry) benchmark)
            benchmark))]))
 
   #|macro:define-benchmark-fixture
 The `define-benchmark-fixture` macro defines a reusable fixture descriptor named
-by `name`. Its setup hook receives state and its teardown hook receives state
+by identifier `name`. Its setup hook receives state and its teardown hook receives state
 and the setup value. Only `:setup` and `:teardown` options are accepted, and each
 supplied hook must accept its documented arguments.
 Setup must clean up partial resources if it raises; teardown runs only after successful setup.
@@ -1985,7 +1998,7 @@ Setup must clean up partial resources if it raises; teardown runs only after suc
   (define-syntax define-benchmark-fixture
     (syntax-rules ()
       [(_ name options)
-       (define name
+       ($define-benchmark-value name
          (let ([opts (benchmark-options options)])
            ($check-benchmark-options 'define-benchmark-fixture opts '(setup teardown))
            ($mk-benchmark-fixture 'name
@@ -1993,7 +2006,7 @@ Setup must clean up partial resources if it raises; teardown runs only after suc
                                   ($option-ref opts 'teardown $void-procedure))))]))
 
   #|macro:define-fixture-benchmark
-The `define-fixture-benchmark` macro defines and registers benchmark `name`
+The `define-fixture-benchmark` macro defines and registers benchmark identifier `name`
 using fixture descriptor `fixture`. `options` has the same argument syntax as
 `define-benchmark`; `body` receives state, argument values in option order, and
 the fixture setup value.
@@ -2002,7 +2015,7 @@ Descriptor `:setup` and `:teardown` hooks cannot be combined with a fixture.
   (define-syntax define-fixture-benchmark
     (syntax-rules ()
       [(_ name fixture-descriptor options body)
-       (define name
+       ($define-benchmark-value name
          (let* ([opts (benchmark-options options)]
                 [benchmark (make-benchmark 'name body
                                            (cons (cons 'fixture fixture-descriptor) opts))])
@@ -2010,7 +2023,7 @@ Descriptor `:setup` and `:teardown` hooks cannot be combined with a fixture.
            benchmark))]))
 
   #|macro:define-benchmark-suite
-  The `define-benchmark-suite` macro defines a suite descriptor named by `name`
+  The `define-benchmark-suite` macro defines a suite descriptor named by identifier `name`
   containing the listed benchmark descriptors. The optional `:suite-setup` procedure
   receives the suite state and returns a setup value. The `:suite-teardown` procedure
   receives that state and setup value, or `#f` if setup raised; it can inspect user
@@ -2022,7 +2035,7 @@ Descriptor `:setup` and `:teardown` hooks cannot be combined with a fixture.
   (define-syntax define-benchmark-suite
     (syntax-rules ()
       [(_ name options benchmark ...)
-       (define name
+       ($define-benchmark-value name
          (let ([opts (benchmark-options options)]
                [children (list benchmark ...)])
            ($check-benchmark-options 'define-benchmark-suite opts '(suite-setup suite-teardown))
@@ -2035,14 +2048,14 @@ Descriptor `:setup` and `:teardown` hooks cannot be combined with a fixture.
 
   #|macro:define-benchmark-template
 The `define-benchmark-template` macro defines a template procedure named by
-`name`. The generated procedure accepts template parameters `param ...` and
+identifier `name`. The generated procedure accepts template parameters `param ...` and
 returns a benchmark descriptor. `options` has the same grouped `:args` argument
 syntax as `define-benchmark`.
 |#
   (define-syntax define-benchmark-template
     (syntax-rules ()
       [(_ name (param ...) options body)
-       (define name
+       ($define-benchmark-value name
          (lambda (param ...)
            (make-benchmark 'name body
                            (append (benchmark-options options)

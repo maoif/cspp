@@ -2389,3 +2389,29 @@
                  (= (length (benchmark-result-samples result)) 1)
                  (= (bytevector-length (extract)) 0))))
         (lambda () (close-port unused))))))
+
+(mat benchmark-definition-names-are-identifiers
+  ;; Error: a list name must not expand into Scheme's procedure-definition shorthand.
+  (for-all
+    (lambda (form)
+      (guard (raised [else (syntax-violation? raised)])
+        (expand form (environment '(cspp)))
+        #f))
+    '((let () (define-benchmark (bad x) () (lambda (state) #t)) bad)
+      (let () (define-benchmark-fixture (bad x) ()) bad)
+      (let () (define-fixture-benchmark (bad x) fixture () (lambda arguments #t)) bad)
+      (let () (define-benchmark-suite (bad x) ()) bad)
+      (let () (define-benchmark-template (bad x) (kind) () (lambda (state) kind)) bad)
+      (let () (define-benchmark :bad () (lambda (state) #t)) :bad)))
+
+  ;; All definition forms still produce runnable descriptors with ordinary names.
+  (let ()
+    (define-benchmark valid-name () (lambda (state) #t))
+    (define-benchmark-fixture valid-fixture ())
+    (define-fixture-benchmark valid-fixture-name valid-fixture () (lambda (state value) #t))
+    (define-benchmark-template valid-template (kind) () (lambda (state) kind))
+    (define-benchmark-suite valid-suite () valid-name valid-fixture-name (valid-template 'kind))
+    (let ([results (benchmark-run-suite valid-suite (benchmark-test-config))])
+      (and (equal? (map benchmark-result-name results)
+                   '(valid-name valid-fixture-name valid-template))
+           (for-all (lambda (result) (not (benchmark-result-error result))) results)))))
