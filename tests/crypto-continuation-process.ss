@@ -1,4 +1,4 @@
-(import (chezscheme) (cspp crypto) (cspp optional-library))
+(import (chezscheme) (cspp crypto) (cspp crypto private) (cspp optional-library))
 
 (define openssl? (optional-library-available? (optional-library-info 'openssl)))
 (define blake3? (optional-library-available? (optional-library-info 'blake3)))
@@ -50,6 +50,28 @@
     (let ([port (open-file-input-port (string-append "tests/data/crypto/" name))])
       (dynamic-wind void (lambda () (get-bytevector-all port))
                     (lambda () (close-port port))))))
+
+(define check-constructor-resumption
+  (lambda (create handle destroy!)
+    ;; Error case: replaying a constructor continuation must not create two Scheme
+    ;; owners for the same native allocation. Sharing the same record remains safe.
+    (do ([ticks 1 (fx1+ ticks)]) [(fx= ticks 97)]
+      (let ([first #f] [second #f] [pending #f])
+        ((make-engine create) ticks
+         (lambda (fuel object) (set! first object))
+         (lambda (engine) (set! pending engine)))
+        (when pending
+          (resume-engine pending (lambda (fuel object) (set! first object)))
+          (guard (condition
+                   [(and (who-condition? condition)
+                         (eq? (condition-who condition) 'with-crypto-operation))
+                    (void)])
+            (resume-engine pending (lambda (fuel object) (set! second object)))))
+        (when (and second (not (eq? first second)) (= (handle first) (handle second)))
+          (destroy! first)
+          (error 'crypto-continuations "constructor duplicated native ownership"))
+        (destroy! first)
+        (when (and second (not (eq? first second))) (destroy! second))))))
 
 (define touch-state
   (lambda (state)
@@ -215,4 +237,24 @@
              [else
               (unless (eq? result 'blocked)
                 (error 'crypto-continuations "reentered failed native operation"))]))))]
+    [(string=? mode "constructors")
+     (when openssl?
+       (check-constructor-resumption (lambda () (generate-private-key 'ed25519))
+         crypto-private-key-handle destroy-private-key!)
+       (check-constructor-resumption make-cert-store
+         crypto-cert-store-handle destroy-cert-store!)
+       (let* ([private (generate-private-key 'ed25519)]
+              [public (private-key->public-key private)]
+              [private-pem (store-private-key private)]
+              [public-pem (store-public-key public)])
+         (dynamic-wind
+           void
+           (lambda ()
+             (check-constructor-resumption (lambda () (load-private-key private-pem))
+               crypto-private-key-handle destroy-private-key!)
+             (check-constructor-resumption (lambda () (load-public-key public-pem))
+               crypto-public-key-handle destroy-public-key!)
+             (check-constructor-resumption (lambda () (private-key->public-key private))
+               crypto-public-key-handle destroy-public-key!))
+           (lambda () (destroy-public-key! public) (destroy-private-key! private)))))]
     [else (error 'crypto-continuations "unknown fixture mode" mode)]))

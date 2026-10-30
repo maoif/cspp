@@ -8,7 +8,7 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 for mode in sys.argv[1:] or ['digests', 'mac-cipher', 'certificates', 'callbacks',
-                           'error-continuations']:
+                           'error-continuations', 'constructors']:
     result = subprocess.run(
         [str(ROOT / 'cspp'), '--script=' + str(ROOT / 'tests/crypto-continuation-process.ss'), mode],
         cwd=ROOT, capture_output=True, text=True, timeout=30)

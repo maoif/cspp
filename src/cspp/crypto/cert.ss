@@ -317,17 +317,21 @@ The `make-cert-store` procedure creates an empty or system-backed certificate st
 |#
   (define-who make-cert-store
     (case-lambda
-      [() (let ([handle (ffi-cert-store-create 0)])
-            (when (eq? handle 0)
-              (errorf who "failed to create certificate store"))
-            (make-crypto-cert-store handle #f))]
+      [() (pcheck ()
+            (with-crypto-operation
+              (let ([handle (ffi-cert-store-create 0)])
+                (when (eq? handle 0)
+                  (errorf who "failed to create certificate store"))
+                (make-crypto-cert-store handle #f))))]
       [(source)
-       (unless (eq? source 'system)
-         (errorf who "valid certificate store source is 'system, given ~s" source))
-       (let ([handle (ffi-cert-store-create 1)])
-         (when (eq? handle 0)
-           (errorf who "failed to create system certificate store"))
-         (make-crypto-cert-store handle #f))]))
+       (pcheck ([symbol? source])
+         (unless (eq? source 'system)
+           (errorf who "valid certificate store source is 'system, given ~s" source))
+         (with-crypto-operation
+           (let ([handle (ffi-cert-store-create 1)])
+             (when (eq? handle 0)
+               (errorf who "failed to create system certificate store"))
+             (make-crypto-cert-store handle #f))))]))
 
   #|proc:destroy-cert-store!
 The `destroy-cert-store!` procedure releases foreign resources owned by `store`.

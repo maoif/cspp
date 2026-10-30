@@ -93,23 +93,24 @@
       [(alg param)
        (pcheck ([symbol? alg])
          (check-algorithm who alg)
-         (let ([handle
-                (cond
-                 [(eq? alg 'rsa)
-                  (unless (and (natural? param) (exact? param) (positive? param))
-                    (errorf who "RSA bit count must be an exact positive integer, given ~s" param))
-                  (ffi-pkey-generate alg param #f)]
-                 [(memq alg '(ecdsa ecdh))
-                  (unless (symbol? param)
-                    (errorf who "EC curve must be a symbol, given ~s" param))
-                  (ffi-pkey-generate alg 0 param)]
-                 [else
-                  (when param
-                    (errorf who "algorithm ~s does not accept a generation parameter" alg))
-                  (ffi-pkey-generate alg 0 #f)])])
-           (when (eq? handle 0)
-             (errorf who "failed to generate private key for ~s" alg))
-           (raw->private-key who handle)))]))
+         (with-crypto-operation
+           (let ([handle
+                  (cond
+                   [(eq? alg 'rsa)
+                    (unless (and (natural? param) (exact? param) (positive? param))
+                      (errorf who "RSA bit count must be an exact positive integer, given ~s" param))
+                    (ffi-pkey-generate alg param #f)]
+                   [(memq alg '(ecdsa ecdh))
+                    (unless (symbol? param)
+                      (errorf who "EC curve must be a symbol, given ~s" param))
+                    (ffi-pkey-generate alg 0 param)]
+                   [else
+                    (when param
+                      (errorf who "algorithm ~s does not accept a generation parameter" alg))
+                    (ffi-pkey-generate alg 0 #f)])])
+             (when (eq? handle 0)
+               (errorf who "failed to generate private key for ~s" alg))
+             (raw->private-key who handle))))]))
 
   #|proc:destroy-private-key!
 The `destroy-private-key!` procedure releases the foreign resources owned by `key`.
@@ -232,10 +233,11 @@ The `store-public-key` procedure serializes `key` to PEM or DER as a bytevector.
       [(bv fmt start stop)
        (pcheck ([bytevector? bv])
                (check-slice who (bytevector-length bv) start stop)
-               (let ([handle (load-dispatch who 'private bv start stop fmt)])
-                 (when (eq? handle 0)
-                   (errorf who "failed to load private key"))
-                 (raw->private-key who handle)))]))
+               (with-crypto-operation
+                 (let ([handle (load-dispatch who 'private bv start stop fmt)])
+                   (when (eq? handle 0)
+                     (errorf who "failed to load private key"))
+                   (raw->private-key who handle))))]))
 
   #|proc:load-public-key
 The `load-public-key` procedure loads a public key from a PEM or DER bytevector slice.
@@ -252,10 +254,11 @@ The `load-public-key` procedure loads a public key from a PEM or DER bytevector 
       [(bv fmt start stop)
        (pcheck ([bytevector? bv])
                (check-slice who (bytevector-length bv) start stop)
-               (let ([handle (load-dispatch who 'public bv start stop fmt)])
-                 (when (eq? handle 0)
-                   (errorf who "failed to load public key"))
-                 (raw->public-key who handle)))]))
+               (with-crypto-operation
+                 (let ([handle (load-dispatch who 'public bv start stop fmt)])
+                   (when (eq? handle 0)
+                     (errorf who "failed to load public key"))
+                   (raw->public-key who handle))))]))
 
   #|proc:pem->private-key
   The `pem->private-key` procedure returns an owned private key loaded from PEM bytevector
