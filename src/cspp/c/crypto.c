@@ -506,6 +506,13 @@ static ptr hkdf_common(int mode, ptr which, ptr ikm, uint64_t ikm_start,
       slice_len(info_start, info_stop));
   params[idx++] = OSSL_PARAM_construct_end();
 
+  /* OpenSSL rejects a zero-byte derive. Still validate provider parameters before
+   * returning the empty RFC 5869 expansion requested by the Scheme API. */
+  if (out_len == 0) {
+    if (EVP_KDF_CTX_set_params(ctx, params) != 1) goto done;
+    ans = Smake_bytevector(0, 0);
+    goto done;
+  }
   out_buf = malloc(out_len == 0 ? 1 : (size_t)out_len);
   if (out_buf == NULL) goto done;
   if (EVP_KDF_derive(ctx, out_buf, (size_t)out_len, params) != 1) goto done;

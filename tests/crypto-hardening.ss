@@ -319,3 +319,20 @@
   (= 0 (system (if (file-exists? "crypto-envelope-memory.py")
                    "python3 -I crypto-envelope-memory.py"
                    "python3 -I tests/crypto-envelope-memory.py"))))
+
+(mat crypto-hkdf-empty-output
+  (mat-requires (openssl)
+    (for-all
+      (lambda (algorithm)
+        (and (equal? #vu8() (hkdf algorithm "key" "salt" "info" 0))
+             (equal? #vu8()
+               (hkdf-expand algorithm (hkdf-extract algorithm "key" "salt") "info" 0))))
+      '(sha256 sha512)))
+
+  ;; Error case: an empty request still validates its algorithm, inputs, and exact length.
+  (and (crypto-rejects? (lambda () (hkdf 'unknown "key" "salt" "info" 0)))
+       (crypto-rejects? (lambda () (hkdf 'sha256 #f "salt" "info" 0)))
+       (crypto-rejects? (lambda () (hkdf 'sha256 "key" "salt" "info" 0.0)))
+       (crypto-rejects? (lambda () (hkdf-expand 'unknown #vu8(1) "info" 0)))
+       (crypto-rejects? (lambda () (hkdf-expand 'sha256 #f "info" 0)))
+       (crypto-rejects? (lambda () (hkdf-expand 'sha256 #vu8(1) "info" 0.0)))))
