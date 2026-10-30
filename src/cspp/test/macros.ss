@@ -18,7 +18,11 @@
             (let ([index (make-eq-hashtable (length parameters))])
               (for-each (lambda (entry) (hashtable-set! index (car entry) (cdr entry))) parameters)
               (for-each (lambda (name)
-                          (vector-set! values offset (hashtable-ref index name #f))
+                          ;; The fresh private index cannot be an input value.
+                          (let ([value (hashtable-ref index name index)])
+                            (when (eq? value index)
+                              (errorf 'test-case "missing input binding: ~s" name))
+                            (vector-set! values offset value))
                           (set! offset (fx+ offset 1)))
                         names-left)
               values)])))))
@@ -393,6 +397,7 @@
   A child's explicit fixture list or parameter tables replace the corresponding suite list.
   Inherited conditional callbacks keep their parent declaration bindings; a child replacing
   parameter tables must preserve names those callbacks require or override the conditions too.
+  Missing required inputs raise an error; they are never replaced by `#f`.
   |#
   (define-syntax test-suite
     (syntax-rules ()

@@ -2110,3 +2110,32 @@
               (list 'errored '((lambda (x x) x)) '())
               (list 'passed '((define valid (lambda (x) x))) '())))
       #t))
+
+(mat test-lexical-inputs-require-present-bindings
+  ;; Error: omitted concrete parameters must not turn a failing assertion into a pass.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (let* ([descriptor
+            (test-case required-input :parameterize ([value] [42]) (test-false value))]
+           [concrete (make-test-concrete-case 0 'required-input descriptor '() '())]
+           [result (car (test-run (list concrete) (test-silent-config)))])
+      (and (eq? (test-result-status result) 'errored)
+           (test-error-message-contains?
+             (lambda () (raise (test-result-condition result))) "value"))))
+
+  ;; Error: replacing inherited tables must preserve names required by inherited conditions.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (test-suite required-policy :parameterize ([number] [1])
+      :skip-when (not number) "missing number must not skip"
+      (test-case child :parameterize ([other] [2]) (test-= other 2)))
+    (let ([result (car (test-run-registry (current-test-registry) (test-silent-config)))])
+      (and (eq? (test-result-status result) 'errored)
+           (test-error-message-contains?
+             (lambda () (raise (test-result-condition result))) "number"))))
+
+  ;; Reordered concrete parameters and actual #f values remain valid inputs.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (let* ([descriptor (test-case present-input :parameterize ([value other] [#f 7])
+                         (test-false value) (test-= other 7))]
+           [concrete (make-test-concrete-case 0 'present-input descriptor
+                       '((other . 7) (value . #f)) '())])
+      (eq? (test-result-status (car (test-run (list concrete) (test-silent-config)))) 'passed))))
