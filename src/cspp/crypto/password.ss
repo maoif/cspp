@@ -48,27 +48,34 @@
                           [salt-len (u32-ref bv 18)]
                           [derived-len (u32-ref bv 22)]
                           [expect (fx+ 26 salt-len derived-len)])
-                     (and (fx= expect (bytevector-length bv))
+                     (and (fx> derived-len 0)
+                          (fx= expect (bytevector-length bv))
                           (vector algo p1 p2 p3
                                   (subbytevector bv 26 (fx+ 26 salt-len))
                                   (subbytevector bv (fx+ 26 salt-len) expect))))))))
 
   #|proc:password-hash/scrypt
-The `password-hash/scrypt` procedure derives and encodes a scrypt password hash as a bytevector.
-|#
+  The `password-hash/scrypt` procedure returns an encoded scrypt hash of the string or
+  bytevector `password`, using bytevector `salt` and cost parameters `n`, `r`, and `p`.
+  `outlen` is the positive derived-key length in bytes; zero-length hashes raise an error.
+  |#
   (define-who password-hash/scrypt
     (lambda (password salt n r p outlen)
       (pcheck ([bytevector? salt] [natural? n r p outlen])
+              (when (zero? outlen) (errorf who "derived-key length must be positive"))
               (let* ([pw (normalize-password who password)]
                      [derived (scrypt pw salt n r p outlen)])
                 (make-password-record algo-scrypt n r p salt derived)))))
 
   #|proc:password-hash/pbkdf2
-The `password-hash/pbkdf2` procedure derives and encodes a PBKDF2-SHA256 password hash as a bytevector.
-|#
+  The `password-hash/pbkdf2` procedure returns an encoded PBKDF2-SHA256 hash of the string
+  or bytevector `password`, using bytevector `salt` and the count `iterations`.
+  `outlen` is the positive derived-key length in bytes; zero-length hashes raise an error.
+  |#
   (define-who password-hash/pbkdf2
     (lambda (password salt iterations outlen)
       (pcheck ([bytevector? salt] [natural? iterations outlen])
+              (when (zero? outlen) (errorf who "derived-key length must be positive"))
               (let* ([pw (normalize-password who password)]
                      [derived (pbkdf2 'sha256 pw salt iterations outlen)])
                 (make-password-record algo-pbkdf2 iterations 0 0 salt derived)))))
@@ -82,8 +89,9 @@ The `password-hash` procedure derives and encodes a default scrypt password hash
         (password-hash/scrypt password salt 16384 8 1 32))))
 
   #|proc:password-hash?
-The `password-hash?` procedure returns `#t` when `x` is a valid encoded password hash bytevector.
-|#
+  The `password-hash?` procedure returns `#t` when `x` has the structure of an encoded
+  password hash containing a nonempty derived key, and `#f` otherwise.
+  |#
   (define password-hash?
     (lambda (x)
       (and (bytevector? x)
@@ -91,8 +99,10 @@ The `password-hash?` procedure returns `#t` when `x` is a valid encoded password
            #t)))
 
   #|proc:password-verify?
-The `password-verify?` procedure returns `#t` when `password` matches `encoded`.
-|#
+  The `password-verify?` procedure returns `#t` when the string or bytevector `password`
+  matches the encoded password hash bytevector `encoded`. Malformed records, including
+  empty derived keys, return `#f`; native derivation failures raise an error.
+  |#
   (define-who password-verify?
     (lambda (password encoded)
       (pcheck ([bytevector? encoded])
