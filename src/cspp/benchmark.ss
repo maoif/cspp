@@ -91,7 +91,7 @@
     (fields name suite args template-args
             (mutable iteration $benchmark-state-iteration $benchmark-state-iteration-set!)
             iterations sample
-            (mutable user-data benchmark-state-user-data benchmark-state-set-user-data!)
+            (mutable user-data $benchmark-state-user-data $benchmark-state-set-user-data!)
             (mutable counters $benchmark-state-counters $benchmark-state-counters-set!)
             (mutable counter-index $benchmark-state-counter-index $benchmark-state-counter-index-set!)
             (mutable timing-paused? $benchmark-state-timing-paused? $benchmark-state-timing-paused?-set!)
@@ -1020,6 +1020,24 @@ in `state`.
     (lambda (state)
       (pcheck ([benchmark-state? state])
               ($benchmark-state-sample state))))
+
+  #|proc:benchmark-state-user-data
+  The `benchmark-state-user-data` procedure returns the application value stored in `state`,
+  initially `#f`. `state` is a benchmark state owned by the controlling sample or suite.
+  |#
+  (define benchmark-state-user-data
+    (lambda (state)
+      (pcheck ([benchmark-state? state])
+              ($benchmark-state-user-data state))))
+
+  #|proc:benchmark-state-set-user-data!
+  The `benchmark-state-set-user-data!` procedure stores arbitrary application `value` in
+  benchmark `state` and returns unspecified values. Call it only on the controlling thread.
+  |#
+  (define benchmark-state-set-user-data!
+    (lambda (state value)
+      (pcheck ([benchmark-state? state])
+              ($benchmark-state-set-user-data! state value))))
 
   (define $counter-entry
     (lambda (state name)

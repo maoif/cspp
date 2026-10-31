@@ -2550,3 +2550,20 @@
                (json5-document? (parse-json5 text))
                (not (benchmark-string-contains? text "inf.0")))))
       (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat benchmark-user-data-checks-state
+  ;; Error: invalid state arguments must raise an ordinary condition before raw record access.
+  (guard (raised [else (and (condition? raised) (who-condition? raised)
+                           (eq? (condition-who raised) 'pcheck))])
+    (if (benchmark-state-user-data #f) #f #f))
+
+  ;; Error: mutation must also validate its state argument before writing a record field.
+  (guard (raised [else (and (condition? raised) (who-condition? raised)
+                           (eq? (condition-who raised) 'pcheck))])
+    (benchmark-state-set-user-data! #f 'resource)
+    #f)
+
+  (let ([state (benchmark-state 'user-data #f '() '() 0 1 0)]
+        [payload (vector 'resource)])
+    (benchmark-state-set-user-data! state payload)
+    (eq? (benchmark-state-user-data state) payload)))
