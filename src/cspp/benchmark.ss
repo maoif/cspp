@@ -2058,7 +2058,8 @@ Setup must clean up partial resources if it raises; teardown runs only after suc
 
   #|macro:define-fixture-benchmark
 The `define-fixture-benchmark` macro defines and registers benchmark identifier `name`
-using fixture descriptor `fixture`. `options` has the same argument syntax as
+using fixture descriptor `fixture`. The fixture expression is evaluated once and must return
+a fixture record; `#f` is rejected before registration. `options` has the same argument syntax as
 `define-benchmark`; `body` receives state, argument values in option order, and
 the fixture setup value.
 Descriptor `:setup` and `:teardown` hooks cannot be combined with a fixture.
@@ -2067,11 +2068,14 @@ Descriptor `:setup` and `:teardown` hooks cannot be combined with a fixture.
     (syntax-rules ()
       [(_ name fixture-descriptor options body)
        ($define-benchmark-value name
-         (let* ([opts (benchmark-options options)]
-                [benchmark (make-benchmark 'name body
-                                           (cons (cons 'fixture fixture-descriptor) opts))])
-           (benchmark-register! (current-benchmark-registry) benchmark)
-           benchmark))]))
+         (let ([fixture fixture-descriptor])
+           (unless (benchmark-fixture? fixture)
+             (errorf 'define-fixture-benchmark "expected a fixture descriptor: ~s" fixture))
+           (let* ([opts (benchmark-options options)]
+                  [benchmark (make-benchmark 'name body
+                                             (cons (cons 'fixture fixture) opts))])
+             (benchmark-register! (current-benchmark-registry) benchmark)
+             benchmark)))]))
 
   #|macro:define-benchmark-suite
   The `define-benchmark-suite` macro defines a suite descriptor named by identifier `name`

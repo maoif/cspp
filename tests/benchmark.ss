@@ -2605,3 +2605,28 @@
         (and (equal? (map benchmark-result-name results)
                      '(instance-template/small instance-template/large))
              (for-all (lambda (result) (not (benchmark-result-error result))) results))))))
+
+(mat benchmark-fixture-macro-requires-fixture
+  ;; Error: fixture-specific definitions must reject #f before registering a benchmark.
+  (let* ([registry (current-benchmark-registry)]
+         [before (benchmark-registry-benchmarks registry)]
+         [evaluations 0])
+    (and (guard (raised [else #t])
+           (let ()
+             (define-fixture-benchmark invalid-fixture
+               (begin (set! evaluations (+ evaluations 1)) #f)
+               () (lambda arguments #t))
+             invalid-fixture)
+           #f)
+         (= evaluations 1)
+         (equal? (benchmark-registry-benchmarks registry) before)))
+
+  (let ([evaluations 0] [seen '()])
+    (let ()
+      (define-benchmark-fixture required-fixture (:setup (lambda (state) 'resource)))
+      (define-fixture-benchmark required-fixture-benchmark
+        (begin (set! evaluations (+ evaluations 1)) required-fixture)
+        () (lambda (state resource) (set! seen (cons resource seen))))
+      (let ([results (benchmark-run required-fixture-benchmark (benchmark-test-config))])
+        (and (= evaluations 1) (equal? seen '(resource resource))
+             (for-all (lambda (result) (not (benchmark-result-error result))) results))))))
