@@ -2368,16 +2368,30 @@ arities are rejected even when the registry is empty.
                                         counters
                                         #f))))))))
 
+  (define $expanded-benchmark?
+    (lambda (expanded)
+      (and (pair? expanded) (benchmark-state? (car expanded)) (benchmark? (cdr expanded)))))
+
   #|proc:benchmark-run-one
   The `benchmark-run-one` procedure runs one concrete expanded benchmark pair
-  `expanded` with runner `config` and returns one benchmark result. Explicit config
-  fields override descriptor options, which override default settings. Reporting fields
+  `expanded` with runner `config` and returns one benchmark result. The pair's car must
+  be a benchmark state and its cdr a benchmark descriptor. State argument names must match
+  the descriptor's declared names in expansion order; argument values may be arbitrary objects.
+  Invalid pairs and argument layouts are rejected before setup. Custom state names and template
+  metadata are retained. Explicit config fields override descriptor options and defaults.
+  Reporting fields
   are unused: this procedure neither invokes a reporter nor validates its output port.
   |#
   (define benchmark-run-one
     (lambda (expanded config)
-      (pcheck ([pair? expanded] [benchmark-config? config])
-              ($run-expanded expanded ($effective-benchmark-config (cdr expanded) config)))))
+      (pcheck ([$expanded-benchmark? expanded] [benchmark-config? config])
+              (let ([state (car expanded)] [benchmark (cdr expanded)])
+                (unless (equal? (map car ($benchmark-state-args state))
+                                (apply append (map car ($benchmark-axes benchmark))))
+                  (errorf 'benchmark-run-one
+                          "state argument names must match descriptor order: ~s"
+                          ($benchmark-state-args state)))
+                ($run-expanded expanded ($effective-benchmark-config benchmark config))))))
 
   #|proc:benchmark-run-suite
   The `benchmark-run-suite` procedure runs suite descriptor `suite` with runner

@@ -2661,3 +2661,46 @@
                  (= (length (benchmark-run config)) 1))))))
     (list (lambda descriptors (= (length descriptors) 1))
           (case-lambda [() #f] [(descriptor) (benchmark? descriptor)]))))
+
+(mat benchmark-run-one-validates-expanded-inputs
+  ;; Error: a pair alone does not establish that either member is the required record.
+  (for-all
+    (lambda (expanded)
+      (guard (raised [else (and (condition? raised) (who-condition? raised)
+                               (eq? (condition-who raised) 'pcheck))])
+        (benchmark-run-one expanded (benchmark-test-config))
+        #f))
+    (let ([descriptor (make-benchmark 'pair-check (lambda (state) #t) '())]
+          [state (benchmark-state 'pair-check #f '() '() 0 1 0)])
+      (list (cons #f #f) (cons #f descriptor) (cons state #f))))
+
+  ;; Error: missing, extra, renamed, or reordered arguments must reject before setup.
+  (let* ([setups 0]
+         [descriptor
+          (make-benchmark 'argument-check (lambda (state left right resource) #t)
+            `((args (left) (1)) (args (right) (2))
+              (setup . ,(lambda (state) (set! setups (+ setups 1)) 'resource))))])
+    (and (for-all
+           (lambda (args)
+             (guard (raised [else (and (condition? raised) (who-condition? raised)
+                                      (eq? (condition-who raised) 'benchmark-run-one))])
+               (benchmark-run-one
+                 (cons (benchmark-state 'argument-check #f args '() 0 1 0) descriptor)
+                 (benchmark-test-config))
+               #f))
+           '(() ((left . 1)) ((left . 1) (right . 2) (extra . 3))
+             ((left . 1) (other . 2)) ((right . 2) (left . 1))))
+         (= setups 0)))
+
+  ;; Custom states may retain their own name/template metadata and argument object identity.
+  (let* ([payload (vector 'resource)]
+         [descriptor (make-benchmark 'declared
+                       (lambda (state value) (test-eq value payload))
+                       '((args (value) (#f))))]
+         [state (benchmark-state 'custom #f (list (cons 'value payload))
+                  '((kind . custom)) 0 1 0)]
+         [result (benchmark-run-one (cons state descriptor) (benchmark-test-config))])
+    (and (not (benchmark-result-error result))
+         (eq? (benchmark-result-name result) 'custom)
+         (equal? (benchmark-result-template-args result) '((kind . custom)))
+         (eq? (cdar (benchmark-result-args result)) payload))))
