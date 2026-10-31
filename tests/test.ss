@@ -2139,3 +2139,53 @@
            [concrete (make-test-concrete-case 0 'present-input descriptor
                        '((other . 7) (value . #f)) '())])
       (eq? (test-result-status (car (test-run (list concrete) (test-silent-config)))) 'passed))))
+
+(mat test-binding-preparation-is-outside-raises
+  ;; Error: missing generated bindings must not satisfy an expected body error.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (let ([body-ran? #f] [cleanup-ran? #f])
+      (let* ([descriptor
+              (test-case missing-before-body
+                :parameterize ([number] [42])
+                :fixture ([resource 'acquired])
+                :after (lambda (fixtures)
+                         (set! cleanup-ran? (equal? fixtures '((resource . acquired)))))
+                :raises error?
+                (set! body-ran? #t)
+                (test-= number 42)
+                (test-eq resource 'acquired))]
+             [concrete (make-test-concrete-case 0 'missing-before-body descriptor '()
+                         (test-descriptor-metadata descriptor))]
+             [result (car (test-run (list concrete) (test-silent-config)))])
+        (and (eq? (test-result-status result) 'errored)
+             (not body-ran?) cleanup-ran?
+             (test-error-message-contains?
+               (lambda () (raise (test-result-condition result))) "number")))))
+
+  ;; Error: missing inherited fixture bindings are preparation errors as well.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (let* ([suite (test-suite lexical-preparation :fixture ([resource 'ready])
+                    (test-case inherited :raises error? (test-eq resource 'ready)))]
+           [descriptor (car (test-descriptor-children suite))]
+           [concrete (make-test-concrete-case 0 'inherited descriptor '()
+                       (test-descriptor-metadata descriptor))]
+           [result (car (test-run (list concrete) (test-silent-config)))])
+      (and (eq? (test-result-status result) 'errored)
+           (test-error-message-contains?
+             (lambda () (raise (test-result-condition result))) "resource"))))
+
+  ;; Binding preparation must defer user forms, while preserving local definitions and mutation.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (let* ([descriptor
+            (test-case prepared-body :parameterize ([number] [41]) :raises error?
+              (define value (+ number 1))
+              (set! number value)
+              (test-= number 42)
+              (error 'prepared-body "expected body error"))]
+           [result (car (test-run (list descriptor) (test-silent-config)))])
+      (eq? (test-result-status result) 'passed)))
+
+  ;; Descriptor body access retains the documented unary call behavior.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (let ([descriptor (test-case callable-body :parameterize ([value] [7]) (+ value 1))])
+      (= ((test-descriptor-body descriptor) '((value . 7))) 8))))

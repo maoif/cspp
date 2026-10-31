@@ -319,13 +319,13 @@
                (case (syntax->datum #'kind)
                  [(case)
                   #`(let ([descriptor
-                           (make-test-case
+                           (test-make-prepared-case
                             'name
                             (lambda (params)
                               #,(build-callback
                                  (append local-parameter-ids local-fixture-ids)
                                  (append inherited-parameter-ids inherited-fixture-ids)
-                                 body))
+                                 (list #`(lambda () #,@body))))
                             #,metadata)])
                       (test-register! (current-test-registry) descriptor)
                       descriptor)]
@@ -365,6 +365,8 @@
   `name`. Config clauses may include `:tags`, `:parameterize`, `:skip-when`,
   `:xfail`, `:capture`, and output expectations. Body forms are evaluated by the
   runner. Conditional rules can reference the case's named parameters.
+  Lexical input preparation and fixture setup occur outside `:raises` matching;
+  only conditions from the user body can satisfy its expected-condition predicate.
   `:xfail-strict` overrides the configuration's strictness for this case.
   `:before` and `:after` receive a fixture-value association list with signature
   `(lambda (fixtures) unspecified)`. Cleanup runs even if setup or `:before` raises;

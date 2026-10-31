@@ -4,6 +4,7 @@
           test-expand-descriptor? test-compile-descriptor? test-concrete-case?
           test-result? test-summary? test-config? test-registry?
           make-test-case make-test-suite make-test-expand make-test-compile
+          test-make-prepared-case test-prepare-runtime-body
           test-descriptor-name test-descriptor-phase test-descriptor-metadata
           test-descriptor-children test-descriptor-body
           make-test-config default-test-config test-config-with
@@ -25,7 +26,7 @@
           (cspp test private common))
 
   (define-record-type ($test-descriptor $make-test-descriptor $test-descriptor?)
-    (fields kind name phase metadata children body))
+    (fields kind name phase metadata children body prepare))
 
   (define-record-type ($test-config $make-test-config $test-config?)
     (fields reporter output xfail-strict? stop-on-failure? color))
@@ -186,7 +187,42 @@ registry.
                           (logbit? 1 (procedure-arity-mask body)))
                 (errorf 'make-test-case "body must accept zero or one argument: ~s" body))
               (test-check-metadata 'make-test-case metadata)
-              ($make-test-descriptor 'case name 'runtime metadata '() body))))
+              ($make-test-descriptor 'case name 'runtime metadata '() body #f))))
+
+  #|proc:test-make-prepared-case
+  The internal `test-make-prepared-case` procedure creates a runtime case named by symbol
+  `name` with association-list `metadata`. The unary `prepare` procedure accepts fixture and
+  parameter bindings and returns a zero-argument body thunk. Preparation precedes expected
+  condition matching. The descriptor's public body procedure still accepts the bindings and
+  executes the prepared thunk directly.
+  |#
+  (define test-make-prepared-case
+    (lambda (name prepare metadata)
+      (pcheck ([symbol? name] [procedure? prepare] [list? metadata])
+              (unless (test-callback-accepts? prepare 1)
+                (errorf 'test-make-prepared-case "prepare must accept one argument"))
+              (test-check-metadata 'test-make-prepared-case metadata)
+              ($make-test-descriptor 'case name 'runtime metadata '()
+                (lambda (parameters) ((prepare parameters))) prepare))))
+
+  #|proc:test-prepare-runtime-body
+  The internal `test-prepare-runtime-body` procedure returns a zero-argument body thunk for
+  runtime `descriptor` and binding association list `parameters`. Generated cases resolve
+  lexical inputs immediately; ordinary cases defer their zero- or one-argument body call.
+  |#
+  (define test-prepare-runtime-body
+    (lambda (descriptor parameters)
+      (pcheck ([test-case-descriptor? descriptor] [test-symbol-alist? parameters])
+              (let ([prepare ($test-descriptor-prepare descriptor)])
+                (if prepare
+                    (let ([thunk (prepare parameters)])
+                      (unless (test-callback-accepts? thunk 0)
+                        (errorf 'test-prepare-runtime-body "prepare must return a body thunk"))
+                      thunk)
+                    (let ([body ($test-descriptor-body descriptor)])
+                      (if (logbit? 1 (procedure-arity-mask body))
+                          (lambda () (body parameters))
+                          (lambda () (body)))))))))
 
   #|proc:make-test-suite
 The `make-test-suite` procedure creates a suite descriptor. `name` is the symbol
@@ -197,7 +233,7 @@ suite, and `metadata` is an association list of descriptor metadata.
     (lambda (name children metadata)
       (pcheck ([symbol? name] [$all-descriptors? children] [list? metadata])
               (test-check-metadata 'make-test-suite metadata)
-              ($make-test-descriptor 'suite name 'suite metadata children #f))))
+              ($make-test-descriptor 'suite name 'suite metadata children #f #f))))
 
   #|proc:make-test-expand
 The `make-test-expand` procedure creates an expansion test descriptor. `name` is
@@ -209,7 +245,7 @@ immutable `(cspp)` environment; include custom macro definitions in `form`.
     (lambda (name form metadata)
       (pcheck ([symbol? name] [list? metadata])
               (test-check-metadata 'make-test-expand metadata)
-              ($make-test-descriptor 'expand name 'expand metadata '() form))))
+              ($make-test-descriptor 'expand name 'expand metadata '() form #f))))
 
   #|proc:make-test-compile
   The `make-test-compile` procedure creates a compile test descriptor. `name` is
@@ -220,7 +256,7 @@ immutable `(cspp)` environment; include custom macro definitions in `form`.
     (lambda (name forms metadata)
       (pcheck ([symbol? name] [list? forms metadata])
               (test-check-metadata 'make-test-compile metadata)
-              ($make-test-descriptor 'compile name 'compile metadata '() forms))))
+              ($make-test-descriptor 'compile name 'compile metadata '() forms #f))))
 
   #|proc:test-descriptor-name
 The `test-descriptor-name` procedure returns the symbolic name stored in

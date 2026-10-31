@@ -183,13 +183,6 @@ association-list filters as `test-select`.
       (pcheck ([test-registry? registry] [$test-selectors? selectors])
               (test-select registry selectors))))
 
-  (define $call-body
-    (lambda (body parameters)
-      (let ([arity-mask (procedure-arity-mask body)])
-        (unless (or (logbit? 1 arity-mask) (logbit? 0 arity-mask))
-          (errorf 'test-run "body must accept zero or one argument: ~a" body))
-        (apply body (if (logbit? 1 arity-mask) (list parameters) '())))))
-
   (define $current-predicate-cache (make-parameter #f))
 
   (define $resolve-predicate
@@ -236,7 +229,7 @@ association-list filters as `test-select`.
                   (let ([fixtures (reverse fixture-values)]
                         [before (test-metadata-ref metadata 'before #f)])
                     (when before (before fixtures))
-                    ($call-body body (append fixtures parameters)))))))
+                    (body (append fixtures parameters)))))))
           (lambda ()
             (guard (condition [else (unless failed? (raise condition))])
               ($run-allowing-warnings metadata
@@ -354,8 +347,8 @@ association-list filters as `test-select`.
           [(runtime)
            ($run-body-with-fixtures metadata
              (lambda (parameters)
-               ($run-with-expected-condition metadata
-                 (lambda () ($call-body (test-descriptor-body descriptor) parameters))))
+               (let ([thunk (test-prepare-runtime-body descriptor parameters)])
+                 ($run-with-expected-condition metadata thunk)))
              (test-concrete-case-parameters concrete-case))]
           [(expand)
            ($run-with-expected-condition
