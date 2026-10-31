@@ -218,10 +218,12 @@
   `constructor-name`. The `source-predicate` procedure has signature `(source) -> boolean`.
   The `source-length` procedure has signature `(source) -> nonnegative integer`, and the
   `source-ref` procedure has signature `(source index) -> value`. The returned constructor
-  accepts a source with optional `start`, `stop`, and nonzero `step` integers and returns an
+  accepts a source with optional `start`, `stop`, and nonzero `step` integers and returns a
   resource-free iterator. Integer-valued inexact bounds/steps/lengths are normalized to
   exact integers before `source-ref` is called. Negative bounds count from the source end;
-  reset rereads source length and renormalizes bounds. Mutation during a pass is unspecified.
+  reset rechecks `source-predicate` before calling `source-length`, then renormalizes bounds.
+  A source that no longer satisfies its predicate raises a named constructor error without
+  invoking its length or reference callbacks. Mutation during a pass is unspecified.
   Kind: constructor factory; each returned constructor call creates independent cursor state.
   |#
   (define make-indexed-iter
@@ -275,7 +277,11 @@
                                    (let ([value (source-ref source index)])
                                      (set! index (+ index step))
                                      value)))
-                             reset!)))])
+                             (lambda ()
+                               (unless (source-predicate source)
+                                 (errorf constructor-name
+                                         "source no longer satisfies its predicate"))
+                               (reset!)))))])
                 (case-lambda
                   [(source)
                    (pcheck ([source-predicate source])

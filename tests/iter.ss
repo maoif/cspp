@@ -1210,6 +1210,38 @@
          (lambda (source) (iter-concat (list->iter source)))
          (lambda (source) (sequence (tidentity) (list->iter source))))))
 
+(mat iter-indexed-reset-validates-current-source
+  ;; An invalidated mutable source must be rejected before entering its typed callbacks.
+  (let* ([length-reads 0]
+         [source? (lambda (value) (and (box? value) (vector? (unbox value))))]
+         [construct
+          (make-indexed-iter
+           'boxed-vector->iter source?
+           (lambda (source)
+             (set! length-reads (+ length-reads 1))
+             (vector-length (unbox source)))
+           (lambda (source index) (vector-ref (unbox source) index)))]
+         [source (box (vector 1 2))]
+         [cursor (construct source)])
+    (collect-iter cursor)
+    (set-box! source 42)
+    (and (iter-type-error? (lambda () (iter-reset! cursor)))
+         (= 1 length-reads)))
+
+  (let* ([source (box (vector 1 2))]
+         [construct
+          (make-indexed-iter
+           'boxed-vector->iter
+           (lambda (value) (and (box? value) (vector? (unbox value))))
+           (lambda (source) (vector-length (unbox source)))
+           (lambda (source index) (vector-ref (unbox source) index)))]
+         [cursor (construct source)])
+    (and (equal? '(1 2) (collect-iter cursor))
+         (begin
+           (set-box! source (vector 3 4 5))
+           (iter-reset! cursor)
+           (equal? '(3 4 5) (collect-iter cursor))))))
+
 (mat iter-specialized-numeric-type-safety
   ;; Fixnum terminals must reject non-fixnums before using specialized arithmetic.
   (andmap
