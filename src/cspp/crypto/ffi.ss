@@ -116,7 +116,7 @@
   (define ffi-random-fill!
     (let ([native (foreign-procedure "crypto_random_fill" (ptr unsigned-64 unsigned-64) int)])
       (lambda (bytevector start stop)
-        (pcheck ([bytevector? bytevector] [natural? start] [natural? stop])
+        (pcheck ([mutable-bytevector? bytevector] [natural? start] [natural? stop])
                 (require-optional-library 'ffi-random-fill! 'openssl)
                 (native bytevector start stop)))))
   #|proc:ffi-constant-time-eq

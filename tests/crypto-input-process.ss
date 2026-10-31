@@ -127,6 +127,23 @@
                (destroy-public-key! public)
                (destroy-private-key! private))))))]
     [(string=? mode "public-contracts")
+     ;; Error case: native output must never modify an immutable bytevector, including
+     ;; empty slices. Check every public arity and the internal FFI boundary.
+     (for-each
+       (lambda (length)
+         (let* ([immutable (bytevector->immutable-bytevector (make-bytevector length 7))]
+                [before (bytevector-copy immutable)])
+           (for-each
+             (lambda (proc)
+               (unless (rejects-input? proc)
+                 (error 'crypto-inputs "immutable random output accepted"))
+               (unless (equal? before immutable)
+                 (error 'crypto-inputs "immutable random output modified")))
+             (list (lambda () (random-bytes! immutable))
+                   (lambda () (random-bytes! immutable 0))
+                   (lambda () (random-bytes! immutable 0 length))
+                   (lambda () (ffi-random-fill! immutable 0 length))))))
+       '(0 1 32))
      ;; Error case: opaque-record accessors must reject arbitrary Scheme values,
      ;; including records of the wrong kind, before optimized field access.
      (for-each
@@ -177,8 +194,8 @@
            (lambda (proc)
              (unless (rejects-input? (lambda () (proc index)))
                (error 'crypto-inputs "slice index failed to type-check" index)))
-           (list (lambda (index) (random-bytes! #vu8(1) index 1))
-                 (lambda (index) (random-bytes! #vu8(1) 0 index))
+           (list (lambda (index) (random-bytes! (make-bytevector 1) index 1))
+                 (lambda (index) (random-bytes! (make-bytevector 1) 0 index))
                  (lambda (index) (constant-time-subbytevector=?
                                   #vu8(1) index 1 #vu8(1) 0 1))
                  (lambda (index) (unsafe-hash-bytevector 'md5 #vu8(1) index 1))
@@ -188,6 +205,10 @@
                  (lambda (index) (load-certificate #vu8(1) 'pem 0 index)))))
        (list #f 0.0 1.0 (+ (most-positive-fixnum) 1)))
      (when (optional-library-available? (optional-library-info 'openssl))
+       (let ([bytes (make-bytevector 4 7)])
+         (unless (and (eq? bytes (random-bytes! bytes 1 3))
+                      (= 7 (bytevector-u8-ref bytes 0) (bytevector-u8-ref bytes 3)))
+           (error 'crypto-inputs "mutable random output slice changed")))
        (let* ([private (generate-private-key 'ed25519)]
               [public (private-key->public-key private)])
          (dynamic-wind

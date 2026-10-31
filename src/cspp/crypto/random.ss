@@ -47,18 +47,21 @@ The `random-status` procedure returns `#t` when the OpenSSL random source is rea
     random-bytes)
 
   #|proc:random-bytes!
-The `random-bytes!` procedure fills a bytevector slice with random bytes.
-|#
+  The `random-bytes!` procedure fills mutable bytevector `bv` with random bytes and
+  returns `bv`. Optional nonnegative fixnums `start` and `stop` select a half-open
+  byte slice, defaulting to zero and the bytevector length. Immutable bytevectors and
+  invalid slices raise errors before native writes. Backend failures raise errors.
+  |#
   (define-who random-bytes!
     (case-lambda
       [(bv)
-       (pcheck ([bytevector? bv])
+       (pcheck ([mutable-bytevector? bv])
                (random-bytes! bv 0 (bytevector-length bv)))]
       [(bv start)
-       (pcheck ([bytevector? bv])
+       (pcheck ([mutable-bytevector? bv])
                (random-bytes! bv start (bytevector-length bv)))]
       [(bv start stop)
-       (pcheck ([bytevector? bv])
+       (pcheck ([mutable-bytevector? bv])
                (check-slice who (bytevector-length bv) start stop)
                (ensure-openssl who)
                (when (fx= 0 (ffi-random-fill! bv start stop))
