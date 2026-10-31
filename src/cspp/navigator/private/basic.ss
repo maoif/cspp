@@ -821,8 +821,10 @@
 
   #|proc:nav/key
   The `nav/key` procedure returns a navigator that focuses the value associated
-  with key `key` in a hashtable or association list. For association lists,
-  selection focuses each matching key in order.
+  with `key` in a hashtable, association list, or registered keyed container.
+  Keys follow the container's comparison policy and type restrictions. Association
+  lists use `eq?` and focus every matching entry's value in order. A missing key is
+  an absent focus; `nav/maybe` skips it and `nav/key/default` supplies a fallback.
   Kind: Reusable step constructor.
   |#
   (define nav/key
