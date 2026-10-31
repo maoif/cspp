@@ -1663,7 +1663,11 @@
 
   ;; The first transduce1 value is still subject to the reducer's accumulator type.
   (and (transducer-type-error? (lambda () (transduce1 (tidentity) (rffxsum) '(1.0))))
-       (transducer-type-error? (lambda () (transduce1 (tidentity) (rfflsum) '(1))))))
+       (transducer-type-error? (lambda () (transduce1 (tidentity) (rfflsum) '(1)))))
+
+  ;; Fixnum inputs and seeds do not guarantee that their sum is still a fixnum.
+  (transducer-type-error?
+   (lambda () (transduce (tidentity) (rffxsum) (most-positive-fixnum) '(1)))))
 
 (mat transducer-collection-seed-type-safety
   ;; Completed containers, scalars, and improper lists are not collection accumulators.

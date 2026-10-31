@@ -740,7 +740,9 @@
             [(find-keyed-protocol value)
              => (lambda (protocol)
                   (let ([entries (($keyed-protocol-entries-proc protocol) value)])
-                    (pcheck ([alist? entries]) entries)))]
+                    (unless (alist? entries)
+                      (nav-error 'nav-register-keyed! "invalid adapter entry list: ~s" entries))
+                    entries))]
             [else #f])))
 
   ;; Empty builders feed the selected protocol's setters directly. Check their
@@ -749,7 +751,9 @@
     (lambda (protocol value)
       (let ([result (($keyed-protocol-empty-proc protocol) value)]
             [predicate ($keyed-protocol-predicate protocol)])
-        (pcheck ([predicate result]) result))))
+        (unless (predicate result)
+          (nav-error 'nav-register-keyed! "invalid adapter empty map: ~s" result))
+        result)))
 
   ;; Rebuilding belongs to the container protocol, so submaps and entry updates
   ;; preserve key equivalence without depending on the concrete map implementation.
@@ -898,7 +902,9 @@
       (let ([protocol (find-set-protocol value)])
         (and protocol
              (let ([members (($set-protocol-values-proc protocol) value)])
-               (pcheck ([list? members]) members))))))
+               (unless (list? members)
+                 (nav-error 'nav-register-set! "invalid adapter member list: ~s" members))
+               members)))))
 
   (define set-replace
     (lambda (value members)

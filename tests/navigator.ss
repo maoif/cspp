@@ -3481,7 +3481,8 @@
    (lambda (index)
      (navigator-type-error?
       (lambda () (nav-setval (nav/nth/default index 0) 1 (vector)))))
-   (list (most-positive-fixnum) (+ 1 (most-positive-fixnum)))))
+   (list (quotient (most-positive-fixnum) 2)
+         (most-positive-fixnum) (+ 1 (most-positive-fixnum)))))
 
 (define-record-type (bad-keyed-adapter make-bad-keyed-adapter bad-keyed-adapter?)
   (fields entries))

@@ -71,11 +71,15 @@
                                  [else (cons default (loop '() (+ i 1)))]))]
                         [(vector? value)
                          ;; A natural index need not imply a representable vector length.
-                         (let ([copy (($primitive 2 make-vector) (+ index 1) default)]
-                               [len (vector-length value)])
-                           (vector-copy! value 0 copy 0 len)
-                           (vector-set! copy index child)
-                           copy)]
+                         (let ([new-length (+ index 1)])
+                           ;; Chez reserves one more header bit for vectors than fixnums.
+                           (unless (<= new-length (quotient (most-positive-fixnum) 2))
+                             (nav-error 'nav-transform "invalid vector length: ~s" new-length))
+                           (let ([copy (make-vector new-length default)]
+                                 [len (vector-length value)])
+                             (vector-copy! value 0 copy 0 len)
+                             (vector-set! copy index child)
+                             copy))]
                         [else
                          (nav-error 'nav-transform "cannot update missing index ~s in: ~s"
                                     index value)])))]))))

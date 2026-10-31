@@ -1781,7 +1781,7 @@
 
   #|proc:rffxsum
   The `rffxsum` procedure returns a reducer that sums transformed fixnum values
-  with `fx+`. Initialization returns fixnum zero; completion returns the fixnum accumulator.
+  with fixnum inputs and results. Initialization returns zero; completion returns the accumulator.
   An explicit seed must be a fixnum; intermediate sums must remain within the fixnum range.
   Kind: reusable reducer constructor. Each initialization creates independent accumulation
   state; supplying a mutable explicit seed shares that seed at the caller's discretion.
@@ -1794,7 +1794,11 @@
          [() 0]
          [(acc) (pcheck ([fixnum? acc]) acc)]
          ;; Explicit seeds and transformed values are not trusted fixnums.
-         [(acc x) (($primitive 2 fx+) acc x)]))))
+         [(acc x)
+          (pcheck ([fixnum? acc x])
+                  (let ([next (+ acc x)])
+                    (unless (fixnum? next) (errorf 'rffxsum "fixnum sum overflow"))
+                    next))]))))
 
   #|proc:rfflsum
   The `rfflsum` procedure returns a reducer that sums transformed flonum values
@@ -1810,7 +1814,7 @@
        (case-lambda
          [() 0.0]
          [(acc) (pcheck ([flonum? acc]) acc)]
-         [(acc x) (($primitive 2 fl+) acc x)]))))
+         [(acc x) (pcheck ([flonum? acc x]) (fl+ acc x))]))))
 
   #|proc:rfproduct
   The `rfproduct` procedure returns a reducer that multiplies transformed

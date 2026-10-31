@@ -805,7 +805,20 @@
                       (lambda () (set! closed (+ closed 1))))])
          (terminal source)
          (= closed 1))))
-   (list iter-flsum iter-flproduct iter-flavg)))
+   (list iter-flsum iter-flproduct iter-flavg))
+
+  ;; Explicit arithmetic checks must reject overflow instead of wrapping the result.
+  (andmap
+   (lambda (terminal)
+     (iter-type-error?
+      (lambda () (terminal (list->iter (list (most-positive-fixnum) 1))))))
+   (list iter-fxsum iter-fxavg))
+
+  ;; A product can overflow even though both inputs fit in fixnums.
+  (iter-type-error?
+   (lambda () (iter-fxproduct (list->iter (list (most-positive-fixnum) 2)))))
+
+  (= -1 (iter-fxavg (list->iter '(-1 -2)))))
 
 
 (mat iter-review-reset-current-list-slice
