@@ -319,8 +319,8 @@
              ;; Error case: synchronous handlers must run after resource locks unwind,
              ;; allowing the handler to perform another crypto call without deadlock.
              (check-error-handler-reentry (list left right)
-               (lambda (key) (sign-message 'ed25519 key 42))
-               (lambda () (private-key=? left right)) 'string/bytevector->utf8))
+               (lambda (key) (sign-message 'ed25519 'sha256 key #vu8()))
+               (lambda () (private-key=? left right)) 'sign-message))
            (lambda () (destroy-private-key! left) (destroy-private-key! right))))
        (let ([left (make-hmac-state 'sha256 #vu8(1))]
              [right (make-hmac-state 'sha256 #vu8(2))])

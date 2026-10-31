@@ -35,11 +35,12 @@
 
   (define check-signing-digest
     (lambda (who algorithm digest)
-      (if (eq? algorithm 'ed25519)
-          (when digest (errorf who "Ed25519 requires #f for the external digest"))
-          (unless (memq digest '(md5 sha1 sha224 sha256 sha384 sha512 sha512-224 sha512-256
-                                sha3-224 sha3-256 sha3-384 sha3-512 blake2b-512 blake2s-256))
-            (errorf who "unsupported signing digest: ~s" digest)))))
+      (pcheck ([(lambda (value) (or (not value) (symbol? value))) digest])
+        (if (eq? algorithm 'ed25519)
+            (when digest (errorf who "Ed25519 requires #f for the external digest"))
+            (unless (memq digest '(md5 sha1 sha224 sha256 sha384 sha512 sha512-224 sha512-256
+                                  sha3-224 sha3-256 sha3-384 sha3-512 blake2b-512 blake2s-256))
+              (errorf who "unsupported signing digest: ~s" digest))))))
 
   (define check-signing-key
     (lambda (who algorithm key-algorithm destroyed?)
@@ -99,7 +100,7 @@
       [(alg key message)
        (sign-message alg (default-digest alg) key message)]
       [(alg digest key message)
-       (pcheck ([private-key? key])
+       (pcheck ([symbol? alg] [private-key? key] [string/bytevector? message])
                (with-crypto-locks ((crypto-private-key-lock key))
                  (check-signing-algorithm who alg)
                  (check-signing-digest who alg digest)
@@ -126,7 +127,8 @@
       [(alg key message signature)
        (verify-signature? alg (default-digest alg) key message signature)]
       [(alg digest key message signature)
-       (pcheck ([public-key? key] [bytevector? signature])
+       (pcheck ([symbol? alg] [public-key? key] [bytevector? signature]
+                [string/bytevector? message])
                (with-crypto-locks ((crypto-public-key-lock key))
                  (check-signing-algorithm who alg)
                  (check-signing-digest who alg digest)
@@ -150,7 +152,7 @@
       [(alg key)
        (make-sign-state alg (default-digest alg) key)]
       [(alg digest key)
-       (pcheck ([private-key? key])
+       (pcheck ([symbol? alg] [private-key? key])
                (with-crypto-locks ((crypto-private-key-lock key))
                  (check-signing-algorithm who alg)
                  (check-signing-digest who alg digest)
@@ -170,7 +172,7 @@
       [(alg key)
        (make-verify-state alg (default-digest alg) key)]
       [(alg digest key)
-       (pcheck ([public-key? key])
+       (pcheck ([symbol? alg] [public-key? key])
                (with-crypto-locks ((crypto-public-key-lock key))
                  (check-signing-algorithm who alg)
                  (check-signing-digest who alg digest)

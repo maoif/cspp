@@ -21,12 +21,57 @@
           (cspp crypto key-agreement))
 
   (define envelope? crypto-envelope?)
-  (define envelope-kem crypto-envelope-kem)
-  (define envelope-cipher crypto-envelope-cipher)
-  (define envelope-ephemeral-key crypto-envelope-ephemeral-key)
-  (define envelope-nonce crypto-envelope-nonce)
-  (define envelope-ciphertext crypto-envelope-ciphertext)
-  (define envelope-tag crypto-envelope-tag)
+  #|proc:envelope-kem
+  The `envelope-kem` procedure returns the key agreement algorithm symbol of `envelope`.
+  Values that are not envelopes raise an error.
+  |#
+  (define envelope-kem
+    (lambda (envelope)
+      (pcheck ([envelope? envelope]) (crypto-envelope-kem envelope))))
+
+  #|proc:envelope-cipher
+  The `envelope-cipher` procedure returns the authenticated cipher algorithm symbol of `envelope`.
+  Values that are not envelopes raise an error.
+  |#
+  (define envelope-cipher
+    (lambda (envelope)
+      (pcheck ([envelope? envelope]) (crypto-envelope-cipher envelope))))
+
+  #|proc:envelope-ephemeral-key
+  The `envelope-ephemeral-key` procedure returns the stored PEM public-key bytevector of `envelope`.
+  Values that are not envelopes raise an error.
+  The bytevector is shared with the envelope; mutating it changes the envelope.
+  |#
+  (define envelope-ephemeral-key
+    (lambda (envelope)
+      (pcheck ([envelope? envelope]) (crypto-envelope-ephemeral-key envelope))))
+
+  #|proc:envelope-nonce
+  The `envelope-nonce` procedure returns the stored nonce bytevector of `envelope`.
+  Values that are not envelopes raise an error.
+  The bytevector is shared with the envelope; mutating it changes the envelope.
+  |#
+  (define envelope-nonce
+    (lambda (envelope)
+      (pcheck ([envelope? envelope]) (crypto-envelope-nonce envelope))))
+
+  #|proc:envelope-ciphertext
+  The `envelope-ciphertext` procedure returns the stored ciphertext bytevector of `envelope`.
+  Values that are not envelopes raise an error.
+  The bytevector is shared with the envelope; mutating it changes the envelope.
+  |#
+  (define envelope-ciphertext
+    (lambda (envelope)
+      (pcheck ([envelope? envelope]) (crypto-envelope-ciphertext envelope))))
+
+  #|proc:envelope-tag
+  The `envelope-tag` procedure returns the stored authentication-tag bytevector of `envelope`.
+  Values that are not envelopes raise an error.
+  The bytevector is shared with the envelope; mutating it changes the envelope.
+  |#
+  (define envelope-tag
+    (lambda (envelope)
+      (pcheck ([envelope? envelope]) (crypto-envelope-tag envelope))))
 
   (define derive-envelope-key
     (lambda (shared)
@@ -56,7 +101,8 @@
   |#
   (define-who seal-envelope/aad
     (lambda (recipient-public-key aad plaintext)
-      (pcheck ([public-key? recipient-public-key] [bytevector? aad])
+      (pcheck ([public-key? recipient-public-key] [bytevector? aad]
+               [string/bytevector? plaintext])
               (unless (eq? (public-key-algorithm recipient-public-key) 'x25519)
                 (errorf who "safe envelope currently requires an x25519 recipient public key"))
               (let ([pt (string/bytevector->utf8 plaintext)])

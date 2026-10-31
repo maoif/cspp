@@ -81,7 +81,7 @@
   |#
   (define-who password-hash/scrypt
     (lambda (password salt n r p outlen)
-      (pcheck ([bytevector? salt] [natural? n r p outlen])
+      (pcheck ([string/bytevector? password] [bytevector? salt] [exact-natural? n r p outlen])
               (when (zero? outlen) (errorf who "derived-key length must be positive"))
               (let* ([pw (normalize-password who password)]
                      [derived (scrypt pw salt n r p outlen)])
@@ -94,7 +94,7 @@
   |#
   (define-who password-hash/pbkdf2
     (lambda (password salt iterations outlen)
-      (pcheck ([bytevector? salt] [natural? iterations outlen])
+      (pcheck ([string/bytevector? password] [bytevector? salt] [exact-natural? iterations outlen])
               (when (zero? outlen) (errorf who "derived-key length must be positive"))
               (let* ([pw (normalize-password who password)]
                      [derived (pbkdf2 'sha256 pw salt iterations outlen)])
@@ -105,8 +105,9 @@ The `password-hash` procedure derives and encodes a default scrypt password hash
 |#
   (define-who password-hash
     (lambda (password)
-      (let ([salt (random-bytes 16)])
-        (password-hash/scrypt password salt 16384 8 1 32))))
+      (pcheck ([string/bytevector? password])
+        (let ([salt (random-bytes 16)])
+          (password-hash/scrypt password salt 16384 8 1 32)))))
 
   #|proc:password-hash?
   The `password-hash?` procedure returns `#t` when `x` is a supported, structurally valid
@@ -129,7 +130,7 @@ The `password-hash` procedure derives and encodes a default scrypt password hash
   |#
   (define-who password-verify?
     (lambda (password encoded)
-      (pcheck ([bytevector? encoded])
+      (pcheck ([string/bytevector? password] [bytevector? encoded])
               (let ([rec (parse-password-record who encoded)])
                 (and rec
                      (let* ([algo (vector-ref rec 0)]

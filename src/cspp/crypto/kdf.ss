@@ -39,7 +39,7 @@
   |#
   (define-who hkdf
     (lambda (which ikm salt info len)
-      (pcheck ([symbol? which] [natural? len])
+      (pcheck ([symbol? which] [exact-natural? len] [string/bytevector? ikm salt info])
         (check-digest-algorithm who which)
         (let* ([ikm-bv (normalized-bytevector who ikm)]
                [salt-bv (normalized-bytevector who salt)]
@@ -60,7 +60,7 @@
   |#
   (define-who hkdf-extract
     (lambda (which ikm salt)
-      (pcheck ([symbol? which])
+      (pcheck ([symbol? which] [string/bytevector? ikm salt])
         (check-digest-algorithm who which)
         (let* ([ikm-bv (normalized-bytevector who ikm)]
                [salt-bv (normalized-bytevector who salt)]
@@ -80,7 +80,7 @@
   |#
   (define-who hkdf-expand
     (lambda (which prk info len)
-      (pcheck ([symbol? which] [natural? len])
+      (pcheck ([symbol? which] [exact-natural? len] [string/bytevector? prk info])
         (check-digest-algorithm who which)
         (let* ([prk-bv (normalized-bytevector who prk)]
                [info-bv (normalized-bytevector who info)]
@@ -100,7 +100,8 @@
   |#
   (define-who pbkdf2
     (lambda (which password salt iterations len)
-      (pcheck ([symbol? which] [natural? iterations len])
+      (pcheck ([symbol? which] [exact-natural? iterations len]
+               [string/bytevector? password salt])
               (check-digest-algorithm who which)
               (let* ([password-bv (normalized-bytevector who password)]
                      [salt-bv (normalized-bytevector who salt)]
@@ -121,7 +122,7 @@
   |#
   (define-who scrypt
     (lambda (password salt n r p len)
-      (pcheck ([natural? n r p len])
+      (pcheck ([exact-natural? n r p len] [string/bytevector? password salt])
               (ensure-openssl who)
               (let* ([password-bv (normalized-bytevector who password)]
                      [salt-bv (normalized-bytevector who salt)]

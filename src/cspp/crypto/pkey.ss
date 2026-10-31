@@ -38,10 +38,41 @@
 
   (define private-key? crypto-private-key?)
   (define public-key? crypto-public-key?)
-  (define private-key-algorithm crypto-private-key-algorithm)
-  (define public-key-algorithm crypto-public-key-algorithm)
-  (define private-key-bits crypto-private-key-bits)
-  (define public-key-bits crypto-public-key-bits)
+  #|proc:private-key-algorithm
+  The `private-key-algorithm` procedure returns the algorithm symbol
+  stored in private key `key`. This immutable metadata remains available after destruction.
+  A value of another type raises an error.
+  |#
+  (define private-key-algorithm
+    (lambda (key)
+      (pcheck ([private-key? key]) (crypto-private-key-algorithm key))))
+
+  #|proc:public-key-algorithm
+  The `public-key-algorithm` procedure returns the algorithm symbol
+  stored in public key `key`. This immutable metadata remains available after destruction.
+  A value of another type raises an error.
+  |#
+  (define public-key-algorithm
+    (lambda (key)
+      (pcheck ([public-key? key]) (crypto-public-key-algorithm key))))
+
+  #|proc:private-key-bits
+  The `private-key-bits` procedure returns the key size in bits as an exact integer
+  stored in private key `key`. This immutable metadata remains available after destruction.
+  A value of another type raises an error.
+  |#
+  (define private-key-bits
+    (lambda (key)
+      (pcheck ([private-key? key]) (crypto-private-key-bits key))))
+
+  #|proc:public-key-bits
+  The `public-key-bits` procedure returns the key size in bits as an exact integer
+  stored in public key `key`. This immutable metadata remains available after destruction.
+  A value of another type raises an error.
+  |#
+  (define public-key-bits
+    (lambda (key)
+      (pcheck ([public-key? key]) (crypto-public-key-bits key))))
 
   (define check-private-key-live
     (lambda (who key)
@@ -174,7 +205,7 @@ The `store-private-key` procedure serializes `key` to PEM or DER as a bytevector
     (case-lambda
       [(key) (store-private-key key 'pem)]
       [(key fmt)
-       (pcheck ([private-key? key])
+       (pcheck ([private-key? key] [symbol? fmt])
                (with-crypto-locks ((crypto-private-key-lock key))
                  (check-private-key-live who key)
                  (let ([ans (store-dispatch who 'private key fmt)])
@@ -189,7 +220,7 @@ The `store-public-key` procedure serializes `key` to PEM or DER as a bytevector.
     (case-lambda
       [(key) (store-public-key key 'pem)]
       [(key fmt)
-       (pcheck ([public-key? key])
+       (pcheck ([public-key? key] [symbol? fmt])
                (with-crypto-locks ((crypto-public-key-lock key))
                  (check-public-key-live who key)
                  (let ([ans (store-dispatch who 'public key fmt)])
@@ -233,7 +264,7 @@ The `store-public-key` procedure serializes `key` to PEM or DER as a bytevector.
        (pcheck ([bytevector? bv])
                (load-private-key bv fmt start (bytevector-length bv)))]
       [(bv fmt start stop)
-       (pcheck ([bytevector? bv])
+       (pcheck ([bytevector? bv] [symbol? fmt])
                (check-slice who (bytevector-length bv) start stop)
                (with-crypto-operation
                  (let ([handle (load-dispatch who 'private bv start stop fmt)])
@@ -256,7 +287,7 @@ The `load-public-key` procedure loads a public key from a PEM or DER bytevector 
        (pcheck ([bytevector? bv])
                (load-public-key bv fmt start (bytevector-length bv)))]
       [(bv fmt start stop)
-       (pcheck ([bytevector? bv])
+       (pcheck ([bytevector? bv] [symbol? fmt])
                (check-slice who (bytevector-length bv) start stop)
                (with-crypto-operation
                  (let ([handle (load-dispatch who 'public bv start stop fmt)])

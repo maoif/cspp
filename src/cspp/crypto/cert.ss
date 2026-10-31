@@ -132,7 +132,7 @@ The `load-certificate` procedure loads a single certificate from a PEM or DER by
        (pcheck ([bytevector? bv])
                (load-certificate bv fmt start (bytevector-length bv)))]
       [(bv fmt start stop)
-       (pcheck ([bytevector? bv])
+       (pcheck ([bytevector? bv] [symbol? fmt])
                (check-slice who (bytevector-length bv) start stop)
                (load-certificate/raw who bv start stop fmt))]))
 
@@ -156,7 +156,7 @@ The `load-certificate` procedure loads a single certificate from a PEM or DER by
        (pcheck ([bytevector? bv])
                (load-cert-chain bv fmt start (bytevector-length bv)))]
       [(bv fmt start stop)
-       (pcheck ([bytevector? bv])
+       (pcheck ([bytevector? bv] [symbol? fmt])
                (check-slice who (bytevector-length bv) start stop)
                (check-cert-format who fmt)
                (let ([slice (subbytevector bv start stop)])
@@ -308,7 +308,7 @@ The `certificate-fingerprint` procedure returns a certificate digest, defaulting
     (case-lambda
       [(cert) (certificate-fingerprint cert 'sha256)]
       [(cert which)
-       (pcheck ([certificate? cert])
+       (pcheck ([certificate? cert] [symbol? which])
                (with-crypto-locks ((crypto-certificate-lock cert))
                  (check-certificate-live who cert)
                  (let ([ans (ffi-cert-fingerprint (crypto-certificate-handle cert) which)])

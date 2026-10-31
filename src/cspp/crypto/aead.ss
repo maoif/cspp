@@ -50,23 +50,38 @@
       (when (aead-state-finalized? st)
         (errorf who "AEAD state is finalized"))))
 
+  #|proc:aead-key-size
+  The `aead-key-size` procedure returns the required key length in bytes for algorithm
+  symbol `which`. An invalid type or unsupported symbol raises an error.
+  |#
   (define aead-key-size
     (lambda (which)
-      (check-aead-algorithm 'aead-key-size which)
-      (case which
-        [(aes-128-gcm) 16]
-        [(aes-256-gcm chacha20-poly1305) 32]
-        [else (unreachable!)])))
+      (pcheck ([symbol? which])
+        (check-aead-algorithm 'aead-key-size which)
+        (case which
+          [(aes-128-gcm) 16]
+          [(aes-256-gcm chacha20-poly1305) 32]
+          [else (unreachable!)]))))
 
+  #|proc:aead-default-nonce-size
+  The `aead-default-nonce-size` procedure returns the required nonce length in bytes
+  for algorithm symbol `which`. Invalid types and unsupported symbols raise errors.
+  |#
   (define aead-default-nonce-size
     (lambda (which)
-      (check-aead-algorithm 'aead-default-nonce-size which)
-      12))
+      (pcheck ([symbol? which])
+        (check-aead-algorithm 'aead-default-nonce-size which)
+        12)))
 
+  #|proc:aead-tag-size
+  The `aead-tag-size` procedure returns the authentication-tag length in bytes for
+  algorithm symbol `which`. Invalid types and unsupported symbols raise errors.
+  |#
   (define aead-tag-size
     (lambda (which)
-      (check-aead-algorithm 'aead-tag-size which)
-      16))
+      (pcheck ([symbol? which])
+        (check-aead-algorithm 'aead-tag-size which)
+        16)))
 
   (define check-aead-key/nonce
     (lambda (who which key nonce)
@@ -112,7 +127,7 @@ The `aead-encrypt` procedure encrypts `plaintext` and returns ciphertext and tag
 |#
   (define-who aead-encrypt
     (lambda (which key nonce plaintext)
-      (pcheck ([bytevector? key nonce plaintext])
+      (pcheck ([symbol? which] [bytevector? key nonce plaintext])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
               (do-aead-encrypt who which key nonce (bytevector-empty) plaintext))))
@@ -122,7 +137,7 @@ The `aead-encrypt/aad` procedure encrypts `plaintext` with associated data and r
 |#
   (define-who aead-encrypt/aad
     (lambda (which key nonce aad plaintext)
-      (pcheck ([bytevector? key nonce aad plaintext])
+      (pcheck ([symbol? which] [bytevector? key nonce aad plaintext])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
               (do-aead-encrypt who which key nonce aad plaintext))))
@@ -147,7 +162,7 @@ The `aead-encrypt/detached-aad` procedure is an alias for `aead-encrypt/aad`.
   |#
   (define-who aead-decrypt
     (lambda (which key nonce ciphertext tag)
-      (pcheck ([bytevector? key nonce ciphertext tag])
+      (pcheck ([symbol? which] [bytevector? key nonce ciphertext tag])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
               (do-aead-decrypt who which key nonce (bytevector-empty) ciphertext tag))))
@@ -160,7 +175,7 @@ The `aead-encrypt/detached-aad` procedure is an alias for `aead-encrypt/aad`.
   |#
   (define-who aead-decrypt/aad
     (lambda (which key nonce aad ciphertext tag)
-      (pcheck ([bytevector? key nonce aad ciphertext tag])
+      (pcheck ([symbol? which] [bytevector? key nonce aad ciphertext tag])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
               (do-aead-decrypt who which key nonce aad ciphertext tag))))
@@ -173,7 +188,7 @@ The `aead-encrypt/detached-aad` procedure is an alias for `aead-encrypt/aad`.
   |#
   (define-who make-aead-encrypt-state
     (lambda (which key nonce)
-      (pcheck ([bytevector? key nonce])
+      (pcheck ([symbol? which] [bytevector? key nonce])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
               (%make-aead-state (make-mutex 'aead) 'encrypt which
@@ -187,7 +202,7 @@ The `aead-encrypt/detached-aad` procedure is an alias for `aead-encrypt/aad`.
   |#
   (define-who make-aead-decrypt-state
     (lambda (which key nonce)
-      (pcheck ([bytevector? key nonce])
+      (pcheck ([symbol? which] [bytevector? key nonce])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
               (%make-aead-state (make-mutex 'aead) 'decrypt which
@@ -325,7 +340,7 @@ The `aead-destroy!` procedure marks an AEAD state as destroyed and releases buff
   |#
   (define-who call-with-aead-encrypt-state
     (lambda (which key nonce proc)
-      (pcheck ([bytevector? key nonce] [procedure? proc])
+      (pcheck ([symbol? which] [bytevector? key nonce] [procedure? proc])
               (call-with-crypto-resource who
                 (lambda () (make-aead-encrypt-state which key nonce)) aead-destroy! proc))))
 
@@ -337,7 +352,7 @@ The `aead-destroy!` procedure marks an AEAD state as destroyed and releases buff
   |#
   (define-who call-with-aead-decrypt-state
     (lambda (which key nonce proc)
-      (pcheck ([bytevector? key nonce] [procedure? proc])
+      (pcheck ([symbol? which] [bytevector? key nonce] [procedure? proc])
               (call-with-crypto-resource who
                 (lambda () (make-aead-decrypt-state which key nonce)) aead-destroy! proc))))
   )

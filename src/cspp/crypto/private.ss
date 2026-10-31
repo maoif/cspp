@@ -10,6 +10,8 @@
           bytevector-append
           subbytevector
           string/bytevector->utf8
+          string/bytevector?
+          exact-natural?
           u32-set!
           u32-ref
           bytevector-prefix?
@@ -194,18 +196,38 @@ The `bytevector-empty` procedure returns an empty bytevector.
       (make-bytevector 0 0)))
 
   #|proc:check-slice
-The `check-slice` procedure validates a `[start, stop)` slice against `len`.
-|#
+  The internal `check-slice` procedure validates the half-open slice `[start, stop)`
+  against fixnum length `len`. Both indices must be nonnegative fixnums. It returns
+  an unspecified value on success; invalid types raise a pcheck error, and invalid
+  bounds raise an error attributed to symbol `who`.
+  |#
   (define check-slice
     (lambda (who len start stop)
-      (unless (natural? start)
-        (errorf who "invalid start index ~a" start))
-      (unless (natural? stop)
-        (errorf who "invalid stop index ~a" stop))
-      (when (fx> start stop)
-        (errorf who "start index ~a is greater than stop index ~a" start stop))
-      (when (fx> stop len)
-        (errorf who "stop index ~a is greater than total length ~a" stop len))))
+      (pcheck ([fixnum? start stop])
+        (when (fx< start 0)
+          (errorf who "invalid start index ~a" start))
+        (when (fx< stop 0)
+          (errorf who "invalid stop index ~a" stop))
+        (when (fx> start stop)
+          (errorf who "start index ~a is greater than stop index ~a" start stop))
+        (when (fx> stop len)
+          (errorf who "stop index ~a is greater than total length ~a" stop len)))))
+
+  #|proc:string/bytevector?
+  The internal `string/bytevector?` predicate returns `#t` when `value` is a string or
+  bytevector, and `#f` otherwise. It accepts any Scheme value.
+  |#
+  (define string/bytevector?
+    (lambda (value)
+      (pcheck () (or (string? value) (bytevector? value)))))
+
+  #|proc:exact-natural?
+  The internal `exact-natural?` predicate returns `#t` when `value` is an exact
+  nonnegative integer, and `#f` otherwise. It accepts any Scheme value.
+  |#
+  (define exact-natural?
+    (lambda (value)
+      (pcheck () (and (integer? value) (exact? value) (>= value 0)))))
 
   #|proc:subbytevector
 The `subbytevector` procedure copies a bytevector slice.

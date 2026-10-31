@@ -24,13 +24,13 @@
   (define-who unsafe-hash-bytevector
     (case-lambda
       [(alg bv)
-       (pcheck ([bytevector? bv])
+       (pcheck ([symbol? alg] [bytevector? bv])
          (unsafe-hash-bytevector alg bv 0 (bytevector-length bv)))]
       [(alg bv start)
-       (pcheck ([bytevector? bv])
+       (pcheck ([symbol? alg] [bytevector? bv])
          (unsafe-hash-bytevector alg bv start (bytevector-length bv)))]
       [(alg bv start stop)
-       (pcheck ([bytevector? bv])
+       (pcheck ([symbol? alg] [bytevector? bv])
                (check-unsafe-hash who alg)
                (check-slice who (bytevector-length bv) start stop)
                (let ([ans (ffi-digest-bytevector alg bv start stop)])
@@ -48,13 +48,13 @@
   (define-who unsafe-hash-string
     (case-lambda
       [(alg str)
-       (pcheck ([string? str])
+       (pcheck ([symbol? alg] [string? str])
          (unsafe-hash-string alg str 0 (string-length str)))]
       [(alg str start)
-       (pcheck ([string? str])
+       (pcheck ([symbol? alg] [string? str])
          (unsafe-hash-string alg str start (string-length str)))]
       [(alg str start stop)
-       (pcheck ([string? str])
+       (pcheck ([symbol? alg] [string? str])
                (check-unsafe-hash who alg)
                (check-slice who (string-length str) start stop)
                (let ([ans (ffi-digest-string alg str start stop)])
@@ -70,8 +70,8 @@
   |#
   (define-who unsafe-hash
     (lambda (alg x)
-      (pcase x
-        [bytevector? (unsafe-hash-bytevector alg x)]
-        [string? (unsafe-hash-string alg x)]
-        [else (errorf who "expected string or bytevector, given ~s" x)])))
+      (pcheck ([symbol? alg] [string/bytevector? x])
+        (if (bytevector? x)
+            (unsafe-hash-bytevector alg x)
+            (unsafe-hash-string alg x)))))
   )

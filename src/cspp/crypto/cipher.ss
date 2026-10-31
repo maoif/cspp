@@ -52,40 +52,43 @@ The `cipher-key-size` procedure returns the required key size in bytes for `whic
 |#
   (define-who cipher-key-size
     (lambda (which)
-      (check-cipher-algorithm who which)
-      (let ([ans (ffi-cipher-key-size which)])
-        (when (fx< ans 0)
-          (errorf who "failed to query key size for ~s" which))
-        ans)))
+      (pcheck ([symbol? which])
+        (check-cipher-algorithm who which)
+        (let ([ans (ffi-cipher-key-size which)])
+          (when (fx< ans 0)
+            (errorf who "failed to query key size for ~s" which))
+          ans))))
 
   #|proc:cipher-iv-size
 The `cipher-iv-size` procedure returns the required IV size in bytes for `which`.
 |#
   (define-who cipher-iv-size
     (lambda (which)
-      (check-cipher-algorithm who which)
-      (let ([ans (ffi-cipher-iv-size which)])
-        (when (fx< ans 0)
-          (errorf who "failed to query IV size for ~s" which))
-        ans)))
+      (pcheck ([symbol? which])
+        (check-cipher-algorithm who which)
+        (let ([ans (ffi-cipher-iv-size which)])
+          (when (fx< ans 0)
+            (errorf who "failed to query IV size for ~s" which))
+          ans))))
 
   #|proc:cipher-block-size
 The `cipher-block-size` procedure returns the block size in bytes for `which`.
 |#
   (define-who cipher-block-size
     (lambda (which)
-      (check-cipher-algorithm who which)
-      (let ([ans (ffi-cipher-block-size which)])
-        (when (fx< ans 0)
-          (errorf who "failed to query block size for ~s" which))
-        ans)))
+      (pcheck ([symbol? which])
+        (check-cipher-algorithm who which)
+        (let ([ans (ffi-cipher-block-size which)])
+          (when (fx< ans 0)
+            (errorf who "failed to query block size for ~s" which))
+          ans))))
 
   #|proc:make-cipher-state
 The `make-cipher-state` procedure creates a lower-level cipher state in `mode` for `which`.
 |#
   (define-who make-cipher-state
     (lambda (mode which key iv)
-      (pcheck ([bytevector? key iv])
+      (pcheck ([symbol? mode which] [bytevector? key iv])
               (check-cipher-mode who mode)
               (check-cipher-algorithm who which)
               (unless (fx= (bytevector-length key) (cipher-key-size which))
@@ -172,7 +175,7 @@ The `cipher-destroy!` procedure releases foreign resources owned by `st`.
   |#
   (define-who call-with-cipher-state
     (lambda (mode which key iv proc)
-      (pcheck ([bytevector? key iv] [procedure? proc])
+      (pcheck ([symbol? mode which] [bytevector? key iv] [procedure? proc])
               (call-with-crypto-resource who
                 (lambda () (make-cipher-state mode which key iv)) cipher-destroy! proc))))
   )

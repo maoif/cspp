@@ -63,7 +63,9 @@ Internal native-resource operations defer timer, keyboard, and collection interr
 their handles and ownership changes are consistent. An exited internal operation cannot be
 reentered, including through the continuation attached to a Chez error condition. Public
 `call-with-*` callbacks run with the caller's interrupt settings; their states are destroyed
-on continuation escape. `call-with-digester` rejects reentry into its destroyed callback scope.
+on continuation escape. All managed crypto state scopes reject reentry after exit.
+Public crypto procedures validate argument types before optimized primitive or native access.
+Slice indices must be nonnegative fixnums; inexact integers and bignums are rejected.
 
 The old `(cspp digest)` and `(cspp crypto hash)` imports have been removed. Replace them with
 `(cspp crypto digest)` and replace the former crypto `hash-*` names with `digest-*` or

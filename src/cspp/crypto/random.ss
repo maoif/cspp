@@ -14,8 +14,9 @@ The `random-status` procedure returns `#t` when the OpenSSL random source is rea
 |#
   (define random-status
     (lambda ()
-      (ensure-openssl 'random-status)
-      (not (fx= 0 (ffi-random-status)))))
+      (pcheck ()
+        (ensure-openssl 'random-status)
+        (not (fx= 0 (ffi-random-status))))))
 
   #|proc:random-bytes
   The `random-bytes` procedure returns a fresh random bytevector of length `len`.

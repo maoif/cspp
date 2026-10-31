@@ -20,7 +20,7 @@
   |#
   (define-who derive-shared-secret
     (lambda (alg private-key peer-public-key)
-      (pcheck ([private-key? private-key] [public-key? peer-public-key])
+      (pcheck ([symbol? alg] [private-key? private-key] [public-key? peer-public-key])
               (with-crypto-locks ((crypto-private-key-lock private-key) (crypto-public-key-lock peer-public-key))
                 (check-key-agreement-algorithm who alg)
                 (when (or (crypto-private-key-destroyed? private-key)

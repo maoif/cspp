@@ -51,13 +51,13 @@
   (define-who make-hmac-state
     (case-lambda
       [(which key)
-       (pcheck ([bytevector? key])
+       (pcheck ([symbol? which] [bytevector? key])
                (make-hmac-state which key 0 (bytevector-length key)))]
       [(which key start)
-       (pcheck ([bytevector? key])
+       (pcheck ([symbol? which] [bytevector? key])
                (make-hmac-state which key start (bytevector-length key)))]
       [(which key start stop)
-       (pcheck ([bytevector? key])
+       (pcheck ([symbol? which] [bytevector? key])
                (check-mac-algorithm who which)
                (check-slice who (bytevector-length key) start stop)
                (with-crypto-operation
@@ -176,7 +176,7 @@ The `hmac-destroy!` procedure releases the foreign resources owned by an HMAC st
   |#
   (define-who call-with-hmac-state
     (lambda (which key proc)
-      (pcheck ([procedure? proc] [bytevector? key])
+      (pcheck ([symbol? which] [procedure? proc] [bytevector? key])
               (call-with-crypto-resource who
                 (lambda () (make-hmac-state which key)) hmac-destroy! proc))))
 
@@ -188,7 +188,7 @@ The `hmac-destroy!` procedure releases the foreign resources owned by an HMAC st
   |#
   (define-who hmac
     (lambda (which key data)
-      (pcheck ([bytevector? key])
+      (pcheck ([symbol? which] [bytevector? key] [string/bytevector? data])
               (call-with-hmac-state
                which key
                (lambda (st)
@@ -207,6 +207,6 @@ The `hmac-destroy!` procedure releases the foreign resources owned by an HMAC st
   |#
   (define-who hmac-verify?
     (lambda (which key data expected-tag)
-      (pcheck ([bytevector? key expected-tag])
+      (pcheck ([symbol? which] [bytevector? key expected-tag] [string/bytevector? data])
               (constant-time-bytevector=? (hmac which key data) expected-tag))))
   )
