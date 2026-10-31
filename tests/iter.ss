@@ -1,5 +1,12 @@
 (import (cspp))
 
+;; A managed type error names its procedure; an invalid memory reference does not.
+(define iter-type-error?
+  (lambda (run)
+    (guard (condition [(who-condition? condition) #t] [else #f])
+      (run)
+      #f)))
+
 (define collect-iter
   (lambda (iter)
     (let loop ([acc '()])
@@ -1163,3 +1170,20 @@
            (set-cdr! (cddr source) (list 3 4))
            (iter-reset! cursor)
            (equal? '(3) (iter->list cursor))))))
+
+(mat iter-specialized-numeric-type-safety
+  ;; Fixnum terminals must reject non-fixnums before using specialized arithmetic.
+  (andmap
+   (lambda (terminal)
+     (andmap (lambda (value)
+               (iter-type-error? (lambda () (terminal (list->iter (list value))))))
+             (list #f 'bad "bad" (cons 1 2) 1.0 (+ 1 (most-positive-fixnum)))))
+   (list iter-fxsum iter-fxproduct iter-fxavg))
+
+  ;; Flonum terminals must reject other numeric representations as well as nonnumbers.
+  (andmap
+   (lambda (terminal)
+     (andmap (lambda (value)
+               (iter-type-error? (lambda () (terminal (list->iter (list value))))))
+             (list #f 'bad "bad" (cons 1 2) 1 1/2 1+2i)))
+   (list iter-flsum iter-flproduct iter-flavg)))

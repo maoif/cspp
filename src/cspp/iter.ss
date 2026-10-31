@@ -1010,6 +1010,7 @@
       (iter-min fx< iter)))
   #|proc:iter-fxavg
   Return the fixnum arithmetic mean of values from `iter`, or `#f` when empty.
+  Each value must be a fixnum; arithmetic overflow raises an error.
   Kind: consuming terminal; successful completion finalizes the resource chain.
   |#
   (define iter-fxavg
@@ -1017,22 +1018,25 @@
       (let loop ([i 0] [sum 0])
         (let ([x (iter-next! iter)])
           (if (iter-end? x)
-              (begin (iter-finalize! iter) (if (fx= i 0) #f (fx/ sum i)))
-              (loop (add1 i) (fx+ x sum)))))))
+              (begin (iter-finalize! iter) (if (= i 0) #f (($primitive 2 fx/) sum i)))
+              (loop (add1 i) (($primitive 2 fx+) x sum)))))))
   #|proc:iter-fxsum
   Return the fixnum sum of values from `iter` and finalize the iterator.
+  Each value must be a fixnum; arithmetic overflow raises an error.
   Kind: consuming terminal; successful completion finalizes the resource chain.
   |#
   (define iter-fxsum
     (lambda (iter)
-      (iter-fold (lambda (acc x) (fx+ acc x)) 0 iter)))
+      ;; Elements cross an untyped boundary: retain primitive checks in release builds.
+      (iter-fold (lambda (acc x) (($primitive 2 fx+) acc x)) 0 iter)))
   #|proc:iter-fxproduct
   Return the fixnum product of values from `iter` and finalize the iterator.
+  Each value must be a fixnum; arithmetic overflow raises an error.
   Kind: consuming terminal; successful completion finalizes the resource chain.
   |#
   (define iter-fxproduct
     (lambda (iter)
-      (iter-fold (lambda (acc x) (fx* acc x)) 1 iter)))
+      (iter-fold (lambda (acc x) (($primitive 2 fx*) acc x)) 1 iter)))
 
   (define iter-flmax
     (lambda (iter)
@@ -1042,6 +1046,7 @@
       (iter-min fl< iter)))
   #|proc:iter-flavg
   Return the flonum arithmetic mean of values from `iter`, or `#f` when empty.
+  Each value must be a flonum; other numeric representations are rejected.
   Kind: consuming terminal; successful completion finalizes the resource chain.
   |#
   (define iter-flavg
@@ -1049,22 +1054,24 @@
       (let loop ([i 0] [sum 0.0])
         (let ([x (iter-next! iter)])
           (if (iter-end? x)
-              (begin (iter-finalize! iter) (if (fx= i 0) #f (fl/ sum (inexact i))))
-              (loop (add1 i) (fl+ x sum)))))))
+              (begin (iter-finalize! iter) (if (= i 0) #f (fl/ sum (inexact i))))
+              (loop (add1 i) (($primitive 2 fl+) x sum)))))))
   #|proc:iter-flsum
   Return the flonum sum of values from `iter` and finalize the iterator.
+  Each value must be a flonum; other numeric representations are rejected.
   Kind: consuming terminal; successful completion finalizes the resource chain.
   |#
   (define iter-flsum
     (lambda (iter)
-      (iter-fold (lambda (acc x) (fl+ acc x)) 0.0 iter)))
+      (iter-fold (lambda (acc x) (($primitive 2 fl+) acc x)) 0.0 iter)))
   #|proc:iter-flproduct
   Return the flonum product of values from `iter` and finalize the iterator.
+  Each value must be a flonum; other numeric representations are rejected.
   Kind: consuming terminal; successful completion finalizes the resource chain.
   |#
   (define iter-flproduct
     (lambda (iter)
-      (iter-fold (lambda (acc x) (fl* acc x)) 1.0 iter)))
+      (iter-fold (lambda (acc x) (($primitive 2 fl*) acc x)) 1.0 iter)))
 
   ;; TODO type-specialized ops
 

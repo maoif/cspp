@@ -1753,7 +1753,7 @@
        'rfcount
        (case-lambda
          [() 0]
-         [(acc) acc]
+         [(acc) (pcheck ([number? acc]) acc)]
          [(acc x) (+ acc 1)]))))
 
   #|proc:rfsum
@@ -1769,7 +1769,7 @@
        'rfsum
        (case-lambda
          [() 0]
-         [(acc) acc]
+         [(acc) (pcheck ([number? acc]) acc)]
          [(acc x) (+ acc x)]))))
 
   #|proc:rffxsum
@@ -1785,8 +1785,9 @@
        'rffxsum
        (case-lambda
          [() 0]
-         [(acc) acc]
-         [(acc x) (fx+ acc x)]))))
+         [(acc) (pcheck ([fixnum? acc]) acc)]
+         ;; Explicit seeds and transformed values are not trusted fixnums.
+         [(acc x) (($primitive 2 fx+) acc x)]))))
 
   #|proc:rfflsum
   The `rfflsum` procedure returns a reducer that sums transformed flonum values
@@ -1801,8 +1802,8 @@
        'rfflsum
        (case-lambda
          [() 0.0]
-         [(acc) acc]
-         [(acc x) (fl+ acc x)]))))
+         [(acc) (pcheck ([flonum? acc]) acc)]
+         [(acc x) (($primitive 2 fl+) acc x)]))))
 
   #|proc:rfproduct
   The `rfproduct` procedure returns a reducer that multiplies transformed
@@ -1817,7 +1818,7 @@
        'rfproduct
        (case-lambda
          [() 1]
-         [(acc) acc]
+         [(acc) (pcheck ([number? acc]) acc)]
          [(acc x) (* acc x)]))))
 
   (define extrema-reducer

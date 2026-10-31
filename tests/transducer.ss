@@ -1,5 +1,12 @@
 (import (cspp))
 
+;; Type errors must be reported before an unchecked primitive can fault.
+(define transducer-type-error?
+  (lambda (run)
+    (guard (condition [(who-condition? condition) #t] [else #f])
+      (run)
+      #f)))
+
 (mat registered-source-transduction
      (= 15 (transduce (tcompose (tfilter even?) (tmap add1))
                       (rffxsum)
@@ -1628,3 +1635,32 @@
                   (loop (fx1- remaining) (and okay? result)))))))
       workers 100))
    '(1 4)))
+
+(mat transducer-numeric-type-safety
+  ;; Specialized numeric reducers reject elements with the wrong representation.
+  (andmap
+   (lambda (value)
+     (transducer-type-error?
+      (lambda () (transduce (tidentity) (rffxsum) (list value)))))
+   (list #f 'bad "bad" (cons 1 2) 1.0 (+ 1 (most-positive-fixnum))))
+
+  ;; Exact numbers are not valid flonum inputs.
+  (andmap
+   (lambda (value)
+     (transducer-type-error?
+      (lambda () (transduce (tidentity) (rfflsum) (list value)))))
+   (list #f 'bad "bad" (cons 1 2) 1 1/2 1+2i))
+
+  ;; Invalid numeric seeds must also be rejected when no step runs.
+  (andmap
+   (lambda (make-reducer)
+     (andmap
+      (lambda (seed)
+        (transducer-type-error?
+         (lambda () (transduce (tidentity) (make-reducer) seed '()))))
+      (list #f 'bad "bad" (cons 1 2))))
+   (list rfcount rfsum rfproduct rffxsum rfflsum))
+
+  ;; The first transduce1 value is still subject to the reducer's accumulator type.
+  (and (transducer-type-error? (lambda () (transduce1 (tidentity) (rffxsum) '(1.0))))
+       (transducer-type-error? (lambda () (transduce1 (tidentity) (rfflsum) '(1))))))
