@@ -1023,7 +1023,7 @@ in `state`.
 
   #|proc:benchmark-state-user-data
   The `benchmark-state-user-data` procedure returns the application value stored in `state`,
-  initially `#f`. `state` is a benchmark state owned by the controlling sample or suite.
+  initially the empty list. `state` belongs to the controlling sample or suite.
   |#
   (define benchmark-state-user-data
     (lambda (state)
@@ -1626,9 +1626,8 @@ result fields and whose values are column labels; supported field keys are
   `max-iterations` is a positive iteration cap. `output` is an output port or `#f`;
   `filter` is `#f`, a name symbol, a name prefix string, or a predicate receiving a
   benchmark descriptor and returning whether to select it. The predicate must accept one argument.
-  `reporter` is a reporter
-  or `#f`. Boolean `cost-center?` requests optional instrumentation, and Boolean
-  `stop-on-error?` stops after the first captured error when true. Cost-center
+  `reporter` is a reporter or `#f`. Boolean `cost-center?` requests optional instrumentation.
+  Boolean `stop-on-error?` stops after the first captured error when true. Cost-center
   instrumentation is reserved for future support; measured cost-center data is `#f`.
   |#
   (define make-benchmark-config
@@ -2379,8 +2378,8 @@ arities are rejected even when the registry is empty.
   the descriptor's declared names in expansion order; argument values may be arbitrary objects.
   Invalid pairs and argument layouts are rejected before setup. Custom state names and template
   metadata are retained. Explicit config fields override descriptor options and defaults.
-  Reporting fields
-  are unused: this procedure neither invokes a reporter nor validates its output port.
+  Reporting fields are unused: this procedure neither invokes a reporter nor validates its
+  output port.
   |#
   (define benchmark-run-one
     (lambda (expanded config)
