@@ -211,10 +211,16 @@
 
   (define indexed-clear
     (lambda (index value clear)
+      ;; Bulk adapter hooks accept valid indexes only. Diagnose absence here so
+      ;; optional clearing does not mistake an adapter's bounds error for user failure.
+      (when (nav-missing? (indexed-ref/missing value index))
+        (nav-focus-error 'nav-clearval "index ~s out of range for: ~s" index value))
       (indexed-clear-values value (list index) clear)))
 
   (define indexed-clear!
     (lambda (index value clear!)
+      (when (nav-missing? (indexed-ref/missing value index))
+        (nav-focus-error 'nav-clearval! "index ~s out of range for: ~s" index value))
       (indexed-clear-values! value (list index) clear!)))
 
   (define clear-pair-field
@@ -635,6 +641,9 @@
 
   #|proc:nav/nth
   The `nav/nth` procedure returns a navigator that focuses zero-based `index`.
+  The index must be a nonnegative integer; integer-valued inexact indexes become exact.
+  An out-of-range index is an absent focus in every operation, including clearing;
+  `nav/maybe` skips it without calling the suffix or a bulk adapter hook.
   Kind: Reusable step constructor.
   |#
   (define nav/nth

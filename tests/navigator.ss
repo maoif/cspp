@@ -3448,3 +3448,22 @@
   (null? (nav-select nav/children '#()))
 
   (null? (nav-select nav/children 42)))
+
+(mat navigator-optional-indexed-clearing-bounds
+  (andmap
+   (lambda (make-source)
+     (andmap
+      (lambda (size)
+        (let* ([source (apply make-source (make-list size 1))]
+               [before (nav-select nav/all source)])
+          (andmap
+           (lambda (index)
+             (let ([path (nav/maybe (nav/nth index))])
+               (and (null? (nav-select path source))
+                    (equal? before (nav-select nav/all (nav-clearval path source)))
+                    (eq? source (nav-clearval! path source))
+                    (equal? before (nav-select nav/all source)))))
+           ;; Both the first absent index and an oversized index are optional misses.
+           (list size (+ 1 (most-positive-fixnum))))))
+      '(0 3)))
+   (list array fxarray (lambda values (apply flarray (map inexact values))) bytearray dlist)))
