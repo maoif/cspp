@@ -480,6 +480,17 @@ static ptr hkdf_common(int mode, ptr which, ptr ikm, uint64_t ikm_start,
   if (md_name == NULL || out_len < 0) return Sfalse;
 
   if (!cspp_openssl_require()) return Sfalse;
+  /* RFC 5869 limits expansion to 255 digest blocks. Reject impossible requests
+   * before allocating an output buffer that cleanup would otherwise cleanse. */
+  if (mode != EVP_KDF_HKDF_MODE_EXTRACT_ONLY && out_len != 0) {
+    EVP_MD *md = fetch_digest(which);
+    int digest_size;
+    if (md == NULL) return Sfalse;
+    digest_size = EVP_MD_get_size(md);
+    EVP_MD_free(md);
+    if (digest_size <= 0 || (uint64_t)out_len > 255 * (uint64_t)digest_size)
+      return Sfalse;
+  }
   kdf = EVP_KDF_fetch(NULL, "HKDF", NULL);
   if (kdf == NULL) goto done;
   ctx = EVP_KDF_CTX_new(kdf);

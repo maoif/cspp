@@ -34,8 +34,9 @@
   The `hkdf` procedure returns `len` derived bytes using digest symbol `which`, input
   key material `ikm`, `salt`, and context `info`. Each input may be a bytevector or a
   string, with strings encoded as UTF-8. `len` must be an exact nonnegative integer
-  fitting a signed C int; zero returns an empty bytevector after input and backend
-  validation. Invalid inputs and native derivation failures raise errors.
+  fitting a signed C int and at most 255 times the digest length in bytes. Excessive
+  lengths raise an error before output allocation. Zero returns an empty bytevector
+  after input and backend validation. Invalid inputs and native failures raise errors.
   |#
   (define-who hkdf
     (lambda (which ikm salt info len)
@@ -74,9 +75,10 @@
   #|proc:hkdf-expand
   The `hkdf-expand` procedure returns `len` bytes using digest symbol `which`,
   pseudorandom key `prk`, and context `info`. Both inputs may be bytevectors or strings;
-  strings use UTF-8. `len` must be an exact nonnegative integer fitting a signed C int.
-  Zero returns an empty bytevector after input and backend validation. Invalid inputs
-  and native derivation failures raise errors.
+  strings use UTF-8. `len` must be an exact nonnegative integer fitting a signed C int
+  and at most 255 times the digest length in bytes. Excessive lengths raise an error
+  before output allocation. Zero returns an empty bytevector after input and backend
+  validation. Invalid inputs and native derivation failures raise errors.
   |#
   (define-who hkdf-expand
     (lambda (which prk info len)

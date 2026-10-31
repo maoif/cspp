@@ -383,7 +383,8 @@
   The `ffi-hkdf` procedure derives a bytevector with algorithm symbol `algorithm` from
   bytevectors `key`, `salt`, and `info`. Their corresponding `*-start` and `*-stop`
   arguments select half-open byte slices; callers validate bounds. `length` is an exact
-  nonnegative C-int-sized byte count. Native failures return `#f`; invalid lengths and
+  nonnegative C-int-sized byte count. Lengths exceeding 255 digest blocks return `#f`
+  before output allocation. Native failures return `#f`; invalid integer ranges and
   unavailable OpenSSL raise errors.
   |#
   (define ffi-hkdf
@@ -418,7 +419,8 @@
   The `ffi-hkdf-expand` procedure returns an expanded-key bytevector using algorithm
   symbol `algorithm`, bytevectors `key` and `info`, and their corresponding half-open
   `*-start` and `*-stop` byte slices. Callers validate bounds. `length` is an exact
-  nonnegative C-int-sized byte count. Native failures return `#f`; invalid lengths and
+  nonnegative C-int-sized byte count. Lengths exceeding 255 digest blocks return `#f`
+  before output allocation. Native failures return `#f`; invalid integer ranges and
   unavailable OpenSSL raise errors.
   |#
   (define ffi-hkdf-expand

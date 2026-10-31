@@ -9,6 +9,63 @@
 
 (let ([mode (car (command-line-arguments))])
   (cond
+    [(string=? mode "hkdf-output-limits")
+     (when (optional-library-available? (optional-library-info 'openssl))
+       (let ([peak-kib
+              (lambda ()
+                (and (file-exists? "/proc/self/status")
+                     (call-with-port (open-input-file "/proc/self/status")
+                       (lambda (port)
+                         (let loop ()
+                           (let ([line (get-line port)])
+                             (cond
+                               [(eof-object? line) #f]
+                               [(and (>= (string-length line) 6)
+                                     (string=? (substring line 0 6) "VmHWM:"))
+                                (let ([fields (open-input-string line)])
+                                  (dynamic-wind void
+                                    (lambda () (read fields) (read fields))
+                                    (lambda () (close-port fields))))]
+                               [else (loop)])))))))])
+         ;; Warm OpenSSL before measuring. An invalid output request must not touch
+         ;; an output-sized buffer; Linux exposes the process's peak resident memory.
+         (hkdf 'sha256 "key" "salt" "info" 1)
+         (for-each
+           (lambda (derive)
+             (let ([before (peak-kib)])
+               ;; Error case: 128 MiB exceeds every supported HKDF expansion limit.
+               (unless (guard (condition
+                                [else (and (who-condition? condition)
+                                           (memq (condition-who condition)
+                                                 '(hkdf hkdf-expand)))])
+                         (derive 134217728)
+                         #f)
+                 (error 'crypto-inputs "excessive HKDF output accepted"))
+               (let ([after (peak-kib)])
+                 (when (and before after (> (- after before) 32768))
+                   (error 'crypto-inputs "invalid HKDF request allocated excessive memory"
+                          before after)))))
+           (list (lambda (length) (hkdf 'sha256 "key" "salt" "info" length))
+                 (lambda (length) (hkdf-expand 'sha256 #vu8(1) "info" length)))))
+       (for-each
+         (lambda (entry)
+           (let* ([algorithm (car entry)] [limit (cadr entry)]
+                  [prk (hkdf-extract algorithm "key" "salt")]
+                  [expanded (hkdf-expand algorithm prk "info" limit)])
+             (unless (and (= limit (bytevector-length expanded))
+                          (equal? expanded (hkdf algorithm "key" "salt" "info" limit)))
+               (error 'crypto-inputs "valid HKDF boundary rejected" algorithm))
+             ;; Error case: even one byte beyond 255 digest blocks must be rejected.
+             (for-each
+               (lambda (derive)
+                 (unless (guard (condition [else #t]) (derive (+ limit 1)) #f)
+                   (error 'crypto-inputs "HKDF boundary exceeded" algorithm)))
+               (list (lambda (length) (hkdf algorithm "key" "salt" "info" length))
+                     (lambda (length) (hkdf-expand algorithm prk "info" length))))))
+         '((sha224 7140) (sha256 8160) (sha384 12240) (sha512 16320)
+           (sha512-224 7140) (sha512-256 8160)
+           (sha3-224 7140) (sha3-256 8160) (sha3-384 12240) (sha3-512 16320)
+           (blake2b-512 16320) (blake2s-256 8160))))]
     [(string=? mode "random-lengths")
      ;; Error case: inexact lengths must not cross the integer FFI and become huge
      ;; allocation requests. Reject negative and unrepresentable exact lengths too.
