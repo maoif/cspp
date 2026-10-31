@@ -1664,3 +1664,25 @@
   ;; The first transduce1 value is still subject to the reducer's accumulator type.
   (and (transducer-type-error? (lambda () (transduce1 (tidentity) (rffxsum) '(1.0))))
        (transducer-type-error? (lambda () (transduce1 (tidentity) (rfflsum) '(1))))))
+
+(mat transducer-collection-seed-type-safety
+  ;; Completed containers, scalars, and improper lists are not collection accumulators.
+  (andmap
+   (lambda (make-reducer)
+     (andmap
+      (lambda (seed)
+        (andmap
+         (lambda (source)
+           (transducer-type-error?
+            (lambda () (transduce (tidentity) (make-reducer) seed source))))
+         '(() (1))))
+      (list 17 #f (vector 1) "bad" (cons 1 17))))
+   (list rflist rfreverselist rfvector rfstring rfbytevector))
+
+  ;; An opaque builder accumulator belongs to the reducer that initialized it.
+  (let* ([first (rfvector)] [second (rfvector)] [seed ((completion first))])
+    (transducer-type-error?
+     (lambda () (transduce (tidentity) second seed '()))))
+
+  (let* ([reducer (rfvector)] [seed ((completion reducer))])
+    (equal? '#(1 2) (transduce (tidentity) reducer seed '(1 2)))))

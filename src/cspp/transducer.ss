@@ -113,6 +113,13 @@
     (opaque #t)
     (sealed #t))
 
+  ;; Explicit seeds cross an untyped boundary. A sealed immutable handle keeps
+  ;; arbitrary pairs from being mistaken for an accumulator containing a builder.
+  (define-record-type ($list-acc mk-$list-acc $list-acc?)
+    (fields (immutable tag) (immutable builder))
+    (opaque #t)
+    (sealed #t))
+
   #|proc:transducer?
   The `transducer?` procedure returns `#t` when `x` is a transducer record.
   |#
@@ -426,7 +433,7 @@
        name
        (case-lambda
          [() '()]
-         [(acc) (complete acc)]
+         [(acc) (pcheck ([list? acc]) (complete acc))]
          [(acc x) (cons x acc)])
        #f)))
 
@@ -435,20 +442,20 @@
       (let ([tag (gensym)])
         (define builder-acc?
           (lambda (acc)
-            (and (pair? acc) (eq? (car acc) tag))))
+            (and ($list-acc? acc) (eq? ($list-acc-tag acc) tag))))
         (mk-$reducer
          name
          (case-lambda
-           [() (cons tag (make-list-builder))]
+           [() (mk-$list-acc tag (make-list-builder))]
            [(acc)
             (complete
              (if (builder-acc? acc)
-                 ((cdr acc))
-                 (reverse acc)))]
+                 (($list-acc-builder acc))
+                 (pcheck ([list? acc]) (reverse acc))))]
            [(acc x)
             (if (builder-acc? acc)
                 (begin
-                  ((cdr acc) x)
+                  (($list-acc-builder acc) x)
                   acc)
                 (cons x acc))])
          #f))))
