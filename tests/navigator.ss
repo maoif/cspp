@@ -1,5 +1,12 @@
 (import (cspp) (cspp concurrency fiber))
 
+;; A type/range error must name its procedure rather than report a memory fault.
+(define navigator-type-error?
+  (lambda (run)
+    (guard (condition [(who-condition? condition) #t] [else #f])
+      (run)
+      #f)))
+
 (define list-copy*
   (lambda (x)
     (if (pair? x)
@@ -3467,3 +3474,11 @@
            (list size (+ 1 (most-positive-fixnum))))))
       '(0 3)))
    (list array fxarray (lambda values (apply flarray (map inexact values))) bytearray dlist)))
+
+(mat navigator-default-vector-length-type-safety
+  ;; A valid natural index can still require an unrepresentable vector length.
+  (andmap
+   (lambda (index)
+     (navigator-type-error?
+      (lambda () (nav-setval (nav/nth/default index 0) 1 (vector)))))
+   (list (most-positive-fixnum) (+ 1 (most-positive-fixnum)))))

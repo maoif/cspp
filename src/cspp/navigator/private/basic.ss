@@ -70,7 +70,8 @@
                                  [(= i index) (list child)]
                                  [else (cons default (loop '() (+ i 1)))]))]
                         [(vector? value)
-                         (let ([copy (make-vector (+ index 1) default)]
+                         ;; A natural index need not imply a representable vector length.
+                         (let ([copy (($primitive 2 make-vector) (+ index 1) default)]
                                [len (vector-length value)])
                            (vector-copy! value 0 copy 0 len)
                            (vector-set! copy index child)
@@ -681,7 +682,8 @@
   `index`, or `default` when the index is out of range. Clearing visits the default
   through later path steps but never inserts a missing location. Persistent transformation
   can extend lists and vectors, padding skipped locations with `default`, only if the full
-  path reaches the update callback. Other indexed types cannot extend, and destructive
+  path reaches the update callback. An unrepresentable extended vector length raises an error.
+  Other indexed types cannot extend, and destructive
   transformation never inserts a missing index. Unsupported insertion can run the updater
   before raising an error; callback effects are not rolled back. Completed step/suffix
   checkpoints restore terminal-count prefixes on resumption, without undoing heap updates.
