@@ -1187,3 +1187,26 @@
                (iter-type-error? (lambda () (terminal (list->iter (list value))))))
              (list #f 'bad "bad" (cons 1 2) 1 1/2 1+2i)))
    (list iter-flsum iter-flproduct iter-flavg)))
+
+(define-record-type iter-invalid-adapter-source (fields value))
+(iter-register-source! iter-invalid-adapter-source?
+                       iter-invalid-adapter-source-value)
+
+(mat iter-source-adapter-result-type-safety
+  ;; A registered maker must produce an iterator before conversion publishes its result.
+  (andmap
+   (lambda (value)
+     (iter-type-error?
+      (lambda () (iter-source->iter (make-iter-invalid-adapter-source value)))))
+   (list #f 42 'bad (vector 1) (list 1 2)))
+
+  ;; A rejected deferred conversion must not become a sequence cleanup dependency.
+  (let ([cursor (sequence (tidentity) (make-iter-invalid-adapter-source 42))])
+    (and (iter-type-error? (lambda () (iter-next! cursor)))
+         (begin (iter-finalize! cursor) #t)))
+
+  (let ([cursor (list->iter '(1 2))])
+    (eq? cursor (iter-source->iter (make-iter-invalid-adapter-source cursor))))
+
+  ;; The diagnostic caller name must be a symbol even when the source is iterable.
+  (iter-type-error? (lambda () (get-iter 42 '(1)))))

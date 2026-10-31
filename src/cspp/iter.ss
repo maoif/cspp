@@ -94,7 +94,8 @@
   #|proc:iter-register-source!
   Register `predicate` and `iterator-maker` as an iterator source adapter.
   Both parameters must be procedures. The maker receives one matching source and must
-  return an iterator. Registering the same predicate procedure object twice raises an
+  return an iterator; conversion checks this result before using or returning it.
+  Registering the same predicate procedure object twice raises an
   error without changing the registry. Predicate signature: `(source) -> boolean`.
   Publication is atomic; each lookup uses one newest-first immutable snapshot, and
   predicates/makers run without registry locks. Distinct overlapping predicates are allowed,
@@ -475,7 +476,12 @@
                     [(fxvector? source) (fxvector->iter source)]
                     [(flvector? source) (flvector->iter source)]
                     [(hashtable? source) (hashtable->iter source)]
-                    [else ((find-source-adapter source) source)]))))
+                    [else
+                     (let ([maker (find-source-adapter source)])
+                       (unless maker
+                         (errorf who "no matching source adapter: ~s" source))
+                       (let ([iterator (maker source)])
+                         (pcheck ([$iter? iterator]) iterator)))]))))
 
 
 ;;;; ports are opened and closed by the caller
@@ -585,9 +591,10 @@
   |#
   (define get-iter
     (lambda (who val)
-      (if (iterable? val)
-          (iter-source->iter val)
-          (errorf who "cannot be iterated: ~a" val))))
+      (pcheck ([symbol? who])
+              (if (iterable? val)
+                  (iter-source->iter val)
+                  (errorf who "cannot be iterated: ~a" val)))))
 
   #|proc:range
   The `range` procedure returns an iterator over numbers from `start` toward exclusive `stop`.
