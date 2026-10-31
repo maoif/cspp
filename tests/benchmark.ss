@@ -2630,3 +2630,34 @@
       (let ([results (benchmark-run required-fixture-benchmark (benchmark-test-config))])
         (and (= evaluations 1) (equal? seen '(resource resource))
              (for-all (lambda (result) (not (benchmark-result-error result))) results))))))
+
+(mat benchmark-selectors-require-unary-callbacks
+  ;; Error: invalid selector arity must reject even when there are no descriptors to visit.
+  (let ([invalid (lambda () #t)])
+    (benchmark-clear-registry! (current-benchmark-registry))
+    (and (guard (raised [else #t])
+           (benchmark-select (current-benchmark-registry) invalid)
+           #f)
+         (guard (raised [else #t])
+           (make-benchmark-config 0 1 0 1 #f invalid #f #f #f)
+           #f)
+         (guard (raised [else #t])
+           (benchmark-config-with (benchmark-test-config) `((filter . ,invalid)))
+           #f)
+         (guard (raised [else #t])
+           (make-benchmark 'invalid-selector (lambda (state) #t) `((filter . ,invalid)))
+           #f)))
+
+  ;; Rest and case-lambda selectors are valid when they accept a descriptor argument.
+  (for-all
+    (lambda (selector)
+      (let ()
+        (benchmark-clear-registry! (current-benchmark-registry))
+        (let ()
+          (define-benchmark selected-by-unary () (lambda (state) #t))
+          (let ([config (benchmark-config-with (benchmark-test-config) `((filter . ,selector)))])
+            (and (equal? (benchmark-select (current-benchmark-registry) selector)
+                         (list selected-by-unary))
+                 (= (length (benchmark-run config)) 1))))))
+    (list (lambda descriptors (= (length descriptors) 1))
+          (case-lambda [() #f] [(descriptor) (benchmark? descriptor)]))))

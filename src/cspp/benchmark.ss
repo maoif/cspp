@@ -1600,6 +1600,11 @@ result fields and whose values are column labels; supported field keys are
   (define $benchmark-config-keys
     '(warmup samples min-time max-iterations output filter reporter cost-center? stop-on-error?))
 
+  (define $benchmark-selector?
+    (lambda (selector)
+      (or (not selector) (symbol? selector) (string? selector)
+          (and (procedure? selector) (logbit? 1 (procedure-arity-mask selector))))))
+
   (define $make-checked-config
     (lambda (warmup samples min-time max-iterations output selector reporter
              cost-center? stop-on-error? explicit-options)
@@ -1607,7 +1612,7 @@ result fields and whose values are column labels; supported field keys are
                    (natural? max-iterations) (> max-iterations 0)
                    (real? min-time) (finite? min-time) (>= min-time 0)
                    (or (not output) (output-port? output))
-                   (or (not selector) (symbol? selector) (string? selector) (procedure? selector))
+                   ($benchmark-selector? selector)
                    (or (not reporter) (benchmark-reporter? reporter))
                    (boolean? cost-center?) (boolean? stop-on-error?))
         (errorf 'make-benchmark-config "invalid benchmark configuration"))
@@ -1620,7 +1625,8 @@ result fields and whose values are column labels; supported field keys are
   sample counts, `min-time` is a finite nonnegative target in seconds, and
   `max-iterations` is a positive iteration cap. `output` is an output port or `#f`;
   `filter` is `#f`, a name symbol, a name prefix string, or a predicate receiving a
-  benchmark descriptor and returning whether to select it. `reporter` is a reporter
+  benchmark descriptor and returning whether to select it. The predicate must accept one argument.
+  `reporter` is a reporter
   or `#f`. Boolean `cost-center?` requests optional instrumentation, and Boolean
   `stop-on-error?` stops after the first captured error when true. Cost-center
   instrumentation is reserved for future support; measured cost-center data is `#f`.
@@ -2211,29 +2217,19 @@ to run in the cdr.
                 (reverse expanded)))))
 
   #|proc:benchmark-select
-The `benchmark-select` procedure selects benchmarks from `registry` according
-to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
+The `benchmark-select` procedure returns benchmarks from `registry` matching `selector`.
+`selector` may be `#f` to select all, an exact name symbol, a name prefix string, or a
+procedure with signature `(lambda (descriptor) selected?)`. Invalid selector types or
+arities are rejected even when the registry is empty.
 |#
   (define benchmark-select
     (lambda (registry selector)
-      (pcheck ([benchmark-registry? registry])
+      (pcheck ([benchmark-registry? registry] [$benchmark-selector? selector])
               (let ([benchmarks ($benchmark-registry-benchmarks registry)])
-                (cond
-                 [(not selector) benchmarks]
-                 [(symbol? selector)
-                  (filter (lambda (benchmark)
-                            (eq? selector ($benchmark-name benchmark)))
-                          benchmarks)]
-                 [(string? selector)
-                  (filter (lambda (benchmark)
-                            (let ([name (symbol->string ($benchmark-name benchmark))])
-                              (and (<= (string-length selector) (string-length name))
-                                   (string=? selector
-                                             (substring name 0 (string-length selector))))))
-                          benchmarks)]
-                 [(procedure? selector)
-                  (filter selector benchmarks)]
-                 [else (errorf 'benchmark-select "invalid selector: ~s" selector)])))))
+                (if (not selector)
+                    benchmarks
+                    (filter (lambda (benchmark) ($benchmark-matches-selector? benchmark selector))
+                            benchmarks))))))
 
   (define $call-with-values-list
     (lambda (producer consumer)
