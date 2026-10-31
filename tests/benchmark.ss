@@ -2704,3 +2704,49 @@
          (eq? (benchmark-result-name result) 'custom)
          (equal? (benchmark-result-template-args result) '((kind . custom)))
          (eq? (cdar (benchmark-result-args result)) payload))))
+
+(mat benchmark-reporters-render-error-diagnostics
+  ;; Error: text and rich reports must show condition origins and actual irritants.
+  (for-all
+    (lambda (row)
+      (let* ([descriptor (make-benchmark 'reported-error (lambda (state) ((car row))) '())]
+             [results (benchmark-run descriptor (benchmark-test-config))]
+             [path (benchmark-temp-file)])
+        (dynamic-wind
+          (lambda () (void))
+          (lambda ()
+            (benchmark-save-baseline results path)
+            (for-all
+              (lambda (reported)
+                (for-all
+                  (lambda (reporter)
+                    (let ([text (call-with-string-output-port
+                                  (lambda (out) (benchmark-report reported reporter out)))])
+                      (for-all (lambda (needle) (benchmark-string-contains? text needle))
+                               (cdr row))))
+                  (list (benchmark-text-reporter)
+                        (benchmark-rich-reporter '((columns . ((error . "error"))))))))
+              (list results (benchmark-load-baseline path))))
+          (lambda () (when (file-exists? path) (delete-file path))))))
+    (list (list (lambda () (errorf 'open-resource "cannot open resource ~s" "database.db"))
+                "open-resource" "cannot open resource \"database.db\"")
+          (list (lambda () (error 'literal-message "literal ~s" 'unavailable))
+                "literal-message" "literal ~s" "unavailable")
+          (list (lambda () (raise '(application-error unavailable)))
+                "application-error unavailable"))))
+
+(mat benchmark-baseline-validates-error-format-marker
+  ;; Error: an optional error format marker must be Boolean before reconstructing conditions.
+  (let ([path (benchmark-temp-file)])
+    (dynamic-wind
+      (lambda () (void))
+      (lambda ()
+        (benchmark-write-datum-file path
+          '((format . cspp-benchmark-baseline) (version . 1)
+            (results . (((name . malformed-format)
+                         (error . ((message . "failure") (format? . invalid))))))))
+        (guard (raised [else (and (who-condition? raised)
+                                 (eq? (condition-who raised) 'benchmark-load-baseline))])
+          (benchmark-load-baseline path)
+          #f))
+      (lambda () (when (file-exists? path) (delete-file path))))))

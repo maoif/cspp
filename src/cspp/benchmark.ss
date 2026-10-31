@@ -556,6 +556,7 @@
     (lambda (exn)
       (if (condition? exn)
           `((who . ,(and (who-condition? exn) ($diagnostic-datum (condition-who exn))))
+            (format? . ,(format-condition? exn))
             (message . ,(if (message-condition? exn)
                             (condition-message exn)
                             "benchmark error"))
@@ -566,6 +567,12 @@
             (message . ,($write-string exn))
             (irritants . ())))))
 
+  (define $condition->text
+    (lambda (raised)
+      (if (condition? raised)
+          (call-with-string-output-port (lambda (out) (display-condition raised out)))
+          ($write-string raised))))
+
   (define $datum->condition
     (lambda (datum)
       (let* ([who ($alist-ref datum 'who #f)]
@@ -573,6 +580,9 @@
              [irritants ($alist-ref datum 'irritants '())]
              [parts (append (list (make-error)
                                   (make-message-condition message))
+                            (if ($alist-ref datum 'format? #f)
+                                (list (make-format-condition))
+                                '())
                             (if who
                                 (list (make-who-condition who))
                                 '())
@@ -625,7 +635,7 @@
         [(counters) (benchmark-result-counters result)]
         [(error)
          (let ([error (benchmark-result-error result)])
-           (and error ($alist-ref ($condition->datum error) 'message)))]
+           (and error ($condition->text error)))]
         [else (errorf 'benchmark-rich-reporter "unknown result column: ~a" key)])))
 
   (define $benchmark-result-column-justify
@@ -862,6 +872,7 @@
       (let ([error-datum ($alist-ref datum 'error #f)])
         (when error-datum
           ($baseline-alist error-datum 'error)
+          ($baseline-check boolean? ($alist-ref error-datum 'format? #f) 'error-format?)
           ($baseline-check string? ($alist-ref error-datum 'message "") 'error-message)
           ($baseline-check list? ($alist-ref error-datum 'irritants '()) 'error-irritants)))
       ($mk-benchmark-result ($alist-ref datum 'name)
@@ -1472,7 +1483,8 @@ The `benchmark-comparison-improvement?` procedure returns whether comparison
   #|proc:benchmark-text-reporter
   The `benchmark-text-reporter` procedure returns the default plain textual
   reporter. It identifies runtime and template arguments in each row. Its error
-  column describes captured failures beside their measurements.
+  column describes captured failures beside their measurements, including the condition
+  origin and irritants. Formatted conditions render their message arguments using Chez.
   |#
   (define benchmark-text-reporter
     (lambda ()
@@ -1570,6 +1582,7 @@ style. Supported keys are `title`, `caption`, `box`, `show-header?`,
 result fields and whose values are column labels; supported field keys are
 `name`, `args`, `template-args`, `iterations`, `cpu-ns`, `real-ns`, `bytes`,
 `counters`, and `error`. Invalid or duplicate options are rejected at construction.
+The error column renders condition origins and irritants as in `benchmark-text-reporter`.
 |#
   (define benchmark-rich-reporter
     (case-lambda
@@ -2552,6 +2565,7 @@ The `benchmark-save-baseline` procedure writes benchmark `results` to file
 Scheme data; unsupported values such as procedures or ports are rejected before
 changing `path`. Unreadable error who fields and irritants are saved as diagnostic strings.
 Generated symbol keys retain their identity independently of ambient printer settings.
+Formatted error conditions retain their format marker for reporting after reloading.
 |#
   (define benchmark-save-baseline
     (lambda (results path)
