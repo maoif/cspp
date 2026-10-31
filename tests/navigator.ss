@@ -3482,3 +3482,58 @@
      (navigator-type-error?
       (lambda () (nav-setval (nav/nth/default index 0) 1 (vector)))))
    (list (most-positive-fixnum) (+ 1 (most-positive-fixnum)))))
+
+(define-record-type (bad-keyed-adapter make-bad-keyed-adapter bad-keyed-adapter?)
+  (fields entries))
+(define-record-type (bad-set-adapter make-bad-set-adapter bad-set-adapter?)
+  (fields members))
+(define-record-type (bad-empty-adapter make-bad-empty-adapter bad-empty-adapter?))
+
+(nav-register-keyed!
+   bad-keyed-adapter?
+   (lambda (value key default) default)
+   (lambda (value key child) value)
+   (lambda (value key child) (void))
+   (lambda (value key) value)
+   (lambda (value key) (void))
+   bad-keyed-adapter-entries)
+
+(nav-register-set!
+   bad-set-adapter?
+   bad-set-adapter-members
+   (lambda (value members) value)
+   (lambda (value members) (void))
+   (lambda (value member) value)
+   (lambda (value member) (void)))
+
+(nav-register-keyed!
+ bad-empty-adapter?
+ (lambda (value key default) default)
+ (lambda (value key child) value)
+ (lambda (value key child) (void))
+ (lambda (value key) value)
+ (lambda (value key) (void))
+ (lambda (value) '())
+ (lambda (value) 42))
+
+(mat navigator-adapter-result-type-safety
+  ;; Keyed entries must be an association list, even when the callback returns #f.
+  (andmap
+   (lambda (entries)
+     (navigator-type-error?
+      (lambda () (nav-select nav/entries (make-bad-keyed-adapter entries)))))
+   (list #f 42 (vector 1) (list 1 2) (cons '(a . 1) 2)))
+
+  ;; Set values must be a proper list before traversal or replacement.
+  (andmap
+   (lambda (members)
+     (navigator-type-error?
+      (lambda () (nav-select nav/all (make-bad-set-adapter members)))))
+   (list #f 42 (vector 1) (cons 1 2)))
+
+  ;; An empty builder must return this adapter's container type, including with no writes.
+  (andmap
+   (lambda (path)
+     (navigator-type-error?
+      (lambda () (nav-transform path values (make-bad-empty-adapter)))))
+   (list nav/all nav/keys (nav/submap))))

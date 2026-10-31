@@ -176,6 +176,7 @@
   entries in traversal order. Optional `empty-proc` receives a map and returns a fresh,
   mutable empty map with the same key policy. It enables efficient bulk rebuilding and
   submaps; without it, rebuilding uses the pure delete and set callbacks.
+  Entry-list shape and empty-map container type are checked before library traversal or writes.
   Optional `canonical-proc` has signature `(map key default) -> stored-key-or-default`.
   It returns the stored key equivalent to `key`, preserving its identity, or `default`
   when absent. Without it, canonical lookup uses pure deletion and an entry scan.
@@ -242,6 +243,7 @@
   Signatures are `(value) -> boolean`, `(set) -> member-list`,
   `(set member-list) -> rebuilt-set` / unspecified, and `(set member) -> rebuilt-set` /
   unspecified, respectively. Registration itself returns an unspecified value.
+  A member list returned by `values-proc` is checked for proper-list shape before use.
   Newer registrations are tried first. Concurrent publications are retained atomically;
   one lookup uses one stable registry snapshot and runs callbacks outside synchronization.
   Overlapping predicates are allowed; callbacks must obey the caller's data-sharing rules.
@@ -737,8 +739,17 @@
             [(alist? value) value]
             [(find-keyed-protocol value)
              => (lambda (protocol)
-                  (($keyed-protocol-entries-proc protocol) value))]
+                  (let ([entries (($keyed-protocol-entries-proc protocol) value)])
+                    (pcheck ([alist? entries]) entries)))]
             [else #f])))
+
+  ;; Empty builders feed the selected protocol's setters directly. Check their
+  ;; result before those callbacks can assume their container representation.
+  (define keyed-empty
+    (lambda (protocol value)
+      (let ([result (($keyed-protocol-empty-proc protocol) value)]
+            [predicate ($keyed-protocol-predicate protocol)])
+        (pcheck ([predicate result]) result))))
 
   ;; Rebuilding belongs to the container protocol, so submaps and entry updates
   ;; preserve key equivalence without depending on the concrete map implementation.
@@ -764,7 +775,7 @@
              => (lambda (protocol)
                   (let ([empty-proc ($keyed-protocol-empty-proc protocol)])
                     (if empty-proc
-                        (let ([result (empty-proc value)])
+                        (let ([result (keyed-empty protocol value)])
                           (for-each (lambda (entry)
                                       (($keyed-protocol-set!-proc protocol)
                                        result (car entry) (cdr entry))) entries)
@@ -787,7 +798,7 @@
                             (find-keyed-protocol value))]
              [empty-proc (and protocol ($keyed-protocol-empty-proc protocol))])
         (cond [(or (hashtable? value) empty-proc)
-               (let ([result (if empty-proc (empty-proc value)
+               (let ([result (if empty-proc (keyed-empty protocol value)
                                  (nav-call-user hashtable-copy value #t))])
                  (for-each
                   (lambda (entry)
@@ -885,7 +896,9 @@
   (define set-values
     (lambda (value)
       (let ([protocol (find-set-protocol value)])
-        (and protocol (($set-protocol-values-proc protocol) value)))))
+        (and protocol
+             (let ([members (($set-protocol-values-proc protocol) value)])
+               (pcheck ([list? members]) members))))))
 
   (define set-replace
     (lambda (value members)
