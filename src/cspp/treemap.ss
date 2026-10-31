@@ -1046,6 +1046,13 @@
                   (hashtable-cells table))
                 result))))
 
+  ;; Canonical lookup bypasses the public map accessors, including their key check.
+  (define fxtreemap-canonical-key
+    (lambda (tm key default)
+      (unless (fixnum? key)
+        (errorf 'fxtreemap-canonical-key "expected fixnum key: ~s" key))
+      (rbtree-ref-key tm key default)))
+
   (define write-treemap
                  (lambda (r p wr)
                    (display "#[treemap (" p)
@@ -1150,7 +1157,7 @@
      tm)
    fxtreemap->list
    (lambda (tm) (make-fxtreemap-like tm))
-   rbtree-ref-key
+   fxtreemap-canonical-key
    (lambda (tm entries)
      (fxtreemap-clear! tm)
      (for-each (lambda (entry) (fxtreemap-set! tm (car entry) (cdr entry))) entries)))

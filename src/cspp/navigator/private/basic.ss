@@ -929,6 +929,7 @@
   The `nav/submap` procedure returns a navigator that focuses the subset of
   association-list entries or map entries named by `keys`. Map submaps preserve the source's
   container type and key comparison policy. Association lists focus matching entry pairs.
+  Lookup keys must satisfy the source's key restrictions, including fixnum-only treemaps.
   For alists, each key selects its first matching entry; a pure transform replaces only that
   entry and may rename its key. Other keyed containers focus one submap containing the requested
   keys. Pure transforms remove the selected membership and merge every entry

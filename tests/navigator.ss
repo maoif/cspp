@@ -2222,6 +2222,30 @@
     (and (fxtreemap? result) (= 1 (fxtreemap-size result))
          (= 10 (fxtreemap-ref result 1)) (= 2 (fxtreemap-size source)))))
 
+(mat navigator-fxtreemap-submap-key-types
+  ;; Non-fixnum queries must fail before comparison, even in empty maps or optional paths.
+  (andmap
+   (lambda (query)
+     (andmap
+      (lambda (entries)
+        (andmap
+         (lambda (operation)
+           (let ([comparisons 0])
+             (let* ([same? (lambda (left right)
+                             (set! comparisons (+ comparisons 1)) (= left right))]
+                    [less? (lambda (left right)
+                             (set! comparisons (+ comparisons 1)) (< left right))]
+                    [source (apply fxtreemap same? less? entries)])
+               (set! comparisons 0)
+               (and (navigator-type-error?
+                     (lambda () (operation (nav/maybe (nav/submap query)) source)))
+                    (= 0 comparisons)))))
+         (list nav-select
+               (lambda (path source) (nav-transform path values source))
+               nav-clearval nav-clearval!)))
+      '(() ((1 . 10)))))
+   (list 1.0 1.0+0.0i 1/2 #f 'bad "bad" '(1) (+ 1 (most-positive-fixnum)))))
+
 (mat navigator-review-indexed-length-rounded-boundary
   ;; Rounding the fixnum maximum to inexact can produce the first invalid fixnum.
   (error? (nav-select-first nav/all
