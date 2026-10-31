@@ -2114,25 +2114,39 @@ syntax as `define-benchmark`.
                                                (list (cons 'param param) ...)))))))]))
 
   #|macro:instantiate-benchmark-template
-The `instantiate-benchmark-template` macro registers concrete benchmark
-descriptors from template `template`. Each row supplies values positionally for
-the template parameters, and the first row value becomes the concrete name
-suffix.
+The `instantiate-benchmark-template` macro registers concrete benchmark descriptors from
+identifier `template`, a procedure accepting the symbolic label followed by the values in
+its row and returning a benchmark descriptor. Each row has syntax `[label value ...]`;
+`label` must be an identifier and is passed as a quoted symbol. The concrete name is
+`template/label`. Invalid syntax is rejected before any template is called, and invalid
+return values are rejected before record access or registration.
 |#
   (define-syntax instantiate-benchmark-template
-    (syntax-rules ()
-      [(_ template ([label value ...] ...))
-       (begin
-         (define template-instance-marker (void))
-         (let ([benchmark (template 'label value ...)])
-           (let ([renamed (make-benchmark ($symbol-append 'template 'label)
-                                          ($benchmark-body benchmark)
-                                          ($replace-option ($benchmark-options benchmark)
-                                                           'template-args
-                                                           ($benchmark-template-args benchmark)))])
-             (benchmark-register! (current-benchmark-registry) renamed)))
-         ...)]))
-
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ template ([label value ...] ...))
+         (begin
+           (unless (identifier? #'template)
+             (syntax-error #'template "template must be an identifier"))
+           (for-each
+             (lambda (label)
+               (unless (identifier? label)
+                 (syntax-error label "template label must be an identifier")))
+             #'(label ...))
+           #'(begin
+               (define template-instance-marker (void))
+               (let ([benchmark (template 'label value ...)])
+                 (unless (benchmark? benchmark)
+                   (errorf 'instantiate-benchmark-template
+                           "template must return a benchmark descriptor: ~s" benchmark))
+                 (let ([renamed (make-benchmark ($symbol-append 'template 'label)
+                                                ($benchmark-body benchmark)
+                                                ($replace-option ($benchmark-options benchmark)
+                                                                 'template-args
+                                                                 ($benchmark-template-args benchmark)))])
+                   (benchmark-register! (current-benchmark-registry) renamed)))
+               ...))]
+        [_ (syntax-error stx "invalid benchmark template instantiation")])))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; expansion and runner

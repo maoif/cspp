@@ -2567,3 +2567,41 @@
         [payload (vector 'resource)])
     (benchmark-state-set-user-data! state payload)
     (eq? (benchmark-state-user-data state) payload)))
+
+(mat benchmark-template-validates-boundaries
+  ;; Error: invalid labels or template expressions must be rejected during expansion.
+  (for-all
+    (lambda (form)
+      (guard (raised [else (syntax-violation? raised)])
+        (expand form (environment '(cspp)))
+        #f))
+    '((let ()
+        (define-benchmark-template sized (size) () (lambda (state) size))
+        (instantiate-benchmark-template sized ([64])))
+      (let ([factory (lambda (label) #f)])
+        (instantiate-benchmark-template factory ([(nested label)])))
+      (instantiate-benchmark-template (lambda (label) #f) ([kind]))))
+
+  ;; Error: a user-supplied template must return a benchmark before record fields are read.
+  (let ()
+    (benchmark-clear-registry! (current-benchmark-registry))
+    (let ([calls 0])
+      (let ([factory (lambda (label) (set! calls (+ calls 1)) #f)])
+        (and (guard (raised [else (and (condition? raised) (who-condition? raised)
+                                      (eq? (condition-who raised)
+                                           'instantiate-benchmark-template))])
+               (instantiate-benchmark-template factory ([kind]))
+               #f)
+             (= calls 1)
+             (null? (benchmark-registry-benchmarks (current-benchmark-registry)))))))
+
+  (let ()
+    (benchmark-clear-registry! (current-benchmark-registry))
+    (let ()
+      (define-benchmark-template instance-template (kind size) ()
+        (lambda (state) (test-true (memq kind '(small large))) (test-true (> size 0))))
+      (instantiate-benchmark-template instance-template ([small 1] [large 2]))
+      (let ([results (benchmark-run (benchmark-test-config))])
+        (and (equal? (map benchmark-result-name results)
+                     '(instance-template/small instance-template/large))
+             (for-all (lambda (result) (not (benchmark-result-error result))) results))))))
