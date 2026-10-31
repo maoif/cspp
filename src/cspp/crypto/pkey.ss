@@ -223,7 +223,9 @@ The `store-public-key` procedure serializes `key` to PEM or DER as a bytevector.
   |#
   (define-who load-private-key
     (case-lambda
-      [(bv) (load-private-key bv 'pem 0 (bytevector-length bv))]
+      [(bv)
+       (pcheck ([bytevector? bv])
+         (load-private-key bv 'pem 0 (bytevector-length bv)))]
       [(bv fmt)
        (pcheck ([bytevector? bv])
                (load-private-key bv fmt 0 (bytevector-length bv)))]
@@ -244,7 +246,9 @@ The `load-public-key` procedure loads a public key from a PEM or DER bytevector 
 |#
   (define-who load-public-key
     (case-lambda
-      [(bv) (load-public-key bv 'pem 0 (bytevector-length bv))]
+      [(bv)
+       (pcheck ([bytevector? bv])
+         (load-public-key bv 'pem 0 (bytevector-length bv)))]
       [(bv fmt)
        (pcheck ([bytevector? bv])
                (load-public-key bv fmt 0 (bytevector-length bv)))]

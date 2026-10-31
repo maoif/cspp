@@ -122,7 +122,9 @@ The `load-certificate` procedure loads a single certificate from a PEM or DER by
 |#
   (define-who load-certificate
     (case-lambda
-      [(bv) (load-certificate bv 'pem 0 (bytevector-length bv))]
+      [(bv)
+       (pcheck ([bytevector? bv])
+         (load-certificate bv 'pem 0 (bytevector-length bv)))]
       [(bv fmt)
        (pcheck ([bytevector? bv])
                (load-certificate bv fmt 0 (bytevector-length bv)))]
@@ -144,7 +146,9 @@ The `load-certificate` procedure loads a single certificate from a PEM or DER by
   |#
   (define-who load-cert-chain
     (case-lambda
-      [(bv) (load-cert-chain bv 'pem 0 (bytevector-length bv))]
+      [(bv)
+       (pcheck ([bytevector? bv])
+         (load-cert-chain bv 'pem 0 (bytevector-length bv)))]
       [(bv fmt)
        (pcheck ([bytevector? bv])
                (load-cert-chain bv fmt 0 (bytevector-length bv)))]

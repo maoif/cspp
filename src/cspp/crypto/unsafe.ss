@@ -23,8 +23,12 @@
   |#
   (define-who unsafe-hash-bytevector
     (case-lambda
-      [(alg bv) (unsafe-hash-bytevector alg bv 0 (bytevector-length bv))]
-      [(alg bv start) (unsafe-hash-bytevector alg bv start (bytevector-length bv))]
+      [(alg bv)
+       (pcheck ([bytevector? bv])
+         (unsafe-hash-bytevector alg bv 0 (bytevector-length bv)))]
+      [(alg bv start)
+       (pcheck ([bytevector? bv])
+         (unsafe-hash-bytevector alg bv start (bytevector-length bv)))]
       [(alg bv start stop)
        (pcheck ([bytevector? bv])
                (check-unsafe-hash who alg)
@@ -43,8 +47,12 @@
   |#
   (define-who unsafe-hash-string
     (case-lambda
-      [(alg str) (unsafe-hash-string alg str 0 (string-length str))]
-      [(alg str start) (unsafe-hash-string alg str start (string-length str))]
+      [(alg str)
+       (pcheck ([string? str])
+         (unsafe-hash-string alg str 0 (string-length str)))]
+      [(alg str start)
+       (pcheck ([string? str])
+         (unsafe-hash-string alg str start (string-length str)))]
       [(alg str start stop)
        (pcheck ([string? str])
                (check-unsafe-hash who alg)

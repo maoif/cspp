@@ -189,8 +189,12 @@ The `sign-update-bytevector!` procedure appends a bytevector slice to a sign sta
 |#
   (define-who sign-update-bytevector!
     (case-lambda
-      [(st bv) (sign-update-bytevector! st bv 0 (bytevector-length bv))]
-      [(st bv start) (sign-update-bytevector! st bv start (bytevector-length bv))]
+      [(st bv)
+       (pcheck ([sign-state? st] [bytevector? bv])
+         (sign-update-bytevector! st bv 0 (bytevector-length bv)))]
+      [(st bv start)
+       (pcheck ([sign-state? st] [bytevector? bv])
+         (sign-update-bytevector! st bv start (bytevector-length bv)))]
       [(st bv start stop)
        (pcheck ([sign-state? st] [bytevector? bv])
                (with-crypto-mutex (sign-state-mutex st)
@@ -203,8 +207,12 @@ The `sign-update-string!` procedure appends a string slice to a sign state.
 |#
   (define-who sign-update-string!
     (case-lambda
-      [(st str) (sign-update-string! st str 0 (string-length str))]
-      [(st str start) (sign-update-string! st str start (string-length str))]
+      [(st str)
+       (pcheck ([sign-state? st] [string? str])
+         (sign-update-string! st str 0 (string-length str)))]
+      [(st str start)
+       (pcheck ([sign-state? st] [string? str])
+         (sign-update-string! st str start (string-length str)))]
       [(st str start stop)
        (pcheck ([sign-state? st] [string? str])
                (with-crypto-mutex (sign-state-mutex st)
@@ -220,8 +228,12 @@ The `verify-update-bytevector!` procedure appends a bytevector slice to a verify
 |#
   (define-who verify-update-bytevector!
     (case-lambda
-      [(st bv) (verify-update-bytevector! st bv 0 (bytevector-length bv))]
-      [(st bv start) (verify-update-bytevector! st bv start (bytevector-length bv))]
+      [(st bv)
+       (pcheck ([verify-state? st] [bytevector? bv])
+         (verify-update-bytevector! st bv 0 (bytevector-length bv)))]
+      [(st bv start)
+       (pcheck ([verify-state? st] [bytevector? bv])
+         (verify-update-bytevector! st bv start (bytevector-length bv)))]
       [(st bv start stop)
        (pcheck ([verify-state? st] [bytevector? bv])
                (with-crypto-mutex (verify-state-mutex st)
@@ -234,8 +246,12 @@ The `verify-update-string!` procedure appends a string slice to a verify state.
 |#
   (define-who verify-update-string!
     (case-lambda
-      [(st str) (verify-update-string! st str 0 (string-length str))]
-      [(st str start) (verify-update-string! st str start (string-length str))]
+      [(st str)
+       (pcheck ([verify-state? st] [string? str])
+         (verify-update-string! st str 0 (string-length str)))]
+      [(st str start)
+       (pcheck ([verify-state? st] [string? str])
+         (verify-update-string! st str start (string-length str)))]
       [(st str start stop)
        (pcheck ([verify-state? st] [string? str])
                (with-crypto-mutex (verify-state-mutex st)
