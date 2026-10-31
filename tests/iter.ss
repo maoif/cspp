@@ -1184,6 +1184,32 @@
            (iter-reset! cursor)
            (equal? '(3) (iter->list cursor))))))
 
+(mat iter-list-reset-validates-current-source
+  ;; A source made improper between passes must fail at reset, before unchecked traversal.
+  (andmap
+   (lambda (make-cursor)
+     (let* ([source (list 1 2 3)] [cursor (make-cursor source)])
+       (collect-iter cursor)
+       (set-cdr! (cdr source) 42)
+       (iter-type-error? (lambda () (iter-reset! cursor)))))
+   (list list->iter
+         (lambda (source) (list->iter source 3))
+         (lambda (source) (list->iter source 3 4))
+         (lambda (source) (list->iter source -2 -1))))
+
+  ;; Cyclic sources must also fail at reset, including through a wrapper's reset graph.
+  (andmap
+   (lambda (make-cursor)
+     (let* ([source (list 1 2 3)] [cursor (make-cursor source)])
+       (collect-iter cursor)
+       (set-cdr! (cddr source) source)
+       (iter-type-error? (lambda () (iter-reset! cursor)))))
+   (list list->iter
+         (lambda (source) (list->iter source 1 3))
+         (lambda (source) (list->iter source -2 -1))
+         (lambda (source) (iter-concat (list->iter source)))
+         (lambda (source) (sequence (tidentity) (list->iter source))))))
+
 (mat iter-specialized-numeric-type-safety
   ;; Fixnum terminals must reject non-fixnums before using specialized arithmetic.
   (andmap

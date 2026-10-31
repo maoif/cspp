@@ -300,9 +300,11 @@
   inexact bounds and steps are normalized to exact integers. Omitted `start` is zero and
   omitted `step` is one; with no bounds, traverse the whole source.
   Reset resolves the selected start from the current source again, so changes between
-  passes are visible. Mutation during a pass is unspecified. The final pull does not seek
+  passes are visible. The source must remain a proper list; reset checks its current shape
+  before traversing it, scanning the whole spine even for a bounded or empty range.
+  Mutation during a pass is unspecified. The final pull does not seek
   past the selected range, even when `step` is larger than the remaining range.
-  After bounds are normalized, an empty range (`start >= stop`) does not seek a source
+  After validation and normalization, an empty range (`start >= stop`) does not seek a source
   prefix. Resolving negative bounds still reads the source length on reset.
   Kind: resource-free cursor constructor; each call creates independent producer state.
   |#
@@ -318,7 +320,10 @@
                              (let ([next (car remaining)])
                                (cdr! remaining)
                                next)))
-                       (lambda () (set! remaining source)))))]
+                       (lambda ()
+                         (unless (list? source)
+                           (errorf who "source is no longer a proper list"))
+                         (set! remaining source)))))]
       [(source stop)
        (pcheck-list (source) (list->iter source 0 stop 1))]
       [(source start stop)
@@ -331,7 +336,9 @@
                      [step (exact step)] [index 0] [stop 0] [remaining '()])
                  (define reset!
                    (lambda ()
-                     ;; Ordinary forward bounds need no extra full-spine traversal.
+                     (unless (list? source)
+                       (errorf who "source is no longer a proper list"))
+                     ;; Forward normalization needs no separate length scan after validation.
                      ;; Relative bounds use the current length on every reset.
                      (let* ([length (and (or (negative? original-start)
                                             (negative? original-stop))
