@@ -2225,3 +2225,95 @@
                       (directory-list root))
             (delete-directory root)))))
     '(success warning error)))
+
+(mat test-condition-handler-is-limited-to-tested-body
+  ;; Error: fixture acquisition and lifecycle hook failures must not become handled passes.
+  (for-all
+    (lambda (phase)
+      (let ([calls 0] [body-ran? #f] [cleaned? #f]
+            [primary (condition (make-error) (make-message-condition "lifecycle failed"))])
+        (let* ([options
+                (case phase
+                  [(fixture)
+                   `((fixtures . ((resource . ,(lambda () (raise primary))))))]
+                  [(before) `((before . ,(lambda (fixtures) (raise primary))))]
+                  [(after) '()])]
+               [descriptor
+                (make-test-case 'lifecycle-failure (lambda () (set! body-ran? #t))
+                  (append options
+                    `((after . ,(lambda (fixtures)
+                                  (set! cleaned? #t)
+                                  (when (eq? phase 'after) (raise primary))))
+                      (condition-handler . ,(lambda (raised) (set! calls (+ calls 1)) 'handled)))))]
+               [result (car (test-run (list descriptor) (test-silent-config)))])
+          (and (eq? (test-result-status result) 'errored)
+               (eq? (test-result-condition result) primary)
+               (= calls 0) cleaned? (eq? body-ran? (eq? phase 'after))))))
+    '(fixture before after))
+
+  ;; Error: missing lexical inputs must fail before a custom body handler can accept them.
+  (parameterize ([current-test-registry (make-test-registry)])
+    (let ([calls 0] [body-ran? #f])
+      (let* ([descriptor
+              (test-case missing-input-for-handler :parameterize ([number] [42])
+                :condition-handler (lambda (raised) (set! calls (+ calls 1)) 'handled)
+                (set! body-ran? #t) (test-= number 42))]
+             [concrete (make-test-concrete-case 0 'missing-input-for-handler descriptor '()
+                         (test-descriptor-metadata descriptor))]
+             [result (car (test-run (list concrete) (test-silent-config)))])
+        (and (eq? (test-result-status result) 'errored) (= calls 0) (not body-ran?)
+             (test-error-message-contains?
+               (lambda () (raise (test-result-condition result))) "number")))))
+
+  ;; Allowed lifecycle warnings must resume setup even when body conditions use a handler.
+  (let ([calls 0] [events '()] [handled-warning? #f])
+    (let* ([descriptor
+            (make-test-case 'lifecycle-warning
+              (lambda () (set! events (cons 'body events)) (warningf 'body "handled"))
+              `((before . ,(lambda (fixtures)
+                             (warningf 'before "allowed")
+                             (set! events (cons 'before events))))
+                (after . ,(lambda (fixtures)
+                            (warningf 'after "allowed")
+                            (set! events (cons 'after events))))
+                (condition-handler . ,(lambda (raised)
+                                        (set! calls (+ calls 1))
+                                        (set! handled-warning? (warning? raised)) 'handled))))]
+           [result (car (test-run (list descriptor) (test-silent-config)))])
+      (and (eq? (test-result-status result) 'passed) (= calls 1) handled-warning?
+           (equal? (reverse events) '(before body after)))))
+
+  ;; Error: warnings promoted to failures in lifecycle hooks bypass the body handler.
+  (let ([calls 0] [body-ran? #f])
+    (let* ([descriptor
+            (make-test-case 'lifecycle-warning-error (lambda () (set! body-ran? #t))
+              `((warnings . error)
+                (before . ,(lambda (fixtures) (warningf 'before "rejected")))
+                (condition-handler . ,(lambda (raised) (set! calls (+ calls 1)) 'handled))))]
+           [result (car (test-run (list descriptor) (test-silent-config)))])
+      (and (eq? (test-result-status result) 'failed) (= calls 0) (not body-ran?)))))
+
+(mat test-condition-handler-covers-all-tested-phases
+  ;; Body conditions from runtime, expansion, and compilation retain custom handling.
+  (let ([calls 0])
+    (let* ([metadata `((condition-handler . ,(lambda (raised)
+                                              (set! calls (+ calls 1)) 'handled)))]
+           [descriptors
+            (list (make-test-case 'runtime-handler (lambda () (raise #f)) metadata)
+                  (make-test-expand 'expansion-handler
+                    '(let-syntax ([broken (lambda (stx) (error 'expansion "handled"))])
+                       (broken)) metadata)
+                  (make-test-compile 'compiler-handler
+                    '((eval-when (compile) (error 'compiler "handled"))) metadata))]
+           [results (test-run descriptors (test-silent-config))])
+      (and (= calls 3) (equal? (map test-result-status results) '(passed passed passed))))))
+
+(mat test-condition-handler-excludes-predicate-preparation
+  ;; Error: resolving an invalid quoted expected-condition predicate is preparation, not body work.
+  (let ([calls 0] [body-ran? #f])
+    (let* ([descriptor
+            (make-test-case 'invalid-quoted-predicate (lambda () (set! body-ran? #t))
+              `((raises . vector-ref)
+                (condition-handler . ,(lambda (raised) (set! calls (+ calls 1)) 'handled))))]
+           [result (car (test-run (list descriptor) (test-silent-config)))])
+      (and (eq? (test-result-status result) 'errored) (= calls 0) (not body-ran?)))))

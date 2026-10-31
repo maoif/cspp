@@ -68,10 +68,13 @@ benchmark-state values into ordinary local bindings before starting workers; col
 worker measurements and update counters in the controlling body after joining them.
 
 Test fixture initializers, `:before`, `:after`, case policy predicates, and `:condition-handler`
-run synchronously in the controlling thread. Test cleanup receives successfully acquired
-fixtures even when a later initializer or `:before` fails. A benchmark sample's teardown
-runs after the body, even without setup. If a supplied setup raises, setup must release its
-own partial resources and sample teardown is skipped.
+run synchronously in the controlling thread. The custom condition handler applies only to
+conditions from the tested runtime, expansion, or compilation body. Preparation, fixture,
+`:before`, and `:after` failures use the normal failure policy and cannot become handled passes.
+Allowed lifecycle warnings resume their hooks independently of the body handler.
+Test cleanup receives successfully acquired fixtures even when a later initializer or `:before`
+fails. A benchmark sample's teardown runs after the body, even without setup. If a supplied setup
+raises, setup must release its own partial resources and sample teardown is skipped.
 Benchmark suite teardown also runs after failed suite setup, receiving `#f` as its setup
 value. Cleanup must follow these different lifecycle contracts.
 

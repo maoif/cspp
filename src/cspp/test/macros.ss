@@ -374,6 +374,9 @@
   If setup or the body and cleanup both raise, the primary condition takes precedence.
   A custom `:condition-handler` has signature `(lambda (condition) disposition)`;
   `handled` passes the body, `failed` fails it, and other dispositions mark it errored.
+  The handler applies to tested runtime, expansion, or compilation conditions only;
+  preparation and fixture lifecycle failures follow the normal failure policy.
+  Allowed fixture warnings resume independently of the custom body handler.
   Captured output expectations are checked separately after successful or handled bodies;
   their failures do not invoke the custom handler.
   Parameters and fixtures are lexical variables around the case body. Parameters are also
