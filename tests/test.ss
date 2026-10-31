@@ -2189,3 +2189,39 @@
   (parameterize ([current-test-registry (make-test-registry)])
     (let ([descriptor (test-case callable-body :parameterize ([value] [7]) (+ value 1))])
       (= ((test-descriptor-body descriptor) '((value . 7))) 8))))
+
+(mat test-compile-cleans-files-after-directory-changes
+  ;; Error: compile-time directory changes must not redirect source/output file cleanup.
+  (for-all
+    (lambda (mode)
+      (let* ([original (current-directory)]
+             [root (format "~a/tmp-cspp-compile-directory-~a-~a"
+                     original (random 1000000) (time-nanosecond (current-time)))]
+             [changed (string-append root "/changed")])
+        (dynamic-wind
+          (lambda () (mkdir root) (mkdir changed))
+          (lambda ()
+            (current-directory root)
+            (let* ([forms `((eval-when (compile)
+                             (current-directory ,changed)
+                             ,@(case mode
+                                 [(warning) '((warningf 'compiler "expected warning"))]
+                                 [(error) '((errorf 'compiler "expected compiler error"))]
+                                 [else '()]))
+                           (define value 1))]
+                   [metadata (if (eq? mode 'warning) (list (cons 'raises warning?)) '())]
+                   [result (car (test-run (list (make-test-compile 'changes-directory
+                                                 forms metadata))
+                                  (test-silent-config)))])
+              (and (eq? (test-result-status result) (if (eq? mode 'error) 'errored 'passed))
+                   (equal? (directory-list root) '("changed"))
+                   (null? (directory-list changed)))))
+          (lambda ()
+            (current-directory original)
+            (for-each (lambda (file) (delete-file (string-append changed "/" file)))
+                      (directory-list changed))
+            (delete-directory changed)
+            (for-each (lambda (file) (delete-file (string-append root "/" file)))
+                      (directory-list root))
+            (delete-directory root)))))
+    '(success warning error)))

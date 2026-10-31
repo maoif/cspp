@@ -431,7 +431,9 @@ association-list filters as `test-select`.
 
   (define $compile-temp-path
     (lambda ()
-      (format "test-compile-~a-~a.ss"
+      ;; Compile-time user code can change the working directory before cleanup runs.
+      (format "~a/test-compile-~a-~a.ss"
+              (current-directory)
               (random 1000000)
               (time-nanosecond (current-time)))))
 
