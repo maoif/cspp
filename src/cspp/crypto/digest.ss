@@ -17,7 +17,6 @@
           blake2s-256-file blake3-file)
   (import (cspp chez)
           (cspp utils)
-          (only (cspp file) file-size)
           (cspp optional-library-check)
           (only (cspp crypto private)
                 with-crypto-mutex with-crypto-operation call-with-crypto-resource)
@@ -337,6 +336,12 @@
 ;;;;===----------------------------------------------------------------------===
 ;;;; Streaming files and algorithm-specific convenience procedures
 ;;;;===----------------------------------------------------------------------===
+
+  (define file-size
+    (lambda (path)
+      ;; The general file-size helper opens a port without continuation cleanup.
+      (call-with-crypto-resource 'digest-file
+        (lambda () (open-file-input-port path)) close-port file-length)))
 
   #|proc:digest-file
   The `digest-file` procedure returns a digest bytevector for the regular file at `path`
