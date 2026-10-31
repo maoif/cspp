@@ -359,21 +359,19 @@
          (check-slice who (file-size path) start stop)
          (call-with-digester algorithm
            (lambda (state)
-             (let ([port (open-file-input-port path)])
-               (dynamic-wind
-                 void
-                 (lambda ()
-                   (let ([buffer (make-bytevector 4096)])
-                     (set-port-position! port start)
-                     (let loop ([remaining (fx- stop start)])
-                       (unless (fx= remaining 0)
-                         (let ([count (get-bytevector-n! port buffer 0
-                                                        (fxmin remaining 4096))])
-                           (when (or (eof-object? count) (fx= count 0))
-                             (errorf who "unexpected end of file: ~s" path))
-                           (digester-update-bytevector! state buffer 0 count)
-                           (loop (fx- remaining count)))))))
-                 (lambda () (close-port port)))))))]))
+             (call-with-crypto-resource who
+               (lambda () (open-file-input-port path)) close-port
+               (lambda (port)
+                 (let ([buffer (make-bytevector 4096)])
+                   (set-port-position! port start)
+                   (let loop ([remaining (fx- stop start)])
+                     (unless (fx= remaining 0)
+                       (let ([count (get-bytevector-n! port buffer 0
+                                                      (fxmin remaining 4096))])
+                         (when (or (eof-object? count) (fx= count 0))
+                           (errorf who "unexpected end of file: ~s" path))
+                         (digester-update-bytevector! state buffer 0 count)
+                         (loop (fx- remaining count)))))))))))]))
 
   (define-syntax define-specialized-digest
     (syntax-rules ()

@@ -62,3 +62,35 @@ default_properties = fips=yes
         env = os.environ.copy()
         env['OPENSSL_CONF'] = str(config)
         run_script(script, env=env)
+
+    config = (ROOT / 'src/cspp/c/build-config.h').read_text()
+    algorithms = [name for macro, name in [('OPENSSL', 'sha256'), ('BLAKE3', 'blake3')]
+                  if f'#define CSPP_WITH_{macro} 1' in config]
+    if algorithms and Path('/proc/self/fd').is_dir():
+        fixture = directory / 'input.bin'
+        fixture.write_bytes(bytes(range(256)) * 32)
+        script = directory / 'file-ownership.ss'
+        script.write_text('''(import (chezscheme) (cspp crypto digest))
+(define descriptor-count (lambda () (length (directory-list "/proc/self/fd"))))
+(let* ([arguments (command-line-arguments)]
+       [path (car arguments)]
+       [algorithm (string->symbol (cadr arguments))]
+       [expected (digest-bytevector algorithm
+                   (call-with-port (open-file-input-port path) get-bytevector-all))]
+       [baseline (descriptor-count)])
+  (for-each
+    (lambda (hash)
+      ;; Error case: abandon suspension during acquisition, reading, or cleanup.
+      ;; File ownership must not depend on resuming the expired engine or on GC.
+      (do ([ticks 1 (fx1+ ticks)]) [(fx= ticks 257)]
+        ((make-engine hash) ticks (lambda results (void)) (lambda (abandoned) (void))))
+      (unless (= baseline (descriptor-count))
+        (error 'digest-file-ownership "abandoned digest leaked file descriptors"))
+      (unless (equal? expected (hash))
+        (error 'digest-file-ownership "normal file digest changed")))
+    (list (lambda () (digest-file algorithm path))
+          (lambda () (digest-file algorithm path 0))
+          (lambda () (digest-file algorithm path 0 8192)))))
+''')
+        for algorithm in algorithms:
+            run_script(script, str(fixture), algorithm)
