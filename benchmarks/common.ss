@@ -37,6 +37,7 @@
   (lambda (title columns rows)
     (let ([table (make-rich-table)])
       (rich-table-title-set! table title)
+      (rich-table-box-set! table 'rounded)
       (for-each (lambda (column)
                   (rich-table-add-column! table (car column) (cdr column)))
                 columns)
@@ -198,7 +199,8 @@
             (benchmark-report
              results
              (benchmark-rich-reporter
-              '((columns . ((name . "case")
+              '((box . rounded)
+                (columns . ((name . "case")
                             (args . "arguments")
                             (cpu-ns . "cpu/ns")
                             (real-ns . "real/ns")
