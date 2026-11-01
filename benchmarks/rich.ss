@@ -1,5 +1,6 @@
 #!chezscheme
 (import (cspp))
+(load "benchmarks/common.ss")
 
 ;; Run from the repository root: ./cspp --script=benchmarks/rich.ss
 ;; Each sample prepares its inputs before collecting and measuring. Report the median
@@ -8,6 +9,7 @@
   (lambda (duration)
     (+ (* 1000.0 (time-second duration)) (/ (time-nanosecond duration) 1000000.0))))
 
+(define results '())
 (define measure
   (lambda (name size prepare)
     (let ([samples
@@ -19,9 +21,12 @@
                       (unless result (error 'rich-benchmark "invalid result"))
                       (cons (milliseconds (sstats-real delta)) (sstats-bytes delta)))))
                 (iota 5))])
-      (printf "~a n=~a median-ms=~,3f allocated=~a\n" name size
-              (list-ref (sort < (map car samples)) 2)
-              (list-ref (sort < (map cdr samples)) 2)))))
+      (set! results
+            (cons (list (symbol->string name)
+                        (number->string size)
+                        (format "~,3f" (list-ref (sort < (map car samples)) 2))
+                        (number->string (list-ref (sort < (map cdr samples)) 2)))
+                  results)))))
 
 (printf "~a ~a; five samples, release build\n" (scheme-version) (machine-type))
 (for-each
@@ -111,3 +116,9 @@
                 (apply rich-table-add-row! table (make-list size "x"))
                 (lambda () (rich-table-render table))))))
  '(1000 2000 4000 8000))
+
+(benchmark-print-table!
+ "Rich Benchmarks"
+ '(("case" . left) ("size" . right) ("median ms" . right)
+   ("allocated bytes" . right))
+ (reverse results))

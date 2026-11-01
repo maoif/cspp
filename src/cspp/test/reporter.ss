@@ -4,20 +4,9 @@
           test-datum-reporter test-progress-reporter test-report test-summarize)
   (import (cspp chez)
           (cspp utils)
-          (cspp test descriptor))
-
-  (define-record-type ($test-reporter $make-test-reporter test-reporter?)
-    (fields kind write))
-
-  #|proc:make-test-reporter
-The `make-test-reporter` procedure creates a reporter. `kind` is a symbol
-naming the reporter, and `write` is a procedure with signature
-`(lambda (output-port summary) unspecified)`.
-|#
-  (define make-test-reporter
-    (lambda (kind write)
-      (pcheck ([symbol? kind] [procedure? write])
-              ($make-test-reporter kind write))))
+          (cspp test assertion)
+          (cspp test descriptor)
+          (cspp test common))
 
   (define $count-status
     (lambda (status results)
@@ -47,6 +36,31 @@ The `test-summarize` procedure returns a summary record for `results`.
                ($count-status 'xpass results)
                results))))
 
+  (define $write-failure-detail
+    (lambda (out result)
+      (when (memq (test-result-status result) '(failed errored xpass))
+        (parameterize ([print-graph #t])
+          (fprintf out "\n~a: ~a\n" (test-result-status result) (test-result-name result))
+          (unless (null? (test-result-parameters result))
+            (fprintf out "  parameters: ~s\n" (test-result-parameters result)))
+          (when (test-result-source result)
+            (fprintf out "  source: ~s\n" (test-result-source result)))
+          (let ([message (test-result-message result)])
+            (when (and message (not (string=? message "")))
+              (fprintf out "  message: ~a\n" message)))
+          (let ([raised (test-result-condition result)])
+            (when raised
+              (when (test-failure? raised)
+                (fprintf out "  expected: ~s\n" (test-failure-expected raised))
+                (fprintf out "  actual: ~s\n" (test-failure-actual raised)))
+              (display "  condition: " out)
+              (if (condition? raised) (display-condition raised out) (write raised out))
+              (newline out)))
+          (unless (string=? (test-result-stdout result) "")
+            (fprintf out "  stdout:\n~a\n" (test-result-stdout result)))
+          (unless (string=? (test-result-stderr result) "")
+            (fprintf out "  stderr:\n~a\n" (test-result-stderr result)))))))
+
   (define $write-text-summary
     (lambda (out summary)
       (fprintf out "passed: ~a\n" (test-summary-passed summary))
@@ -55,7 +69,9 @@ The `test-summarize` procedure returns a summary record for `results`.
       (fprintf out "skipped: ~a\n" (test-summary-skipped summary))
       (fprintf out "xfail: ~a\n" (test-summary-xfail summary))
       (fprintf out "xpass: ~a\n" (test-summary-xpass summary))
-      (fprintf out "total: ~a\n" (test-summary-total summary))))
+      (fprintf out "total: ~a\n" (test-summary-total summary))
+      (for-each (lambda (result) ($write-failure-detail out result))
+                (test-summary-results summary))))
 
   (define $ansi-wrap
     (lambda (color text enabled?)
@@ -77,59 +93,65 @@ The `test-summarize` procedure returns a summary record for `results`.
 
   #|proc:test-text-reporter
 The `test-text-reporter` procedure returns a reporter that writes a plain text
-summary.
+summary followed by failed, errored, and unexpected-pass case details, including
+parameters, source, conditions, assertion operands and captured output when present.
 |#
   (define test-text-reporter
     (lambda ()
-      (make-test-reporter 'text $write-text-summary)))
+      (test-make-textual-reporter 'text $write-text-summary)))
 
   (define $write-datum-summary
     (lambda (out summary)
-      (write
-       `(test-summary
-         (total . ,(test-summary-total summary))
-         (passed . ,(test-summary-passed summary))
-         (failed . ,(test-summary-failed summary))
-         (errored . ,(test-summary-errored summary))
-         (skipped . ,(test-summary-skipped summary))
-         (xfail . ,(test-summary-xfail summary))
-         (xpass . ,(test-summary-xpass summary)))
-       out)
-      (newline out)))
+      (parameterize ([print-level #f] [print-length #f])
+        (write
+         `(test-summary
+           (total . ,(test-summary-total summary))
+           (passed . ,(test-summary-passed summary))
+           (failed . ,(test-summary-failed summary))
+           (errored . ,(test-summary-errored summary))
+           (skipped . ,(test-summary-skipped summary))
+           (xfail . ,(test-summary-xfail summary))
+           (xpass . ,(test-summary-xpass summary)))
+         out)
+        (newline out))))
 
   #|proc:test-datum-reporter
-The `test-datum-reporter` procedure returns a reporter that writes a Scheme
-datum summary.
+The `test-datum-reporter` procedure returns a reporter that writes a complete Scheme
+datum summary, independent of diagnostic printer length and level limits.
 |#
   (define test-datum-reporter
     (lambda ()
-      (make-test-reporter 'datum $write-datum-summary)))
+      (test-make-textual-reporter 'datum $write-datum-summary)))
 
   #|proc:test-progress-reporter
 The `test-progress-reporter` procedure returns a reporter that writes one
-status character per result followed by the standard text summary. `color` is
-`auto`, `always`, or `never`; only `always` forces ANSI styling.
+status character per result followed by the text summary and failure details. `color` is
+`auto`, `always`, or `never`; only `always` forces ANSI styling. The runner's
+explicit color configuration overrides this default while it reports results.
 |#
   (define test-progress-reporter
     (lambda (color)
-      (unless (memq color '(auto always never))
-        (errorf 'test-progress-reporter "invalid color mode: ~a" color))
-      (make-test-reporter
-       'progress
-       (lambda (out summary)
-         (for-each
-          (lambda (result)
-            (display ($status-text (test-result-status result) color) out))
-          (test-summary-results summary))
-         (newline out)
-         ($write-text-summary out summary)))))
+      (pcheck ([test-color-mode? color])
+              (test-make-textual-reporter
+               'progress
+               (lambda (out summary)
+                 (let* ([override (test-current-report-color)]
+                        [color (if (eq? override 'auto) color override)])
+                   (for-each
+                    (lambda (result)
+                      (display ($status-text (test-result-status result) color) out))
+                    (test-summary-results summary))
+                   (newline out)
+                   ($write-text-summary out summary)))))))
 
   #|proc:test-report
 The `test-report` procedure writes `summary` to `output-port` using `reporter`.
+Built-in reporters require an open textual port; custom reporters define their own port usage.
 |#
   (define test-report
     (lambda (reporter output-port summary)
       (pcheck ([test-reporter? reporter] [output-port? output-port] [test-summary? summary])
-              (($test-reporter-write reporter) output-port summary))))
+              (test-check-reporter-output 'test-report reporter output-port)
+              ((test-reporter-write reporter) output-port summary))))
 
   )

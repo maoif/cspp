@@ -1,4 +1,5 @@
 (import (cspp))
+(load "benchmarks/common.ss")
 
 ;; Run this same script against the baseline and optimized libraries.
 ;; Compile the procedures before the measurement; use retained graph size as the primary metric.
@@ -16,8 +17,14 @@
           (collect)
           (let ([retained (- (compute-size set) empty-size)])
             (unless (= count (treeset-size set)) (error 'memory "incorrect set size"))
-            (printf "~a retained=~a bytes/item=~a allocated=~a\n"
-                    count retained (/ retained count) allocated)))))))
+            (list (number->string count)
+                  (number->string retained)
+                  (number->string (/ retained count))
+                  (number->string allocated))))))))
 
 (printf "~a ~a\n" (scheme-version) (machine-type))
-(for-each measure-set '(1000 10000 100000))
+(benchmark-print-table!
+ "Tree Set Memory"
+ '(("entries" . right) ("retained bytes" . right)
+   ("bytes/item" . right) ("allocated bytes" . right))
+ (map measure-set '(1000 10000 100000)))

@@ -256,6 +256,9 @@ This prints:
 (CHEZ SCHEME)
 ```
 
+See [test and benchmark usage requirements](docs/test-and-benchmark.md) for controlling-thread
+APIs, assertions in worker threads and fibers, failure propagation, and measurement scope.
+
 ## 📦 Install
 
 Install the compiled library and launcher under an absolute prefix:

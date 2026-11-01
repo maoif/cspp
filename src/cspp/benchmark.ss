@@ -21,6 +21,7 @@
           benchmark-config-min-time benchmark-config-max-iterations
           benchmark-config-output benchmark-config-filter
           benchmark-config-reporter benchmark-config-cost-center?
+          benchmark-config-stop-on-error?
 
           benchmark-run benchmark-run-one benchmark-run-suite benchmark-select
           benchmark-expand benchmark-summarize
@@ -58,13 +59,25 @@
           (cspp internal)
           (cspp rich))
 
+  #|doc
+  Execution requirements are documented in `docs/test-and-benchmark.md`. Coordinate definitions,
+  registries, runners, reporting, and persistence synchronously from one controlling OS thread,
+  outside fibers. Concurrent coordinator calls, reentrant reporting, and continuation reentry
+  are undefined. Benchmark state, counters, and timing controls belong to the controlling thread.
+  Record predicates and read-only descriptor/config/result/sample/comparison accessors support
+  workers when their payloads remain stable. Numeric difference helpers and optimization barriers
+  also support independent worker calls. Bodies must join their workers before returning.
+  Measurements use controlling-thread CPU time, elapsed wall time, and process-wide allocation
+  and garbage-collection statistics. Worker CPU time is not aggregated.
+  |#
+
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; records and low-level helpers
 ;;;;===----------------------------------------------------------------------===
 
   (define-record-type ($benchmark $mk-benchmark benchmark?)
-    (fields name body options args arg-names setup teardown
+    (fields name body options axes setup teardown
             (immutable fixture $benchmark-fixture-ref)
             (immutable suite $benchmark-suite-ref)
             template-args))
@@ -76,9 +89,12 @@
     (fields name benchmarks setup teardown))
 
   (define-record-type ($benchmark-state $mk-benchmark-state benchmark-state?)
-    (fields name suite args template-args iteration iterations sample
-            (mutable user-data benchmark-state-user-data benchmark-state-set-user-data!)
+    (fields name suite args template-args
+            (mutable iteration $benchmark-state-iteration $benchmark-state-iteration-set!)
+            iterations sample
+            (mutable user-data $benchmark-state-user-data $benchmark-state-set-user-data!)
             (mutable counters $benchmark-state-counters $benchmark-state-counters-set!)
+            (mutable counter-index $benchmark-state-counter-index $benchmark-state-counter-index-set!)
             (mutable timing-paused? $benchmark-state-timing-paused? $benchmark-state-timing-paused?-set!)
             (mutable pause-start $benchmark-state-pause-start $benchmark-state-pause-start-set!)
             (mutable paused-sstats $benchmark-state-paused-sstats $benchmark-state-paused-sstats-set!)))
@@ -87,26 +103,47 @@
     (fields iterations sstats cost-center counters))
 
   (define-record-type ($benchmark-result $mk-benchmark-result benchmark-result?)
+    ;; Internal samples #f preserves the absence of sample data in historical baselines.
     (fields name args template-args samples summary counters error))
 
   (define-record-type ($benchmark-config $mk-benchmark-config benchmark-config?)
-    (fields warmup samples min-time max-iterations output filter reporter cost-center? stop-on-error?))
+    (fields warmup samples min-time max-iterations output filter reporter cost-center? stop-on-error?
+            explicit-options))
 
   (define-record-type ($benchmark-reporter $mk-benchmark-reporter benchmark-reporter?)
-    (fields start result finish))
+    (fields start result finish textual-output?))
 
   (define-record-type ($benchmark-comparison $mk-benchmark-comparison benchmark-comparison?)
     (fields name metric baseline current baseline-value current-value absolute-difference
             percent-difference regression? improvement?))
 
   (define-record-type ($benchmark-registry $mk-benchmark-registry benchmark-registry?)
-    (fields (mutable benchmarks $benchmark-registry-benchmarks $benchmark-registry-benchmarks-set!)))
+    (fields (mutable reversed $benchmark-registry-reversed $benchmark-registry-reversed-set!)
+            (mutable snapshot $benchmark-registry-snapshot $benchmark-registry-snapshot-set!)))
+
+  (define $benchmark-registry-benchmarks
+    (lambda (registry)
+      (or ($benchmark-registry-snapshot registry)
+          (let ([snapshot (reverse ($benchmark-registry-reversed registry))])
+            ($benchmark-registry-snapshot-set! registry snapshot)
+            snapshot))))
 
   (define $void-procedure (lambda args (void)))
 
   (define $false-procedure (lambda args #f))
 
   (define $identity (lambda (x) x))
+
+  (define $symbol-alist?
+    (lambda (value)
+      (and (list? value)
+           (let ([seen (make-eq-hashtable (length value))])
+             (for-all
+               (lambda (entry)
+                 (and (pair? entry) (symbol? (car entry))
+                      (not (hashtable-contains? seen (car entry)))
+                      (begin (hashtable-set! seen (car entry) #t) #t)))
+               value)))))
 
   (define $alist-ref
     (case-lambda
@@ -210,31 +247,31 @@
   (define $make-benchmark-state
     (lambda (name suite args template-args iteration iterations sample user-data counters timing-paused?)
       ($mk-benchmark-state name suite args template-args iteration iterations sample
-                           user-data counters timing-paused? #f ($zero-sstats))))
+                           user-data counters #f timing-paused? #f ($zero-sstats))))
 
   (define $sample-cpu-ns
     (lambda (sample)
-      (let ([iterations (benchmark-sample-iterations sample)])
+      (let ([iterations (inexact->exact (benchmark-sample-iterations sample))])
         (if (zero? iterations)
             0
-            (quotient ($time->ns (sstats-cpu (benchmark-sample-sstats sample)))
-                      iterations)))))
+            (/ ($time->ns (sstats-cpu (benchmark-sample-sstats sample)))
+               iterations)))))
 
   (define $sample-real-ns
     (lambda (sample)
-      (let ([iterations (benchmark-sample-iterations sample)])
+      (let ([iterations (inexact->exact (benchmark-sample-iterations sample))])
         (if (zero? iterations)
             0
-            (quotient ($time->ns (sstats-real (benchmark-sample-sstats sample)))
-                      iterations)))))
+            (/ ($time->ns (sstats-real (benchmark-sample-sstats sample)))
+               iterations)))))
 
   (define $sample-bytes
     (lambda (sample)
-      (let ([iterations (benchmark-sample-iterations sample)])
+      (let ([iterations (inexact->exact (benchmark-sample-iterations sample))])
         (if (zero? iterations)
             0
-            (quotient (sstats-bytes (benchmark-sample-sstats sample))
-                      iterations)))))
+            (/ (sstats-bytes (benchmark-sample-sstats sample))
+               iterations)))))
 
   (define $mean
     (lambda (xs)
@@ -255,16 +292,39 @@
                       (list-ref sorted mid))
                    2))))))
 
+  (define $range-safe-sqrt
+    (lambda (value)
+      (let ([root (sqrt value)]
+            [exponent (- (integer-length (numerator value))
+                         (integer-length (denominator value)))])
+        (if (or (exact? root)
+                ;; Ordinary inexact roots retain their existing representation.
+                (<= -1022 exponent 1022))
+            root
+            ;; Normalize an exact rational before taking an approximate root. Scaling the
+            ;; approximation back with exact arithmetic preserves values outside flonum range.
+            (let* ([scale (expt 2 (floor (/ exponent 2)))]
+                   [normalized (/ value (* scale scale))])
+              (* (inexact->exact (sqrt (exact->inexact normalized))) scale))))))
+
+  (define $range-safe-inexact
+    (lambda (value)
+      (let ([approximation (exact->inexact value)])
+        (if (and (finite? approximation) (or (zero? value) (not (zero? approximation))))
+            approximation
+            value))))
+
   (define $stddev
     (lambda (xs)
       (if (or (null? xs) (null? (cdr xs)))
           0
           (let ([mean ($mean xs)])
-            (sqrt (/ (apply + (map (lambda (x)
-                                     (let ([delta (- x mean)])
-                                       (* delta delta)))
-                                   xs))
-                     (length xs)))))))
+            ($range-safe-sqrt
+              (/ (apply + (map (lambda (x)
+                                 (let ([delta (- x mean)])
+                                   (* delta delta)))
+                               xs))
+                 (length xs)))))))
 
   (define $summary-values
     (lambda (xs)
@@ -275,32 +335,39 @@
                  [stddev ($stddev xs)]
                  [margin (if (null? (cdr xs))
                              0
-                             (* 1.96 (/ stddev (sqrt (length xs)))))])
+                             (* 49/25 (/ (inexact->exact stddev)
+                                         (inexact->exact (sqrt (length xs))))))])
             `((median . ,($median xs))
               (mean . ,mean)
               (min . ,(apply min xs))
               (max . ,(apply max xs))
               (stddev . ,stddev)
-              (confidence-interval . ,(list (- mean margin) (+ mean margin))))))))
+              (confidence-interval . ,(if (null? (cdr xs))
+                                         (list mean mean)
+                                         (list ($range-safe-inexact (- mean margin))
+                                               ($range-safe-inexact (+ mean margin))))))))))
 
   (define $merge-counters
     (lambda (samples)
-      (let loop-samples ([samples samples] [out '()])
-        (if (null? samples)
-            (reverse out)
-            (let loop-counters ([counters (benchmark-sample-counters (car samples))]
-                                [out out])
-              (if (null? counters)
-                  (loop-samples (cdr samples) out)
-                  (let* ([entry (car counters)]
-                         [key (car entry)]
-                         [value (cdr entry)]
-                         [old (assq key out)])
-                    (if old
-                        (begin
-                          (set-cdr! old (+ (cdr old) value))
-                          (loop-counters (cdr counters) out))
-                        (loop-counters (cdr counters) (cons (cons key value) out))))))))))
+      (let ([index (make-eq-hashtable)])
+        (let loop-samples ([samples samples] [out '()])
+          (if (null? samples)
+              (reverse out)
+              (let loop-counters ([counters (benchmark-sample-counters (car samples))]
+                                  [out out])
+                (if (null? counters)
+                    (loop-samples (cdr samples) out)
+                    (let* ([entry (car counters)]
+                           [key (car entry)]
+                           [value (cdr entry)]
+                           [old (hashtable-ref index key #f)])
+                      (if old
+                          (begin
+                            (set-cdr! old (+ (cdr old) value))
+                            (loop-counters (cdr counters) out))
+                          (let ([entry (cons key value)])
+                            (hashtable-set! index key entry)
+                            (loop-counters (cdr counters) (cons entry out))))))))))))
 
   (define $string-replace
     (lambda (text old new)
@@ -319,17 +386,26 @@
             (write-char (string-ref text i) out)
             (loop (+ i 1))])))))
 
-  (define $display-string
-    (lambda (value)
-      (let ([out (open-output-string)])
-        (display value out)
-        (get-output-string out))))
+  (define $write-readable-datum
+    (lambda (value out)
+      (parameterize ([print-graph #t] [print-level #f] [print-length #f] [print-gensym #t]
+                     [case-sensitive #t])
+        (write value out))))
 
   (define $write-string
     (lambda (value)
-      (let ([out (open-output-string)])
-        (write value out)
-        (get-output-string out))))
+      (call-with-string-output-port (lambda (out) ($write-readable-datum value out)))))
+
+  (define $readback-equal?
+    (lambda (value text)
+      (guard (raised [else #f])
+        (call-with-port (open-input-string text)
+          (lambda (in) (parameterize ([case-sensitive #t]) (equal? value (read in))))))))
+
+  (define $diagnostic-datum
+    (lambda (value)
+      (let ([text ($write-string value)])
+        (if ($readback-equal? value text) value text))))
 
   (define $csv-field
     (lambda (value)
@@ -362,15 +438,25 @@
 
   (define $json-key
     (lambda (key)
-      (if (symbol? key)
-          (symbol->string key)
-          ($display-string key))))
+      (cond
+       [(gensym? key) ($write-string key)]
+       [(symbol? key) (symbol->string key)]
+       [(string? key) key]
+       [(char? key) (string key)]
+       [else ($write-string key)])))
 
   (define $json-number-string
     (lambda (n)
-      (number->string (if (and (rational? n) (not (integer? n)))
-                          (exact->inexact n)
-                          n))))
+      ;; Chez's optional mantissa-width suffix is Scheme syntax, not JSON numeric syntax.
+      (parameterize ([print-precision #f] [print-subnormal-precision #f])
+        (number->string
+          (if (and (exact? n) (rational? n) (not (integer? n)))
+              (let ([approximation (exact->inexact n)])
+                ;; Keep a readable exact string if conversion loses the range entirely.
+                (if (and (finite? approximation) (not (zero? approximation)))
+                    approximation
+                    n))
+              n)))))
 
   (define $json-safe-number-string?
     (lambda (text)
@@ -413,49 +499,80 @@
            (andmap pair? x))))
 
   (define $write-json-list
-    (lambda (xs out)
+    (lambda (xs out ancestors)
       (display "[" out)
       (let loop ([xs xs] [first? #t])
         (unless (null? xs)
           (unless first? (display "," out))
-          ($write-json (car xs) out)
+          ($write-json (car xs) out ancestors)
           (loop (cdr xs) #f)))
       (display "]" out)))
 
   (define $write-json-object
-    (lambda (alist out)
-      (display "{" out)
-      (let loop ([alist alist] [first? #t])
-        (unless (null? alist)
-          (unless first? (display "," out))
-          ($json-string ($json-key (caar alist)) out)
-          (display ":" out)
-          ($write-json (cdar alist) out)
-          (loop (cdr alist) #f)))
-      (display "}" out)))
+    (lambda (alist out ancestors)
+      (let* ([keys (map (lambda (entry) ($json-key (car entry))) alist)]
+             [seen (make-hashtable string-hash string=?)]
+             [unique? (andmap (lambda (key)
+                                (and (not (hashtable-contains? seen key))
+                                     (begin (hashtable-set! seen key #t) #t)))
+                              keys)])
+        (if (not unique?)
+            ;; JSON object names cannot represent every distinct Scheme key.
+            ($json-string ($write-string alist) out)
+            (begin
+              (display "{" out)
+              (let loop ([alist alist] [keys keys] [first? #t])
+                (unless (null? alist)
+                  (unless first? (display "," out))
+                  ($json-string (car keys) out)
+                  (display ":" out)
+                  ($write-json (cdar alist) out ancestors)
+                  (loop (cdr alist) (cdr keys) #f)))
+              (display "}" out))))))
 
   (define $write-json
-    (lambda (datum out)
+    (lambda (datum out ancestors)
       (cond
+       ;; Only ancestors indicate recursion; shared acyclic values keep their JSON shape.
+       [(and (pair? datum) (memq datum ancestors))
+        ($json-string ($write-string datum) out)]
        [(eq? datum #t) (display "true" out)]
        [(eq? datum #f) (display "false" out)]
        [(number? datum) ($write-json-number datum out)]
        [(string? datum) ($json-string datum out)]
        [(symbol? datum) ($json-string (symbol->string datum) out)]
        [(null? datum) (display "[]" out)]
-       [($alist? datum) ($write-json-object datum out)]
-       [(list? datum) ($write-json-list datum out)]
+       [($alist? datum) ($write-json-object datum out (cons datum ancestors))]
+       [(list? datum) ($write-json-list datum out (cons datum ancestors))]
        [else ($json-string ($write-string datum) out)])))
+
+  (define $captured-benchmark-error
+    (lambda (raised)
+      (or raised
+          (condition (make-error)
+                     (make-message-condition "benchmark raised #f")
+                     (make-irritants-condition (list #f))))))
 
   (define $condition->datum
     (lambda (exn)
       (if (condition? exn)
-          `((who . ,(condition-who exn))
-            (message . ,(condition-message exn))
-            (irritants . ,(condition-irritants exn)))
+          `((who . ,(and (who-condition? exn) ($diagnostic-datum (condition-who exn))))
+            (format? . ,(format-condition? exn))
+            (message . ,(if (message-condition? exn)
+                            (condition-message exn)
+                            "benchmark error"))
+            (irritants . ,(if (irritants-condition? exn)
+                              (map $diagnostic-datum (condition-irritants exn))
+                              '())))
           `((who . #f)
             (message . ,($write-string exn))
             (irritants . ())))))
+
+  (define $condition->text
+    (lambda (raised)
+      (if (condition? raised)
+          (call-with-string-output-port (lambda (out) (display-condition raised out)))
+          ($write-string raised))))
 
   (define $datum->condition
     (lambda (datum)
@@ -464,6 +581,9 @@
              [irritants ($alist-ref datum 'irritants '())]
              [parts (append (list (make-error)
                                   (make-message-condition message))
+                            (if ($alist-ref datum 'format? #f)
+                                (list (make-format-condition))
+                                '())
                             (if who
                                 (list (make-who-condition who))
                                 '())
@@ -478,6 +598,14 @@
         (if entry
             ($alist-ref (cdr entry) 'mean 0)
             0))))
+
+  (define $comparison-metric-mean
+    (lambda (result metric)
+      (and (not (benchmark-result-error result))
+           (not (null? ($benchmark-result-samples result)))
+           (let* ([entry (assq metric (benchmark-result-summary result))]
+                  [mean (and entry ($alist-ref (cdr entry) 'mean #f))])
+             (and (real? mean) (finite? mean) mean)))))
 
   (define $benchmark-report-value
     (lambda (value)
@@ -506,7 +634,9 @@
         [(real-ns) ($metric-mean result 'real-ns)]
         [(bytes) ($metric-mean result 'bytes)]
         [(counters) (benchmark-result-counters result)]
-        [(error) (and (benchmark-result-error result) #t)]
+        [(error)
+         (let ([error (benchmark-result-error result)])
+           (and error ($condition->text error)))]
         [else (errorf 'benchmark-rich-reporter "unknown result column: ~a" key)])))
 
   (define $benchmark-result-column-justify
@@ -518,6 +648,7 @@
   (define $benchmark-rich-default-columns
     '((name . "name")
       (args . "args")
+      (template-args . "template-args")
       (iterations . "iterations")
       (cpu-ns . "cpu/ns")
       (real-ns . "real/ns")
@@ -527,11 +658,14 @@
 
   (define $benchmark-text-default-columns
     '((name . "name")
+      (args . "args")
+      (template-args . "template-args")
       (iterations . "iterations")
       (cpu-ns . "cpu/ns")
       (real-ns . "real/ns")
       (bytes . "bytes/iter")
-      (counters . "counters")))
+      (counters . "counters")
+      (error . "error")))
 
   (define $string-pad-left
     (lambda (text width)
@@ -623,16 +757,11 @@
                   results)
         table)))
 
-  (define $find-result
-    (lambda (results name args template-args)
-      (let loop ([results results])
-        (cond
-         [(null? results) #f]
-         [(and (eq? name (benchmark-result-name (car results)))
-               (equal? args (benchmark-result-args (car results)))
-               (equal? template-args (benchmark-result-template-args (car results))))
-          (car results)]
-         [else (loop (cdr results))]))))
+  (define $result-key
+    (lambda (result)
+      (list (benchmark-result-name result)
+            (benchmark-result-args result)
+            (benchmark-result-template-args result))))
 
   (define $sample->datum
     (lambda (sample)
@@ -647,8 +776,64 @@
         (cost-center . ,(benchmark-sample-cost-center sample))
         (counters . ,(benchmark-sample-counters sample)))))
 
+  ;; Validate persisted data once, before constructing records used by statistics/reporters.
+  (define $baseline-check
+    (lambda (predicate value context)
+      (unless (predicate value)
+        (errorf 'benchmark-load-baseline "invalid ~a: ~s" context value))))
+
+  (define $baseline-alist
+    (lambda (datum context)
+      ($baseline-check list? datum context)
+      (let ([seen (make-eq-hashtable)])
+        (for-each
+          (lambda (entry)
+            (unless (and (pair? entry) (symbol? (car entry))
+                         (not (hashtable-contains? seen (car entry))))
+              (errorf 'benchmark-load-baseline "invalid or duplicate ~a field: ~s" context entry))
+            (hashtable-set! seen (car entry) #t))
+          datum))))
+
+  (define $baseline-counters
+    (lambda (datum context)
+      ($baseline-alist datum context)
+      (for-each (lambda (entry) ($baseline-check number? (cdr entry) context)) datum)))
+
+  (define $baseline-summary
+    (lambda (datum)
+      ($baseline-alist datum 'summary)
+      (for-each
+        (lambda (metric)
+          ($baseline-alist (cdr metric) (car metric))
+          (for-each
+            (lambda (entry)
+              (let ([value (cdr entry)])
+                (if (eq? (car entry) 'confidence-interval)
+                    ($baseline-check
+                      (lambda (value)
+                        (and (list? value) (= (length value) 2) (andmap real? value)))
+                      value 'confidence-interval)
+                    ($baseline-check
+                      (lambda (value)
+                        (and (real? value)
+                             (or (not (eq? (car entry) 'stddev)) (>= value 0))))
+                      value (car entry)))))
+            (cdr metric)))
+        datum)))
+
   (define $datum->sample
     (lambda (datum)
+      ($baseline-alist datum 'sample)
+      (for-each
+        (lambda (key)
+          ($baseline-check (lambda (value)
+                             (and (natural? value)
+                                  (or (eq? key 'iterations) (exact? value))))
+                           ($alist-ref datum key 0) key))
+        '(iterations cpu-ns real-ns bytes gc-count gc-cpu-ns gc-real-ns gc-bytes))
+      ($baseline-counters ($alist-ref datum 'counters '()) 'sample-counters)
+      (let ([data ($alist-ref datum 'cost-center #f)])
+        (when data ($baseline-counters data 'cost-center)))
       (let ([sstats (make-sstats ($ns->time ($alist-ref datum 'cpu-ns 0))
                                  ($ns->time ($alist-ref datum 'real-ns 0))
                                  ($alist-ref datum 'bytes 0)
@@ -666,7 +851,9 @@
       `((name . ,(benchmark-result-name result))
         (args . ,(benchmark-result-args result))
         (template-args . ,(benchmark-result-template-args result))
-        (samples . ,(map $sample->datum (benchmark-result-samples result)))
+        ,@(if ($benchmark-result-samples result)
+              `((samples . ,(map $sample->datum (benchmark-result-samples result))))
+              '())
         (summary . ,(benchmark-result-summary result))
         (counters . ,(benchmark-result-counters result))
         (error . ,(and (benchmark-result-error result)
@@ -674,10 +861,26 @@
 
   (define $datum->result
     (lambda (datum)
+      ($baseline-alist datum 'result)
+      ($baseline-check symbol? ($alist-ref datum 'name #f) 'result-name)
+      ($baseline-alist ($alist-ref datum 'args '()) 'args)
+      ($baseline-alist ($alist-ref datum 'template-args '()) 'template-args)
+      (when (assq 'samples datum)
+        ($baseline-check list? ($alist-ref datum 'samples) 'samples))
+      ($baseline-summary ($alist-ref datum 'summary '()))
+      ($baseline-counters ($alist-ref datum 'counters '()) 'result-counters)
+      ($baseline-check boolean? ($alist-ref datum 'error? #f) 'error?)
+      (let ([error-datum ($alist-ref datum 'error #f)])
+        (when error-datum
+          ($baseline-alist error-datum 'error)
+          ($baseline-check boolean? ($alist-ref error-datum 'format? #f) 'error-format?)
+          ($baseline-check string? ($alist-ref error-datum 'message "") 'error-message)
+          ($baseline-check list? ($alist-ref error-datum 'irritants '()) 'error-irritants)))
       ($mk-benchmark-result ($alist-ref datum 'name)
                             ($alist-ref datum 'args '())
                             ($alist-ref datum 'template-args '())
-                            (map $datum->sample ($alist-ref datum 'samples '()))
+                            (and (assq 'samples datum)
+                                 (map $datum->sample ($alist-ref datum 'samples)))
                             ($alist-ref datum 'summary '())
                             ($alist-ref datum 'counters '())
                             (let ([error-datum ($alist-ref datum 'error #f)])
@@ -704,7 +907,7 @@
 
   (define $seconds->ns
     (lambda (seconds)
-      (inexact->exact (floor (* (exact->inexact seconds) 1000000000.0)))))
+      (floor (* (if (exact? seconds) seconds (inexact->exact seconds)) 1000000000))))
 
   (define $sstats-real-ns
     (lambda (s)
@@ -730,10 +933,13 @@ custom runners. `name` is the concrete run name, `suite` is a suite name or
 `#f`, `args` is an argument alist, `template-args` is a template argument alist,
 `iteration` is the current iteration index, `iterations` is the current sample's
 iteration count, and `sample` is the current sample index.
+Both argument alists must have unique symbolic keys; their values may be arbitrary objects.
 |#
   (define benchmark-state
     (lambda (name suite args template-args iteration iterations sample)
-      (pcheck ([symbol? name] [list? args template-args] [natural? iteration iterations sample])
+      (pcheck ([symbol? name]
+               [(lambda (value) (or (not value) (symbol? value))) suite]
+               [$symbol-alist? args template-args] [natural? iteration iterations sample])
               ($make-benchmark-state name suite args template-args iteration iterations sample '() '() #f))))
 
   #|proc:benchmark-state-name
@@ -827,6 +1033,39 @@ in `state`.
       (pcheck ([benchmark-state? state])
               ($benchmark-state-sample state))))
 
+  #|proc:benchmark-state-user-data
+  The `benchmark-state-user-data` procedure returns the application value stored in `state`,
+  initially the empty list. `state` belongs to the controlling sample or suite.
+  |#
+  (define benchmark-state-user-data
+    (lambda (state)
+      (pcheck ([benchmark-state? state])
+              ($benchmark-state-user-data state))))
+
+  #|proc:benchmark-state-set-user-data!
+  The `benchmark-state-set-user-data!` procedure stores arbitrary application `value` in
+  benchmark `state` and returns unspecified values. Call it only on the controlling thread.
+  |#
+  (define benchmark-state-set-user-data!
+    (lambda (state value)
+      (pcheck ([benchmark-state? state])
+              ($benchmark-state-set-user-data! state value))))
+
+  (define $counter-entry
+    (lambda (state name)
+      (let ([index (or ($benchmark-state-counter-index state)
+                       (let ([index (make-eq-hashtable)])
+                         (for-each (lambda (entry) (hashtable-set! index (car entry) entry))
+                                   ($benchmark-state-counters state))
+                         ($benchmark-state-counter-index-set! state index)
+                         index))])
+        (or (hashtable-ref index name #f)
+            (let ([entry (cons name 0)])
+              (hashtable-set! index name entry)
+              ($benchmark-state-counters-set!
+               state (cons entry ($benchmark-state-counters state)))
+              entry)))))
+
   #|proc:benchmark-state-counter-set!
 The `benchmark-state-counter-set!` procedure sets counter `name` in `state` to
 numeric `value` for the current sample.
@@ -834,10 +1073,7 @@ numeric `value` for the current sample.
   (define benchmark-state-counter-set!
     (lambda (state name value)
       (pcheck ([benchmark-state? state] [symbol? name] [number? value])
-              ($benchmark-state-counters-set!
-               state
-               (cons (cons name value)
-                     ($remove-key name ($benchmark-state-counters state)))))))
+              (set-cdr! ($counter-entry state name) value))))
 
   #|proc:benchmark-state-counter-add!
 The `benchmark-state-counter-add!` procedure adds numeric `value` to counter
@@ -846,30 +1082,109 @@ The `benchmark-state-counter-add!` procedure adds numeric `value` to counter
   (define benchmark-state-counter-add!
     (lambda (state name value)
       (pcheck ([benchmark-state? state] [symbol? name] [number? value])
-              (benchmark-state-counter-set!
-               state name
-               (+ value ($alist-ref ($benchmark-state-counters state) name 0))))))
+              (let ([entry ($counter-entry state name)])
+                (set-cdr! entry (+ value (cdr entry)))))))
+
+  (define $check-option-keys
+    (lambda (who options allowed repeatable)
+      (let loop ([options options] [seen '()])
+        (unless (null? options)
+          (let ([option (car options)])
+            (unless (and (pair? option) (memq (car option) allowed))
+              (errorf who "unknown or unused option: ~s" option))
+            (when (and (memq (car option) seen) (not (memq (car option) repeatable)))
+              (errorf who "duplicate option: ~s" (car option)))
+            (loop (cdr options) (cons (car option) seen)))))))
+
+  (define $check-benchmark-options
+    (lambda (who options allowed)
+      ($check-option-keys who options allowed '(args arg-range dense-arg-range))
+      (for-each
+        (lambda (option)
+          (unless (and (pair? option) (memq (car option) allowed))
+            (errorf who "unknown or unused option: ~s" option))
+          (let ([value (cdr option)])
+            (unless
+              (case (car option)
+                [(setup suite-setup)
+                 (or (and (procedure? value) (logbit? 1 (procedure-arity-mask value)))
+                     (and (eq? who 'make-benchmark) (not value)))]
+                [(teardown suite-teardown)
+                 (or (and (procedure? value) (logbit? 2 (procedure-arity-mask value)))
+                     (and (eq? who 'make-benchmark) (not value)))]
+                [(fixture) (or (not value) (benchmark-fixture? value))]
+                [(suite) (or (not value) (symbol? value))]
+                [(template-args) ($symbol-alist? value)]
+                [(arg-range dense-arg-range)
+                 (and (list? value) (= (length value) 4) (symbol? (car value)))]
+                [else #t])
+              (errorf who "invalid option: ~s" option))))
+        options)
+      (let ([config-options (filter (lambda (option) (memq (car option) $benchmark-config-keys))
+                                    options)])
+        (unless (null? config-options)
+          ;; Reuse the configuration validator, including when a run will override these defaults.
+          (benchmark-config-with (default-benchmark-config) config-options)))))
 
   #|proc:make-benchmark
 The `make-benchmark` procedure creates a benchmark descriptor named by symbol
 `name`. `body` is a procedure with signature `(lambda (state arg ... setup-value)
 ...)`; `options` is a benchmark option alist, usually produced by
-`benchmark-options`.
+`benchmark-options`. Options include argument tables/ranges, sample setup/teardown,
+fixture and suite context, template arguments, and runner configuration defaults.
+Unknown options and invalid hooks/configuration values are rejected at construction.
+The body must accept state, one value per argument name, and a setup value when setup or
+a fixture is supplied. Invalid body signatures are rejected even for empty argument domains.
+Setup hooks must accept one argument and teardown hooks must accept two arguments.
+Singleton options cannot repeat; argument tables and ranges may repeat with distinct names.
+Setup has signature `(lambda (state) value)`; teardown has signature
+`(lambda (state value) unspecified)` and runs after the body, even without setup.
+When setup raises, it must release its own partial resources; sample teardown is not called.
+Without setup, teardown receives `#f` and the body receives no extra argument.
+A fixture supplies both hooks; combining it with non-false descriptor hooks is an error.
+`unit`, `complexity`, and `throughput` are descriptive metadata; they do not change
+measurement or reporting. Argument axes are validated at construction; the runner
+traverses their Cartesian product incrementally, preserving option and row order.
 |#
   (define make-benchmark
     (lambda (name body options)
       (pcheck ([symbol? name] [procedure? body] [list? options])
-              (let ([args ($normalize-arguments options)])
+              ($check-benchmark-options 'make-benchmark options
+                (append '(args arg-range dense-arg-range setup teardown fixture suite template-args
+                          unit complexity throughput)
+                        $benchmark-config-keys))
+              (let ([args ($normalize-arguments options)]
+                    [setup ($option-ref options 'setup #f)]
+                    [teardown ($option-ref options 'teardown #f)]
+                    [fixture ($option-ref options 'fixture #f)])
+                (when (and fixture (or setup teardown))
+                  (errorf 'make-benchmark "fixture conflicts with setup or teardown hooks"))
+                (let ([arity (+ 1 (if (or setup fixture) 1 0)
+                                (apply + (map (lambda (axis) (length (car axis))) args)))])
+                  (unless (logbit? arity (procedure-arity-mask body))
+                    (errorf 'make-benchmark "body must accept ~s arguments: ~s" arity body)))
                 ($mk-benchmark name
                                body
                                options
                                args
-                               ($argument-names args)
-                               ($option-ref options 'setup #f)
-                               ($option-ref options 'teardown #f)
-                               ($option-ref options 'fixture #f)
+                               (if fixture ($benchmark-fixture-setup fixture) setup)
+                               (if fixture ($benchmark-fixture-teardown fixture) teardown)
+                               fixture
                                ($option-ref options 'suite #f)
                                ($option-ref options 'template-args '()))))))
+
+  (define $benchmark-with-name
+    (lambda (benchmark name)
+      ;; Rename the validated descriptor without reinterpreting caller-owned source options.
+      ($mk-benchmark name
+                     ($benchmark-body benchmark)
+                     ($benchmark-options benchmark)
+                     ($benchmark-axes benchmark)
+                     ($benchmark-setup benchmark)
+                     ($benchmark-teardown benchmark)
+                     ($benchmark-fixture-ref benchmark)
+                     ($benchmark-suite-ref benchmark)
+                     ($benchmark-template-args benchmark))))
 
   #|proc:benchmark-register!
 The `benchmark-register!` procedure adds `benchmark` to `registry`. `registry`
@@ -879,10 +1194,10 @@ must be a benchmark registry, usually `(current-benchmark-registry)`.
     (lambda (registry benchmark)
       (pcheck ([benchmark-registry? registry] [benchmark? benchmark])
               (begin
-                ($benchmark-registry-benchmarks-set!
+                ($benchmark-registry-reversed-set!
                  registry
-                 (append ($benchmark-registry-benchmarks registry)
-                         (list benchmark)))
+                 (cons benchmark ($benchmark-registry-reversed registry)))
+                ($benchmark-registry-snapshot-set! registry #f)
                 benchmark))))
 
   #|proc:benchmark-unregister!
@@ -892,14 +1207,11 @@ from `registry`.
   (define benchmark-unregister!
     (lambda (registry name)
       (pcheck ([benchmark-registry? registry] [symbol? name])
-              ($benchmark-registry-benchmarks-set!
+              ($benchmark-registry-reversed-set!
                registry
-               (let loop ([benchmarks ($benchmark-registry-benchmarks registry)] [out '()])
-                 (cond
-                  [(null? benchmarks) (reverse out)]
-                  [(eq? name ($benchmark-name (car benchmarks)))
-                   (loop (cdr benchmarks) out)]
-                  [else (loop (cdr benchmarks) (cons (car benchmarks) out))]))))))
+               (filter (lambda (benchmark) (not (eq? name ($benchmark-name benchmark))))
+                       ($benchmark-registry-reversed registry)))
+              ($benchmark-registry-snapshot-set! registry #f))))
 
   #|proc:benchmark-clear-registry!
 The `benchmark-clear-registry!` procedure removes all benchmarks from
@@ -908,7 +1220,8 @@ The `benchmark-clear-registry!` procedure removes all benchmarks from
   (define benchmark-clear-registry!
     (lambda (registry)
       (pcheck ([benchmark-registry? registry])
-              ($benchmark-registry-benchmarks-set! registry '()))))
+              ($benchmark-registry-reversed-set! registry '())
+              ($benchmark-registry-snapshot-set! registry '()))))
 
   #|proc:benchmark-registry-benchmarks
 The `benchmark-registry-benchmarks` procedure returns the benchmark descriptors
@@ -924,14 +1237,15 @@ The `current-benchmark-registry` parameter stores the default benchmark
 registry used by definition macros and `(benchmark-run)`.
 |#
   (define current-benchmark-registry
-    (make-parameter ($mk-benchmark-registry '())))
+    (make-parameter ($mk-benchmark-registry '() '())
+      (lambda (registry) (pcheck ([benchmark-registry? registry]) registry))))
 
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; configs and reporters
 ;;;;===----------------------------------------------------------------------===
 
-  (define $default-config #f)
+  (define $default-reporter #f)
 
   #|proc:benchmark-result-name
 The `benchmark-result-name` procedure returns the concrete name stored in
@@ -967,7 +1281,7 @@ stored in benchmark `result`.
   (define benchmark-result-samples
     (lambda (result)
       (pcheck ([benchmark-result? result])
-              ($benchmark-result-samples result))))
+              (or ($benchmark-result-samples result) '()))))
 
   #|proc:benchmark-result-summary
 The `benchmark-result-summary` procedure returns the summary alist stored in
@@ -989,7 +1303,8 @@ alist stored in benchmark `result`.
 
   #|proc:benchmark-result-error
 The `benchmark-result-error` procedure returns the captured exception stored in
-benchmark `result`, or `#f` when the run completed.
+benchmark `result`, or `#f` when the run completed. A raised `#f` is wrapped
+in an error condition whose irritants contain the original value.
 |#
   (define benchmark-result-error
     (lambda (result)
@@ -1069,11 +1384,25 @@ stored in sample `sample`.
 The `make-benchmark-reporter` procedure creates a reporter descriptor from
 callbacks. `start` receives `(results output-port)`, `result` receives
 `(result output-port)`, and `finish` receives `(results output-port)`.
+Custom reporters may use binary output ports when their callbacks support them.
 |#
   (define make-benchmark-reporter
     (lambda (start result finish)
       (pcheck ([procedure? start result finish])
-              ($mk-benchmark-reporter start result finish))))
+              (unless (andmap (lambda (callback) (logbit? 2 (procedure-arity-mask callback)))
+                              (list start result finish))
+                (errorf 'make-benchmark-reporter "callbacks must accept two arguments"))
+              ($mk-benchmark-reporter start result finish #f))))
+
+  (define $make-textual-benchmark-reporter
+    (lambda (start result finish)
+      ($mk-benchmark-reporter start result finish #t)))
+
+  (define $check-reporter-output
+    (lambda (who reporter out)
+      (when (and reporter out ($benchmark-reporter-textual-output? reporter))
+        (unless (and (textual-port? out) (not (port-closed? out)))
+          (errorf who "built-in reporter requires an open textual output port")))))
 
   #|proc:benchmark-comparison-name
 The `benchmark-comparison-name` procedure returns the benchmark name associated
@@ -1166,12 +1495,14 @@ The `benchmark-comparison-improvement?` procedure returns whether comparison
               ($benchmark-comparison-improvement? comparison))))
 
   #|proc:benchmark-text-reporter
-The `benchmark-text-reporter` procedure returns the default plain textual
-reporter.
-|#
+  The `benchmark-text-reporter` procedure returns the default plain textual
+  reporter. It identifies runtime and template arguments in each row. Its error
+  column describes captured failures beside their measurements, including the condition
+  origin and irritants. Formatted conditions render their message arguments using Chez.
+  |#
   (define benchmark-text-reporter
     (lambda ()
-      (make-benchmark-reporter
+      ($make-textual-benchmark-reporter
        (lambda (results out)
          (for-each (lambda (line)
                      (display line out)
@@ -1183,20 +1514,23 @@ reporter.
 
   #|proc:benchmark-datum-reporter
 The `benchmark-datum-reporter` procedure returns a reporter that writes one
-Scheme datum per result to the output port.
+complete Scheme datum per result to the output port, independent of printer limits.
+Shared and cyclic data use readable graph notation without printer warnings.
+Generated symbols retain their identity regardless of the ambient gensym printer mode.
 |#
   (define benchmark-datum-reporter
     (lambda ()
-      (make-benchmark-reporter
+      ($make-textual-benchmark-reporter
        $void-procedure
        (lambda (result out)
-         (write `((name . ,(benchmark-result-name result))
-                  (args . ,(benchmark-result-args result))
-                  (template-args . ,(benchmark-result-template-args result))
-                  (summary . ,(benchmark-result-summary result))
-                  (counters . ,(benchmark-result-counters result))
-                  (error . ,(and (benchmark-result-error result) #t)))
-                out)
+         ($write-readable-datum
+                  `((name . ,(benchmark-result-name result))
+                    (args . ,(benchmark-result-args result))
+                    (template-args . ,(benchmark-result-template-args result))
+                    (summary . ,(benchmark-result-summary result))
+                    (counters . ,(benchmark-result-counters result))
+                    (error . ,(and (benchmark-result-error result) #t)))
+                  out)
          (newline out))
        (lambda (results out)
          (flush-output-port out)))))
@@ -1205,18 +1539,17 @@ Scheme datum per result to the output port.
 The `benchmark-csv-reporter` procedure returns a reporter that writes benchmark
 results as comma-separated values. Each row contains the result name, argument
 data, template data, summary means, counters, and whether the result captured an
-error.
+error. Missing metrics or means in legacy summaries are reported as zero.
 |#
   (define benchmark-csv-reporter
     (lambda ()
-      (make-benchmark-reporter
+      ($make-textual-benchmark-reporter
        (lambda (results out)
          (fprintf out "name,args,template_args,cpu_ns_mean,real_ns_mean,bytes_mean,counters,error~%"))
        (lambda (result out)
-         (let* ([summary (benchmark-result-summary result)]
-                [cpu (cdr (assq 'mean (cdr (assq 'cpu-ns summary))))]
-                [real (cdr (assq 'mean (cdr (assq 'real-ns summary))))]
-                [bytes (cdr (assq 'mean (cdr (assq 'bytes summary))))])
+         (let ([cpu ($metric-mean result 'cpu-ns)]
+               [real ($metric-mean result 'real-ns)]
+               [bytes ($metric-mean result 'bytes)])
            (fprintf out "~a,~a,~a,~a,~a,~a,~a,~a~%"
                     ($csv-field (benchmark-result-name result))
                     ($csv-field (benchmark-result-args result))
@@ -1233,11 +1566,15 @@ error.
 The `benchmark-json-reporter` procedure returns a reporter that writes benchmark
 results as one JSON object containing a `results` array. The JSON writer is
 self-contained and supports the Scheme data emitted by benchmark results.
+Cyclic substructures use readable Scheme strings when recursion would repeat a value.
+Generated symbol keys use their readable unique names. Associations with colliding
+JSON names use a readable Scheme string preserving all keys and values. Exact fractions outside the
+nonzero finite flonum range use exact Scheme strings; other fractions use decimal numbers.
 |#
   (define benchmark-json-reporter
     (lambda ()
       (let ([first? #t])
-        (make-benchmark-reporter
+        ($make-textual-benchmark-reporter
          (lambda (results out)
            (set! first? #t)
            (display "{\"results\":[" out))
@@ -1245,7 +1582,7 @@ self-contained and supports the Scheme data emitted by benchmark results.
            (unless first?
              (display "," out))
            (set! first? #f)
-           ($write-json ($result->json result) out))
+           ($write-json ($result->json result) out '()))
          (lambda (results out)
            (display "]}" out)
            (newline out)
@@ -1258,7 +1595,8 @@ style. Supported keys are `title`, `caption`, `box`, `show-header?`,
 `show-lines?`, `padding`, and `columns`. `columns` is an alist whose keys select
 result fields and whose values are column labels; supported field keys are
 `name`, `args`, `template-args`, `iterations`, `cpu-ns`, `real-ns`, `bytes`,
-`counters`, and `error`.
+`counters`, and `error`. Invalid or duplicate options are rejected at construction.
+The error column renders condition origins and irritants as in `benchmark-text-reporter`.
 |#
   (define benchmark-rich-reporter
     (case-lambda
@@ -1266,7 +1604,19 @@ result fields and whose values are column labels; supported field keys are
        (benchmark-rich-reporter '())]
       [(options)
        (pcheck ([list? options])
-               (make-benchmark-reporter
+               ($check-option-keys 'benchmark-rich-reporter options
+                 '(title caption box show-header? show-lines? padding columns) '())
+               (let ([columns ($option-ref options 'columns $benchmark-rich-default-columns)])
+                 (unless (and (list? columns)
+                              (andmap (lambda (column)
+                                        (and (pair? column)
+                                             (assq (car column) $benchmark-rich-default-columns)
+                                             (string? (cdr column))))
+                                      columns))
+                   (errorf 'benchmark-rich-reporter "invalid columns: ~s" columns)))
+               ;; Reuse the rich table's own field validators before any benchmark runs.
+               ($benchmark-rich-table '() options)
+               ($make-textual-benchmark-reporter
                 $void-procedure
                 $void-procedure
                 (lambda (results out)
@@ -1274,15 +1624,45 @@ result fields and whose values are column labels; supported field keys are
                   (newline out)
                   (flush-output-port out))))]))
 
+  (define $benchmark-config-keys
+    '(warmup samples min-time max-iterations output filter reporter cost-center? stop-on-error?))
+
+  (define $benchmark-selector?
+    (lambda (selector)
+      (or (not selector) (symbol? selector) (string? selector)
+          (and (procedure? selector) (logbit? 1 (procedure-arity-mask selector))))))
+
+  (define $make-checked-config
+    (lambda (warmup samples min-time max-iterations output selector reporter
+             cost-center? stop-on-error? explicit-options)
+      (unless (and (natural? warmup) (natural? samples)
+                   (natural? max-iterations) (> max-iterations 0)
+                   (real? min-time) (finite? min-time) (>= min-time 0)
+                   (or (not output) (output-port? output))
+                   ($benchmark-selector? selector)
+                   (or (not reporter) (benchmark-reporter? reporter))
+                   (boolean? cost-center?) (boolean? stop-on-error?))
+        (errorf 'make-benchmark-config "invalid benchmark configuration"))
+      ($mk-benchmark-config warmup samples min-time max-iterations output selector reporter
+                            cost-center? stop-on-error? explicit-options)))
+
   #|proc:make-benchmark-config
-The `make-benchmark-config` procedure creates a runner configuration. The
-parameters are `warmup`, `samples`, `min-time`, `max-iterations`, `output`,
-`filter`, `reporter`, `cost-center?`, and `stop-on-error?`.
-|#
+  The `make-benchmark-config` procedure returns a runner configuration whose fields
+  are explicit overrides of descriptor defaults. `warmup` and `samples` are natural
+  sample counts, `min-time` is a finite nonnegative target in seconds, and
+  `max-iterations` is a positive iteration cap. `output` is an output port or `#f`;
+  `filter` is `#f`, a name symbol, a name prefix string, or a predicate receiving a
+  benchmark descriptor and returning whether to select it. The predicate must accept one argument.
+  `reporter` is a reporter or `#f`. Boolean `cost-center?` requests optional instrumentation.
+  Boolean `stop-on-error?` stops after the first captured error when true. Cost-center
+  instrumentation is reserved for future support; measured cost-center data is `#f`.
+  |#
   (define make-benchmark-config
     (lambda (warmup samples min-time max-iterations output filter reporter cost-center? stop-on-error?)
-      (pcheck ([natural? warmup samples max-iterations] [number? min-time])
-              ($mk-benchmark-config warmup samples min-time max-iterations output filter reporter cost-center? stop-on-error?))))
+      (pcheck ([natural? warmup samples max-iterations] [real? min-time]
+               [boolean? cost-center? stop-on-error?])
+              ($make-checked-config warmup samples min-time max-iterations output filter reporter
+                                    cost-center? stop-on-error? $benchmark-config-keys))))
 
   #|proc:benchmark-config-warmup
 The `benchmark-config-warmup` procedure returns the warmup sample count stored
@@ -1356,135 +1736,76 @@ cost-center measurement is enabled in runner `config`.
       (pcheck ([benchmark-config? config])
               ($benchmark-config-cost-center? config))))
 
+  #|proc:benchmark-config-stop-on-error?
+  The `benchmark-config-stop-on-error?` procedure returns whether runner `config`
+  stops after the first captured benchmark error. The return value is a Boolean.
+  |#
+  (define benchmark-config-stop-on-error?
+    (lambda (config)
+      (pcheck ([benchmark-config? config])
+              ($benchmark-config-stop-on-error? config))))
+
   #|proc:default-benchmark-config
-The `default-benchmark-config` procedure returns the default benchmark runner
-configuration.
-|#
+  The `default-benchmark-config` procedure returns a fresh default runner
+  configuration using the current output port. Its fields remain defaults rather
+  than explicit overrides, so descriptor options can replace them.
+  |#
   (define default-benchmark-config
     (lambda ()
-      (or $default-config
-          (begin
-            (set! $default-config
-                  (make-benchmark-config 1 10 0.01 1000000
-                                         (current-output-port)
-                                         #f
-                                         (benchmark-text-reporter)
-                                         #f
-                                         #f))
-            $default-config))))
+      (unless $default-reporter
+        (set! $default-reporter (benchmark-text-reporter)))
+      ($make-checked-config 1 10 0.01 1000000 (current-output-port) #f
+                            $default-reporter #f #f '())))
+
+  (define $benchmark-config-options
+    (lambda (config)
+      (list (cons 'warmup ($benchmark-config-warmup config))
+            (cons 'samples ($benchmark-config-samples config))
+            (cons 'min-time ($benchmark-config-min-time config))
+            (cons 'max-iterations ($benchmark-config-max-iterations config))
+            (cons 'output ($benchmark-config-output config))
+            (cons 'filter ($benchmark-config-filter config))
+            (cons 'reporter ($benchmark-config-reporter config))
+            (cons 'cost-center? ($benchmark-config-cost-center? config))
+            (cons 'stop-on-error? ($benchmark-config-stop-on-error? config)))))
 
   #|proc:benchmark-config-with
-The `benchmark-config-with` procedure returns a copy of `config` with fields
-changed according to option alist `options`.
-|#
+  The `benchmark-config-with` procedure returns a validated copy of `config` with
+  fields changed by option alist `options`. Each changed field becomes an explicit
+  run override. Explicit run settings take precedence over descriptor options;
+  descriptor options take precedence over untouched default settings.
+  Each key may occur once within an update; successive updates may override earlier values.
+  |#
   (define benchmark-config-with
     (lambda (config options)
       (pcheck ([benchmark-config? config] [list? options])
-              (let loop ([options options] [config config])
-                (if (null? options)
-                    config
-                    (let ([option (car options)])
-                      (case (car option)
-                        [(warmup)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (cdr option)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(samples)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (cdr option)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(min-time)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (cdr option)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(max-iterations)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (cdr option)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(output)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (cdr option)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(filter)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (cdr option)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(reporter)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (cdr option)
-                                                     (benchmark-config-cost-center? config)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(cost-center?)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (cdr option)
-                                                     ($benchmark-config-stop-on-error? config)))]
-                        [(stop-on-error?)
-                         (loop (cdr options)
-                               ($mk-benchmark-config (benchmark-config-warmup config)
-                                                     (benchmark-config-samples config)
-                                                     (benchmark-config-min-time config)
-                                                     (benchmark-config-max-iterations config)
-                                                     (benchmark-config-output config)
-                                                     (benchmark-config-filter config)
-                                                     (benchmark-config-reporter config)
-                                                     (benchmark-config-cost-center? config)
-                                                     (cdr option)))]
-                        [else (errorf 'benchmark-config-with "unknown config option: ~a" (car option))])))))))
+              ($check-option-keys 'benchmark-config-with options $benchmark-config-keys '())
+              (if (null? options)
+                  config
+                  (let loop ([options options]
+                             [fields ($benchmark-config-options config)]
+                             [explicit ($benchmark-config-explicit-options config)])
+                    (if (null? options)
+                        (apply $make-checked-config
+                               (append (map (lambda (key) ($alist-ref fields key))
+                                            $benchmark-config-keys)
+                                       (list explicit)))
+                        (let ([option (car options)])
+                          (unless (and (pair? option) (memq (car option) $benchmark-config-keys))
+                            (errorf 'benchmark-config-with "unknown config option: ~s" option))
+                          (loop (cdr options)
+                                ($replace-option fields (car option) (cdr option))
+                                (if (memq (car option) explicit)
+                                    explicit
+                                    (cons (car option) explicit))))))))))
+
+  (define $effective-benchmark-config
+    (lambda (benchmark config)
+      (benchmark-config-with config
+        (filter (lambda (option)
+                  (and (memq (car option) $benchmark-config-keys)
+                       (not (memq (car option) ($benchmark-config-explicit-options config)))))
+                ($benchmark-options benchmark)))))
 
 
 ;;;;===----------------------------------------------------------------------===
@@ -1493,125 +1814,83 @@ changed according to option alist `options`.
 
   (define $range-values
     (lambda (start end step geometric?)
-      (when (zero? step)
-        (errorf '$range-values "range step must not be zero"))
+      (unless (and (real? start) (finite? start)
+                   (real? end) (finite? end)
+                   (real? step) (finite? step)
+                   (if geometric?
+                       (and (> start 0) (> step 1))
+                       (> step 0)))
+        (errorf '$range-values "range must have finite bounds and an advancing positive step"))
       (let loop ([value start] [out '()])
         (if (> value end)
             (reverse out)
-            (loop (if geometric? (* value step) (+ value step))
-                  (cons value out))))))
-
-  (define $duplicate-symbol?
-    (lambda (names)
-      (let loop ([names names] [seen '()])
-        (cond
-         [(null? names) #f]
-         [(memq (car names) seen) (car names)]
-         [else (loop (cdr names) (cons (car names) seen))]))))
-
-  (define $any-shared-symbol?
-    (lambda (left right)
-      (let loop ([left left])
-        (cond
-         [(null? left) #f]
-         [(memq (car left) right) (car left)]
-         [else (loop (cdr left))]))))
-
-  (define $zip-argument-row
-    (lambda (names values)
-      (let loop ([names names] [values values] [out '()])
-        (cond
-         [(and (null? names) (null? values)) (reverse out)]
-         [(or (null? names) (null? values))
-          (errorf '$zip-argument-row "argument value row length does not match names")]
-         [else
-          (loop (cdr names)
-                (cdr values)
-                (cons (cons (car names) (car values)) out))]))))
-
-  (define $args-spec->rows
-    (lambda (spec)
-      (unless (and (pair? spec) (list? (car spec)) (not (null? (car spec))))
-        (errorf '$args-spec->rows "invalid :args option: ~s" spec))
-      (let ([names (car spec)]
-            [value-rows (cdr spec)])
-        (unless (andmap symbol? names)
-          (errorf '$args-spec->rows "argument names must be symbols: ~s" names))
-        (let ([duplicate ($duplicate-symbol? names)])
-          (when duplicate
-            (errorf '$args-spec->rows "duplicate argument name: ~a" duplicate)))
-        (map (lambda (values)
-               (unless (list? values)
-                 (errorf '$args-spec->rows "invalid argument value row: ~s" values))
-               (list names values ($zip-argument-row names values)))
-             value-rows))))
+            (let ([next (if geometric? (* value step) (+ value step))])
+              (unless (> next value)
+                (errorf '$range-values "range step does not advance: ~s" value))
+              (loop next (cons value out)))))))
 
   (define $normalize-arguments
     (lambda (options)
-      (when (assq 'arg-product options)
-        (errorf '$normalize-arguments ":arg-product has been removed; use repeated :args forms"))
-      (let ([args-options (filter (lambda (option)
-                                    (memq (car option) '(args arg-range dense-arg-range)))
-                                  options)])
-        (if (null? args-options)
-            (list (list '() '() '()))
-            (let loop ([options args-options] [rows (list (list '() '() '()))] [seen-names '()])
-              (if (null? options)
-                  rows
-                  (let* ([option (car options)]
-                         [new-rows
-                          (case (car option)
-                            [(args)
-                             ($args-spec->rows (cdr option))]
-                            [(arg-range)
-                             (let* ([spec (cdr option)]
-                                    [name (car spec)]
-                                    [values ($range-values (cadr spec) (caddr spec) (cadddr spec) #t)])
-                               (map (lambda (value)
-                                      (list (list name) (list value) (list (cons name value))))
-                                    values))]
-                            [(dense-arg-range)
-                             (let* ([spec (cdr option)]
-                                    [name (car spec)]
-                                    [values ($range-values (cadr spec) (caddr spec) (cadddr spec) #f)])
-                               (map (lambda (value)
-                                      (list (list name) (list value) (list (cons name value))))
-                                    values))]
-                            [else (errorf '$normalize-arguments "unknown argument option: ~a" (car option))])]
-                         [new-names (case (car option)
-                                      [(args) (cadr option)]
-                                      [(arg-range dense-arg-range) (list (cadr option))]
-                                      [else (if (null? new-rows) '() (car (car new-rows)))])]
-                         [duplicate ($duplicate-symbol? new-names)]
-                         [shared ($any-shared-symbol? new-names seen-names)])
-                    (when duplicate
-                      (errorf '$normalize-arguments "duplicate argument name: ~a" duplicate))
-                    (when shared
-                      (errorf '$normalize-arguments "duplicate argument name across argument options: ~a" shared))
-                    (loop (cdr options)
-                          (apply append
-                                 (map (lambda (left)
-                                        (map (lambda (right)
-                                               (list (append (car left) (car right))
-                                                     (append (cadr left) (cadr right))
-                                                     (append (caddr left) (caddr right))))
-                                             new-rows))
-                                      rows))
-                          (append seen-names new-names)))))))))
+      ;; Keep validated axes factorized; combinations exist only during traversal.
+      (let ([seen (make-eq-hashtable)])
+        (map
+          (lambda (option)
+            (let ([axis
+                   (case (car option)
+                     [(args) (cdr option)]
+                     [(arg-range dense-arg-range)
+                      (let ([spec (cdr option)])
+                        (cons (list (car spec))
+                              (map list ($range-values (cadr spec) (caddr spec) (cadddr spec)
+                                          (eq? (car option) 'arg-range)))))])])
+              (unless (and (list? axis) (pair? axis)
+                           (list? (car axis)) (pair? (car axis)))
+                (errorf 'make-benchmark "invalid argument table: ~s" axis))
+              (for-each
+                (lambda (name)
+                  (unless (symbol? name)
+                    (errorf 'make-benchmark "argument names must be symbols: ~s" name))
+                  (when (hashtable-contains? seen name)
+                    (errorf 'make-benchmark "duplicate argument name across options: ~s" name))
+                  (hashtable-set! seen name #t))
+                (car axis))
+              (let ([width (length (car axis))])
+                (for-each
+                  (lambda (row)
+                    (unless (and (list? row) (= (length row) width))
+                      (errorf 'make-benchmark "argument row length must match names: ~s" row)))
+                  (cdr axis)))
+              ;; Preserve the constructor's row snapshot without copying products.
+              (cons (list-copy (car axis)) (map list-copy (cdr axis)))))
+          (filter (lambda (option) (memq (car option) '(args arg-range dense-arg-range)))
+                  options)))))
 
-  (define $argument-names
-    (lambda (args)
-      (if (null? args)
-          '()
-          (car (car args)))))
+  (define $walk-argument-axes
+    (lambda (axes visit)
+      (or (exists (lambda (axis) (null? (cdr axis))) axes)
+          (let loop ([axes axes] [reversed '()])
+            (if (null? axes)
+                (visit (reverse reversed))
+                (for-all
+                  (lambda (row)
+                    (loop (cdr axes)
+                          (fold-left (lambda (bindings name value)
+                                       (cons (cons name value) bindings))
+                                     reversed (caar axes) row)))
+                  (cdar axes)))))))
 
   #|macro:benchmark-options
-The `benchmark-options` macro converts benchmark option syntax into an option
-alist. `:args` receives a grouped table `([name ...] [value ...] ...)`; each
-`name` is an argument name and each value row supplies one concrete benchmark
-case. Repeated `:args` tables are expanded as a Cartesian product, and argument
-names must not be duplicated in one table or across argument options.
-|#
+  The `benchmark-options` macro converts benchmark option syntax into an option
+  alist. `:args` receives a grouped table `([name ...] [value ...] ...)`; each
+  `name` is an argument name and each value row supplies one concrete benchmark
+  case. Repeated `:args` tables are expanded as a Cartesian product, and argument
+  names must not be duplicated in one table or across argument options.
+  Singleton clauses must not repeat, and range clauses require exactly four elements.
+  `:arg-range [name start end factor]` requires finite bounds, a positive start,
+  and a factor greater than one. `:dense-arg-range [name start end step]` requires
+  finite bounds and a positive step; its start may be zero. Both ranges include
+  their upper bound when reached and reject steps that fail to advance.
+  |#
   (define-syntax benchmark-options
     (lambda (stx)
       (define keyword?
@@ -1643,9 +1922,9 @@ names must not be duplicated in one table or across argument options.
       (define parse-old-row
         (lambda (row)
           (syntax-case row ()
-            [(name value rest ...)
+            [(name start end step)
              (identifier? #'name)
-             #'(name value rest ...)]
+             #'(name start end step)]
             [_ (syntax-error row "invalid benchmark argument row")])))
       (define parse-args-spec
         (lambda (key rest seen-names)
@@ -1733,6 +2012,13 @@ names must not be duplicated in one table or across argument options.
               [else (syntax-error key "unknown benchmark option")]))))
       (define parse-options
         (lambda (clauses)
+          (let loop ([clauses clauses] [seen '()])
+            (unless (null? clauses)
+              (let ([key (syntax->datum (caar clauses))])
+                (when (and (memq key seen)
+                           (not (memq key '(:args :arg-range :dense-arg-range))))
+                  (syntax-error (caar clauses) "duplicate benchmark option"))
+                (loop (cdr clauses) (cons key seen)))))
           (let loop ([clauses clauses] [seen-names '()] [out '()])
             (if (null? clauses)
                 (reverse out)
@@ -1764,76 +2050,108 @@ names must not be duplicated in one table or across argument options.
          #`(list #,@(parse-options (split-options #'(item ...))))]
         [_ (syntax-error stx "invalid benchmark-options form")])))
 
+  (define-syntax $define-benchmark-value
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ name value)
+         (begin
+           (unless (identifier? #'name)
+             (syntax-error #'name "benchmark name must be an identifier"))
+           (let ([text (symbol->string (syntax->datum #'name))])
+             (when (and (positive? (string-length text))
+                        (char=? (string-ref text 0) #\:))
+               (syntax-error #'name "benchmark name must not be an option keyword")))
+           #'(define name value))])))
+
   #|macro:define-benchmark
 The `define-benchmark` macro defines and registers a benchmark descriptor named
-by `name`. `options` configures arguments, lifecycle hooks, and runner defaults;
+by identifier `name`. `options` configures arguments, lifecycle hooks, and runner defaults;
 `body` is a procedure that receives state, argument values in option order, and
 optional setup value. Runtime arguments are configured with grouped `:args`
 tables such as `(:args ([size start] [1024 0] [2048 128]))`; repeated `:args`
-tables are expanded as a Cartesian product.
+tables are expanded as a Cartesian product. If body and teardown both raise,
+the body condition takes precedence.
 |#
   (define-syntax define-benchmark
     (syntax-rules ()
       [(_ name options body)
-       (define name
+       ($define-benchmark-value name
          (let ([benchmark (make-benchmark 'name body (benchmark-options options))])
            (benchmark-register! (current-benchmark-registry) benchmark)
            benchmark))]))
 
   #|macro:define-benchmark-fixture
 The `define-benchmark-fixture` macro defines a reusable fixture descriptor named
-by `name`. Its setup hook receives state and its teardown hook receives state
-and the setup value.
+by identifier `name`. Its setup hook receives state and its teardown hook receives state
+and the setup value. Only `:setup` and `:teardown` options are accepted, and each
+supplied hook must accept its documented arguments.
+Setup must clean up partial resources if it raises; teardown runs only after successful setup.
 |#
   (define-syntax define-benchmark-fixture
     (syntax-rules ()
       [(_ name options)
-       (define name
+       ($define-benchmark-value name
          (let ([opts (benchmark-options options)])
+           ($check-benchmark-options 'define-benchmark-fixture opts '(setup teardown))
            ($mk-benchmark-fixture 'name
                                   ($option-ref opts 'setup $false-procedure)
                                   ($option-ref opts 'teardown $void-procedure))))]))
 
   #|macro:define-fixture-benchmark
-The `define-fixture-benchmark` macro defines and registers benchmark `name`
-using fixture descriptor `fixture`. `options` has the same argument syntax as
+The `define-fixture-benchmark` macro defines and registers benchmark identifier `name`
+using fixture descriptor `fixture`. The fixture expression is evaluated once and must return
+a fixture record; `#f` is rejected before registration. `options` has the same argument syntax as
 `define-benchmark`; `body` receives state, argument values in option order, and
 the fixture setup value.
+Descriptor `:setup` and `:teardown` hooks cannot be combined with a fixture.
 |#
   (define-syntax define-fixture-benchmark
     (syntax-rules ()
       [(_ name fixture-descriptor options body)
-       (define name
-         (let* ([opts (benchmark-options options)]
-                [benchmark (make-benchmark 'name body
-                                           (cons (cons 'fixture fixture-descriptor) opts))])
-           (benchmark-register! (current-benchmark-registry) benchmark)
-           benchmark))]))
+       ($define-benchmark-value name
+         (let ([fixture fixture-descriptor])
+           (unless (benchmark-fixture? fixture)
+             (errorf 'define-fixture-benchmark "expected a fixture descriptor: ~s" fixture))
+           (let* ([opts (benchmark-options options)]
+                  [benchmark (make-benchmark 'name body
+                                             (cons (cons 'fixture fixture) opts))])
+             (benchmark-register! (current-benchmark-registry) benchmark)
+             benchmark)))]))
 
   #|macro:define-benchmark-suite
-The `define-benchmark-suite` macro defines a suite descriptor named by `name`
-containing the listed benchmark descriptors.
-|#
+  The `define-benchmark-suite` macro defines a suite descriptor named by identifier `name`
+  containing the listed benchmark descriptors. The optional `:suite-setup` procedure
+  receives the suite state and returns a setup value. The `:suite-teardown` procedure
+  receives that state and setup value, or `#f` if setup raised; it can inspect user
+  data in the state to release partially acquired resources. Only these two hook
+  options are accepted; measurement defaults belong to child benchmark descriptors.
+  Setup must accept one argument and teardown must accept two arguments.
+  Every member expression must evaluate to a benchmark descriptor.
+  |#
   (define-syntax define-benchmark-suite
     (syntax-rules ()
       [(_ name options benchmark ...)
-       (define name
-         (let ([opts (benchmark-options options)])
+       ($define-benchmark-value name
+         (let ([opts (benchmark-options options)]
+               [children (list benchmark ...)])
+           ($check-benchmark-options 'define-benchmark-suite opts '(suite-setup suite-teardown))
+           (unless (andmap benchmark? children)
+             (errorf 'define-benchmark-suite "suite members must be benchmark descriptors"))
            ($mk-benchmark-suite 'name
-                                (list benchmark ...)
+                                children
                                 ($option-ref opts 'suite-setup $false-procedure)
                                 ($option-ref opts 'suite-teardown $void-procedure))))]))
 
   #|macro:define-benchmark-template
 The `define-benchmark-template` macro defines a template procedure named by
-`name`. The generated procedure accepts template parameters `param ...` and
+identifier `name`. The generated procedure accepts template parameters `param ...` and
 returns a benchmark descriptor. `options` has the same grouped `:args` argument
 syntax as `define-benchmark`.
 |#
   (define-syntax define-benchmark-template
     (syntax-rules ()
       [(_ name (param ...) options body)
-       (define name
+       ($define-benchmark-value name
          (lambda (param ...)
            (make-benchmark 'name body
                            (append (benchmark-options options)
@@ -1841,29 +2159,82 @@ syntax as `define-benchmark`.
                                                (list (cons 'param param) ...)))))))]))
 
   #|macro:instantiate-benchmark-template
-The `instantiate-benchmark-template` macro registers concrete benchmark
-descriptors from template `template`. Each row supplies values positionally for
-the template parameters, and the first row value becomes the concrete name
-suffix.
+The `instantiate-benchmark-template` macro registers concrete benchmark descriptors from
+identifier `template`, a procedure accepting the symbolic label followed by the values in
+its row and returning a benchmark descriptor. Each row has syntax `[label value ...]`;
+`label` must be an identifier and is passed as a quoted symbol. The concrete name is
+`template/label`. Invalid syntax is rejected before any template is called, and invalid
+return values are rejected before record access or registration.
+Renaming preserves the returned descriptor's validated argument axes, hooks, and metadata;
+source option lists are not normalized again. Mutable argument values retain their identity.
+Instantiation is an expression and may appear in helper bodies and conditionals.
+An empty row list does not call the template or change the registry and returns unspecified values.
 |#
   (define-syntax instantiate-benchmark-template
-    (syntax-rules ()
-      [(_ template ([label value ...] ...))
-       (begin
-         (define template-instance-marker (void))
-         (let ([benchmark (template 'label value ...)])
-           (let ([renamed (make-benchmark ($symbol-append 'template 'label)
-                                          ($benchmark-body benchmark)
-                                          ($replace-option ($benchmark-options benchmark)
-                                                           'template-args
-                                                           ($benchmark-template-args benchmark)))])
-             (benchmark-register! (current-benchmark-registry) renamed)))
-         ...)]))
-
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ template ([label value ...] ...))
+         (begin
+           (unless (identifier? #'template)
+             (syntax-error #'template "template must be an identifier"))
+           (for-each
+             (lambda (label)
+               (unless (identifier? label)
+                 (syntax-error label "template label must be an identifier")))
+             #'(label ...))
+           #'(begin
+               (void)
+               (let ([benchmark (template 'label value ...)])
+                 (unless (benchmark? benchmark)
+                   (errorf 'instantiate-benchmark-template
+                           "template must return a benchmark descriptor: ~s" benchmark))
+                 (let ([renamed ($benchmark-with-name benchmark ($symbol-append 'template 'label))])
+                   (benchmark-register! (current-benchmark-registry) renamed)))
+               ...))]
+        [_ (syntax-error stx "invalid benchmark template instantiation")])))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; expansion and runner
 ;;;;===----------------------------------------------------------------------===
+
+  (define $current-suite-context (make-parameter #f))
+
+  (define-record-type ($report-groups $make-report-groups $report-groups?)
+    (fields index (mutable ordered $report-groups-ordered $report-groups-ordered-set!)))
+
+  (define $make-report-collector
+    (lambda ()
+      ($make-report-groups (make-eq-hashtable) '())))
+
+  (define $collect-report!
+    (lambda (groups results reporter out)
+      (when (and reporter out)
+        (let* ([index ($report-groups-index groups)]
+               [ports (or (hashtable-ref index reporter #f)
+                          (let ([ports (make-eq-hashtable)])
+                            (hashtable-set! index reporter ports)
+                            ports))]
+               [group (or (hashtable-ref ports out #f)
+                          (let ([group (cons (cons reporter out) '())])
+                            (hashtable-set! ports out group)
+                            ($report-groups-ordered-set! groups
+                              (cons group ($report-groups-ordered groups)))
+                            group))])
+          (for-each (lambda (result) (set-cdr! group (cons result (cdr group)))) results)))))
+
+  (define $dispatch-reports
+    (lambda (groups)
+      (for-each
+        (lambda (group)
+          (benchmark-report (reverse (cdr group)) (caar group) (cdar group)))
+        (reverse ($report-groups-ordered groups)))))
+
+  (define $expand-benchmark-case
+    (lambda (benchmark args)
+      (cons ($make-benchmark-state ($benchmark-name benchmark)
+                                  (or ($current-suite-context) ($benchmark-suite-ref benchmark))
+                                  args ($benchmark-template-args benchmark) 0 1 0 '() '() #f)
+            benchmark)))
 
   #|proc:benchmark-expand
 The `benchmark-expand` procedure expands `benchmark` into concrete run pairs
@@ -1873,45 +2244,27 @@ to run in the cdr.
   (define benchmark-expand
     (lambda (benchmark config)
       (pcheck ([benchmark? benchmark] [benchmark-config? config])
-              (map (lambda (arg-row)
-                     (let ([args (caddr arg-row)])
-                       (cons ($make-benchmark-state ($benchmark-name benchmark)
-                                                    ($benchmark-suite-ref benchmark)
-                                                    args
-                                                    ($benchmark-template-args benchmark)
-                                                    0
-                                                    1
-                                                    0
-                                                    '()
-                                                    '()
-                                                    #f)
-                             benchmark)))
-                   ($benchmark-args benchmark)))))
+              (let ([expanded '()])
+                ($walk-argument-axes ($benchmark-axes benchmark)
+                  (lambda (args)
+                    (set! expanded (cons ($expand-benchmark-case benchmark args) expanded))
+                    #t))
+                (reverse expanded)))))
 
   #|proc:benchmark-select
-The `benchmark-select` procedure selects benchmarks from `registry` according
-to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
+The `benchmark-select` procedure returns benchmarks from `registry` matching `selector`.
+`selector` may be `#f` to select all, an exact name symbol, a name prefix string, or a
+procedure with signature `(lambda (descriptor) selected?)`. Invalid selector types or
+arities are rejected even when the registry is empty.
 |#
   (define benchmark-select
     (lambda (registry selector)
-      (pcheck ([benchmark-registry? registry])
+      (pcheck ([benchmark-registry? registry] [$benchmark-selector? selector])
               (let ([benchmarks ($benchmark-registry-benchmarks registry)])
-                (cond
-                 [(not selector) benchmarks]
-                 [(symbol? selector)
-                  (filter (lambda (benchmark)
-                            (eq? selector ($benchmark-name benchmark)))
-                          benchmarks)]
-                 [(string? selector)
-                  (filter (lambda (benchmark)
-                            (let ([name (symbol->string ($benchmark-name benchmark))])
-                              (and (<= (string-length selector) (string-length name))
-                                   (string=? selector
-                                             (substring name 0 (string-length selector))))))
-                          benchmarks)]
-                 [(procedure? selector)
-                  (filter selector benchmarks)]
-                 [else (errorf 'benchmark-select "invalid selector: ~s" selector)])))))
+                (if (not selector)
+                    benchmarks
+                    (filter (lambda (benchmark) ($benchmark-matches-selector? benchmark selector))
+                            benchmarks))))))
 
   (define $call-with-values-list
     (lambda (producer consumer)
@@ -1919,73 +2272,76 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
         (lambda values
           (consumer values)))))
 
-  (define $apply-body
-    (lambda (benchmark state values setup-value setup-value?)
-      (if setup-value?
-          (apply ($benchmark-body benchmark) state (append values (list setup-value)))
-          (apply ($benchmark-body benchmark) state values))))
-
   (define $run-body-iterations
-    (lambda (benchmark state values setup-value setup-value? iterations)
+    (lambda (body state arguments iterations)
       (let loop ([i 0])
         (when (< i iterations)
-          ($apply-body benchmark state values setup-value setup-value?)
+          ($benchmark-state-iteration-set! state i)
+          (apply body state arguments)
           (loop (+ i 1))))))
 
   (define $setup-for-sample
     (lambda (benchmark state)
-        (let ([fixture ($benchmark-fixture-ref benchmark)])
-        (cond
-         [fixture
-          (values (($benchmark-fixture-setup fixture) state)
-                  ($benchmark-fixture-teardown fixture)
-                  #t)]
-         [($benchmark-setup benchmark)
-          (values (($benchmark-setup benchmark) state)
-                  (or ($benchmark-teardown benchmark) $void-procedure)
-                  #t)]
-         [else
-          (values #f $void-procedure #f)]))))
+      (let ([setup ($benchmark-setup benchmark)])
+        (values (if setup (setup state) #f)
+                ($benchmark-teardown benchmark)
+                (and setup #t)))))
 
   (define $measure-sample
     (lambda (benchmark state values iterations)
-      ($call-with-values-list
-       (lambda ()
-         ($setup-for-sample benchmark state))
-       (lambda (setup-results)
-         (let ([setup-value (car setup-results)]
-               [teardown (cadr setup-results)]
-               [setup-value? (caddr setup-results)]
-               [cleanup? #t]
-               [sample-state ($make-benchmark-state ($benchmark-state-name state)
-                                                    ($benchmark-state-suite state)
-                                                    ($benchmark-state-args state)
-                                                    ($benchmark-state-template-args state)
-                                                    0
-                                                    iterations
-                                                    ($benchmark-state-sample state)
-                                                    (benchmark-state-user-data state)
-                                                    '()
-                                                    #f)])
-           (dynamic-wind
-             (lambda () (void))
-             (lambda ()
-               (let* ([b1 (statistics)]
-                      [b2 (statistics)])
-                 ($run-body-iterations benchmark sample-state values setup-value setup-value? iterations)
-                 (let* ([after (statistics)]
-                        [elapsed (sstats-difference after b2)]
-                        [overhead (sstats-difference b2 b1)]
-                        [active (sstats-difference elapsed ($benchmark-state-paused-sstats sample-state))]
-                        [adjusted ($sanitize-sstats (sstats-difference active overhead))])
-                   ($mk-benchmark-sample iterations adjusted #f ($benchmark-state-counters sample-state)))))
-             (lambda ()
-               (when cleanup?
-                 (set! cleanup? #f)
-                 (when ($benchmark-state-timing-paused? sample-state)
-                   (benchmark-resume-timing sample-state))
-                 (when setup-value?
-                   (teardown state setup-value))))))))))
+      (let ([sample-state ($make-benchmark-state ($benchmark-state-name state)
+                                                ($benchmark-state-suite state)
+                                                ($benchmark-state-args state)
+                                                ($benchmark-state-template-args state)
+                                                0
+                                                iterations
+                                                ($benchmark-state-sample state)
+                                                (benchmark-state-user-data state)
+                                                '()
+                                                #f)])
+        ($call-with-values-list
+         (lambda ()
+           ($setup-for-sample benchmark sample-state))
+         (lambda (setup-results)
+           (let ([setup-value (car setup-results)]
+                 [teardown (cadr setup-results)]
+                 [arguments (if (caddr setup-results)
+                                (append values (list (car setup-results)))
+                                values)]
+                 [cleanup? #t]
+                 [failed? #f])
+             (dynamic-wind
+               (lambda () (void))
+               (lambda ()
+                 (guard (exn [else (set! failed? #t) (raise exn)])
+                   ;; Setup is outside measurement, including any completed pause intervals.
+                   ($benchmark-state-paused-sstats-set! sample-state ($zero-sstats))
+                   (let* ([b1 (statistics)]
+                          [b2 (statistics)])
+                     (when ($benchmark-state-timing-paused? sample-state)
+                       ($benchmark-state-pause-start-set! sample-state b2))
+                     ($run-body-iterations ($benchmark-body benchmark) sample-state
+                                           arguments iterations)
+                     (when ($benchmark-state-timing-paused? sample-state)
+                       (benchmark-resume-timing sample-state))
+                     (let* ([after (statistics)]
+                            [elapsed (sstats-difference after b2)]
+                            [overhead (sstats-difference b2 b1)]
+                            [active (sstats-difference
+                                     elapsed ($benchmark-state-paused-sstats sample-state))]
+                            [adjusted ($sanitize-sstats (sstats-difference active overhead))])
+                       ($mk-benchmark-sample iterations adjusted #f
+                         ;; Keep completed samples independent of cleanup and retained states.
+                         (map (lambda (entry) (cons (car entry) (cdr entry)))
+                              ($benchmark-state-counters sample-state)))))))
+               (lambda ()
+                 (when cleanup?
+                   (set! cleanup? #f)
+                   (when ($benchmark-state-timing-paused? sample-state)
+                     (benchmark-resume-timing sample-state))
+                   (when teardown
+                     (guard (exn [else (unless failed? (raise exn))])
+                       (teardown sample-state setup-value))))))))))))
 
   (define $warmup
     (lambda (benchmark state values config)
@@ -2020,10 +2376,8 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
     (lambda (expanded config)
       (let* ([state (car expanded)]
              [benchmark (cdr expanded)]
-             [arg-row (car (filter (lambda (row)
-                                     (equal? (caddr row) ($benchmark-state-args state)))
-                                   ($benchmark-args benchmark)))]
-             [values (cadr arg-row)])
+             ;; Expansion preserves positional argument order in the state alist.
+             [values (map cdr ($benchmark-state-args state))])
         (guard (exn
                 [else
                  ($mk-benchmark-result ($benchmark-state-name state)
@@ -2032,7 +2386,7 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                                        '()
                                        (benchmark-summarize '())
                                        '()
-                                       exn)])
+                                       ($captured-benchmark-error exn))])
           ($warmup benchmark state values config)
           (let loop ([i 0] [samples '()])
             (if (< i (benchmark-config-samples config))
@@ -2049,46 +2403,152 @@ to `selector`, which may be `#f`, a symbol, a string, or a predicate procedure.
                                         counters
                                         #f))))))))
 
+  (define $expanded-benchmark?
+    (lambda (expanded)
+      (and (pair? expanded) (benchmark-state? (car expanded)) (benchmark? (cdr expanded)))))
+
   #|proc:benchmark-run-one
-The `benchmark-run-one` procedure runs one concrete expanded benchmark pair
-`expanded` with runner `config` and returns one benchmark result.
-|#
+  The `benchmark-run-one` procedure runs one concrete expanded benchmark pair
+  `expanded` with runner `config` and returns one benchmark result. The pair's car must
+  be a benchmark state and its cdr a benchmark descriptor. State argument names must match
+  the descriptor's declared names in expansion order; argument values may be arbitrary objects.
+  Invalid pairs and argument layouts are rejected before setup. Custom state names and template
+  metadata are retained. Explicit config fields override descriptor options and defaults.
+  Reporting fields are unused: this procedure neither invokes a reporter nor validates its
+  output port.
+  |#
   (define benchmark-run-one
     (lambda (expanded config)
-      (pcheck ([pair? expanded] [benchmark-config? config])
-              ($run-expanded expanded config))))
+      (pcheck ([$expanded-benchmark? expanded] [benchmark-config? config])
+              (let ([state (car expanded)] [benchmark (cdr expanded)])
+                (unless (equal? (map car ($benchmark-state-args state))
+                                (apply append (map car ($benchmark-axes benchmark))))
+                  (errorf 'benchmark-run-one
+                          "state argument names must match descriptor order: ~s"
+                          ($benchmark-state-args state)))
+                ($run-expanded expanded ($effective-benchmark-config benchmark config))))))
 
   #|proc:benchmark-run-suite
-The `benchmark-run-suite` procedure runs suite descriptor `suite` with runner
-`config` and returns the resulting benchmark results.
-|#
+  The `benchmark-run-suite` procedure runs suite descriptor `suite` with runner
+  `config` and returns its benchmark results. Failed setup skips children and returns
+  one error result named after the suite. Teardown always runs, receiving `#f` when
+  setup failed; a setup error takes precedence over a later teardown error. Failed
+  teardown after successful setup appends a suite error after completed child results.
+  Reports are emitted after teardown, grouping children by their effective reporter
+  and output. Suite errors join the configured reporter's group when enabled.
+  If child selection or coordination raises, completed child results and their report groups
+  are retained before the suite error. Selectors are called once per visited descriptor.
+  |#
   (define benchmark-run-suite
     (lambda (suite config)
       (pcheck ([benchmark-suite? suite] [benchmark-config? config])
+              ($check-reporter-output 'benchmark-run-suite
+                (benchmark-config-reporter config) (benchmark-config-output config))
               (let ([suite-state (benchmark-state ($benchmark-suite-name suite)
                                                   ($benchmark-suite-name suite)
                                                   '()
                                                   '()
                                                   0
                                                   1
-                                                  0)])
-                ($call-with-values-list
-                 (lambda ()
-                   (values (($benchmark-suite-setup suite) suite-state)))
-                 (lambda (values)
-                   (dynamic-wind
-                     (lambda () (void))
-                     (lambda ()
-                       (benchmark-run ($benchmark-suite-benchmarks suite) config))
-                     (lambda ()
-                       (($benchmark-suite-teardown suite) suite-state (car values))))))))))
+                                                  0)]
+                    [setup-value #f]
+                    [failure #f]
+                    [results '()]
+                    [report-groups ($make-report-collector)])
+                (define visit
+                  (lambda (result effective)
+                    (when result (set! results (cons result results)))
+                    ($collect-report! report-groups (if result (list result) '())
+                      (benchmark-config-reporter effective) (benchmark-config-output effective))))
+                (dynamic-wind
+                  (lambda () (void))
+                  (lambda ()
+                    (guard (exn [else (set! failure ($captured-benchmark-error exn))])
+                      (set! setup-value (($benchmark-suite-setup suite) suite-state))
+                      (parameterize ([$current-suite-context ($benchmark-suite-name suite)])
+                        ($walk-benchmarks ($benchmark-suite-benchmarks suite) config visit))))
+                  (lambda ()
+                    (guard (exn [else (unless failure (set! failure ($captured-benchmark-error exn)))])
+                      (($benchmark-suite-teardown suite) suite-state setup-value))))
+                (set! results (reverse results))
+                (when failure
+                  (let ([result ($mk-benchmark-result ($benchmark-suite-name suite)
+                                                      '() '() '()
+                                                      (benchmark-summarize '())
+                                                      '() failure)]
+                        [reporter (benchmark-config-reporter config)]
+                        [out (benchmark-config-output config)])
+                    (when (and reporter out)
+                      ($collect-report! report-groups (list result) reporter out))
+                    (set! results (append results (list result)))))
+                ($dispatch-reports report-groups)
+                results))))
+
+  (define $benchmark-matches-selector?
+    (lambda (benchmark selector)
+      (cond
+       [(not selector) #t]
+       [(symbol? selector) (eq? selector ($benchmark-name benchmark))]
+       [(string? selector)
+        (let ([name (symbol->string ($benchmark-name benchmark))])
+          (and (<= (string-length selector) (string-length name))
+               (string=? selector (substring name 0 (string-length selector)))))]
+       [else (selector benchmark)])))
+
+  ;; Visit each completed result immediately. #f reserves an empty report group for a
+  ;; selected descriptor, or for the run configuration when nothing is selected.
+  (define $walk-benchmarks
+    (lambda (benchmarks config visit)
+      (let ([selected? #f])
+        (define finish
+          (lambda ()
+            ;; With no selected descriptors, the run configuration owns the empty report.
+            (unless selected? (visit #f config))))
+        (let loop-benchmarks ([benchmarks benchmarks])
+          (if (null? benchmarks)
+              (finish)
+              (let* ([benchmark (car benchmarks)]
+                     [effective ($effective-benchmark-config benchmark config)])
+                (if (not ($benchmark-matches-selector?
+                          benchmark (benchmark-config-filter effective)))
+                    (loop-benchmarks (cdr benchmarks))
+                    (begin
+                      ($check-reporter-output 'benchmark-run
+                        (benchmark-config-reporter effective) (benchmark-config-output effective))
+                      (set! selected? #t)
+                      (visit #f effective)
+                      (if ($walk-argument-axes ($benchmark-axes benchmark)
+                            (lambda (args)
+                              (let ([result ($run-expanded
+                                              ($expand-benchmark-case benchmark args) effective)])
+                                (visit result effective)
+                                (not (and ($benchmark-config-stop-on-error? effective)
+                                          (benchmark-result-error result))))))
+                          (loop-benchmarks (cdr benchmarks))
+                          (finish))))))))))
+
+  (define $run-benchmarks
+    (lambda (benchmarks config)
+      (let ([report-groups ($make-report-collector)] [results '()])
+        ($walk-benchmarks benchmarks config
+          (lambda (result effective)
+            (when result (set! results (cons result results)))
+            ($collect-report! report-groups (if result (list result) '())
+              (benchmark-config-reporter effective) (benchmark-config-output effective))))
+        ($dispatch-reports report-groups)
+        (reverse results))))
 
   #|proc:benchmark-run
-The `benchmark-run` procedure runs registered benchmarks, descriptors, or a
-registry with a runner configuration. It supports `(benchmark-run)`,
-`(benchmark-run config)`, `(benchmark-run registry config)`, and
-`(benchmark-run benchmarks config)`.
-|#
+  The `benchmark-run` procedure runs registered benchmarks, descriptors, or a
+  registry with a runner configuration and returns their measured results. It
+  supports `(benchmark-run)`, `(benchmark-run config)`, `(benchmark-run registry
+  config)`, and `(benchmark-run benchmarks config)`. Explicit config fields override
+  descriptor options, which override defaults. Reporting groups results sharing a
+  reporter and output port. Enabled stopping returns results through the first error
+  and skips all later argument cases and descriptors. Empty or fully filtered runs
+  emit an empty report through the configured reporter and output when both are enabled.
+  Built-in reporter ports must be open and textual; effective ports are checked before execution.
+  |#
   (define benchmark-run
     (case-lambda
       [()
@@ -2098,34 +2558,21 @@ registry with a runner configuration. It supports `(benchmark-run)`,
                (benchmark-run (current-benchmark-registry) config))]
       [(source config)
        (pcheck ([benchmark-config? config])
-               (let* ([benchmarks
-                       (cond
-                        [(benchmark-registry? source)
-                         (benchmark-select source (benchmark-config-filter config))]
-                        [(benchmark? source) (list source)]
-                        [(benchmark-suite? source)
-                         (benchmark-run-suite source config)]
-                        [(list? source) source]
-                        [else (errorf 'benchmark-run "invalid benchmark source: ~s" source)])])
-                 (if (and (pair? benchmarks) (benchmark-result? (car benchmarks)))
-                     benchmarks
-                     (let ([results
-                            (apply append
-                                   (map (lambda (benchmark)
-                                          (map (lambda (expanded)
-                                                 (benchmark-run-one expanded config))
-                                               (benchmark-expand benchmark config)))
-                                        benchmarks))])
-                       (when (and (benchmark-config-reporter config)
-                                  (benchmark-config-output config))
-                         (benchmark-report results
-                                           (benchmark-config-reporter config)
-                                           (benchmark-config-output config)))
-                       results))))]))
+               (cond
+                [(benchmark-suite? source) (benchmark-run-suite source config)]
+                [(benchmark-registry? source)
+                 ($run-benchmarks ($benchmark-registry-benchmarks source) config)]
+                [(benchmark? source) ($run-benchmarks (list source) config)]
+                [(and (list? source) (andmap benchmark? source))
+                 ($run-benchmarks source config)]
+                [else (errorf 'benchmark-run "invalid benchmark source: ~s" source)]))]))
 
   #|proc:benchmark-summarize
 The `benchmark-summarize` procedure computes CPU nanosecond, real nanosecond,
 and allocated-byte per-iteration summary alists from measured `samples`.
+Division by iteration counts preserves exact fractional measurements.
+Approximate deviations and confidence bounds use exact rational representations when needed
+to preserve finite nonzero values outside flonum range.
 |#
   (define benchmark-summarize
     (lambda (samples)
@@ -2137,28 +2584,57 @@ and allocated-byte per-iteration summary alists from measured `samples`.
   #|proc:benchmark-save-baseline
 The `benchmark-save-baseline` procedure writes benchmark `results` to file
 `path` as versioned Scheme data. The file can be read back with
-`benchmark-load-baseline`.
+`benchmark-load-baseline`. Runtime and template argument keys must be readable
+Scheme data; unsupported values such as procedures or ports are rejected before
+changing `path`. Unreadable error who fields and irritants are saved as diagnostic strings.
+Generated symbol keys retain their identity independently of ambient printer settings.
+Formatted error conditions retain their format marker for reporting after reloading.
 |#
   (define benchmark-save-baseline
     (lambda (results path)
       (pcheck ([list? results] [string? path])
-              (call-with-output-file path
-                (lambda (out)
-                  (write `((format . cspp-benchmark-baseline)
-                           (version . 1)
-                           (results . ,(map $result->datum results)))
-                         out)
-                  (newline out))
-                'replace))))
+              (let* ([datum `((format . cspp-benchmark-baseline)
+                              (version . 1)
+                              (results . ,(map $result->datum results)))]
+                     [text ($write-string datum)])
+                (unless ($readback-equal? datum text)
+                  (errorf 'benchmark-save-baseline
+                    "results contain unreadable data; argument keys must be readable Scheme values"))
+                (let ([out (open-output-file path 'replace)])
+                  (dynamic-wind
+                    (lambda () (void))
+                    (lambda () (display text out) (newline out))
+                    (lambda ()
+                      (guard (raised
+                              [else
+                               ;; Discard pending data after a failed flush so the port can close.
+                               (clear-output-port out)
+                               (close-output-port out)
+                               (raise raised)])
+                        (close-output-port out)))))))))
 
   #|proc:benchmark-load-baseline
 The `benchmark-load-baseline` procedure reads benchmark results previously
-written by `benchmark-save-baseline` from file `path`.
+written by `benchmark-save-baseline` from string file `path`, returning a list of
+result records. Malformed records and negative or nonintegral sample measurements
+raise an error identifying the field. Omitted fields retain legacy defaults;
+historical summary-only records are preserved without synthesizing samples.
 |#
   (define benchmark-load-baseline
     (lambda (path)
       (pcheck ([string? path])
-              (let ([datum (call-with-input-file path read)])
+              (let ([datum (parameterize ([case-sensitive #t])
+                             (let ([in (open-input-file path)])
+                               (dynamic-wind
+                                 (lambda () (void))
+                                 (lambda ()
+                                   (let ([datum (read in)])
+                                     (unless (eof-object? (read in))
+                                       (errorf 'benchmark-load-baseline "unexpected trailing datum"))
+                                     datum))
+                                 (lambda () (close-input-port in)))))])
+                ($baseline-alist datum 'baseline)
+                ($baseline-check list? ($alist-ref datum 'results '()) 'results)
                 (unless (eq? ($alist-ref datum 'format #f) 'cspp-benchmark-baseline)
                   (errorf 'benchmark-load-baseline "invalid benchmark baseline file: ~a" path))
                 (let ([version ($alist-ref datum 'version #f)])
@@ -2169,81 +2645,128 @@ written by `benchmark-save-baseline` from file `path`.
 
   #|proc:benchmark-absolute-difference
 The `benchmark-absolute-difference` procedure returns `current - baseline` for
-numeric measurements `baseline` and `current`.
+numeric measurements `baseline` and `current`. Finite real inputs are subtracted
+exactly, preserving their represented values without intermediate overflow or underflow.
 |#
   (define benchmark-absolute-difference
     (lambda (baseline current)
       (pcheck ([number? baseline current])
-              (- current baseline))))
+              (if (and (real? baseline) (finite? baseline)
+                       (real? current) (finite? current))
+                  (- (inexact->exact current) (inexact->exact baseline))
+                  (- current baseline)))))
 
   #|proc:benchmark-percent-difference
 The `benchmark-percent-difference` procedure returns the percent change from
-numeric measurement `baseline` to numeric measurement `current`. When
+real measurement `baseline` to real measurement `current`. Complex inputs are rejected. When
 `baseline` is zero, equal values return zero and non-equal values return
-positive or negative infinity.
+positive or negative infinity according to the sign of `current`. NaN inputs propagate NaN.
+Finite inputs use exact arithmetic on their represented values to avoid intermediate overflow.
 |#
   (define benchmark-percent-difference
     (lambda (baseline current)
-      (pcheck ([number? baseline current])
+      (pcheck ([real? baseline current])
               (cond
                [(zero? baseline)
                 (cond
                  [(zero? current) 0]
+                 [(nan? current) +nan.0]
                  [(positive? current) +inf.0]
                  [else -inf.0])]
+               [(and (finite? baseline) (finite? current))
+                (* 100 (/ (benchmark-absolute-difference baseline current)
+                          (inexact->exact baseline)))]
                [else (* 100 (/ (- current baseline) baseline))]))))
 
   #|proc:benchmark-compare-results
-The `benchmark-compare-results` procedure compares current benchmark `current`
-results with `baseline` results. `options` is an alist supporting `metric`,
-`threshold-percent`, `threshold-absolute`, and `noise-threshold-percent`.
-|#
+  The `benchmark-compare-results` procedure compares current benchmark `current`
+  results with `baseline` results. `options` is an alist supporting `metric`,
+  `threshold-percent`, `threshold-absolute`, and `noise-threshold-percent`.
+  Each key may appear once; unknown keys and non-symbol metrics are rejected.
+  Thresholds must be finite nonnegative real numbers; invalid thresholds raise an
+  error naming the option, including when the result lists are empty or do not match.
+  The returned list excludes results with captured errors or without a finite real
+  mean for the selected metric. Runs with no samples are excluded, including after
+  baseline save/load. Historical baselines without sample data remain comparable;
+  their omission of sample data is preserved when saved. A measured zero is comparable.
+  Percentage magnitude determines significance; the absolute change determines direction.
+  |#
   (define benchmark-compare-results
     (case-lambda
       [(baseline current)
        (benchmark-compare-results baseline current '())]
       [(baseline current options)
        (pcheck ([list? baseline current options])
+               (unless (and (andmap benchmark-result? baseline)
+                            (andmap benchmark-result? current))
+                 (errorf 'benchmark-compare-results "expected lists of benchmark results"))
+               (let loop ([options options] [seen '()])
+                 (unless (null? options)
+                   (let ([option (car options)])
+                     (unless (and (pair? option)
+                                  (memq (car option)
+                                    '(metric threshold-percent threshold-absolute
+                                      noise-threshold-percent)))
+                       (errorf 'benchmark-compare-results "unknown or malformed option: ~s" option))
+                     (when (memq (car option) seen)
+                       (errorf 'benchmark-compare-results "duplicate option: ~s" (car option)))
+                     (when (and (eq? (car option) 'metric) (not (symbol? (cdr option))))
+                       (errorf 'benchmark-compare-results "metric must be a symbol: ~s" (cdr option)))
+                     (loop (cdr options) (cons (car option) seen)))))
                (let ([metric ($option-ref options 'metric 'real-ns)]
                      [threshold-percent ($option-ref options 'threshold-percent 5)]
                      [threshold-absolute ($option-ref options 'threshold-absolute 0)]
                      [noise-threshold-percent ($option-ref options 'noise-threshold-percent 0)])
-                 (let loop ([current current] [out '()])
-                   (if (null? current)
-                       (reverse out)
-                       (let* ([cur (car current)]
-                              [base ($find-result baseline
-                                                  (benchmark-result-name cur)
-                                                  (benchmark-result-args cur)
-                                                  (benchmark-result-template-args cur))])
-                         (if base
-                             (let* ([base-value ($metric-mean base metric)]
-                                    [cur-value ($metric-mean cur metric)]
-                                    [absolute (benchmark-absolute-difference base-value cur-value)]
-                                    [percent (benchmark-percent-difference base-value cur-value)]
-                                    [abs-percent (abs percent)]
-                                    [significant? (and (>= (abs absolute) threshold-absolute)
-                                                       (>= abs-percent noise-threshold-percent))]
-                                    [regression? (and significant?
-                                                      (positive? absolute)
-                                                      (>= percent threshold-percent))]
-                                    [improvement? (and significant?
-                                                       (negative? absolute)
-                                                       (>= (abs percent) threshold-percent))])
-                               (loop (cdr current)
-                                     (cons ($mk-benchmark-comparison
-                                            (benchmark-result-name cur)
-                                            metric
-                                            base
-                                            cur
-                                            base-value
-                                            cur-value
-                                            absolute
-                                            percent
-                                            regression?
-                                            improvement?)
-                                           out)))
-                             (loop (cdr current) out)))))))]))
+                 (for-each
+                   (lambda (key value)
+                     (unless (and (real? value) (finite? value) (>= value 0))
+                       (errorf 'benchmark-compare-results
+                         "~a must be a finite nonnegative real: ~s" key value)))
+                   '(threshold-percent threshold-absolute noise-threshold-percent)
+                   (list threshold-percent threshold-absolute noise-threshold-percent))
+                 (let ([baseline-index
+                        (let ([index (make-hashtable equal-hash equal?)])
+                          (for-each
+                            (lambda (result)
+                              (let ([key ($result-key result)])
+                                ;; Keep the first match, as the original ordered search did.
+                                (unless (hashtable-contains? index key)
+                                  (hashtable-set! index key result))))
+                            baseline)
+                          index)])
+                   (let loop ([current current] [out '()])
+                     (if (null? current)
+                         (reverse out)
+                         (let* ([cur (car current)]
+                                [base (hashtable-ref baseline-index ($result-key cur) #f)])
+                           (let ([base-value (and base ($comparison-metric-mean base metric))]
+                                 [cur-value ($comparison-metric-mean cur metric)])
+                             (if (and base-value cur-value)
+                                 (let* ([absolute (benchmark-absolute-difference base-value cur-value)]
+                                        [percent (benchmark-percent-difference base-value cur-value)]
+                                        [abs-percent (abs percent)]
+                                        [significant? (and (>= (abs absolute) threshold-absolute)
+                                                           (>= abs-percent noise-threshold-percent))]
+                                        [regression? (and significant?
+                                                          (positive? absolute)
+                                                          (>= abs-percent threshold-percent))]
+                                        [improvement? (and significant?
+                                                           (negative? absolute)
+                                                           (>= (abs percent) threshold-percent))])
+                                   (loop (cdr current)
+                                         (cons ($mk-benchmark-comparison
+                                                (benchmark-result-name cur)
+                                                metric
+                                                base
+                                                cur
+                                                base-value
+                                                cur-value
+                                                absolute
+                                                percent
+                                                regression?
+                                                improvement?)
+                                               out)))
+                                 (loop (cdr current) out)))))))))]))
 
   #|proc:benchmark-pause-timing
 The `benchmark-pause-timing` procedure pauses timing for measured benchmark
@@ -2293,11 +2816,16 @@ flush CPU caches or enforce hardware memory ordering.
 
   #|proc:benchmark-report
 The `benchmark-report` procedure writes existing benchmark `results` through
-`reporter` to output port `out`.
+`reporter` to output port `out`. Every result must be a benchmark result record;
+invalid collections are rejected before any reporter callback runs.
+Built-in reporters require an open textual port; custom reporters define their own port usage.
 |#
   (define benchmark-report
     (lambda (results reporter out)
       (pcheck ([list? results] [benchmark-reporter? reporter] [output-port? out])
+              (unless (andmap benchmark-result? results)
+                (errorf 'benchmark-report "expected a list of benchmark results"))
+              ($check-reporter-output 'benchmark-report reporter out)
               (($benchmark-reporter-start reporter) results out)
               (for-each (lambda (result)
                           (($benchmark-reporter-result reporter) result out))

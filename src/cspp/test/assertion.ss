@@ -7,7 +7,18 @@
           test-true test-false test-eq test-eqv test-equal test-=
           test-pred test-raises test-not-raises test-fail)
   (import (cspp chez)
-          (cspp utils))
+          (cspp utils)
+          (cspp test common))
+
+  #|doc
+  Every exported procedure in this library supports independent concurrent calls from OS threads
+  and fibers, including during an active test run. Assertions return `#t` on success and raise
+  in their caller on failure; `test-fail` always raises. They do not record runner results.
+  Callers must synchronize shared mutable arguments and callbacks, join workers, and propagate
+  worker failures to the controlling test body. See `docs/test-and-benchmark.md` for an example.
+  General continuation replay is not guaranteed; ordinary callback return, exceptions, and fiber
+  suspension are supported. Failure values retain their original operands without copying them.
+  |#
 
   (define-condition-type &test-failure &error
     %make-test-failure
@@ -95,6 +106,7 @@ The `test-assert-equal` procedure compares `expected` and `actual` with
 `same?`. `same?` is a two-argument predicate with signature
 `(lambda (expected actual) ...)`. `message` is recorded if the comparison
 fails.
+Concurrent callers must supply a comparison and operands safe for concurrent use.
 |#
   (define test-assert-equal
     (lambda (same? expected actual message)
@@ -106,11 +118,14 @@ The `test-assert-raises` procedure succeeds when zero-argument procedure
 `thunk` raises a condition accepted by `predicate`. `predicate` has signature
 `(lambda (condition) ...)`. If `thunk` raises no condition, or raises a
 condition rejected by `predicate`, a framework assertion failure is raised.
-`message` is recorded on failure.
+`message` is recorded on failure. Callback arities are checked before invoking `thunk`.
 |#
   (define test-assert-raises
     (lambda (predicate thunk message)
       (pcheck ([procedure? predicate thunk] [string? message])
+              (unless (and (test-callback-accepts? predicate 1)
+                           (test-callback-accepts? thunk 0))
+                (errorf 'test-assert-raises "expected unary predicate and zero-argument thunk"))
               (let ([raised
                      (guard (condition
                              [else
@@ -127,10 +142,13 @@ condition rejected by `predicate`, a framework assertion failure is raised.
 The `test-assert-not-raises` procedure succeeds when zero-argument procedure
 `thunk` returns without raising a condition. If `thunk` raises any condition,
 a framework assertion failure is raised. `message` is recorded on failure.
+Callback arities are checked before invoking `thunk`.
 |#
   (define test-assert-not-raises
     (lambda (thunk message)
       (pcheck ([procedure? thunk] [string? message])
+              (unless (test-callback-accepts? thunk 0)
+                (errorf 'test-assert-not-raises "thunk must accept zero arguments"))
               (guard (condition
                       [else ($raise-test-failure message 'no-condition condition)])
                 (thunk)
@@ -179,6 +197,8 @@ and raises a framework assertion failure otherwise.
   #|proc:test-=
 The `test-=` procedure succeeds when numbers `expected` and `actual` are `=`
 and raises a framework assertion failure otherwise.
+It returns `#t` on success and may be called from any thread or fiber. A worker's failure
+must be propagated to the controlling body; this procedure does not update runner state.
 |#
   (define test-=
     (lambda (expected actual)
@@ -189,6 +209,7 @@ and raises a framework assertion failure otherwise.
 The `test-pred` procedure succeeds when unary predicate `predicate` accepts
 `actual` and raises a framework assertion failure otherwise. `predicate` has
 signature `(lambda (actual) ...)`.
+Concurrent callers must supply a predicate and argument safe for concurrent use.
 |#
   (define test-pred
     (lambda (predicate actual)

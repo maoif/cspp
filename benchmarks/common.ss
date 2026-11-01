@@ -33,6 +33,18 @@
          option))
       (run-cli-command! command argument*))))
 
+(define benchmark-print-table!
+  (lambda (title columns rows)
+    (let ([table (make-rich-table)])
+      (rich-table-title-set! table title)
+      (rich-table-box-set! table 'rounded)
+      (for-each (lambda (column)
+                  (rich-table-add-column! table (car column) (cdr column)))
+                columns)
+      (for-each (lambda (row) (apply rich-table-add-row! table row)) rows)
+      (rich-print (current-output-port) table)
+      (newline))))
+
 (define benchmark-config-from-cli
   (lambda (ref)
     (let* ([base (default-benchmark-config)]
@@ -80,7 +92,10 @@
                                        benchmarks)
                                benchmarks)])
             (when (null? selected) (errorf program "filter matched no benchmark cases"))
-            (let ([results (benchmark-run selected config)])
+            ;; The CLI has already applied its substring filter; the library selector
+            ;; uses prefix matching and must not filter these cases a second time.
+            (let ([results (benchmark-run selected
+                             (benchmark-config-with config '((filter . #f))))])
               (for-each (lambda (result)
                           (when (benchmark-result-error result)
                             (raise (benchmark-result-error result)))) results))))
@@ -181,14 +196,23 @@
        (let ([metadata (benchmark-metadata)] [records (map benchmark-result-data results)])
          (cond
            [(string=? format-name "text")
-            (benchmark-report results (benchmark-text-reporter) out)
-            (pretty-print `((metadata . ,metadata) (results . ,records)) out)]
+            (benchmark-report
+             results
+             (benchmark-rich-reporter
+              '((box . rounded)
+                (columns . ((name . "case")
+                            (args . "arguments")
+                            (cpu-ns . "cpu/ns")
+                            (real-ns . "real/ns")
+                            (bytes . "bytes/iter")))))
+             out)
+            (display "Metadata: " out)
+            (pretty-print metadata out)]
            [(string=? format-name "json")
             (benchmark-write-json `((metadata . ,metadata) (results . ,records)) out)
             (newline out)]
            [(string=? format-name "datum")
-            (write `((metadata . ,metadata) (results . ,records)) out)
-            (newline out)]
+            (pretty-print `((metadata . ,metadata) (results . ,records)) out)]
            [else
             (display "name,args,summary,samples,metadata,error\n" out)
             (for-each

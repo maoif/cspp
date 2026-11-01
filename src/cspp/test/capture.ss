@@ -3,7 +3,7 @@
   (export test-capture-ports test-check-output-expectations)
   (import (cspp chez)
           (cspp utils)
-          (cspp test private common)
+          (cspp test common)
           (cspp test assertion))
 
   (define $capture-stdout?
@@ -18,37 +18,52 @@
           (eq? mode 'combined)
           (and (list? mode) (memq 'stderr mode)))))
 
+  (define $capture-mode?
+    (lambda (mode)
+      (or (not mode)
+          (memq mode '(stdout stderr combined))
+          (and (list? mode) (for-all (lambda (stream) (memq stream '(stdout stderr))) mode)))))
+
   #|proc:test-capture-ports
-The `test-capture-ports` procedure calls `thunk` while capturing selected
-current output ports. `mode` is `'stdout`, `'stderr`, `'combined`, or a list
-containing `'stdout` and/or `'stderr`. The `thunk` parameter has signature
-`(lambda () value ...)`. The procedure returns three values: the thunk values as
-a list, captured stdout, and captured stderr.
-|#
+  The `test-capture-ports` procedure calls `thunk` while capturing selected
+  current output ports. `mode` is `#f` for no capture, `'stdout`, `'stderr`,
+  `'combined`, or a list containing `'stdout` and/or `'stderr`.
+  The `thunk` parameter has signature `(lambda () value ...)`. The procedure
+  returns three values: the thunk values as a list, captured stdout, and captured
+  stderr. Combined capture preserves output order in stdout and returns empty stderr.
+  Only selected capture ports are opened, and they are closed before returning.
+  Call from the controlling thread, outside fibers. Join workers using inherited ports before
+  returning; concurrent writers need caller synchronization. Continuation reentry is undefined.
+  |#
   (define test-capture-ports
     (lambda (mode thunk)
-      (pcheck ([procedure? thunk])
-              (let ([stdout-port (open-output-string)]
-                    [stderr-port (open-output-string)])
-                (let ([capture-stdout? ($capture-stdout? mode)]
-                      [capture-stderr? ($capture-stderr? mode)])
-                  (let ([values-list
-                         (parameterize ([current-output-port
-                                          (if capture-stdout?
-                                              stdout-port
-                                              (current-output-port))]
-                                         [current-error-port
-                                          (if capture-stderr?
-                                              (if (eq? mode 'combined)
-                                                  stdout-port
-                                                  stderr-port)
-                                              (current-error-port))])
-                           (call-with-values thunk list))])
-                    (values values-list
-                            (get-output-string stdout-port)
-                            (if (eq? mode 'combined)
-                                ""
-                                (get-output-string stderr-port)))))))))
+      (pcheck ([$capture-mode? mode] [procedure? thunk])
+              (let ([capture-stdout? ($capture-stdout? mode)]
+                    [capture-stderr? ($capture-stderr? mode)])
+                (if (not (or capture-stdout? capture-stderr?))
+                    (values (call-with-values thunk list) "" "")
+                    (let* ([stdout-port (and capture-stdout? (open-output-string))]
+                           [stderr-port (and capture-stderr?
+                                             (if (eq? mode 'combined)
+                                                 stdout-port
+                                                 (open-output-string)))])
+                      (dynamic-wind
+                        (lambda () (void))
+                        (lambda ()
+                          (let ([values-list
+                                 (parameterize
+                                   ([current-output-port (or stdout-port (current-output-port))]
+                                    [current-error-port (or stderr-port (current-error-port))])
+                                   (call-with-values thunk list))])
+                            (values values-list
+                                    (if stdout-port (get-output-string stdout-port) "")
+                                    (if (and stderr-port (not (eq? mode 'combined)))
+                                        (get-output-string stderr-port)
+                                        ""))))
+                        (lambda ()
+                          (when stdout-port (close-output-port stdout-port))
+                          (when (and stderr-port (not (eq? stderr-port stdout-port)))
+                            (close-output-port stderr-port))))))))))
 
   #|proc:test-check-output-expectations
 The `test-check-output-expectations` procedure checks captured `stdout` and

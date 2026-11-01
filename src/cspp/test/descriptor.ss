@@ -4,6 +4,7 @@
           test-expand-descriptor? test-compile-descriptor? test-concrete-case?
           test-result? test-summary? test-config? test-registry?
           make-test-case make-test-suite make-test-expand make-test-compile
+          test-make-prepared-case test-prepare-runtime-body
           test-descriptor-name test-descriptor-phase test-descriptor-metadata
           test-descriptor-children test-descriptor-body
           make-test-config default-test-config test-config-with
@@ -22,16 +23,17 @@
           test-summary-xfail test-summary-xpass test-summary-results)
   (import (cspp chez)
           (cspp utils)
-          (cspp test private common))
+          (cspp test common))
 
   (define-record-type ($test-descriptor $make-test-descriptor $test-descriptor?)
-    (fields kind name phase metadata children body))
+    (fields kind name phase metadata children body prepare))
 
   (define-record-type ($test-config $make-test-config $test-config?)
     (fields reporter output xfail-strict? stop-on-failure? color))
 
   (define-record-type ($test-registry $make-test-registry $test-registry?)
-    (fields (mutable descriptors $test-registry-descriptors $test-registry-descriptors-set!)))
+    (fields (mutable reversed $test-registry-reversed $test-registry-reversed-set!)
+            (mutable snapshot $test-registry-snapshot $test-registry-snapshot-set!)))
 
   (define-record-type ($test-concrete-case $make-test-concrete-case $test-concrete-case?)
     (fields id name descriptor parameters metadata))
@@ -50,13 +52,9 @@
     (lambda (status)
       (and (memq status '(passed failed errored skipped xfail xpass)) #t)))
 
-  (define $color-option?
-    (lambda (color)
-      (and (memq color '(auto always never)) #t)))
-
   (define $reporter-option?
     (lambda (reporter)
-      (or (not reporter) (procedure? reporter) (record? reporter))))
+      (or (not reporter) (test-reporter? reporter))))
 
   (define $output-option?
     (lambda (output)
@@ -77,7 +75,7 @@
          (unless (boolean? (cdr option))
            (errorf 'test-config-with "invalid config option: ~a" option))]
         [(color)
-         (unless ($color-option? (cdr option))
+         (unless (test-color-mode? (cdr option))
            (errorf 'test-config-with "invalid config option: ~a" option))]
         [else (errorf 'test-config-with "unknown config option: ~a" (car option))])))
 
@@ -171,14 +169,60 @@ registry.
       ($test-registry? value)))
 
   #|proc:make-test-case
-The `make-test-case` procedure creates a runtime test descriptor. `name` is the
-symbol naming the case, `body` is a zero-argument procedure run by the test
-runner, and `metadata` is an association list of descriptor metadata.
-|#
+  The `make-test-case` procedure creates a runtime test descriptor. `name` is the
+  symbol naming the case, and `metadata` is an association list of descriptor metadata.
+  The runner calls `body` as `(lambda () unspecified)` or as
+  `(lambda (parameters) unspecified)`, where `parameters` is an association list
+  containing fixture values followed by the concrete case parameters.
+  Metadata keys must be supported, unique symbols with correctly typed values;
+  warning policy is `allow` or `error`, tags are symbols, and version requirements
+  contain three natural numbers. Invalid body arity or metadata is rejected at construction.
+  Fixture names must be unique and must not overlap parameter names; the runner
+  rejects conflicting effective bindings before acquiring fixtures.
+  |#
   (define make-test-case
     (lambda (name body metadata)
       (pcheck ([symbol? name] [procedure? body] [list? metadata])
-              ($make-test-descriptor 'case name 'runtime metadata '() body))))
+              (unless (or (logbit? 0 (procedure-arity-mask body))
+                          (logbit? 1 (procedure-arity-mask body)))
+                (errorf 'make-test-case "body must accept zero or one argument: ~s" body))
+              (test-check-metadata 'make-test-case metadata)
+              ($make-test-descriptor 'case name 'runtime metadata '() body #f))))
+
+  #|proc:test-make-prepared-case
+  The internal `test-make-prepared-case` procedure creates a runtime case named by symbol
+  `name` with association-list `metadata`. The unary `prepare` procedure accepts fixture and
+  parameter bindings and returns a zero-argument body thunk. Preparation precedes expected
+  condition matching. The descriptor's public body procedure still accepts the bindings and
+  executes the prepared thunk directly.
+  |#
+  (define test-make-prepared-case
+    (lambda (name prepare metadata)
+      (pcheck ([symbol? name] [procedure? prepare] [list? metadata])
+              (unless (test-callback-accepts? prepare 1)
+                (errorf 'test-make-prepared-case "prepare must accept one argument"))
+              (test-check-metadata 'test-make-prepared-case metadata)
+              ($make-test-descriptor 'case name 'runtime metadata '()
+                (lambda (parameters) ((prepare parameters))) prepare))))
+
+  #|proc:test-prepare-runtime-body
+  The internal `test-prepare-runtime-body` procedure returns a zero-argument body thunk for
+  runtime `descriptor` and binding association list `parameters`. Generated cases resolve
+  lexical inputs immediately; ordinary cases defer their zero- or one-argument body call.
+  |#
+  (define test-prepare-runtime-body
+    (lambda (descriptor parameters)
+      (pcheck ([test-case-descriptor? descriptor] [test-symbol-alist? parameters])
+              (let ([prepare ($test-descriptor-prepare descriptor)])
+                (if prepare
+                    (let ([thunk (prepare parameters)])
+                      (unless (test-callback-accepts? thunk 0)
+                        (errorf 'test-prepare-runtime-body "prepare must return a body thunk"))
+                      thunk)
+                    (let ([body ($test-descriptor-body descriptor)])
+                      (if (logbit? 1 (procedure-arity-mask body))
+                          (lambda () (body parameters))
+                          (lambda () (body)))))))))
 
   #|proc:make-test-suite
 The `make-test-suite` procedure creates a suite descriptor. `name` is the symbol
@@ -188,27 +232,31 @@ suite, and `metadata` is an association list of descriptor metadata.
   (define make-test-suite
     (lambda (name children metadata)
       (pcheck ([symbol? name] [$all-descriptors? children] [list? metadata])
-              ($make-test-descriptor 'suite name 'suite metadata children #f))))
+              (test-check-metadata 'make-test-suite metadata)
+              ($make-test-descriptor 'suite name 'suite metadata children #f #f))))
 
   #|proc:make-test-expand
 The `make-test-expand` procedure creates an expansion test descriptor. `name` is
 the symbol naming the descriptor, `form` is the datum to expand, and `metadata`
-is an association list of descriptor metadata.
+is an association list of descriptor metadata. The form is expanded in an
+immutable `(cspp)` environment; include custom macro definitions in `form`.
 |#
   (define make-test-expand
     (lambda (name form metadata)
       (pcheck ([symbol? name] [list? metadata])
-              ($make-test-descriptor 'expand name 'expand metadata '() form))))
+              (test-check-metadata 'make-test-expand metadata)
+              ($make-test-descriptor 'expand name 'expand metadata '() form #f))))
 
   #|proc:make-test-compile
-The `make-test-compile` procedure creates a compile test descriptor. `name` is
-the symbol naming the descriptor, `forms` is the source datum or list of source
-data to compile, and `metadata` is an association list of descriptor metadata.
-|#
+  The `make-test-compile` procedure creates a compile test descriptor. `name` is
+  the symbol naming the descriptor, `forms` is a list of source data to compile,
+  and `metadata` is an association list of descriptor metadata.
+  |#
   (define make-test-compile
     (lambda (name forms metadata)
-      (pcheck ([symbol? name] [list? metadata])
-              ($make-test-descriptor 'compile name 'compile metadata '() forms))))
+      (pcheck ([symbol? name] [list? forms metadata])
+              (test-check-metadata 'make-test-compile metadata)
+              ($make-test-descriptor 'compile name 'compile metadata '() forms #f))))
 
   #|proc:test-descriptor-name
 The `test-descriptor-name` procedure returns the symbolic name stored in
@@ -247,28 +295,30 @@ suite `descriptor`; non-suite descriptors return the empty list.
               ($test-descriptor-children descriptor))))
 
   #|proc:test-descriptor-body
-The `test-descriptor-body` procedure returns the body stored in `descriptor`.
-For runtime cases this is a zero-argument procedure; for expansion and compile
-descriptors this is source data; for suites this is `#f`.
-|#
+  The `test-descriptor-body` procedure returns the body stored in `descriptor`.
+  For runtime cases the procedure accepts zero arguments or the concrete parameter
+  association list as described by `make-test-case`. Expansion descriptors return one
+  source datum, compile descriptors return a list of source forms, and suites return `#f`.
+  |#
   (define test-descriptor-body
     (lambda (descriptor)
       (pcheck ([test-descriptor? descriptor])
               ($test-descriptor-body descriptor))))
 
   #|proc:make-test-config
-The `make-test-config` procedure creates a test runner configuration.
-`reporter` is a reporter object or `#f`, `output` is the output port or `#f`,
-`xfail-strict?` controls whether unexpected passes fail the run,
-`stop-on-failure?` controls whether the runner stops at the first failure, and
-`color` is `auto`, `always`, or `never`.
-|#
+  The `make-test-config` procedure creates a test runner configuration.
+  `reporter` is a reporter object or `#f`, `output` is the output port or `#f`,
+  `xfail-strict?` makes unexpected passes have status `failed` instead of `xpass`,
+  `stop-on-failure?` controls whether the runner stops at the first failure, and
+  `color` is `auto`, `always`, or `never`. An explicit `always` or `never`
+  overrides the progress reporter's color policy during this run; `auto` retains it.
+  |#
   (define make-test-config
     (lambda (reporter output xfail-strict? stop-on-failure? color)
       (pcheck ([$reporter-option? reporter]
                [$output-option? output]
                [boolean? xfail-strict? stop-on-failure?]
-               [$color-option? color])
+               [test-color-mode? color])
               ($make-test-config reporter output xfail-strict? stop-on-failure? color))))
 
   #|proc:default-test-config
@@ -284,6 +334,7 @@ The `test-config-with` procedure returns a copy of `config` with fields changed
 according to option association list `options`. Each option is a pair whose car
 is one of `reporter`, `output`, `xfail-strict?`, `stop-on-failure?`, or `color`;
 each cdr must have the same type accepted by `make-test-config` for that field.
+Each key may occur once per update; successive updates may override earlier values.
 |#
   (define test-config-with
     (lambda (config options)
@@ -293,6 +344,10 @@ each cdr must have the same type accepted by `make-test-config` for that field.
                     config
                     (let ([option (car options)])
                       ($check-config-option option)
+                      (when (exists (lambda (later)
+                                      (and (pair? later) (eq? (car option) (car later))))
+                                    (cdr options))
+                        (errorf 'test-config-with "duplicate config option: ~s" (car option)))
                       (case (car option)
                         [(reporter)
                          (loop (cdr options)
@@ -382,26 +437,27 @@ registry.
 |#
   (define make-test-registry
     (lambda ()
-      ($make-test-registry '())))
+      ($make-test-registry '() '())))
 
   #|proc:current-test-registry
 The `current-test-registry` parameter stores the default mutable test
 descriptor registry.
 |#
   (define current-test-registry
-    (make-parameter (make-test-registry)))
+    (make-parameter (make-test-registry)
+      (lambda (registry) (pcheck ([test-registry? registry]) registry))))
 
   #|proc:test-register!
-The `test-register!` procedure appends `descriptor` to `registry` and returns
-`descriptor`.
-|#
+  The `test-register!` procedure appends `descriptor` to `registry` in constant time
+  and returns `descriptor`. Previously returned descriptor lists are preserved.
+  |#
   (define test-register!
     (lambda (registry descriptor)
       (pcheck ([test-registry? registry] [test-descriptor? descriptor])
               (begin
-                ($test-registry-descriptors-set!
-                 registry
-                 (append ($test-registry-descriptors registry) (list descriptor)))
+                ($test-registry-reversed-set!
+                 registry (cons descriptor ($test-registry-reversed registry)))
+                ($test-registry-snapshot-set! registry #f)
                 descriptor))))
 
   #|proc:test-clear-registry!
@@ -410,16 +466,21 @@ The `test-clear-registry!` procedure removes all descriptors from `registry`.
   (define test-clear-registry!
     (lambda (registry)
       (pcheck ([test-registry? registry])
-              ($test-registry-descriptors-set! registry '()))))
+              ($test-registry-reversed-set! registry '())
+              ($test-registry-snapshot-set! registry '()))))
 
   #|proc:test-registry-descriptors
-The `test-registry-descriptors` procedure returns the descriptors currently
-stored in `registry`.
-|#
+  The `test-registry-descriptors` procedure returns an ordered snapshot of the
+  descriptors currently stored in `registry`. After registration, the first read
+  takes linear time; repeated reads reuse the snapshot until the registry changes.
+  |#
   (define test-registry-descriptors
     (lambda (registry)
       (pcheck ([test-registry? registry])
-              ($test-registry-descriptors registry))))
+              (or ($test-registry-snapshot registry)
+                  (let ([snapshot (reverse ($test-registry-reversed registry))])
+                    ($test-registry-snapshot-set! registry snapshot)
+                    snapshot)))))
 
   #|proc:make-test-concrete-case
 The `make-test-concrete-case` procedure creates a concrete test case. `id` is a
@@ -431,6 +492,10 @@ case parameters, and `metadata` is an association list of case metadata.
     (lambda (id name descriptor parameters metadata)
       (pcheck ([natural? id] [symbol? name] [test-descriptor? descriptor]
                [list? parameters metadata])
+              (test-check-metadata 'make-test-concrete-case metadata)
+              (unless (test-symbol-alist? parameters)
+                (errorf 'make-test-concrete-case "parameters must have unique symbolic keys: ~s"
+                        parameters))
               ($make-test-concrete-case id name descriptor parameters metadata))))
 
   #|proc:test-concrete-case-id
@@ -490,7 +555,11 @@ message or `#f`, `condition` is the captured condition or `#f`, `stdout` and
     (lambda (id name status message condition stdout stderr parameters source)
       (pcheck ([$test-id? id] [symbol? name] [$result-status? status]
                [(lambda (value) (or (string? value) (not value))) message]
-               [string? stdout stderr] [list? parameters])
+               [string? stdout stderr]
+               [(lambda (value)
+                  (and (list? value)
+                       (andmap (lambda (entry) (and (pair? entry) (symbol? (car entry)))) value)))
+                parameters])
               ($make-test-result id name status message condition stdout stderr parameters source))))
 
   #|proc:test-result-id
@@ -577,6 +646,7 @@ The `test-result-source` procedure returns the source object stored in
   #|proc:make-test-summary
 The `make-test-summary` procedure creates a summary from natural-number counts:
 `total`, `passed`, `failed`, `errored`, `skipped`, `xfail`, and `xpass`.
+The optional `results` argument is a list of test result records; it defaults to empty.
 |#
   (define make-test-summary
     (case-lambda
@@ -584,6 +654,8 @@ The `make-test-summary` procedure creates a summary from natural-number counts:
        (make-test-summary total passed failed errored skipped xfail xpass '())]
       [(total passed failed errored skipped xfail xpass results)
        (pcheck ([natural? total passed failed errored skipped xfail xpass] [list? results])
+               (unless (andmap test-result? results)
+                 (errorf 'make-test-summary "results must contain test result records"))
                ($make-test-summary total passed failed errored skipped xfail xpass results))]))
 
   #|proc:test-summary-total
