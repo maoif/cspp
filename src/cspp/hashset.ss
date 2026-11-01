@@ -616,8 +616,7 @@
   (nav-register-set!
    hashset? hashset->list
    (lambda (hs members)
-     (let ([copy (hashset-map (lambda (item) item) hs)])
-       (hashset-clear! copy)
+     (let ([copy ($newhs hs)])
        (for-each (lambda (member) (hashset-add! copy member)) members)
        copy))
    (lambda (hs members)

@@ -3774,8 +3774,29 @@
                                                         (loop (fx1+ i)))))))))]))
 
 ;;;;===----------------------------------------------------------------------===
-;;;; Iterator extension registration
+;;;; Iterator and navigator extension registration
 ;;;;===----------------------------------------------------------------------===
+
+  ;; Each family is a sibling record type, with its own size and element checks.
+  ;; Pure bulk updates copy storage once; callback state belongs to each invocation.
+  (define register-array-navigation!
+    (lambda (predicate size ref copy setter)
+      (define mutate
+        (lambda (source indexes update)
+          (for-each (lambda (index) (setter source index (update (ref source index)))) indexes)
+          source))
+      (nav-register-indexed!
+       predicate size ref
+       (lambda (source index value)
+         (let ([result (copy source)]) (setter result index value) result))
+       (lambda (source index value) (setter source index value) source)
+       (lambda (source start stop step visit)
+         (let loop ([index start])
+           (when (< index stop)
+             (visit index (ref source index))
+             (loop (+ index step)))))
+       (lambda (source indexes update) (mutate (copy source) indexes update))
+       mutate)))
 
   (iter-register-source! array? array->iter)
   (iter-register-source! fxarray? fxarray->iter)
@@ -3786,29 +3807,10 @@
 ;;;; Navigator extension registration
 ;;;;===----------------------------------------------------------------------===
 
-  (nav-register-indexed!
-   array? array-size
-   (lambda (arr index)
-     (cond [(fxarray? arr) (fxarray-ref arr index)]
-           [(flarray? arr) (flarray-ref arr index)]
-           [(bytearray? arr) (bytearray-ref arr index)]
-           [else (array-ref arr index)]))
-   (lambda (arr index value)
-     (let ([copy (cond [(fxarray? arr) (fxarray-copy arr)]
-                       [(flarray? arr) (flarray-copy arr)]
-                       [(bytearray? arr) (bytearray-copy arr)]
-                       [else (array-copy arr)])])
-       (cond [(fxarray? copy) (fxarray-set! copy index value)]
-             [(flarray? copy) (flarray-set! copy index value)]
-             [(bytearray? copy) (bytearray-set! copy index value)]
-             [else (array-set! copy index value)])
-       copy))
-   (lambda (arr index value)
-     (cond [(fxarray? arr) (fxarray-set! arr index value)]
-           [(flarray? arr) (flarray-set! arr index value)]
-           [(bytearray? arr) (bytearray-set! arr index value)]
-           [else (array-set! arr index value)])
-     arr))
+  (register-array-navigation! array? array-size array-ref array-copy array-set!)
+  (register-array-navigation! fxarray? fxarray-size fxarray-ref fxarray-copy fxarray-set!)
+  (register-array-navigation! flarray? flarray-size flarray-ref flarray-copy flarray-set!)
+  (register-array-navigation! bytearray? bytearray-size bytearray-ref bytearray-copy bytearray-set!)
 
   (gen-array-record-writer $array   "#[array ("   vector-ref)
   (gen-array-record-writer $fxarray "#[fxarray (" fxvector-ref)

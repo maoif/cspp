@@ -1046,6 +1046,13 @@
                   (hashtable-cells table))
                 result))))
 
+  ;; Canonical lookup bypasses the public map accessors, including their key check.
+  (define fxtreemap-canonical-key
+    (lambda (tm key default)
+      (unless (fixnum? key)
+        (errorf 'fxtreemap-canonical-key "expected fixnum key: ~s" key))
+      (rbtree-ref-key tm key default)))
+
   (define write-treemap
                  (lambda (r p wr)
                    (display "#[treemap (" p)
@@ -1082,6 +1089,10 @@
 ;;;; Navigator extension registration
 ;;;;===----------------------------------------------------------------------===
 
+  ;; Final adapter callbacks provide a fresh map with the same comparison policy,
+  ;; canonical stored-key lookup, and complete mutable membership replacement.
+  ;; Clearing before reinsertion avoids searching an old tree whose key ordering
+  ;; may already have changed through nested mutation; entry order decides collisions.
   (nav-register-keyed!
    treemap?
    (lambda (tm key default)
@@ -1104,7 +1115,12 @@
    (lambda (tm key)
      (treemap-delete! tm key)
      tm)
-   treemap->list)
+   treemap->list
+   (lambda (tm) (make-treemap-like tm))
+   rbtree-ref-key
+   (lambda (tm entries)
+     (treemap-clear! tm)
+     (for-each (lambda (entry) (treemap-set! tm (car entry) (cdr entry))) entries)))
 
   (iter-register-source!
    fxtreemap?
@@ -1139,7 +1155,12 @@
    (lambda (tm key)
      (fxtreemap-delete! tm key)
      tm)
-   fxtreemap->list)
+   fxtreemap->list
+   (lambda (tm) (make-fxtreemap-like tm))
+   fxtreemap-canonical-key
+   (lambda (tm entries)
+     (fxtreemap-clear! tm)
+     (for-each (lambda (entry) (fxtreemap-set! tm (car entry) (cdr entry))) entries)))
 
   (record-writer (type-descriptor $treemap) write-treemap)
   (record-writer (type-descriptor $fxtreemap) write-treemap)

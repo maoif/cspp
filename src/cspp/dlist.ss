@@ -1525,6 +1525,24 @@
                          value)))
                  (lambda () (set! node (dlist-first dl))))))))
 
+  ;; Traverse selected nodes once in increasing index order. The cursor is local
+  ;; to the invocation, including while visit/update callbacks suspend in fibers.
+  (define walk-navigation-nodes
+    (lambda (source indexes visit)
+      (let loop ([node (dlist-first source)] [index 0] [indexes indexes])
+        (unless (null? indexes)
+          (if (fx= index (car indexes))
+              (begin (visit index node)
+                     (loop (dnode-right node) (fx1+ index) (cdr indexes)))
+              (loop (dnode-right node) (fx1+ index) indexes))))))
+
+  (define mutate-navigation-values
+    (lambda (source indexes update)
+      (walk-navigation-nodes source indexes
+                             (lambda (index node)
+                               (dnode-value-set! node (update (dnode-value node)))))
+      source))
+
   (iter-register-source!
    dlist?
    dlist->iter)
@@ -1539,9 +1557,18 @@
      (let ([copy (dlist-copy dl)])
        (dlist-set! copy index value)
        copy))
-   (lambda (dl index value)
-     (dlist-set! dl index value)
-     dl))
+   (lambda (dl index value) (dlist-set! dl index value) dl)
+   (lambda (source start stop step visit)
+     (let loop ([node (dlist-first source)] [index 0] [next start])
+       ;; Once the next focus is outside the range, its remaining tail is unused.
+       (when (< next stop)
+         (if (= index next)
+             (begin (visit index (dnode-value node))
+                    (loop (dnode-right node) (fx1+ index) (+ next step)))
+             (loop (dnode-right node) (fx1+ index) next)))))
+   (lambda (source indexes update)
+     (mutate-navigation-values (dlist-copy source) indexes update))
+   mutate-navigation-values)
 
   (record-writer (type-descriptor $dlist)
                  (lambda (r p wr)

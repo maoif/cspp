@@ -18,24 +18,30 @@
 
   (define path-selected?
     (lambda (path value)
-      (guard [exn [else #f]]
+      (guard [exn [(nav-absent-focus? exn) #f]]
         ;; Use a one-shot continuation to stop traversal after the first focus.
         (call/1cc
          (lambda (return)
            (select-path path value (lambda (child) (return #t)))
            #f)))))
 
-  (define clear-path
-    (lambda (path data)
-      (nav-clearval path data)))
-
-  (define clear-path!
-    (lambda (path data)
-      (nav-clearval! path data)))
+  ;; Only steps inside the wrapped traversal are optional. Its continuation belongs
+  ;; to the caller, so protect its failures and restore the caller's optional scope.
+  ;; For (nav/path (nav/maybe inner) suffix), absence inside inner is optional;
+  ;; absence in suffix is governed by the caller's scope. The terminal callback
+  ;; crosses this boundary even when inner delegates through another public call.
+  (define optional-focus
+    (lambda (run callback)
+      (let ([outer-optional? (current-optional-focus?)])
+        (parameterize ([current-optional-focus? #t])
+          (run (lambda (value)
+                 (parameterize ([current-optional-focus? outer-optional?])
+                   (nav-call-protected callback value))))))))
 
   #|proc:nav/pred
   The `nav/pred` procedure returns a navigator that focuses the current value
-  only when `predicate` returns true for that value.
+  only when `predicate` returns true for that value. Its signature is `(value) -> boolean`.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/pred
     (lambda (predicate)
@@ -43,28 +49,36 @@
               (make-conditional-nav
                'nav/pred '(nav/pred)
                (lambda (value emit)
-                 (when (predicate value)
+                 (when (nav-call-user predicate value)
                    (emit value)))
                (lambda (value update)
-                 (if (predicate value) (update value) value))
+                 (if (nav-call-user predicate value) (update value) value))
                (lambda (value update!)
-                 (if (predicate value) (update! value) value))
+                 (if (nav-call-user predicate value) (update! value) value))
                (lambda (value clear)
-                 (if (predicate value) (clear value) value))
+                 (if (nav-call-user predicate value) (clear value) value))
                (lambda (value clear!)
-                 (if (predicate value) (clear! value) value))))))
+                 (if (nav-call-user predicate value) (clear! value) value))))))
 
   #|proc:nav/not-pred
   The `nav/not-pred` procedure returns a navigator that focuses the current
   value only when `predicate` returns false for that value.
+  `predicate` has signature `(value) -> boolean`.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/not-pred
     (lambda (predicate)
       (pcheck ([procedure? predicate])
+              ;; nav/pred protects and checkpoints the whole negation callback.
+              ;; Nothing changes the evidence before predicate, so a second
+              ;; boundary would duplicate the same snapshot and error handler.
               (nav/pred (lambda (value) (not (predicate value)))))))
 
   #|proc:nav/maybe
-  The `nav/maybe` procedure wraps `path` so missing selections become no-ops.
+  The `nav/maybe` procedure wraps `path` so each absent or unsupported focus is skipped.
+  Successful sibling focuses are retained in selection, transformation, and clearing.
+  Errors from user callbacks or later path steps propagate normally. The result is a navigator.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/maybe
     (lambda (path)
@@ -72,23 +86,64 @@
         (make-conditional-nav
          'nav/maybe '(nav/maybe)
          (lambda (value emit)
-           (guard [exn [else (void)]]
-             (select-path compiled value emit)))
+           (optional-focus (lambda (callback) (select-path compiled value callback))
+                           emit))
          (lambda (value update)
-           (guard [exn [else value]]
-             (transform-path compiled update value)))
+           (optional-focus (lambda (callback) (transform-path compiled callback value))
+                           update))
          (lambda (value update!)
-           (guard [exn [else value]]
-             (transform-path! compiled update! value)))
+           (optional-focus (lambda (callback) (transform-path! compiled callback value))
+                           update!))
          (lambda (value clear)
-           (guard [exn [else value]]
-             (clear-path compiled value)))
+           (optional-focus (lambda (callback) (clear-path compiled callback value))
+                           clear))
          (lambda (value clear!)
-           (guard [exn [else value]]
-             (clear-path! compiled value)))))))
+           (optional-focus (lambda (callback) (clear-path! compiled callback value))
+                           clear!))))))
+
+  ;; Focus evidence belongs to this traversal, not to the reusable combinator.
+  ;; A returning outer callback establishes a wrapped-path focus, even when its
+  ;; suffix selects nothing. Set evidence after return so resuming inside that
+  ;; callback reasserts the focus after an enclosing checkpoint restores its prefix.
+  ;; Preserve any number of selection callback values; transforms still return one.
+  ;; Path/user-callback checkpoints restore the cells on completed resumption.
+  (define with-focus-evidence
+    (lambda (run callback finish)
+      (let ([evidence (list #f)] [scope (current-focus-scope)])
+        (call-with-values
+          (lambda ()
+            (parameterize ([current-focus-scope
+                            (cons (car scope) (cons evidence (cdr scope)))])
+              (run (lambda (value)
+                     (call-with-values
+                       (lambda () (callback value))
+                       (case-lambda
+                         ;; Transforms and ordinary callbacks return one value;
+                         ;; avoid allocating a results list on that common path.
+                         [(result) (set-car! evidence #t) result]
+                         [results
+                          (set-car! evidence #t)
+                          (apply values results)]))))))
+          (lambda results (finish (car evidence) results))))))
+
+  ;; Check during the operation itself so stateful callbacks run only once.
+  (define require-focus
+    (lambda (run callback)
+      (with-focus-evidence
+       run callback
+       (lambda (selected? results)
+         (unless selected?
+           (nav-error 'nav/must "required path selected no values"))
+         (apply values results)))))
 
   #|proc:nav/must
   The `nav/must` procedure wraps `path` so selecting no values signals an error.
+  Each operation checks its own traversal without a separate selection pass. Completed
+  continuation resumption restores focus evidence at path and user-callback boundaries.
+  Captures inside custom traversal/adapter or hash/equivalence/comparison callbacks after
+  earlier suffix calls, and backward resumption inside a still-live path/suffix, are unsupported.
+  The result is a navigator.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/must
     (lambda (path)
@@ -96,33 +151,20 @@
         (make-conditional-nav
          'nav/must '(nav/must)
          (lambda (value emit)
-           (let ([count 0])
-             (select-path compiled value
-                          (lambda (child)
-                            (set! count (+ count 1))
-                            (emit child)))
-             (when (= count 0)
-               (nav-error 'nav/must "required path selected no values"))))
+           (require-focus (lambda (callback) (select-path compiled value callback)) emit))
          (lambda (value update)
-           (if (path-selected? compiled value)
-               (transform-path compiled update value)
-               (nav-error 'nav/must "required path selected no values")))
+           (require-focus (lambda (callback) (transform-path compiled callback value)) update))
          (lambda (value update!)
-           (if (path-selected? compiled value)
-               (transform-path! compiled update! value)
-               (nav-error 'nav/must "required path selected no values")))
+           (require-focus (lambda (callback) (transform-path! compiled callback value)) update!))
          (lambda (value clear)
-           (if (path-selected? compiled value)
-               (clear-path compiled value)
-               (nav-error 'nav/must "required path selected no values")))
+           (require-focus (lambda (callback) (clear-path compiled callback value)) clear))
          (lambda (value clear!)
-           (if (path-selected? compiled value)
-               (clear-path! compiled value)
-               (nav-error 'nav/must "required path selected no values")))))))
+           (require-focus (lambda (callback) (clear-path! compiled callback value)) clear!))))))
 
   #|proc:nav/if
   The `nav/if` procedure chooses `then-path` when `test-path` selects at least
   one value from the current focus, otherwise it chooses `else-path`.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/if
     (lambda (test-path then-path else-path)
@@ -141,13 +183,14 @@
          (lambda (value update!)
            (transform-path! (choose value) update! value))
          (lambda (value clear)
-           (clear-path (choose value) value))
+           (clear-path (choose value) clear value))
          (lambda (value clear!)
-           (clear-path! (choose value) value))))))
+           (clear-path! (choose value) clear! value))))))
 
   #|proc:nav/when
   The `nav/when` procedure chooses `then-path` when `test-path` selects at
   least one value; otherwise it selects nothing.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/when
     (lambda (test-path then-path)
@@ -156,6 +199,7 @@
   #|proc:nav/unless
   The `nav/unless` procedure chooses `then-path` when `test-path` selects no
   values; otherwise it selects nothing.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/unless
     (lambda (test-path then-path)
@@ -164,6 +208,11 @@
   #|proc:nav/multi-path
   The `nav/multi-path` procedure returns a navigator that focuses all values
   selected by each path in `paths`, preserving path order.
+  Selection traverses each path against the input value. Transformations and clears
+  apply paths sequentially to the result of preceding paths, including in-place changes.
+  Overlapping paths may revisit changed values or encounter keys removed by an earlier path;
+  no snapshot of the original focuses is retained. Each path must support the requested mode.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/multi-path
     (lambda paths
@@ -178,39 +227,55 @@
                  value
                  (loop (cdr paths) (transform-path (car paths) update value)))))
          (lambda (value update!)
-           (for-each (lambda (path) (transform-path! path update! value)) compiled)
-           value)
-         (lambda (value clear)
            (let loop ([paths compiled] [value value])
              (if (null? paths)
                  value
-                 (loop (cdr paths) (clear-path (car paths) value)))))
+                 (loop (cdr paths) (transform-path! (car paths) update! value)))))
+         (lambda (value clear)
+           (let loop ([paths compiled] [value value])
+             (if (or (null? paths) (nav-missing? value))
+                 value
+                 (loop (cdr paths) (clear-path (car paths) clear value)))))
          (lambda (value clear!)
-           (for-each (lambda (path) (clear-path! path value)) compiled)
-           value)))))
+           (let loop ([paths compiled] [value value])
+             (if (or (null? paths) (nav-missing? value))
+                 value
+                 (loop (cdr paths) (clear-path! (car paths) clear! value)))))))))
+
+  ;; Try each path using the operation itself. Once a path yields a focus its
+  ;; continuation is used immediately; predicates/getters are not called again.
+  (define run-choice
+    (lambda (paths run callback value)
+      (let loop ([paths paths])
+        (if (null? paths)
+            value
+            (with-focus-evidence
+             (lambda (continue)
+               (optional-focus (lambda (emit) (run (car paths) emit value)) continue))
+             callback
+             (lambda (selected? results)
+               (if selected? (apply values results) (loop (cdr paths)))))))))
 
   #|proc:nav/choice
   The `nav/choice` procedure returns a navigator that uses the first path in
-  `paths` that selects at least one value.
+  `paths` that yields a focus during the current operation. Each candidate is traversed
+  once. Absent focuses are skipped; successful sibling focuses of the chosen path remain.
+  Candidate focus evidence follows the same bounded continuation rules as `nav/must`.
+  Kind: Reusable conditional step combinator.
   |#
   (define nav/choice
     (lambda paths
       (let ([compiled (map nav-compile-path paths)])
-        (define choose
-          (lambda (value)
-            (let loop ([paths compiled])
-              (cond [(null? paths) nav/none]
-                    [(path-selected? (car paths) value) (car paths)]
-                    [else (loop (cdr paths))]))))
         (make-conditional-nav
          'nav/choice '(nav/choice)
          (lambda (value emit)
-           (select-path (choose value) value emit))
+           (run-choice compiled (lambda (path emit value) (select-path path value emit))
+                       emit value))
          (lambda (value update)
-           (transform-path (choose value) update value))
+           (run-choice compiled transform-path update value))
          (lambda (value update!)
-           (transform-path! (choose value) update! value))
+           (run-choice compiled transform-path! update! value))
          (lambda (value clear)
-           (clear-path (choose value) value))
+           (run-choice compiled clear-path clear value))
          (lambda (value clear!)
-           (clear-path! (choose value) value)))))))
+           (run-choice compiled clear-path! clear! value)))))))

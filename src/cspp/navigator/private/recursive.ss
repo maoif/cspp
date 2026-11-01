@@ -6,37 +6,39 @@
           (cspp navigator private data)
           (cspp navigator private engine))
 
+  ;; Each lexical frame maps names to stable reference objects. Frames are captured
+  ;; while constructing nested groups, before recursive bodies are linked to targets.
+  (define current-recursive-construction-env (make-nav-scope-parameter '()))
+
   (define make-recursive-nav-group
     (lambda (bindings root)
       (let loop ([names (map car bindings)] [seen '()])
-        (cond [(null? names) (make-$recursive-nav-group bindings root)]
+        (cond [(null? names)
+               (make-$recursive-nav-group
+                (map (lambda (binding) (cons (car binding) (nav-compile-path (cdr binding))))
+                     bindings)
+                (nav-compile-path root) (current-recursive-construction-env))]
               [(memq (car names) seen)
                (nav-error 'nav/letrec "duplicate recursive navigator name: ~s" (car names))]
               [else (loop (cdr names) (cons (car names) seen))]))))
 
-  (define emit-children
-    (lambda (value emit)
-      (cond [(and (pair? value) (not (alist? value)))
-             (when (list? value)
-               (for-each emit value))]
-            [(indexed-supported? value)
-             (let ([len (indexed-length value)])
-               (let loop ([i 0])
-                 (when (< i len)
-                   (emit (indexed-ref/missing value i))
-                   (loop (+ i 1)))))]
-            [(keyed-values value)
-             => (lambda (values) (for-each emit values))]
-            [else (void)])))
+  ;; Macro references are distinct objects and retain the group that defines them.
+  ;; Public symbolic references still resolve by name within an active group.
+  (define bind-recursive-reference!
+    (lambda (reference group)
+      ($nav-ref-target-set!
+       reference
+       (cons (cdr (assq ($nav-ref-name reference) ($recursive-nav-group-bindings group)))
+             ($recursive-nav-group-env group)))))
 
   (define leaf?
     (lambda (value)
-      (or (and (pair? value) (not (list? value)))
-          ;; Use a one-shot continuation to stop after discovering one child.
-          (call/1cc
-           (lambda (return)
-             (emit-children value (lambda (child) (return #f)))
-             #t)))))
+      ;; Use the same adapter dispatch as traversal, including registered pairs.
+      ;; A one-shot continuation stops after discovering one child.
+      (call/1cc
+       (lambda (return)
+         (emit-children value (lambda (child) (return #f)))
+         #t))))
 
   (define emit-current-focus
     (lambda (value emit)
@@ -48,13 +50,6 @@
                            (emit child))))
         (unless emitted?
           (emit value)))))
-
-  (define remove-missing-values
-    (lambda (items)
-      (let loop ([items items])
-        (cond [(null? items) '()]
-              [(nav-missing? (car items)) (loop (cdr items))]
-              [else (cons (car items) (loop (cdr items)))]))))
 
   (define make-tree-nav
     (lambda (name metadata select-proc transform-proc transform!-proc clear-proc clear!-proc)
@@ -84,9 +79,13 @@
         (nav-error 'nav-clearval! "recursive navigator ~s does not support clear! yet" name))))
 
   #|proc:nav/children
-  The `nav/children` navigator focuses immediate children of supported nested
-  values when composed with later path steps. As a final selection step, it
-  focuses collection descendants in tree order.
+  The `nav/children` navigator focuses immediate children of supported nested values,
+  in container traversal order. Selection, transformation, and clearing use the same
+  child locations, including when this is the final path step. Appending `nav/stay`
+  does not change the selection. Built-in and registered indexed/keyed containers are
+  supported; other values have no children. Use `nav/leaves` or `nav/walker` for recursive
+  selection, or compose this step with `nav/rec` / `nav/letrec` for recursive updates.
+  Kind: Reusable tree traversal step.
   |#
   (define nav/children
     (make-tree-nav
@@ -94,97 +93,31 @@
      (lambda (value emit)
        (emit-children value emit))
      (lambda (value update)
-       (cond [(and (pair? value) (list? value))
-              (remove-missing-values (map update value))]
-             [(indexed-supported? value)
-              (let ([len (indexed-length value)])
-                (let loop ([i 0] [value value])
-                  (if (= i len)
-                      value
-                      (let* ([old (indexed-ref/missing value i)]
-                             [new-value (update old)])
-                        (loop (+ i 1)
-                              (if (nav-missing? new-value)
-                                  value
-                                  (indexed-set value i new-value)))))))]
-             [(keyed-entries value)
-              => (lambda (entries)
-                   (let loop ([entries entries] [value value])
-                     (if (null? entries)
-                         value
-                         (let ([new-value (update (cdar entries))])
-                           (loop (cdr entries)
-                                 (if (nav-missing? new-value)
-                                     (keyed-delete value (caar entries))
-                                     (keyed-set value (caar entries) new-value)))))))]
+       (cond [(indexed-supported? value)
+              (indexed-transform value (index-list (indexed-length value)) update)]
+             [(keyed-supported? value) (keyed-update-values value update)]
              [else value]))
      (lambda (value update!)
-       (cond [(and (pair? value) (list? value))
-              (let loop ([xs value])
-                (unless (null? xs)
-                  (let ([new-value (update! (car xs))])
-                    (unless (nav-missing? new-value)
-                      (set-car! xs new-value)))
-                  (loop (cdr xs))))
-              value]
-             [(indexed-supported? value)
-              (let ([len (indexed-length value)])
-                (let loop ([i 0])
-                  (when (< i len)
-                    (let ([new-value (update! (indexed-ref/missing value i))])
-                      (unless (nav-missing? new-value)
-                        (indexed-set! value i new-value)))
-                    (loop (+ i 1)))))
-              value]
-             [(keyed-entries value)
-              => (lambda (entries)
-                   (for-each
-                    (lambda (entry)
-                      (let ([new-value (update! (cdr entry))])
-                        (if (nav-missing? new-value)
-                            (keyed-delete! value (car entry))
-                            (keyed-set! value (car entry) new-value))))
-                    entries)
-                   value)]
+       (cond [(indexed-supported? value)
+              (indexed-transform! value (index-list (indexed-length value)) update!)]
+             [(keyed-supported? value) (keyed-update-values! value update!)]
              [else value]))
      (lambda (value clear)
-       (cond [(and (pair? value) (list? value))
-              (remove-missing-values
-               (map clear value))]
-             [(indexed-supported? value) value]
-             [(keyed-entries value)
-              => (lambda (entries)
-                   (let loop ([entries entries] [value value])
-                     (if (null? entries)
-                         value
-                         (loop (cdr entries)
-                               (if (nav-missing? (clear (cdar entries)))
-                                   (keyed-delete value (caar entries))
-                                   value)))))]
+       (cond [(indexed-supported? value)
+              (indexed-clear-values value (index-list (indexed-length value)) clear)]
+             [(keyed-supported? value) (keyed-update-values value clear)]
              [else value]))
      (lambda (value clear!)
-       (cond [(and (pair? value) (list? value))
-              (for-each clear! value)
-              value]
-             [(indexed-supported? value)
-              (let ([len (indexed-length value)])
-                (let loop ([i 0])
-                  (when (< i len)
-                    (clear! (indexed-ref/missing value i))
-                    (loop (+ i 1)))))
-              value]
-             [(keyed-entries value)
-              => (lambda (entries)
-                   (for-each
-                    (lambda (entry)
-                      (when (nav-missing? (clear! (cdr entry)))
-                        (keyed-delete! value (car entry))))
-                    entries)
-                   value)]
+       (cond [(indexed-supported? value)
+              (indexed-clear-values! value (index-list (indexed-length value)) clear!)]
+             [(keyed-supported? value) (keyed-update-values! value clear!)]
              [else value]))))
 
   #|proc:nav/leaves
   The `nav/leaves` navigator focuses nested values with no supported children.
+  It supports selection only; both transformation modes and clearing are unsupported.
+  Use `nav/rec` / `nav/letrec` with `nav/children` to define recursive updates.
+  Kind: Reusable tree traversal step.
   |#
   (define nav/leaves
     (make-tree-nav
@@ -202,6 +135,9 @@
   #|proc:nav/walker
   The `nav/walker` procedure returns a navigator that recursively walks nested
   values and focuses every value for which `predicate` returns true.
+  `predicate` has signature `(value) -> boolean`. The returned step supports selection;
+  transformation and clearing are unsupported.
+  Kind: Reusable tree traversal step constructor.
   |#
   (define nav/walker
     (lambda (predicate)
@@ -210,7 +146,7 @@
               'nav/walker '(nav/walker)
               (lambda (value emit)
                 (let walk ([value value])
-                  (when (predicate value)
+                  (when (nav-call-user predicate value)
                     (emit value))
                   (emit-children value walk)))
               (tree-unsupported-transform 'nav/walker)
@@ -219,8 +155,11 @@
               (tree-unsupported-clear! 'nav/walker)))))
 
   #|proc:nav/before
-  The `nav/before` procedure returns a navigator that focuses the current value
-  before values selected by `path`.
+  The `nav/before` procedure returns a navigator that focuses immediate leaf children
+  of the current value before values selected by `path`. If no immediate child is a leaf,
+  it focuses the current value itself first.
+  The result supports selection only; both transformation modes and clearing are unsupported.
+  Kind: Reusable tree traversal step constructor.
   |#
   (define nav/before
     (lambda (path)
@@ -236,8 +175,11 @@
          (tree-unsupported-clear! 'nav/before)))))
 
   #|proc:nav/after
-  The `nav/after` procedure returns a navigator that focuses values selected by
-  `path` before focusing the current value.
+  The `nav/after` procedure returns a navigator that focuses values selected by `path`
+  before focusing immediate leaf children of the current value. If no immediate child is
+  a leaf, it focuses the current value itself last.
+  The result supports selection only; both transformation modes and clearing are unsupported.
+  Kind: Reusable tree traversal step constructor.
   |#
   (define nav/after
     (lambda (path)
@@ -255,6 +197,7 @@
   #|macro:nav/rec
   The `nav/rec` macro creates a recursive navigator named by identifier `name`
   whose body is `body`.
+  Kind: Recursive builder.
   |#
   (define-syntax nav/rec
     (lambda (stx)
@@ -266,15 +209,23 @@
 
   #|macro:nav/letrec
   The `nav/letrec` macro creates a mutually recursive navigator group from
-  bindings and returns `root`.
+  bindings and returns a navigator group rooted at `root`. Each identifier names a stable
+  lexical reference. Construction links private references before returning a reusable group;
+  independent constructions in threads/fibers do not share a construction frame.
+  Nested groups retain their defining bindings, and list-valued bodies
+  are compiled at construction so subsequent list mutation cannot change the group.
+  Kind: Recursive builder.
   |#
   (define-syntax nav/letrec
     (lambda (stx)
       (syntax-case stx ()
         [(_ ([name body] ...) root)
          (andmap identifier? #'(name ...))
-         #'(let-syntax ([name (identifier-syntax (make-nav-ref 'name))] ...)
-             (make-recursive-nav-group
-              (list (cons 'name body) ...)
-              root))]
+         #'(let ([name (make-nav-ref 'name)] ...)
+             (parameterize ([current-recursive-construction-env
+                             (cons (list (cons 'name name) ...)
+                                   (current-recursive-construction-env))])
+               (let ([group (make-recursive-nav-group (list (cons 'name body) ...) root)])
+                 (bind-recursive-reference! name group) ...
+                 group)))]
         [_ (syntax-error stx "invalid nav/letrec form:")]))))

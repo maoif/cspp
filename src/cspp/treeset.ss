@@ -1110,8 +1110,7 @@
   (nav-register-set!
    treeset? treeset->list
    (lambda (ts members)
-     (let ([copy (treeset-map (lambda (item) item) ts)])
-       (treeset-clear! copy)
+     (let ([copy (make-treeset-like ts)])
        (for-each (lambda (member) (treeset-add! copy member)) members)
        copy))
    (lambda (ts members)
