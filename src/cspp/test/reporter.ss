@@ -6,7 +6,7 @@
           (cspp utils)
           (cspp test assertion)
           (cspp test descriptor)
-          (cspp test private common))
+          (cspp test common))
 
   (define $count-status
     (lambda (status results)

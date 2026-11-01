@@ -3,7 +3,7 @@
   (export test-suite test-case test-expand test-compile test)
   (import (cspp chez)
           (cspp test descriptor)
-          (for (cspp test private common) expand))
+          (for (cspp test common) expand))
 
   (define $input-values
     (lambda (parameters names)

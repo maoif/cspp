@@ -23,7 +23,7 @@
           test-summary-xfail test-summary-xpass test-summary-results)
   (import (cspp chez)
           (cspp utils)
-          (cspp test private common))
+          (cspp test common))
 
   (define-record-type ($test-descriptor $make-test-descriptor $test-descriptor?)
     (fields kind name phase metadata children body prepare))

@@ -1,5 +1,5 @@
 #!chezscheme
-(library (cspp test private common)
+(library (cspp test common)
   (export test-reporter? make-test-reporter test-reporter-write
           test-make-textual-reporter test-check-reporter-output
           test-alist-ref test-alist-set test-remove-key test-metadata-ref

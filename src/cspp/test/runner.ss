@@ -6,7 +6,7 @@
           (cspp utils)
           (cspp test assertion)
           (cspp test capture)
-          (cspp test private common)
+          (cspp test common)
           (cspp test descriptor)
           (cspp test reporter))
 
