@@ -69,7 +69,9 @@ worker measurements and update counters in the controlling body after joining th
 
 Test fixture initializers, `:before`, `:after`, case policy predicates, and `:condition-handler`
 run synchronously in the controlling thread. The custom condition handler applies only to
-conditions from the tested runtime, expansion, or compilation body. Preparation, fixture,
+conditions from the tested runtime, expansion, or compilation body. A supplied `:raises`
+predicate controls exception matching; missing or rejected conditions and predicate errors
+bypass the custom handler. Preparation, fixture,
 `:before`, and `:after` failures use the normal failure policy and cannot become handled passes.
 Allowed lifecycle warnings resume their hooks independently of the body handler.
 An unhandled body failure takes precedence over a cleanup failure. When the custom handler

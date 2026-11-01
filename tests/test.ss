@@ -2351,3 +2351,54 @@
            [result (car (test-run (list descriptor) (test-silent-config)))])
       (and (= calls 1) (eq? (test-result-status result) 'errored)
            (eq? (test-result-condition result) #f)))))
+
+(mat test-expected-condition-checks-bypass-body-handlers
+  ;; Error: missing or rejected exceptions and broken expectation predicates cannot be handled.
+  (for-all
+    (lambda (phase)
+      (for-all
+        (lambda (mode)
+          (let ([calls 0]
+                [predicate-error (case mode
+                                   [(false-predicate-error) #f]
+                                   [(predicate-warning) (condition (make-warning)
+                                                        (make-message-condition "predicate warning"))]
+                                   [else (condition (make-error)
+                                            (make-message-condition "predicate failed"))])])
+            (let* ([metadata
+                    `((raises . ,(case mode
+                                   [(missing) error?]
+                                   [(rejected) warning?]
+                                   [else (lambda (raised) (raise predicate-error))]))
+                      (condition-handler . ,(lambda (raised) (set! calls (+ calls 1)) 'handled)))]
+                   [descriptor
+                    (case phase
+                      [(runtime)
+                       (make-test-case 'expectation-boundary
+                         (lambda ()
+                           (display "body output")
+                           (unless (eq? mode 'missing) (error 'tested-body "body error")))
+                         (cons '(capture . stdout) metadata))]
+                      [(expand)
+                       (make-test-expand 'expectation-boundary
+                         (if (eq? mode 'missing) '(let ([value 1]) value)
+                             '(let-syntax ([broken (lambda (stx)
+                                                    (error 'tested-body "body error"))])
+                                (broken)))
+                         metadata)]
+                      [(compile)
+                       (make-test-compile 'expectation-boundary
+                         (if (eq? mode 'missing) '((define value 1))
+                             '((eval-when (compile) (error 'tested-body "body error"))))
+                         metadata)])]
+                   [result (car (test-run (list descriptor) (test-silent-config)))])
+              (and (= calls 0)
+                   (if (memq mode '(missing rejected))
+                       (and (eq? (test-result-status result) 'failed)
+                            (test-failure? (test-result-condition result)))
+                       (and (eq? (test-result-status result) 'errored)
+                            (eq? (test-result-condition result) predicate-error)))
+                   (or (not (eq? phase 'runtime))
+                       (string=? (test-result-stdout result) "body output"))))))
+        '(missing rejected predicate-error false-predicate-error predicate-warning)))
+    '(runtime expand compile)))

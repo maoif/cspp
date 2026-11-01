@@ -236,11 +236,12 @@ association-list filters as `test-select`.
           (lambda ()
             (guard (condition
                     [(null? failure) (raise condition)]
-                    [($body-condition? (car failure))
+                    [(and ($case-outcome? (car failure))
+                          (eq? ($case-outcome-kind (car failure)) 'body-condition))
                      ;; Body classification happens after capture. Keep cleanup available
                      ;; in case the custom handler accepts the primary condition.
-                     (raise ($make-body-condition
-                              ($body-condition-condition (car failure)) (list condition)))]
+                     (raise ($make-case-outcome 'body-condition
+                              ($case-outcome-condition (car failure)) (list condition)))]
                     [else (void)])
               ($run-allowing-warnings metadata
                 (lambda ()
@@ -260,14 +261,14 @@ association-list filters as `test-select`.
        (test-concrete-case-parameters concrete-case)
        (test-metadata-ref (test-concrete-case-metadata concrete-case) 'source #f))))
 
-  ;; Tag body conditions while they unwind through cleanup. Keep the original raised
-  ;; object intact, and distinguish a later preparation or cleanup condition from it.
-  (define-record-type ($body-condition $make-body-condition $body-condition?)
-    (fields condition cleanup))
+  ;; Preserve condition origin and the original raised object through cleanup and capture.
+  ;; A cleanup list distinguishes an absent secondary condition from a raised #f.
+  (define-record-type ($case-outcome $make-case-outcome $case-outcome?)
+    (fields kind condition cleanup))
 
   (define $run-tested-body
     (lambda (metadata thunk)
-      (guard (condition [else (raise ($make-body-condition condition '()))])
+      (guard (condition [else (raise ($make-case-outcome 'body-condition condition '()))])
         (if (test-metadata-ref metadata 'condition-handler #f)
             (thunk)
             ($run-allowing-warnings metadata thunk)))))
@@ -345,26 +346,30 @@ association-list filters as `test-select`.
   (define $run-with-expected-condition
     (lambda (metadata thunk)
       (let ([predicate ($expected-condition-predicate metadata)])
-        ($run-tested-body metadata
-          (lambda ()
-            (if predicate
-                (let ([matched?
-                       ;; Escape on a match without resuming the body after an expected warning.
-                       (call/1cc
-                        (lambda (matched)
-                          (with-exception-handler
-                            (lambda (condition)
-                              (cond
-                               [(predicate condition) (matched #t)]
-                               [(and (not (test-metadata-ref metadata 'condition-handler #f))
-                                     ($allowed-warning? metadata condition))
-                                (void)]
-                               [else
-                                (test-fail "expected matching condition" predicate condition)]))
-                            (lambda () (thunk) #f))))])
-                  (unless matched?
-                    (test-fail "expected matching condition" predicate 'no-condition)))
-                (thunk)))))))
+        (if predicate
+            ;; Expectation checks and predicate callbacks are runner policy, so their
+            ;; failures must not be tagged as conditions for the custom body handler.
+            (let ([matched?
+                   ;; Escape on a match without resuming the body after an expected warning.
+                   (call/1cc
+                    (lambda (matched)
+                      (with-exception-handler
+                        (lambda (condition)
+                          (cond
+                           [(guard (raised
+                                    [else (raise ($make-case-outcome
+                                                   'policy-condition raised '()))])
+                              (predicate condition))
+                            (matched #t)]
+                           [(and (not (test-metadata-ref metadata 'condition-handler #f))
+                                 ($allowed-warning? metadata condition))
+                            (void)]
+                           [else
+                            (test-fail "expected matching condition" predicate condition)]))
+                        (lambda () (thunk) #f))))])
+              (unless matched?
+                (test-fail "expected matching condition" predicate 'no-condition)))
+            ($run-tested-body metadata thunk)))))
 
   (define $run-phase-body
     (lambda (concrete-case)
@@ -434,12 +439,10 @@ association-list filters as `test-select`.
                          (test-metadata-ref metadata 'capture #f)
                          (lambda ()
                            (guard (condition
-                                   [($body-condition? condition)
-                                    (list 'body-condition ($body-condition-condition condition)
-                                          ($body-condition-cleanup condition))]
-                                   [else (list 'condition condition)])
+                                   [($case-outcome? condition) condition]
+                                   [else ($make-case-outcome 'condition condition '())])
                              ($run-phase-body concrete-case)
-                             '(success)))))
+                             ($make-case-outcome 'success #f '())))))
                       list)]
                    [outcome (car (car captured))]
                    [stdout (cadr captured)]
@@ -449,13 +452,14 @@ association-list filters as `test-select`.
                (guard (condition
                        [else ($case-result concrete-case 'errored "unexpected policy condition"
                                            condition stdout stderr)])
-                 (let* ([raised? (not (eq? (car outcome) 'success))]
-                        [condition (and raised? (cadr outcome))]
-                        [cleanup (if (eq? (car outcome) 'body-condition) (caddr outcome) '())]
-                        [status (if raised?
-                                    ($classify-condition metadata condition
-                                                         (eq? (car outcome) 'body-condition))
-                                    'passed)])
+                 (let* ([kind ($case-outcome-kind outcome)]
+                        [condition ($case-outcome-condition outcome)]
+                        [cleanup ($case-outcome-cleanup outcome)]
+                        [status (case kind
+                                  [(success) 'passed]
+                                  [(policy-condition) 'errored]
+                                  [else ($classify-condition metadata condition
+                                          (eq? kind 'body-condition))])])
                    (when (and (eq? status 'passed) (pair? cleanup))
                      (set! condition (car cleanup))
                      (set! status ($classify-condition metadata condition #f)))

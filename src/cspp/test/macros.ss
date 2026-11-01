@@ -377,6 +377,8 @@
   The handler applies to tested runtime, expansion, or compilation conditions only;
   preparation and fixture lifecycle failures follow the normal failure policy.
   Allowed fixture warnings resume independently of the custom body handler.
+  With `:raises`, expected-condition matching replaces custom body handling. Missing or rejected
+  conditions and predicate errors cannot be accepted by the custom handler.
   Captured output expectations are checked separately after successful or handled bodies;
   their failures do not invoke the custom handler.
   Parameters and fixtures are lexical variables around the case body. Parameters are also
