@@ -21,6 +21,7 @@
           benchmark-config-min-time benchmark-config-max-iterations
           benchmark-config-output benchmark-config-filter
           benchmark-config-reporter benchmark-config-cost-center?
+          benchmark-config-stop-on-error?
 
           benchmark-run benchmark-run-one benchmark-run-suite benchmark-select
           benchmark-expand benchmark-summarize
@@ -1734,6 +1735,15 @@ cost-center measurement is enabled in runner `config`.
     (lambda (config)
       (pcheck ([benchmark-config? config])
               ($benchmark-config-cost-center? config))))
+
+  #|proc:benchmark-config-stop-on-error?
+  The `benchmark-config-stop-on-error?` procedure returns whether runner `config`
+  stops after the first captured benchmark error. The return value is a Boolean.
+  |#
+  (define benchmark-config-stop-on-error?
+    (lambda (config)
+      (pcheck ([benchmark-config? config])
+              ($benchmark-config-stop-on-error? config))))
 
   #|proc:default-benchmark-config
   The `default-benchmark-config` procedure returns a fresh default runner

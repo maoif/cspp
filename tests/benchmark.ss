@@ -2850,3 +2850,23 @@
                   (environment '(cspp)))
                 (void))
            (eq? before (benchmark-registry-benchmarks (current-benchmark-registry)))))))
+
+(mat benchmark-config-exposes-stopping-policy
+  (guard (raised [else #f])
+    (eval
+      '(let* ([defaults (default-benchmark-config)]
+              [stopping (benchmark-config-with defaults '((stop-on-error? . #t)))]
+              [running (benchmark-config-with stopping
+                         '((stop-on-error? . #f) (cost-center? . #t)))]
+              [constructed (make-benchmark-config 0 1 0 1 #f #f #f #f #t)])
+         (and (not (benchmark-config-stop-on-error? defaults))
+              (benchmark-config-stop-on-error? stopping)
+              (not (benchmark-config-stop-on-error? running))
+              (benchmark-config-stop-on-error? constructed)))
+      (environment '(cspp))))
+
+  ;; Error: the public reader must reject non-config arguments before accessing record fields.
+  (guard (raised [else (and (condition? raised) (who-condition? raised)
+                           (eq? (condition-who raised) 'pcheck))])
+    (eval '(benchmark-config-stop-on-error? #f) (environment '(cspp)))
+    #f))
