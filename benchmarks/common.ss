@@ -190,8 +190,7 @@
             (benchmark-write-json `((metadata . ,metadata) (results . ,records)) out)
             (newline out)]
            [(string=? format-name "datum")
-            (write `((metadata . ,metadata) (results . ,records)) out)
-            (newline out)]
+            (pretty-print `((metadata . ,metadata) (results . ,records)) out)]
            [else
             (display "name,args,summary,samples,metadata,error\n" out)
             (for-each
