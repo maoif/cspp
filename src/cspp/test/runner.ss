@@ -214,11 +214,11 @@ association-list filters as `test-select`.
 
   (define $run-body-with-fixtures
     (lambda (metadata body parameters)
-      (let ([fixture-values '()] [failed? #f])
+      (let ([fixture-values '()] [failure '()])
         (dynamic-wind
           (lambda () (void))
           (lambda ()
-            (guard (condition [else (set! failed? #t) (raise condition)])
+            (guard (condition [else (set! failure (list condition)) (raise condition)])
               (let ([inputs
                      ($run-allowing-warnings metadata
                        (lambda ()
@@ -234,7 +234,14 @@ association-list filters as `test-select`.
                            (append fixtures parameters))))])
                 (body inputs))))
           (lambda ()
-            (guard (condition [else (unless failed? (raise condition))])
+            (guard (condition
+                    [(null? failure) (raise condition)]
+                    [($body-condition? (car failure))
+                     ;; Body classification happens after capture. Keep cleanup available
+                     ;; in case the custom handler accepts the primary condition.
+                     (raise ($make-body-condition
+                              ($body-condition-condition (car failure)) (list condition)))]
+                    [else (void)])
               ($run-allowing-warnings metadata
                 (lambda ()
                   (let ([after (test-metadata-ref metadata 'after #f)])
@@ -256,11 +263,11 @@ association-list filters as `test-select`.
   ;; Tag body conditions while they unwind through cleanup. Keep the original raised
   ;; object intact, and distinguish a later preparation or cleanup condition from it.
   (define-record-type ($body-condition $make-body-condition $body-condition?)
-    (fields condition))
+    (fields condition cleanup))
 
   (define $run-tested-body
     (lambda (metadata thunk)
-      (guard (condition [else (raise ($make-body-condition condition))])
+      (guard (condition [else (raise ($make-body-condition condition '()))])
         (if (test-metadata-ref metadata 'condition-handler #f)
             (thunk)
             ($run-allowing-warnings metadata thunk)))))
@@ -428,7 +435,8 @@ association-list filters as `test-select`.
                          (lambda ()
                            (guard (condition
                                    [($body-condition? condition)
-                                    (list 'body-condition ($body-condition-condition condition))]
+                                    (list 'body-condition ($body-condition-condition condition)
+                                          ($body-condition-cleanup condition))]
                                    [else (list 'condition condition)])
                              ($run-phase-body concrete-case)
                              '(success)))))
@@ -443,10 +451,14 @@ association-list filters as `test-select`.
                                            condition stdout stderr)])
                  (let* ([raised? (not (eq? (car outcome) 'success))]
                         [condition (and raised? (cadr outcome))]
+                        [cleanup (if (eq? (car outcome) 'body-condition) (caddr outcome) '())]
                         [status (if raised?
                                     ($classify-condition metadata condition
                                                          (eq? (car outcome) 'body-condition))
                                     'passed)])
+                   (when (and (eq? status 'passed) (pair? cleanup))
+                     (set! condition (car cleanup))
+                     (set! status ($classify-condition metadata condition #f)))
                    (if (eq? status 'passed)
                        ($success-result concrete-case metadata condition
                                         xfail? xfail-message stdout stderr)

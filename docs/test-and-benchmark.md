@@ -72,6 +72,8 @@ run synchronously in the controlling thread. The custom condition handler applie
 conditions from the tested runtime, expansion, or compilation body. Preparation, fixture,
 `:before`, and `:after` failures use the normal failure policy and cannot become handled passes.
 Allowed lifecycle warnings resume their hooks independently of the body handler.
+An unhandled body failure takes precedence over a cleanup failure. When the custom handler
+accepts the body condition, a separate cleanup failure still determines the case outcome.
 Test cleanup receives successfully acquired fixtures even when a later initializer or `:before`
 fails. A benchmark sample's teardown runs after the body, even without setup. If a supplied setup
 raises, setup must release its own partial resources and sample teardown is skipped.

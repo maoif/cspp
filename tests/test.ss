@@ -2317,3 +2317,37 @@
                 (condition-handler . ,(lambda (raised) (set! calls (+ calls 1)) 'handled))))]
            [result (car (test-run (list descriptor) (test-silent-config)))])
       (and (eq? (test-result-status result) 'errored) (= calls 0) (not body-ran?)))))
+
+(mat test-handled-body-retains-cleanup-failure
+  ;; Error: accepting the body exception must not hide a separate cleanup failure.
+  (for-all
+    (lambda (row)
+      (let ([calls 0]
+            [primary (make-test-failure "body failed" #t #f)]
+            [cleanup (make-test-failure "cleanup failed" #t #f)])
+        (let* ([descriptor
+                (make-test-case 'body-and-cleanup
+                  (lambda () (display "body output") (raise primary))
+                  `((capture . stdout)
+                    (after . ,(lambda (fixtures) (raise cleanup)))
+                    (condition-handler . ,(lambda (raised)
+                                            (set! calls (+ calls 1))
+                                            (test-eq raised primary)
+                                            (car row)))))]
+               [result (car (test-run (list descriptor) (test-silent-config)))])
+          (and (= calls 1)
+               (eq? (test-result-status result) (cadr row))
+               (eq? (test-result-condition result)
+                    (if (eq? (car row) 'handled) cleanup primary))
+               (string=? (test-result-stdout result) "body output")))))
+    '((handled failed) (failed failed) (errored errored)))
+
+  ;; Error: false raised objects and cleanup errors must remain distinguishable from success.
+  (let ([calls 0])
+    (let* ([descriptor
+            (make-test-case 'false-body-and-cleanup (lambda () (raise #f))
+              `((after . ,(lambda (fixtures) (raise #f)))
+                (condition-handler . ,(lambda (raised) (set! calls (+ calls 1)) 'handled))))]
+           [result (car (test-run (list descriptor) (test-silent-config)))])
+      (and (= calls 1) (eq? (test-result-status result) 'errored)
+           (eq? (test-result-condition result) #f)))))
