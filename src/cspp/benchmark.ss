@@ -1172,6 +1172,19 @@ traverses their Cartesian product incrementally, preserving option and row order
                                ($option-ref options 'suite #f)
                                ($option-ref options 'template-args '()))))))
 
+  (define $benchmark-with-name
+    (lambda (benchmark name)
+      ;; Rename the validated descriptor without reinterpreting caller-owned source options.
+      ($mk-benchmark name
+                     ($benchmark-body benchmark)
+                     ($benchmark-options benchmark)
+                     ($benchmark-axes benchmark)
+                     ($benchmark-setup benchmark)
+                     ($benchmark-teardown benchmark)
+                     ($benchmark-fixture-ref benchmark)
+                     ($benchmark-suite-ref benchmark)
+                     ($benchmark-template-args benchmark))))
+
   #|proc:benchmark-register!
 The `benchmark-register!` procedure adds `benchmark` to `registry`. `registry`
 must be a benchmark registry, usually `(current-benchmark-registry)`.
@@ -2142,6 +2155,8 @@ its row and returning a benchmark descriptor. Each row has syntax `[label value 
 `label` must be an identifier and is passed as a quoted symbol. The concrete name is
 `template/label`. Invalid syntax is rejected before any template is called, and invalid
 return values are rejected before record access or registration.
+Renaming preserves the returned descriptor's validated argument axes, hooks, and metadata;
+source option lists are not normalized again. Mutable argument values retain their identity.
 |#
   (define-syntax instantiate-benchmark-template
     (lambda (stx)
@@ -2161,11 +2176,7 @@ return values are rejected before record access or registration.
                  (unless (benchmark? benchmark)
                    (errorf 'instantiate-benchmark-template
                            "template must return a benchmark descriptor: ~s" benchmark))
-                 (let ([renamed (make-benchmark ($symbol-append 'template 'label)
-                                                ($benchmark-body benchmark)
-                                                ($replace-option ($benchmark-options benchmark)
-                                                                 'template-args
-                                                                 ($benchmark-template-args benchmark)))])
+                 (let ([renamed ($benchmark-with-name benchmark ($symbol-append 'template 'label))])
                    (benchmark-register! (current-benchmark-registry) renamed)))
                ...))]
         [_ (syntax-error stx "invalid benchmark template instantiation")])))

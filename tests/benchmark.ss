@@ -2750,3 +2750,70 @@
           (benchmark-load-baseline path)
           #f))
       (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat benchmark-template-preserves-argument-snapshots
+  ;; Error: renaming must retain validated rows instead of rereading caller-owned option lists.
+  (let* ([payload (vector 'resource)]
+         [names (list 'number 'payload)]
+         [row (list 7 payload)]
+         [descriptor (make-benchmark 'snapshot (lambda (state number payload) (void))
+                       (list (cons 'args (list names row))
+                             '(template-args . ((kind . original)))))]
+         [calls 0]
+         [factory (lambda (label) (set! calls (+ calls 1)) descriptor)]
+         [changed (begin (set-car! names 'changed) (set-car! row 99))])
+    (instantiate-benchmark-template factory ([snapshot]))
+    (let* ([renamed (car (reverse (benchmark-registry-benchmarks
+                                   (current-benchmark-registry))))]
+           [original-state (caar (benchmark-expand descriptor (benchmark-test-config)))]
+           [renamed-state (caar (benchmark-expand renamed (benchmark-test-config)))])
+      (and (= calls 1)
+           (eq? (benchmark-name renamed) 'factory/snapshot)
+           (equal? (benchmark-state-args original-state) (benchmark-state-args renamed-state))
+           (eq? (benchmark-state-arg renamed-state 'payload) payload)
+           (= (benchmark-state-arg renamed-state 'number) 7)
+           (equal? (benchmark-state-template-args renamed-state) '((kind . original))))))
+
+  ;; Error: a previously validated range must not be regenerated from a mutated source spec.
+  (for-all
+    (lambda (key)
+      (let* ([spec (list 'number 1 4 2)]
+             [descriptor (make-benchmark 'range-snapshot (lambda (state number) (void))
+                           (list (cons key spec)))]
+             [factory (lambda (label) descriptor)]
+             [changed (set-car! (cdddr spec) 0)])
+        (instantiate-benchmark-template factory ([range]))
+        (let ([renamed (car (reverse (benchmark-registry-benchmarks
+                                      (current-benchmark-registry))))])
+          (equal? (map (lambda (expanded) (benchmark-state-args (car expanded)))
+                       (benchmark-expand descriptor (benchmark-test-config)))
+                  (map (lambda (expanded) (benchmark-state-args (car expanded)))
+                       (benchmark-expand renamed (benchmark-test-config)))))))
+    '(arg-range dense-arg-range)))
+
+(mat benchmark-template-preserves-validated-hooks
+  ;; Error: changes to source hook options must not replace the descriptor's validated hooks.
+  (let* ([events '()]
+         [setup (cons 'setup (lambda (state) 'original-resource))]
+         [teardown (cons 'teardown
+                     (lambda (state resource)
+                       (set! events (cons (list 'cleanup resource) events))))]
+         [descriptor
+          (make-benchmark 'hook-snapshot
+            (lambda (state resource)
+              (set! events (cons (list (benchmark-state-suite state) resource) events)))
+            (list setup teardown '(suite . original-suite) '(samples . 1)))]
+         [factory (lambda (label) descriptor)]
+         [changed (begin (set-cdr! setup (lambda (state) 'changed-resource))
+                         (set-cdr! teardown (lambda (state resource)
+                                             (set! events (cons 'changed-cleanup events)))))])
+    (instantiate-benchmark-template factory ([hooks]))
+    (let* ([renamed (car (reverse (benchmark-registry-benchmarks
+                                   (current-benchmark-registry))))]
+           [config (benchmark-config-with (default-benchmark-config)
+                     '((warmup . 0) (min-time . 0) (max-iterations . 1)
+                       (reporter . #f) (output . #f)))]
+           [results (benchmark-run (list descriptor renamed) config)])
+      (and (for-all (lambda (result) (not (benchmark-result-error result))) results)
+           (equal? events '((cleanup original-resource) (original-suite original-resource)
+                            (cleanup original-resource) (original-suite original-resource)))))))
