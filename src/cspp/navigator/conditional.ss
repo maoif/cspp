@@ -1,11 +1,11 @@
-(library (cspp navigator private conditional)
+(library (cspp navigator conditional)
   (export nav/pred nav/not-pred nav/must nav/maybe nav/if nav/when nav/unless
           nav/multi-path nav/choice)
   (import (chezscheme)
           (cspp utils)
-          (cspp navigator private core)
-          (cspp navigator private basic)
-          (cspp navigator private engine))
+          (cspp navigator core)
+          (cspp navigator basic)
+          (cspp navigator engine))
 
   (define make-conditional-nav
     (lambda (name metadata select-proc transform-proc transform!-proc clear-proc clear!-proc)

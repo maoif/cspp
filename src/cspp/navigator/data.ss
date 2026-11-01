@@ -1,4 +1,4 @@
-(library (cspp navigator private data)
+(library (cspp navigator data)
   (export byte? indexed-length indexed-ref/missing indexed-set indexed-set!
           indexed-supported? indexed-walk indexed-transform indexed-transform!
           indexed-clear-values indexed-clear-values! index-list
@@ -14,7 +14,7 @@
           alist? alist-ref/missing)
   (import (chezscheme)
           (cspp utils)
-          (cspp navigator private core))
+          (cspp navigator core))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Container policies and mutation boundaries

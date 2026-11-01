@@ -1,8 +1,8 @@
-(library (cspp navigator private custom)
+(library (cspp navigator custom)
   (export nav/getter nav/getter-setter nav/getter-setter!)
   (import (chezscheme)
           (cspp utils)
-          (cspp navigator private core))
+          (cspp navigator core))
 
   #|proc:nav/getter
   The `nav/getter` procedure creates a read-only navigator named by `name`.

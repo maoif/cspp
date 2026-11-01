@@ -253,8 +253,8 @@ git commit -m "iter: register custom data-structure sources"
 ### Task 3: Expose navigator extension APIs and self-register adapters
 
 **Files:**
-- Modify: `src/cspp/navigator/private/data.ss`
-- Modify: `src/cspp/navigator/private/basic.ss`
+- Modify: `src/cspp/navigator/data.ss`
+- Modify: `src/cspp/navigator/basic.ss`
 - Modify: `src/cspp/navigator.ss`
 - Modify: `src/cspp/array.ss`
 - Modify: `src/cspp/dlist.ss`
@@ -305,7 +305,7 @@ Run: `make -C tests test-some TEST='navigator'`
 
 Expected: FAIL because the data structures are not registered and no set protocol exists.
 
-- [ ] **Step 3: Extend `navigator/private/data.ss`.** Add the sealed set-protocol record,
+- [ ] **Step 3: Extend `navigator/data.ss`.** Add the sealed set-protocol record,
   registry, lookup, validation, and helpers for values, replacement, and deletion. Keep
   indexed and keyed behavior unchanged. Export the existing indexed/keyed registration
   procedures and the new `nav-register-set!` as extension APIs. Document all three with
@@ -632,8 +632,8 @@ Run:
 
 ```bash
 python3 check_parentheses.py src/cspp/iter.ss src/cspp/transducer.ss \
-  src/cspp/navigator/private/data.ss \
-  src/cspp/navigator/private/basic.ss src/cspp/string.ss
+  src/cspp/navigator/data.ss \
+  src/cspp/navigator/basic.ss src/cspp/string.ss
 ```
 
 Run: `git status --short --branch`

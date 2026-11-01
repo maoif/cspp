@@ -1,4 +1,4 @@
-(library (cspp navigator private basic)
+(library (cspp navigator basic)
   (export nav/stay nav/none nav/all nav/values nav/keys nav/entries
           nav/nth nav/nth/default nav/first nav/second nav/last nav/slice
           nav/key nav/key/default nav/key-values nav/submap nav/car nav/cdr
@@ -6,8 +6,8 @@
   (import (chezscheme)
           (cspp utils)
           (cspp list)
-          (cspp navigator private core)
-          (cspp navigator private data))
+          (cspp navigator core)
+          (cspp navigator data))
 
   ;; Scheme map does not prescribe callback order. Navigation callbacks always
   ;; follow selection order, including indexed updates and stateful suffixes.
