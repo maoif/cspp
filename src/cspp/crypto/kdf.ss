@@ -31,60 +31,79 @@
         [else (errorf who "expected string or bytevector, given ~s" x)])))
 
   #|proc:hkdf
-The `hkdf` procedure performs HKDF extract-and-expand and returns `len` bytes.
-|#
+  The `hkdf` procedure returns `len` derived bytes using digest symbol `which`, input
+  key material `ikm`, `salt`, and context `info`. Each input may be a bytevector or a
+  string, with strings encoded as UTF-8. `len` must be an exact nonnegative integer
+  fitting a signed C int and at most 255 times the digest length in bytes. Excessive
+  lengths raise an error before output allocation. Zero returns an empty bytevector
+  after input and backend validation. Invalid inputs and native failures raise errors.
+  |#
   (define-who hkdf
     (lambda (which ikm salt info len)
-      (check-digest-algorithm who which)
-      (let* ([ikm-bv (normalized-bytevector who ikm)]
-             [salt-bv (normalized-bytevector who salt)]
-             [info-bv (normalized-bytevector who info)]
-             [ans (ffi-hkdf which
-                            ikm-bv 0 (bytevector-length ikm-bv)
-                            salt-bv 0 (bytevector-length salt-bv)
-                            info-bv 0 (bytevector-length info-bv)
-                            len)])
-        (when (eq? ans #f)
-          (errorf who "HKDF failed for ~s" which))
-        ans)))
+      (pcheck ([symbol? which] [exact-natural? len] [string/bytevector? ikm salt info])
+        (check-digest-algorithm who which)
+        (let* ([ikm-bv (normalized-bytevector who ikm)]
+               [salt-bv (normalized-bytevector who salt)]
+               [info-bv (normalized-bytevector who info)]
+               [ans (ffi-hkdf which
+                              ikm-bv 0 (bytevector-length ikm-bv)
+                              salt-bv 0 (bytevector-length salt-bv)
+                              info-bv 0 (bytevector-length info-bv)
+                              len)])
+          (when (eq? ans #f)
+            (errorf who "HKDF failed for ~s" which))
+          ans))))
 
   #|proc:hkdf-extract
-The `hkdf-extract` procedure returns the HKDF pseudorandom key for `ikm` and `salt`.
-|#
+  The `hkdf-extract` procedure returns a pseudorandom-key bytevector using digest symbol
+  `which`, input key material `ikm`, and `salt`. Both inputs may be bytevectors or strings;
+  strings use UTF-8. Invalid inputs and native derivation failures raise errors.
+  |#
   (define-who hkdf-extract
     (lambda (which ikm salt)
-      (check-digest-algorithm who which)
-      (let* ([ikm-bv (normalized-bytevector who ikm)]
-             [salt-bv (normalized-bytevector who salt)]
-             [ans (ffi-hkdf-extract which
-                                    ikm-bv 0 (bytevector-length ikm-bv)
-                                    salt-bv 0 (bytevector-length salt-bv))])
-        (when (eq? ans #f)
-          (errorf who "HKDF extract failed for ~s" which))
-        ans)))
+      (pcheck ([symbol? which] [string/bytevector? ikm salt])
+        (check-digest-algorithm who which)
+        (let* ([ikm-bv (normalized-bytevector who ikm)]
+               [salt-bv (normalized-bytevector who salt)]
+               [ans (ffi-hkdf-extract which
+                                      ikm-bv 0 (bytevector-length ikm-bv)
+                                      salt-bv 0 (bytevector-length salt-bv))])
+          (when (eq? ans #f)
+            (errorf who "HKDF extract failed for ~s" which))
+          ans))))
 
   #|proc:hkdf-expand
-The `hkdf-expand` procedure expands a pseudorandom key with `info` into `len` bytes.
-|#
+  The `hkdf-expand` procedure returns `len` bytes using digest symbol `which`,
+  pseudorandom key `prk`, and context `info`. Both inputs may be bytevectors or strings;
+  strings use UTF-8. `len` must be an exact nonnegative integer fitting a signed C int
+  and at most 255 times the digest length in bytes. Excessive lengths raise an error
+  before output allocation. Zero returns an empty bytevector after input and backend
+  validation. Invalid inputs and native derivation failures raise errors.
+  |#
   (define-who hkdf-expand
     (lambda (which prk info len)
-      (check-digest-algorithm who which)
-      (let* ([prk-bv (normalized-bytevector who prk)]
-             [info-bv (normalized-bytevector who info)]
-             [ans (ffi-hkdf-expand which
-                                   prk-bv 0 (bytevector-length prk-bv)
-                                   info-bv 0 (bytevector-length info-bv)
-                                   len)])
-        (when (eq? ans #f)
-          (errorf who "HKDF expand failed for ~s" which))
-        ans)))
+      (pcheck ([symbol? which] [exact-natural? len] [string/bytevector? prk info])
+        (check-digest-algorithm who which)
+        (let* ([prk-bv (normalized-bytevector who prk)]
+               [info-bv (normalized-bytevector who info)]
+               [ans (ffi-hkdf-expand which
+                                     prk-bv 0 (bytevector-length prk-bv)
+                                     info-bv 0 (bytevector-length info-bv)
+                                     len)])
+          (when (eq? ans #f)
+            (errorf who "HKDF expand failed for ~s" which))
+          ans))))
 
   #|proc:pbkdf2
-The `pbkdf2` procedure derives a key from `password` and `salt`.
-|#
+  The `pbkdf2` procedure returns `len` derived bytes using digest symbol `which`,
+  `password`, and `salt`. Both inputs may be bytevectors or strings; strings use UTF-8.
+  `iterations` must be a positive exact integer and `len` a nonnegative exact integer,
+  both fitting a signed C int. Invalid inputs and native derivation failures raise errors.
+  |#
   (define-who pbkdf2
     (lambda (which password salt iterations len)
-      (pcheck ([natural? iterations len])
+      (pcheck ([symbol? which] [exact-natural? iterations len]
+               [string/bytevector? password salt])
               (check-digest-algorithm who which)
               (let* ([password-bv (normalized-bytevector who password)]
                      [salt-bv (normalized-bytevector who salt)]
@@ -97,11 +116,15 @@ The `pbkdf2` procedure derives a key from `password` and `salt`.
                 ans))))
 
   #|proc:scrypt
-The `scrypt` procedure derives a key from `password` and `salt` using the given scrypt parameters.
-|#
+  The `scrypt` procedure returns `len` derived bytes from `password` and `salt`, each a
+  bytevector or a string encoded as UTF-8. Cost `n` must be a power of two greater than
+  one; block size `r` and parallelization `p` must be positive. All four numeric
+  parameters must be exact integers fitting a signed C int, with `len` nonnegative.
+  Invalid inputs and native derivation failures raise errors.
+  |#
   (define-who scrypt
     (lambda (password salt n r p len)
-      (pcheck ([natural? n r p len])
+      (pcheck ([exact-natural? n r p len] [string/bytevector? password salt])
               (ensure-openssl who)
               (let* ([password-bv (normalized-bytevector who password)]
                      [salt-bv (normalized-bytevector who salt)]

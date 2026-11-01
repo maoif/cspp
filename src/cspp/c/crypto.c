@@ -24,7 +24,7 @@
 typedef struct {
   EVP_MD *md;
   EVP_MD_CTX *ctx;
-} cspp_hash_state;
+} cspp_digest_state;
 
 typedef struct {
   EVP_MAC *mac;
@@ -43,13 +43,6 @@ typedef struct {
   unsigned char *iv;
   size_t iv_len;
 } cspp_cipher_state;
-
-typedef struct {
-  X509_STORE *store;
-  X509 *leaf;
-  STACK_OF(X509) *chain;
-  char *hostname;
-} cspp_cert_verify_state;
 
 ptr crypto_openssl_load_error(void) {
   const char *error;
@@ -208,6 +201,7 @@ int crypto_random_status() {
 }
 
 ptr crypto_random_bytevector(uint64_t len) {
+  if (len > (uint64_t)INTPTR_MAX) return Sfalse;
   if (!cspp_openssl_require()) return Sfalse;
   ptr bv = Smake_bytevector((iptr)len, 0);
   if (rand_bytes_all(Sbytevector_data(bv), len) != 1) {
@@ -231,7 +225,7 @@ int crypto_constant_time_eq(ptr bv1, uint64_t start1, uint64_t stop1, ptr bv2,
                        Sbytevector_data(bv2) + (size_t)start2, len1) == 0;
 }
 
-ptr crypto_hash_bytevector(ptr which, ptr bv, uint64_t start, uint64_t stop) {
+ptr crypto_digest_bytevector(ptr which, ptr bv, uint64_t start, uint64_t stop) {
   EVP_MD *md = fetch_digest(which);
   EVP_MD_CTX *ctx;
   ptr ans = Sfalse;
@@ -252,12 +246,12 @@ done:
   return ans;
 }
 
-ptr crypto_hash_string(ptr which, ptr str, uint64_t start, uint64_t stop) {
+ptr crypto_digest_string(ptr which, ptr str, uint64_t start, uint64_t stop) {
   ptr bv = make_string_utf32_copy(str, start, stop);
-  return crypto_hash_bytevector(which, bv, 0, slice_len(start, stop) * 4);
+  return crypto_digest_bytevector(which, bv, 0, slice_len(start, stop) * 4);
 }
 
-int crypto_hash_output_size(ptr which) {
+int crypto_digest_output_size(ptr which) {
   EVP_MD *md = fetch_digest(which);
   int size = -1;
   if (md != NULL) {
@@ -267,7 +261,7 @@ int crypto_hash_output_size(ptr which) {
   return size;
 }
 
-int crypto_hash_block_size(ptr which) {
+int crypto_digest_block_size(ptr which) {
   EVP_MD *md = fetch_digest(which);
   int size = -1;
   if (md != NULL) {
@@ -277,8 +271,8 @@ int crypto_hash_block_size(ptr which) {
   return size;
 }
 
-void *crypto_hash_state_create(ptr which) {
-  cspp_hash_state *st = malloc(sizeof(cspp_hash_state));
+void *crypto_digest_state_create(ptr which) {
+  cspp_digest_state *st = malloc(sizeof(cspp_digest_state));
   if (st == NULL) return NULL;
 
   st->md = fetch_digest(which);
@@ -298,16 +292,16 @@ fail:
   return NULL;
 }
 
-void crypto_hash_state_destroy(void *ptr_st) {
-  cspp_hash_state *st = (cspp_hash_state *)ptr_st;
+void crypto_digest_state_destroy(void *ptr_st) {
+  cspp_digest_state *st = (cspp_digest_state *)ptr_st;
   if (st == NULL) return;
   if (st->ctx != NULL) EVP_MD_CTX_free(st->ctx);
   if (st->md != NULL) EVP_MD_free(st->md);
   free(st);
 }
 
-ptr crypto_hash_state_get(void *ptr_st) {
-  cspp_hash_state *st = (cspp_hash_state *)ptr_st;
+ptr crypto_digest_state_get(void *ptr_st) {
+  cspp_digest_state *st = (cspp_digest_state *)ptr_st;
   EVP_MD_CTX *dup;
   ptr ans;
   if (st == NULL || st->ctx == NULL) return Sfalse;
@@ -322,33 +316,25 @@ ptr crypto_hash_state_get(void *ptr_st) {
   return ans;
 }
 
-ptr crypto_hash_state_finalize(void *ptr_st) {
-  cspp_hash_state *st = (cspp_hash_state *)ptr_st;
-  ptr ans;
-  if (st == NULL || st->ctx == NULL) return Sfalse;
-  ans = digest_ctx_result(st->ctx);
-  return ans;
-}
-
-int crypto_hash_state_reset(void *ptr_st) {
-  cspp_hash_state *st = (cspp_hash_state *)ptr_st;
+int crypto_digest_state_reset(void *ptr_st) {
+  cspp_digest_state *st = (cspp_digest_state *)ptr_st;
   if (st == NULL || st->ctx == NULL || st->md == NULL) return 0;
   if (EVP_MD_CTX_reset(st->ctx) != 1) return 0;
   return EVP_DigestInit_ex(st->ctx, st->md, NULL);
 }
 
-int crypto_hash_state_update_bytevector(void *ptr_st, ptr bv, uint64_t start,
+int crypto_digest_state_update_bytevector(void *ptr_st, ptr bv, uint64_t start,
                                         uint64_t stop) {
-  cspp_hash_state *st = (cspp_hash_state *)ptr_st;
+  cspp_digest_state *st = (cspp_digest_state *)ptr_st;
   if (st == NULL || st->ctx == NULL) return 0;
   return EVP_DigestUpdate(st->ctx, Sbytevector_data(bv) + (size_t)start,
                           slice_len(start, stop));
 }
 
-int crypto_hash_state_update_string(void *ptr_st, ptr str, uint64_t start,
+int crypto_digest_state_update_string(void *ptr_st, ptr str, uint64_t start,
                                     uint64_t stop) {
   ptr bv = make_string_utf32_copy(str, start, stop);
-  return crypto_hash_state_update_bytevector(ptr_st, bv, 0, slice_len(start, stop) * 4);
+  return crypto_digest_state_update_bytevector(ptr_st, bv, 0, slice_len(start, stop) * 4);
 }
 
 static int hmac_init_state(cspp_hmac_state *st) {
@@ -491,9 +477,20 @@ static ptr hkdf_common(int mode, ptr which, ptr ikm, uint64_t ikm_start,
   ptr ans = Sfalse;
   const char *md_name = digest_name(which);
 
-  if (md_name == NULL) return Sfalse;
+  if (md_name == NULL || out_len < 0) return Sfalse;
 
   if (!cspp_openssl_require()) return Sfalse;
+  /* RFC 5869 limits expansion to 255 digest blocks. Reject impossible requests
+   * before allocating an output buffer that cleanup would otherwise cleanse. */
+  if (mode != EVP_KDF_HKDF_MODE_EXTRACT_ONLY && out_len != 0) {
+    EVP_MD *md = fetch_digest(which);
+    int digest_size;
+    if (md == NULL) return Sfalse;
+    digest_size = EVP_MD_get_size(md);
+    EVP_MD_free(md);
+    if (digest_size <= 0 || (uint64_t)out_len > 255 * (uint64_t)digest_size)
+      return Sfalse;
+  }
   kdf = EVP_KDF_fetch(NULL, "HKDF", NULL);
   if (kdf == NULL) goto done;
   ctx = EVP_KDF_CTX_new(kdf);
@@ -513,6 +510,13 @@ static ptr hkdf_common(int mode, ptr which, ptr ikm, uint64_t ikm_start,
       slice_len(info_start, info_stop));
   params[idx++] = OSSL_PARAM_construct_end();
 
+  /* OpenSSL rejects a zero-byte derive. Still validate provider parameters before
+   * returning the empty RFC 5869 expansion requested by the Scheme API. */
+  if (out_len == 0) {
+    if (EVP_KDF_CTX_set_params(ctx, params) != 1) goto done;
+    ans = Smake_bytevector(0, 0);
+    goto done;
+  }
   out_buf = malloc(out_len == 0 ? 1 : (size_t)out_len);
   if (out_buf == NULL) goto done;
   if (EVP_KDF_derive(ctx, out_buf, (size_t)out_len, params) != 1) goto done;
@@ -566,6 +570,7 @@ ptr crypto_pbkdf2(ptr which, ptr password, uint64_t pw_start, uint64_t pw_stop,
   int pw_len, salt_len;
 
   if (md == NULL) return Sfalse;
+  if (iterations <= 0 || out_len < 0) goto done;
   if (!uint64_to_int(pw_stop - pw_start, &pw_len)) goto done;
   if (!uint64_to_int(salt_stop - salt_start, &salt_len)) goto done;
   out_buf = malloc(out_len == 0 ? 1 : (size_t)out_len);
@@ -593,6 +598,8 @@ ptr crypto_scrypt(ptr password, uint64_t pw_start, uint64_t pw_stop, ptr salt,
   ptr ans = Sfalse;
 
   if (!cspp_openssl_require()) return Sfalse;
+  if (n < 2 || (n & (n - 1)) != 0 || r <= 0 || p <= 0 || out_len < 0)
+    return Sfalse;
   out_buf = malloc(out_len == 0 ? 1 : (size_t)out_len);
   if (out_buf == NULL) return Sfalse;
   if (EVP_PBE_scrypt((const char *)(Sbytevector_data(password) + (size_t)pw_start),
@@ -695,6 +702,8 @@ ptr crypto_aead_decrypt(ptr which, ptr key, uint64_t key_start, uint64_t key_sto
   if (cipher == NULL) return Sfalse;
   if (!uint64_to_int(nonce_stop - nonce_start, &nonce_len)) goto done;
   if (!uint64_to_int(tag_stop - tag_start, &tag_len)) goto done;
+  /* CSPP AEAD algorithms always use full 128-bit authentication tags. */
+  if (tag_len != 16) goto done;
   ctx = EVP_CIPHER_CTX_new();
   if (ctx == NULL) goto done;
   if (EVP_DecryptInit_ex(ctx, cipher, NULL, NULL, NULL) != 1) goto done;
@@ -925,6 +934,18 @@ static ptr pkey_algorithm_symbol(EVP_PKEY *pkey) {
   }
 }
 
+static int pkey_matches_algorithm(EVP_PKEY *key, ptr algorithm) {
+  int id;
+  if (key == NULL) return 0;
+  id = EVP_PKEY_get_base_id(key);
+  if (algorithm == Sstring_to_symbol("rsa-pss")) return id == EVP_PKEY_RSA;
+  if (algorithm == Sstring_to_symbol("ecdsa") ||
+      algorithm == Sstring_to_symbol("ecdh")) return id == EVP_PKEY_EC;
+  if (algorithm == Sstring_to_symbol("ed25519")) return id == EVP_PKEY_ED25519;
+  if (algorithm == Sstring_to_symbol("x25519")) return id == EVP_PKEY_X25519;
+  return 0;
+}
+
 static ptr bio_to_bytevector(BIO *bio) {
   char *data = NULL;
   long len = BIO_ctrl(bio, BIO_CTRL_INFO, 0, &data);
@@ -948,6 +969,7 @@ void *crypto_pkey_generate(ptr alg, int bits, ptr curve) {
   if (EVP_PKEY_keygen_init(ctx) != 1) goto done;
 
   if (alg == Sstring_to_symbol("rsa")) {
+    if (bits <= 0) goto done;
     params[idx++] = OSSL_PARAM_construct_int(OSSL_PKEY_PARAM_BITS, &bits_copy);
   } else if (alg == Sstring_to_symbol("ecdsa") || alg == Sstring_to_symbol("ecdh")) {
     curve_mut = (char *)curve_name(curve);
@@ -1050,6 +1072,16 @@ done:
   return ans;
 }
 
+/* No password API is exposed: encrypted PEM must fail without terminal I/O. */
+static int reject_pem_password(char *buffer, int size, int writing, void *userdata) {
+  (void)buffer;
+  (void)size;
+  (void)writing;
+  (void)userdata;
+  /* Zero denotes an empty password; a negative result rejects every request. */
+  return -1;
+}
+
 void *crypto_pkey_load_private_pem(ptr bv, uint64_t start, uint64_t stop) {
   int len;
   if (!cspp_openssl_require()) return NULL;
@@ -1057,7 +1089,7 @@ void *crypto_pkey_load_private_pem(ptr bv, uint64_t start, uint64_t stop) {
   BIO *bio = BIO_new_mem_buf(Sbytevector_data(bv) + (size_t)start, len);
   EVP_PKEY *pkey = NULL;
   if (bio == NULL) return NULL;
-  pkey = PEM_read_bio_PrivateKey(bio, NULL, NULL, NULL);
+  pkey = PEM_read_bio_PrivateKey(bio, NULL, reject_pem_password, NULL);
   BIO_free(bio);
   return pkey;
 }
@@ -1108,11 +1140,12 @@ ptr crypto_sign_message(ptr alg, ptr digest, void *ptr_pkey, ptr bv, uint64_t st
   size_t sig_len = 0;
   unsigned char *sig = NULL;
 
-  if (pkey == NULL) return Sfalse;
+  if (!pkey_matches_algorithm(pkey, alg)) return Sfalse;
   ctx = EVP_MD_CTX_new();
   if (ctx == NULL) goto done;
 
   if (alg == Sstring_to_symbol("ed25519")) {
+    if (digest != Sfalse) goto done;
     if (EVP_DigestSignInit(ctx, NULL, NULL, NULL, pkey) != 1) goto done;
     if (EVP_DigestSign(ctx, NULL, &sig_len, Sbytevector_data(bv) + (size_t)start,
                        slice_len(start, stop)) != 1) {
@@ -1161,11 +1194,12 @@ int crypto_verify_message(ptr alg, ptr digest, void *ptr_pkey, ptr msg,
   EVP_MD *md = NULL;
   int ok = 0;
 
-  if (pkey == NULL) return 0;
+  if (!pkey_matches_algorithm(pkey, alg)) return 0;
   ctx = EVP_MD_CTX_new();
   if (ctx == NULL) goto done;
 
   if (alg == Sstring_to_symbol("ed25519")) {
+    if (digest != Sfalse) goto done;
     if (EVP_DigestVerifyInit(ctx, NULL, NULL, NULL, pkey) != 1) goto done;
     ok = EVP_DigestVerify(ctx, Sbytevector_data(sig) + (size_t)sig_start,
                           slice_len(sig_start, sig_stop),
@@ -1203,6 +1237,8 @@ ptr crypto_derive_shared_secret(ptr alg, void *ptr_priv, void *ptr_pub) {
   if (priv == NULL || pub == NULL) return Sfalse;
   if (!(alg == Sstring_to_symbol("x25519") || alg == Sstring_to_symbol("ecdh")))
     return Sfalse;
+  if (!pkey_matches_algorithm(priv, alg) || !pkey_matches_algorithm(pub, alg))
+    return Sfalse;
   ctx = EVP_PKEY_CTX_new(priv, NULL);
   if (ctx == NULL) goto done;
   if (EVP_PKEY_derive_init(ctx) != 1) goto done;
@@ -1222,11 +1258,14 @@ done:
   return ans;
 }
 
-static char *copy_bytevector_to_cstring(ptr bv) {
+static char *copy_hostname(ptr bv) {
   char *s;
   iptr len;
   if (bv == Sfalse) return NULL;
   len = Sbytevector_length(bv);
+  /* Empty hostnames disable OpenSSL identity checking; NUL truncates the name. */
+  if (len == 0 || memchr(Sbytevector_data(bv), '\0', (size_t)len) != NULL)
+    return NULL;
   s = malloc((size_t)len + 1);
   if (s == NULL) return NULL;
   if (len != 0) {
@@ -1363,7 +1402,7 @@ int crypto_cert_hostname_matches(void *ptr_cert, ptr hostname) {
   struct in6_addr addr6;
 
   if (cert == NULL || hostname == Sfalse) return 0;
-  host = copy_bytevector_to_cstring(hostname);
+  host = copy_hostname(hostname);
   if (host == NULL) return 0;
 
   if (inet_pton(AF_INET, host, &addr4) == 1 || inet_pton(AF_INET6, host, &addr6) == 1) {
@@ -1453,82 +1492,46 @@ int crypto_cert_store_load_defaults(void *ptr_store) {
   return X509_STORE_set_default_paths((X509_STORE *)ptr_store) == 1;
 }
 
-void *crypto_cert_verify_state_create(void *ptr_cert, void *ptr_store, ptr hostname) {
-  cspp_cert_verify_state *st = malloc(sizeof(cspp_cert_verify_state));
-  if (st == NULL) return NULL;
-  st->store = (X509_STORE *)ptr_store;
-  st->leaf = (X509 *)ptr_cert;
-  st->chain = (STACK_OF(X509) *)OPENSSL_sk_new_null();
-  st->hostname = NULL;
-  if (st->store == NULL || st->leaf == NULL || st->chain == NULL) goto fail;
-  if (hostname != Sfalse) {
-    st->hostname = copy_bytevector_to_cstring(hostname);
-    if (st->hostname == NULL) goto fail;
-  }
-  return st;
-
-fail:
-  if (st->chain != NULL)
-    OPENSSL_sk_free((OPENSSL_STACK *)st->chain);
-  free(st->hostname);
-  free(st);
-  return NULL;
-}
-
-int crypto_cert_verify_state_add_chain_cert(void *ptr_st, void *ptr_cert) {
-  cspp_cert_verify_state *st = (cspp_cert_verify_state *)ptr_st;
-  X509 *cert = (X509 *)ptr_cert;
-
-  if (st == NULL || st->chain == NULL || cert == NULL) return 0;
-  if (X509_up_ref(cert) != 1) return 0;
-  if (OPENSSL_sk_push((OPENSSL_STACK *)st->chain, cert) == 0) {
-    X509_free(cert);
-    return 0;
-  }
-  return 1;
-}
-
-int crypto_cert_verify_state_verify(void *ptr_st) {
-  cspp_cert_verify_state *st = (cspp_cert_verify_state *)ptr_st;
+/* Resource locks in Scheme keep all borrowed certificate pointers live for this call. */
+int crypto_cert_verify_chain(void *ptr_cert, void *ptr_store, ptr chain, ptr hostname) {
+  X509 *leaf = (X509 *)ptr_cert;
+  X509_STORE *store = (X509_STORE *)ptr_store;
+  STACK_OF(X509) *certificates = NULL;
   X509_STORE_CTX *ctx = NULL;
   X509_VERIFY_PARAM *param;
-  int ok = 0;
+  char *host = NULL;
+  int ok = -1;
   struct in_addr addr4;
   struct in6_addr addr6;
 
-  if (st == NULL || st->store == NULL || st->leaf == NULL) return 0;
+  if (leaf == NULL || store == NULL) return -1;
+  if (hostname != Sfalse) {
+    host = copy_hostname(hostname);
+    if (host == NULL) goto done;
+  }
+  certificates = (STACK_OF(X509) *)OPENSSL_sk_new_null();
+  if (certificates == NULL) goto done;
+  for (iptr index = 0; index < Svector_length(chain); ++index) {
+    X509 *certificate = (X509 *)(uintptr_t)Sunsigned_value(Svector_ref(chain, index));
+    if (certificate == NULL ||
+        OPENSSL_sk_push((OPENSSL_STACK *)certificates, certificate) == 0) goto done;
+  }
   ctx = X509_STORE_CTX_new();
   if (ctx == NULL) goto done;
-  if (X509_STORE_CTX_init(ctx, st->store, st->leaf,
-                          OPENSSL_sk_num(
-                              (const OPENSSL_STACK *)st->chain) == 0
-                              ? NULL
-                              : st->chain) != 1) {
-    goto done;
-  }
+  if (X509_STORE_CTX_init(ctx, store, leaf, certificates) != 1) goto done;
   param = X509_STORE_CTX_get0_param(ctx);
-  if (st->hostname != NULL) {
-    if (inet_pton(AF_INET, st->hostname, &addr4) == 1 ||
-        inet_pton(AF_INET6, st->hostname, &addr6) == 1) {
-      if (X509_VERIFY_PARAM_set1_ip_asc(param, st->hostname) != 1) goto done;
+  if (host != NULL) {
+    if (inet_pton(AF_INET, host, &addr4) == 1 || inet_pton(AF_INET6, host, &addr6) == 1) {
+      if (X509_VERIFY_PARAM_set1_ip_asc(param, host) != 1) goto done;
     } else {
-      if (X509_VERIFY_PARAM_set1_host(param, st->hostname, 0) != 1) goto done;
+      if (X509_VERIFY_PARAM_set1_host(param, host, 0) != 1) goto done;
     }
   }
   ok = X509_verify_cert(ctx) == 1;
 
 done:
   if (ctx != NULL) X509_STORE_CTX_free(ctx);
+  if (certificates != NULL) OPENSSL_sk_free((OPENSSL_STACK *)certificates);
+  free(host);
   return ok;
-}
-
-void crypto_cert_verify_state_destroy(void *ptr_st) {
-  cspp_cert_verify_state *st = (cspp_cert_verify_state *)ptr_st;
-  if (st == NULL) return;
-  if (st->chain != NULL)
-    OPENSSL_sk_pop_free(
-        (OPENSSL_STACK *)st->chain,
-        (OPENSSL_sk_freefunc)X509_free);
-  free(st->hostname);
-  free(st);
 }

@@ -100,7 +100,7 @@ _OPTIONAL_ZLIB_SOURCES := src/cspp/c/zlib_loader.c
 _OPTIONAL_OPENSSL_SOURCES := src/cspp/c/crypto.c src/cspp/c/net/tls.c
 _OPTIONAL_UUID_SOURCES := src/cspp/c/uuid.c
 _OPTIONAL_XXHASH_SOURCES := src/cspp/c/hash.c
-# digest.c implements both BLAKE3 and OpenSSL and guards their bodies independently.
+# The BLAKE3 digest backend guards enabled and disabled bodies independently.
 _OPTIONAL_BLAKE3_SOURCES :=
 _OPTIONAL_ZLIB_FALLBACKS := src/cspp/c/zlib_unavailable.c
 $(foreach name,$(OPTIONAL_DEPENDENCY_NAMES),\

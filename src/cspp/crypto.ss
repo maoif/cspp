@@ -4,7 +4,7 @@
 
   (export (import (cspp crypto random)
                   (cspp crypto constant-time)
-                  (cspp crypto hash)
+                  (cspp crypto digest)
                   (cspp crypto encoding)
                   (cspp crypto mac)
                   (cspp crypto kdf)

@@ -136,59 +136,70 @@
              (bytevector 9 1 2 3 8) 1 4
              (bytevector 1 2 4) 0 3))))
 
-(mat crypto-hash-one-shot
+(mat crypto-digest-one-shot
      (mat-requires (openssl)
-       (equal? (bytevector->hex (hash 'sha256 (string->utf8 "abc")))
+       (equal? (bytevector->hex (digest 'sha256 (string->utf8 "abc")))
                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"))
      (mat-requires (openssl)
-       (equal? (bytevector->hex (hash-bytevector 'sha256 (string->utf8 "abc") 1 3))
+       (equal? (bytevector->hex (digest-bytevector 'sha256 (string->utf8 "abc") 1 3))
                "1e0bbd6c686ba050b8eb03ffeedc64fdc9d80947fce821abbe5d6dc8d252c5ac"))
      (mat-requires (openssl)
-       (equal? (bytevector->hex (hash-string 'sha3-256 "abc"))
+       (equal? (bytevector->hex (digest-string 'sha3-256 "abc"))
                "43377aca8e6c7de136624d10167e4fd347a984b24fd56745894111004103da77"))
      (mat-requires (openssl)
        (let ([bv (read-file-bytevector crypto-test-file)])
-         (equal? (hash-file 'sha256 crypto-test-file)
-                 (hash-bytevector 'sha256 bv))))
+         (equal? (digest-file 'sha256 crypto-test-file)
+                 (digest-bytevector 'sha256 bv))))
      (mat-requires (openssl)
        (let ([bv (read-file-bytevector crypto-test-file)])
-         (equal? (hash-file 'sha256 crypto-test-file 3 17)
-                 (hash-bytevector 'sha256 bv 3 17))))
+         (equal? (digest-file 'sha256 crypto-test-file 3 17)
+                 (digest-bytevector 'sha256 bv 3 17))))
      (mat-requires (openssl)
-       (= 32 (hash-output-size 'sha256)))
+       (= 32 (digest-output-size 'sha256)))
      (mat-requires (openssl)
-       (= 128 (hash-block-size 'sha512)))
-     (error? (hash-bytevector 'sha256 (bytevector 1 2 3) 3 1))
-     (error? (hash-file 'sha256 crypto-test-file 99 1)))
+       (= 128 (digest-block-size 'sha512)))
+     ;; Error case: the bytevector slice cannot run backwards.
+     (error? (digest-bytevector 'sha256 (bytevector 1 2 3) 3 1))
 
-(mat crypto-hash-state
+     ;; Error case: the file slice cannot run backwards.
+     (error? (digest-file 'sha256 crypto-test-file 99 1)))
+
+(mat crypto-digest-state
      (mat-requires (openssl)
-       (call-with-hash-state
-        'blake2b-512
-        (lambda (st)
-          (hash-update-string! st "ab")
-          (hash-update-string! st "c")
-          (= 64 (bytevector-length (hash-finalize! st))))))
+       (= 64 (bytevector-length
+               (call-with-digester 'blake2b-512
+                 (lambda (state)
+                   (digester-update-string! state "ab")
+                   (digester-update-string! state "c"))))))
+
      (mat-requires (openssl)
-       (eq? 'ok
-            (call-with-hash-state 'sha256
-              (lambda (st)
-                (hash-update-bytevector! st (string->utf8 "abc"))
-                'ok))))
+       (string=? "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+                 (bytevector->hex
+                   (call-with-digester 'sha256
+                     (lambda (state)
+                       (digester-update-bytevector! state (string->utf8 "abc")))))))
+
      (mat-requires (openssl)
-       (let ([st (make-hash-state 'sha256)])
-         (hash-update-bytevector! st (string->utf8 "abc"))
-         (and (equal? (hash-get st)
-                      (hash-bytevector 'sha256 (string->utf8 "abc")))
-              (begin (hash-reset! st)
-                     (hash-update-bytevector! st (string->utf8 "abc"))
-                     (equal? (hash-finalize! st)
-                             (hash-bytevector 'sha256 (string->utf8 "abc")))))))
+       (let ([state (make-digester 'sha256)])
+         (dynamic-wind
+           void
+           (lambda ()
+             (digester-update-bytevector! state (string->utf8 "abc"))
+             (and (equal? (digester-get state)
+                          (digest-bytevector 'sha256 (string->utf8 "abc")))
+                  (begin
+                    (digester-reset! state)
+                    (digester-update-bytevector! state (string->utf8 "abc"))
+                    (equal? (digester-finalize! state)
+                            (digest-bytevector 'sha256 (string->utf8 "abc"))))))
+           (lambda () (digester-destroy! state)))))
+
      (mat-requires (openssl)
-       (let ([st (make-hash-state 'sha256)])
-         (hash-destroy! st)
+       (let ([state (make-digester 'sha256)])
+         (digester-destroy! state)
+         ;; Error case: snapshots of destroyed digesters must be rejected.
          (guard (c [else #t])
-           (hash-get st)
+           (digester-get state)
            #f))))
 
 (mat crypto-uint64-slices
@@ -196,8 +207,8 @@
        (with-sparse-byte-file
         (fx+ #x80000000 1)
         (lambda (path)
-          (equal? (hash-file 'sha256 path #x80000000 #x80000000)
-                  (hash-bytevector 'sha256 (bytevector))))))
+          (equal? (digest-file 'sha256 path #x80000000 #x80000000)
+                  (digest-bytevector 'sha256 (bytevector))))))
      (mat-requires (openssl)
        (let* ([key (bytevector 9 1 2 3 4 9)]
               [data (string->utf8 "xxpayloadyy")]

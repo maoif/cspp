@@ -7,7 +7,7 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FILES = ['src/cspp/net/ffi.ss', 'src/cspp/net/lws/ffi.ss', 'src/cspp/crypto/ffi.ss',
-         'src/cspp/digest.ss', 'src/cspp/hash.ss', 'src/cspp/uuid.ss']
+         'src/cspp/hash.ss', 'src/cspp/uuid.ss']
 PATTERN = re.compile(r'\(foreign-procedure\s+"([^"]+)"\s+\(([^()]*)\)\s+([^()\s]+)\)')
 
 
@@ -23,7 +23,7 @@ def declarations():
 
 
 def library(symbol):
-    if symbol.startswith(('crypto_', 'cspp_net_tls', 'digester_', 'digest_')):
+    if symbol.startswith(('crypto_', 'cspp_net_tls')):
         return 'blake3' if 'blake3' in symbol else 'openssl'
     if symbol.startswith(('hash_', 'hasher_', 'cspp_xxhash')):
         return 'xxhash'

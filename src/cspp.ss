@@ -44,7 +44,6 @@
 
                   (cspp uuid)
                   (cspp hash)
-                  (cspp digest)
                   (cspp protobuf)
                   (cspp optional-library)
                   (cspp crypto)

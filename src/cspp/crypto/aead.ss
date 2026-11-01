@@ -34,7 +34,7 @@
 
   (define-record-type (aead-state %make-aead-state aead-state?)
     (opaque #t)
-    (fields mode
+    (fields mutex mode
             algorithm
             key
             nonce
@@ -50,23 +50,38 @@
       (when (aead-state-finalized? st)
         (errorf who "AEAD state is finalized"))))
 
+  #|proc:aead-key-size
+  The `aead-key-size` procedure returns the required key length in bytes for algorithm
+  symbol `which`. An invalid type or unsupported symbol raises an error.
+  |#
   (define aead-key-size
     (lambda (which)
-      (check-aead-algorithm 'aead-key-size which)
-      (case which
-        [(aes-128-gcm) 16]
-        [(aes-256-gcm chacha20-poly1305) 32]
-        [else (unreachable!)])))
+      (pcheck ([symbol? which])
+        (check-aead-algorithm 'aead-key-size which)
+        (case which
+          [(aes-128-gcm) 16]
+          [(aes-256-gcm chacha20-poly1305) 32]
+          [else (unreachable!)]))))
 
+  #|proc:aead-default-nonce-size
+  The `aead-default-nonce-size` procedure returns the required nonce length in bytes
+  for algorithm symbol `which`. Invalid types and unsupported symbols raise errors.
+  |#
   (define aead-default-nonce-size
     (lambda (which)
-      (check-aead-algorithm 'aead-default-nonce-size which)
-      12))
+      (pcheck ([symbol? which])
+        (check-aead-algorithm 'aead-default-nonce-size which)
+        12)))
 
+  #|proc:aead-tag-size
+  The `aead-tag-size` procedure returns the authentication-tag length in bytes for
+  algorithm symbol `which`. Invalid types and unsupported symbols raise errors.
+  |#
   (define aead-tag-size
     (lambda (which)
-      (check-aead-algorithm 'aead-tag-size which)
-      16))
+      (pcheck ([symbol? which])
+        (check-aead-algorithm 'aead-tag-size which)
+        16)))
 
   (define check-aead-key/nonce
     (lambda (who which key nonce)
@@ -76,10 +91,6 @@
       (unless (fx= (bytevector-length nonce) (aead-default-nonce-size which))
         (errorf who "invalid nonce length ~a for ~s, expected ~a"
                 (bytevector-length nonce) which (aead-default-nonce-size which)))))
-
-  (define list->concat
-    (lambda (ls)
-      (bytevector-append (apply values ls))))
 
   (define concat*
     (lambda (ls)
@@ -103,22 +114,20 @@
   (define do-aead-decrypt
     (lambda (who which key nonce aad ciphertext tag)
       (ensure-openssl who)
-      (let ([ans (ffi-aead-decrypt which
-                                   key 0 (bytevector-length key)
-                                   nonce 0 (bytevector-length nonce)
-                                   aad 0 (bytevector-length aad)
-                                   ciphertext 0 (bytevector-length ciphertext)
-                                   tag 0 (bytevector-length tag))])
-        (if (eq? ans #f)
-            #f
-            ans))))
+      (and (fx= (bytevector-length tag) (aead-tag-size which))
+           (ffi-aead-decrypt which
+                             key 0 (bytevector-length key)
+                             nonce 0 (bytevector-length nonce)
+                             aad 0 (bytevector-length aad)
+                             ciphertext 0 (bytevector-length ciphertext)
+                             tag 0 (bytevector-length tag)))))
 
   #|proc:aead-encrypt
 The `aead-encrypt` procedure encrypts `plaintext` and returns ciphertext and tag.
 |#
   (define-who aead-encrypt
     (lambda (which key nonce plaintext)
-      (pcheck ([bytevector? key nonce plaintext])
+      (pcheck ([symbol? which] [bytevector? key nonce plaintext])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
               (do-aead-encrypt who which key nonce (bytevector-empty) plaintext))))
@@ -128,7 +137,7 @@ The `aead-encrypt/aad` procedure encrypts `plaintext` with associated data and r
 |#
   (define-who aead-encrypt/aad
     (lambda (which key nonce aad plaintext)
-      (pcheck ([bytevector? key nonce aad plaintext])
+      (pcheck ([symbol? which] [bytevector? key nonce aad plaintext])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
               (do-aead-encrypt who which key nonce aad plaintext))))
@@ -146,44 +155,58 @@ The `aead-encrypt/detached-aad` procedure is an alias for `aead-encrypt/aad`.
     aead-encrypt/aad)
 
   #|proc:aead-decrypt
-The `aead-decrypt` procedure returns the decrypted plaintext or `#f` if authentication fails.
-|#
+  The `aead-decrypt` procedure decrypts bytevector `ciphertext` using algorithm symbol
+  `which`, bytevector `key`, and bytevector `nonce`. It returns a plaintext bytevector
+  when bytevector `tag` authenticates the message, or `#f` on authentication failure.
+  The tag must have exactly `aead-tag-size` bytes; other lengths return `#f`.
+  |#
   (define-who aead-decrypt
     (lambda (which key nonce ciphertext tag)
-      (pcheck ([bytevector? key nonce ciphertext tag])
+      (pcheck ([symbol? which] [bytevector? key nonce ciphertext tag])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
               (do-aead-decrypt who which key nonce (bytevector-empty) ciphertext tag))))
 
   #|proc:aead-decrypt/aad
-The `aead-decrypt/aad` procedure returns the decrypted plaintext or `#f` if authentication fails.
-|#
+  The `aead-decrypt/aad` procedure decrypts bytevector `ciphertext` using algorithm symbol
+  `which`, bytevector `key`, bytevector `nonce`, and associated-data bytevector `aad`.
+  It returns a plaintext bytevector if bytevector `tag` authenticates both inputs, or
+  `#f` otherwise. The tag must have exactly `aead-tag-size` bytes.
+  |#
   (define-who aead-decrypt/aad
     (lambda (which key nonce aad ciphertext tag)
-      (pcheck ([bytevector? key nonce aad ciphertext tag])
+      (pcheck ([symbol? which] [bytevector? key nonce aad ciphertext tag])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
               (do-aead-decrypt who which key nonce aad ciphertext tag))))
 
   #|proc:make-aead-encrypt-state
-The `make-aead-encrypt-state` procedure creates a buffered AEAD encryption state.
-|#
+  The `make-aead-encrypt-state` procedure returns a buffered encryption state for
+  algorithm symbol `which`, bytevector `key`, and bytevector `nonce`. The state owns
+  copies of the key and nonce, so later caller mutations do not change its parameters.
+  Operations on the state are serialized. Invalid algorithms or lengths raise errors.
+  |#
   (define-who make-aead-encrypt-state
     (lambda (which key nonce)
-      (pcheck ([bytevector? key nonce])
+      (pcheck ([symbol? which] [bytevector? key nonce])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
-              (%make-aead-state 'encrypt which key nonce '() '() #f #f))))
+              (%make-aead-state (make-mutex 'aead) 'encrypt which
+                                (bytevector-copy key) (bytevector-copy nonce) '() '() #f #f))))
 
   #|proc:make-aead-decrypt-state
-The `make-aead-decrypt-state` procedure creates a buffered AEAD decryption state.
-|#
+  The `make-aead-decrypt-state` procedure returns a buffered decryption state for
+  algorithm symbol `which`, bytevector `key`, and bytevector `nonce`. The state owns
+  copies of the key and nonce, so later caller mutations do not change its parameters.
+  Operations on the state are serialized. Invalid algorithms or lengths raise errors.
+  |#
   (define-who make-aead-decrypt-state
     (lambda (which key nonce)
-      (pcheck ([bytevector? key nonce])
+      (pcheck ([symbol? which] [bytevector? key nonce])
               (check-aead-algorithm who which)
               (check-aead-key/nonce who which key nonce)
-              (%make-aead-state 'decrypt which key nonce '() '() #f #f))))
+              (%make-aead-state (make-mutex 'aead) 'decrypt which
+                                (bytevector-copy key) (bytevector-copy nonce) '() '() #f #f))))
 
   #|proc:aead-update-aad-bytevector!
 The `aead-update-aad-bytevector!` procedure buffers an AAD bytevector slice into an AEAD state.
@@ -198,10 +221,11 @@ The `aead-update-aad-bytevector!` procedure buffers an AAD bytevector slice into
                (aead-update-aad-bytevector! st bv start (bytevector-length bv)))]
       [(st bv start stop)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (check-live-state who st)
-               (check-slice who (bytevector-length bv) start stop)
-               (aead-state-aad*-set! st (cons (subbytevector bv start stop) (aead-state-aad* st)))
-               st)]))
+               (with-crypto-mutex (aead-state-mutex st)
+                 (check-live-state who st)
+                 (check-slice who (bytevector-length bv) start stop)
+                 (aead-state-aad*-set! st (cons (subbytevector bv start stop) (aead-state-aad* st)))
+                 st))]))
 
   #|proc:aead-update-plaintext-bytevector!
 The `aead-update-plaintext-bytevector!` procedure buffers plaintext into an encryption state.
@@ -216,12 +240,13 @@ The `aead-update-plaintext-bytevector!` procedure buffers plaintext into an encr
                (aead-update-plaintext-bytevector! st bv start (bytevector-length bv)))]
       [(st bv start stop)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (check-live-state who st)
-               (unless (eq? (aead-state-mode st) 'encrypt)
-                 (errorf who "state is not in encrypt mode"))
-               (check-slice who (bytevector-length bv) start stop)
-               (aead-state-data*-set! st (cons (subbytevector bv start stop) (aead-state-data* st)))
-               st)]))
+               (with-crypto-mutex (aead-state-mutex st)
+                 (check-live-state who st)
+                 (unless (eq? (aead-state-mode st) 'encrypt)
+                   (errorf who "state is not in encrypt mode"))
+                 (check-slice who (bytevector-length bv) start stop)
+                 (aead-state-data*-set! st (cons (subbytevector bv start stop) (aead-state-data* st)))
+                 st))]))
 
   #|proc:aead-update-ciphertext-bytevector!
 The `aead-update-ciphertext-bytevector!` procedure buffers ciphertext into a decryption state.
@@ -236,50 +261,63 @@ The `aead-update-ciphertext-bytevector!` procedure buffers ciphertext into a dec
                (aead-update-ciphertext-bytevector! st bv start (bytevector-length bv)))]
       [(st bv start stop)
        (pcheck ([aead-state? st] [bytevector? bv])
-               (check-live-state who st)
-               (unless (eq? (aead-state-mode st) 'decrypt)
-                 (errorf who "state is not in decrypt mode"))
-               (check-slice who (bytevector-length bv) start stop)
-               (aead-state-data*-set! st (cons (subbytevector bv start stop) (aead-state-data* st)))
-               st)]))
+               (with-crypto-mutex (aead-state-mutex st)
+                 (check-live-state who st)
+                 (unless (eq? (aead-state-mode st) 'decrypt)
+                   (errorf who "state is not in decrypt mode"))
+                 (check-slice who (bytevector-length bv) start stop)
+                 (aead-state-data*-set! st (cons (subbytevector bv start stop) (aead-state-data* st)))
+                 st))]))
 
   #|proc:aead-finalize-encrypt!
-The `aead-finalize-encrypt!` procedure finalizes an encryption state and returns ciphertext and tag.
-|#
+  The `aead-finalize-encrypt!` procedure finalizes live encryption state `st` and returns
+  ciphertext and tag as two bytevectors. The state becomes terminal and releases its
+  buffered associated data and plaintext. Further updates or finalization raise errors.
+  |#
   (define-who aead-finalize-encrypt!
     (lambda (st)
       (pcheck ([aead-state? st])
-              (check-live-state who st)
-              (unless (eq? (aead-state-mode st) 'encrypt)
-                (errorf who "state is not in encrypt mode"))
-              (let-values ([(ciphertext tag)
-                            (do-aead-encrypt who
-                                             (aead-state-algorithm st)
-                                             (aead-state-key st)
-                                             (aead-state-nonce st)
-                                             (concat* (aead-state-aad* st))
-                                             (concat* (aead-state-data* st)))])
-                (aead-state-finalized?-set! st #t)
-                (values ciphertext tag)))))
+              (with-crypto-mutex (aead-state-mutex st)
+                (check-live-state who st)
+                (unless (eq? (aead-state-mode st) 'encrypt)
+                  (errorf who "state is not in encrypt mode"))
+                (let-values ([(ciphertext tag)
+                              (do-aead-encrypt who
+                                               (aead-state-algorithm st)
+                                               (aead-state-key st)
+                                               (aead-state-nonce st)
+                                               (concat* (aead-state-aad* st))
+                                               (concat* (aead-state-data* st)))])
+                  (aead-state-aad*-set! st '())
+                  (aead-state-data*-set! st '())
+                  (aead-state-finalized?-set! st #t)
+                  (values ciphertext tag))))))
 
   #|proc:aead-finalize-decrypt!
-The `aead-finalize-decrypt!` procedure finalizes a decryption state and returns the plaintext or `#f`.
-|#
+  The `aead-finalize-decrypt!` procedure finalizes the live decryption state `st` using
+  authentication bytevector `tag`. It returns the plaintext bytevector or `#f` if
+  authentication fails, including when the tag has a length other than `aead-tag-size`.
+  The state becomes terminal and releases its buffered associated data and ciphertext
+  after either result.
+  |#
   (define-who aead-finalize-decrypt!
     (lambda (st tag)
       (pcheck ([aead-state? st] [bytevector? tag])
-              (check-live-state who st)
-              (unless (eq? (aead-state-mode st) 'decrypt)
-                (errorf who "state is not in decrypt mode"))
-              (let ([ans (do-aead-decrypt who
-                                          (aead-state-algorithm st)
-                                          (aead-state-key st)
-                                          (aead-state-nonce st)
-                                          (concat* (aead-state-aad* st))
-                                          (concat* (aead-state-data* st))
-                                          tag)])
-                (aead-state-finalized?-set! st #t)
-                ans))))
+              (with-crypto-mutex (aead-state-mutex st)
+                (check-live-state who st)
+                (unless (eq? (aead-state-mode st) 'decrypt)
+                  (errorf who "state is not in decrypt mode"))
+                (let ([ans (do-aead-decrypt who
+                                            (aead-state-algorithm st)
+                                            (aead-state-key st)
+                                            (aead-state-nonce st)
+                                            (concat* (aead-state-aad* st))
+                                            (concat* (aead-state-data* st))
+                                            tag)])
+                  (aead-state-aad*-set! st '())
+                  (aead-state-data*-set! st '())
+                  (aead-state-finalized?-set! st #t)
+                  ans)))))
 
   #|proc:aead-destroy!
 The `aead-destroy!` procedure marks an AEAD state as destroyed and releases buffered data.
@@ -287,33 +325,34 @@ The `aead-destroy!` procedure marks an AEAD state as destroyed and releases buff
   (define-who aead-destroy!
     (lambda (st)
       (pcheck ([aead-state? st])
-              (unless (aead-state-destroyed? st)
-                (aead-state-aad*-set! st '())
-                (aead-state-data*-set! st '())
-                (aead-state-destroyed?-set! st #t))
-              st)))
+              (with-crypto-mutex (aead-state-mutex st)
+                (unless (aead-state-destroyed? st)
+                  (aead-state-aad*-set! st '())
+                  (aead-state-data*-set! st '())
+                  (aead-state-destroyed?-set! st #t))
+                st))))
 
   #|proc:call-with-aead-encrypt-state
-The `call-with-aead-encrypt-state` procedure creates an AEAD encryption state, passes it to `proc`, and always destroys it afterwards.
-|#
+  The `call-with-aead-encrypt-state` procedure creates a buffered encryption state for
+  algorithm symbol `which` and bytevectors `key` and `nonce`. It calls `(proc state)`
+  with the caller's interrupt settings and returns its values. The state is destroyed
+  on every exit; reentry after exit raises an error.
+  |#
   (define-who call-with-aead-encrypt-state
     (lambda (which key nonce proc)
-      (pcheck ([bytevector? key nonce] [procedure? proc])
-              (let ([st (make-aead-encrypt-state which key nonce)])
-                (dynamic-wind
-                  void
-                  (lambda () (proc st))
-                  (lambda () (aead-destroy! st)))))))
+      (pcheck ([symbol? which] [bytevector? key nonce] [procedure? proc])
+              (call-with-crypto-resource who
+                (lambda () (make-aead-encrypt-state which key nonce)) aead-destroy! proc))))
 
   #|proc:call-with-aead-decrypt-state
-The `call-with-aead-decrypt-state` procedure creates an AEAD decryption state, passes it to `proc`, and always destroys it afterwards.
-|#
+  The `call-with-aead-decrypt-state` procedure creates a buffered decryption state for
+  algorithm symbol `which` and bytevectors `key` and `nonce`. It calls `(proc state)`
+  with the caller's interrupt settings and returns its values. The state is destroyed
+  on every exit; reentry after exit raises an error.
+  |#
   (define-who call-with-aead-decrypt-state
     (lambda (which key nonce proc)
-      (pcheck ([bytevector? key nonce] [procedure? proc])
-              (let ([st (make-aead-decrypt-state which key nonce)])
-                (dynamic-wind
-                  void
-                  (lambda () (proc st))
-                  (lambda () (aead-destroy! st)))))))
+      (pcheck ([symbol? which] [bytevector? key nonce] [procedure? proc])
+              (call-with-crypto-resource who
+                (lambda () (make-aead-decrypt-state which key nonce)) aead-destroy! proc))))
   )

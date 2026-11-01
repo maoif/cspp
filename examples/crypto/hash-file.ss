@@ -1,22 +1,13 @@
-(import (cspp)
-        (cspp digest)
-        (rename (cspp crypto hash) (hash-file crypto-hash-file)))
+(import (cspp) (cspp crypto digest))
 (load "examples/common.ss")
 
 (define file-hash
   (lambda (method path)
     (case method
-      [(sha224 sha256 sha384 sha512 sha3-224 sha3-256 sha3-384 sha3-512
-        blake2b-512 blake2s-256)
-       ;; Hash the file with the modern streaming crypto hash API.
-       (crypto-hash-file method path)]
-      [(md5 sha512-224 sha512-256 blake3)
-       ;; Hash the file with a supported digest implementation.
-       (case method
-         [(md5) (md5-file path)]
-         [(sha512-224) (sha512-224-file path)]
-         [(sha512-256) (sha512-256-file path)]
-         [(blake3) (blake3-file path)])]
+      [(md5 sha224 sha256 sha384 sha512 sha512-224 sha512-256
+        sha3-224 sha3-256 sha3-384 sha3-512 blake2b-512 blake2s-256 blake3)
+       ;; Stream cryptographic digests through the unified digest API.
+       (digest-file method path)]
       [(xxhash32)
        ;; Compute the non-cryptographic 32-bit checksum.
        (xxhash32-file path)]

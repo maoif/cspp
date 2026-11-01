@@ -14,15 +14,18 @@ The `random-status` procedure returns `#t` when the OpenSSL random source is rea
 |#
   (define random-status
     (lambda ()
-      (ensure-openssl 'random-status)
-      (not (fx= 0 (ffi-random-status)))))
+      (pcheck ()
+        (ensure-openssl 'random-status)
+        (not (fx= 0 (ffi-random-status))))))
 
   #|proc:random-bytes
-The `random-bytes` procedure returns a fresh random bytevector of length `len`.
-|#
+  The `random-bytes` procedure returns a fresh random bytevector of length `len`.
+  `len` must be a nonnegative fixnum; inexact or unrepresentable lengths raise an error
+  before native allocation. Native random-source failures also raise errors.
+  |#
   (define-who random-bytes
     (lambda (len)
-      (pcheck ([natural? len])
+      (pcheck ([(lambda (length) (and (fixnum? length) (fx>= length 0))) len])
               (ensure-openssl who)
               (let ([bv (ffi-random-bytevector len)])
                 (when (eq? bv #f)
@@ -30,30 +33,35 @@ The `random-bytes` procedure returns a fresh random bytevector of length `len`.
                 bv))))
 
   #|proc:random-key-bytes
-The `random-key-bytes` procedure returns a fresh random key bytevector of length `len`.
-|#
+  The `random-key-bytes` procedure returns a fresh random key bytevector of length `len`,
+  a nonnegative fixnum. It has the same validation and failure behavior as `random-bytes`.
+  |#
   (define random-key-bytes
     random-bytes)
 
   #|proc:random-nonce
-The `random-nonce` procedure returns a fresh random nonce bytevector of length `len`.
-|#
+  The `random-nonce` procedure returns a fresh random nonce bytevector of length `len`,
+  a nonnegative fixnum. It has the same validation and failure behavior as `random-bytes`.
+  |#
   (define random-nonce
     random-bytes)
 
   #|proc:random-bytes!
-The `random-bytes!` procedure fills a bytevector slice with random bytes.
-|#
+  The `random-bytes!` procedure fills mutable bytevector `bv` with random bytes and
+  returns `bv`. Optional nonnegative fixnums `start` and `stop` select a half-open
+  byte slice, defaulting to zero and the bytevector length. Immutable bytevectors and
+  invalid slices raise errors before native writes. Backend failures raise errors.
+  |#
   (define-who random-bytes!
     (case-lambda
       [(bv)
-       (pcheck ([bytevector? bv])
+       (pcheck ([mutable-bytevector? bv])
                (random-bytes! bv 0 (bytevector-length bv)))]
       [(bv start)
-       (pcheck ([bytevector? bv])
+       (pcheck ([mutable-bytevector? bv])
                (random-bytes! bv start (bytevector-length bv)))]
       [(bv start stop)
-       (pcheck ([bytevector? bv])
+       (pcheck ([mutable-bytevector? bv])
                (check-slice who (bytevector-length bv) start stop)
                (ensure-openssl who)
                (when (fx= 0 (ffi-random-fill! bv start stop))
