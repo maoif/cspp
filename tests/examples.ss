@@ -9,6 +9,8 @@
     "examples/navigator/traversal.ss"
     "examples/transducer/pipeline.ss"
     "examples/iter/operations.ss"
+    "examples/match/patterns.ss"
+    "examples/for/iteration.ss"
     "examples/glob/files.ss"
     "examples/containers/treeset.ss"
     "examples/containers/treemap.ss"

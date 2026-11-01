@@ -20,7 +20,28 @@ Run commands from the repository root with `cspp --script=FILE -- [OPTIONS]`. Ev
 | `examples/navigator/traversal.ss` | `--value='((name . Ada) (scores . #(2 4 6)))'` | select and transform |
 | `examples/transducer/pipeline.ss` | `--limit=4` | composed map/filter/take pipeline |
 | `examples/iter/operations.ss` | `--limit=4` | iterator map, filter, zip, fold, cleanup |
+| `examples/match/patterns.ss` | `--value='(move 3 4)'` | literals, guards, repetition, records, nested datatypes, regex, catamorphisms, bindings |
+| `examples/for/iteration.ss` | `--limit=4` | parallel/nested loops, typed sources, index scopes, bindings, slices, folds, exit results |
 | `examples/glob/files.ss` | `--pattern='examples/**/*.ss' --limit=10` | matching, expansion, lazy iteration |
+
+The `match` and `for` scripts print labeled results for each feature using small built-in inputs.
+Try `--value='(say "hello")'` or `--value='(move north 4)'` to exercise different match clauses,
+and `--limit=0` to see empty bounded collection.
+
+The matching example includes named and positional datatype fields, singleton variants, nested
+variant patterns, repeated variants, and native Chez records. Catamorphisms show recursive
+expression evaluation, a datatype tree returning sum and leaf count, repeated multi-value
+recursion, explicit procedures, and traversal for effects only.
+
+The iteration example starts with simple `for` loops that print range values, list items, string
+characters, and paired items. It also covers strings, lists, vectors, fixnum/flonum vectors,
+signed and multi-byte bytevectors, IEEE doubles, hashtable entries/keys/values, numeric ranges,
+and existing iterators.
+Folds include products, dot products, left/right subtraction, record statistics, a mutable vector
+histogram, datatype actions, empty input, and boolean short-circuiting. Source, guard, global,
+and nested local indexes illustrate their different counting scopes. Exit examples contrast
+inner and outer `:break`, whole-loop `:stop`, accumulator replacement, and results that bypass
+`:finish`.
 
 ## Containers
 

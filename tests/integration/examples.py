@@ -658,6 +658,7 @@ def core():
         'parser/scheme': ['--file=examples/data/sample.scm'],
         'parser/elf': ['--file=.chezscheme-install/bin/scheme'],
         'navigator/traversal': [], 'transducer/pipeline': [], 'iter/operations': [],
+        'match/patterns': [], 'for/iteration': [],
         'glob/files': ['--limit=2'], 'containers/treeset': [],
         'containers/treemap': ['--values=9,8'], 'containers/heap': [],
         'containers/dlist': [], 'containers/array': ['--size=0'],
