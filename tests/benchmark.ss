@@ -2817,3 +2817,36 @@
       (and (for-all (lambda (result) (not (benchmark-result-error result))) results)
            (equal? events '((cleanup original-resource) (original-suite original-resource)
                             (cleanup original-resource) (original-suite original-resource)))))))
+
+(mat benchmark-template-instantiation-is-an-expression
+  ;; Error: helper expressions must not expand into an incidental definition.
+  (guard (raised [else #f])
+    (eval
+      '(let* ([before (length (benchmark-registry-benchmarks (current-benchmark-registry)))]
+              [calls '()]
+              [factory (lambda (label value)
+                         (set! calls (cons (list label value) calls))
+                         (make-benchmark label (lambda (state) value) '()))]
+              [initialize (lambda (enabled?)
+                            (when enabled?
+                              (instantiate-benchmark-template factory ([small 1] [large 2]))))])
+         (initialize #f)
+         (and (null? calls)
+              (begin
+                (initialize #t)
+                (and (equal? (reverse calls) '((small 1) (large 2)))
+                     (equal? (map benchmark-name
+                                  (list-tail (benchmark-registry-benchmarks
+                                               (current-benchmark-registry)) before))
+                             '(factory/small factory/large))))))
+      (environment '(cspp))))
+
+  ;; Error: an empty batch must work as the sole expression in a lexical body.
+  (guard (raised [else #f])
+    (let ([before (benchmark-registry-benchmarks (current-benchmark-registry))])
+      (and (eq? (eval
+                  '(let ([factory (lambda (label) (error 'factory "must not be called"))])
+                     (instantiate-benchmark-template factory ()))
+                  (environment '(cspp)))
+                (void))
+           (eq? before (benchmark-registry-benchmarks (current-benchmark-registry)))))))

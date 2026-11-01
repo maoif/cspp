@@ -2157,6 +2157,8 @@ its row and returning a benchmark descriptor. Each row has syntax `[label value 
 return values are rejected before record access or registration.
 Renaming preserves the returned descriptor's validated argument axes, hooks, and metadata;
 source option lists are not normalized again. Mutable argument values retain their identity.
+Instantiation is an expression and may appear in helper bodies and conditionals.
+An empty row list does not call the template or change the registry and returns unspecified values.
 |#
   (define-syntax instantiate-benchmark-template
     (lambda (stx)
@@ -2171,7 +2173,7 @@ source option lists are not normalized again. Mutable argument values retain the
                  (syntax-error label "template label must be an identifier")))
              #'(label ...))
            #'(begin
-               (define template-instance-marker (void))
+               (void)
                (let ([benchmark (template 'label value ...)])
                  (unless (benchmark? benchmark)
                    (errorf 'instantiate-benchmark-template
