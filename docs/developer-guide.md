@@ -278,3 +278,13 @@ sources to isolate bookkeeping defects from consumption of an external iterator.
 Chez Scheme documents continuation semantics in
 [Control Structures](https://cisco.github.io/ChezScheme/csug/control.html) and primitive thread
 safety in [Thread System](https://cisco.github.io/ChezScheme/csug/threads.html).
+
+## Cryptographic resource implementation
+
+Internal native-resource operations defer timer, keyboard, and collection interrupts until
+their handles and ownership changes are consistent. An exited internal operation cannot be
+reentered, including through the continuation attached to a Chez error condition. Public
+`call-with-*` callbacks run with the caller's interrupt settings; their states are destroyed
+on continuation escape. All managed crypto state scopes reject reentry after exit.
+
+For API usage, encodings, and concurrency rules, see [Cryptography](crypto.md).
