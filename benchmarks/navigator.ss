@@ -2,6 +2,8 @@
 ;; Five samples after a warmup; each sample starts after a collection.
 ;; CPU time includes collections. Allocation includes bytes reclaimed by collections.
 (import (cspp))
+(load "benchmarks/common.ss")
+(define results '())
 (define measure
   (lambda (label rounds thunk)
     (thunk)
@@ -15,9 +17,12 @@
                                (/ (time-nanosecond elapsed) 1000000.0))
                             (- (+ (bytes-allocated) (bytes-deallocated)) allocated)))))
                 '(1 2 3 4 5))])
-      (printf "~a (~a rounds): median CPU ~,3f ms; median allocated ~a bytes\n"
-              label rounds (list-ref (sort < (map car samples)) 2)
-              (list-ref (sort < (map cdr samples)) 2)))))
+      (set! results
+            (cons (list (format "~a" label)
+                        (number->string rounds)
+                        (format "~,3f" (list-ref (sort < (map car samples)) 2))
+                        (number->string (list-ref (sort < (map cdr samples)) 2)))
+                  results)))))
 (define table (make-eqv-hashtable))
 (do ([index 0 (fx+ index 1)]) ((fx= index 1000))
   (hashtable-set! table index index))
@@ -63,3 +68,8 @@
 (define wrapped-children (nav/path (nav/maybe nav/children) nav/stay))
 (measure 'children-identity-3000 30 (lambda () (nav-select children-path vec)))
 (measure 'wrapped-children-3000 30 (lambda () (nav-select wrapped-children vec)))
+(benchmark-print-table!
+ "Navigator Benchmarks"
+ '(("case" . left) ("rounds" . right) ("median CPU ms" . right)
+   ("median allocated bytes" . right))
+ (reverse results))

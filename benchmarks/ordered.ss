@@ -1,4 +1,5 @@
 (import (cspp))
+(load "benchmarks/common.ss")
 
 ;; Deterministic permutation, generated outside measured regions.
 (define keys
@@ -41,6 +42,8 @@
             (error 'benchmark "incorrect final map size"))
           elapsed)))))
 
+(define results '())
+
 (define compare
   (lambda (count operation)
     (let ([items (keys count)] [generic '()] [specialized '()])
@@ -55,11 +58,20 @@
             (begin
               (set! specialized (cons (trial make-fxtreemap fxtreemap-set! fxtreemap-ref fxtreemap-delete! fxtreemap-size items operation) specialized))
               (set! generic (cons (trial make-treemap treemap-set! treemap-ref treemap-delete! treemap-size items operation) generic)))))
-      (printf "~a ~a generic=~a fixnum=~a ns (median of 7)\n"
-              count operation (list-ref (list-sort < generic) 3)
-              (list-ref (list-sort < specialized) 3)))))
+      (set! results
+            (cons (list (number->string count)
+                        (symbol->string operation)
+                        (number->string (list-ref (list-sort < generic) 3))
+                        (number->string (list-ref (list-sort < specialized) 3))
+                        "median of 7")
+                  results)))))
 
 (printf "~a ~a; compiled library settings from Makefile\n" (scheme-version) (machine-type))
 (for-each (lambda (count)
             (for-each (lambda (operation) (compare count operation)) '(insert lookup delete mixed)))
           '(1000 10000 100000))
+(benchmark-print-table!
+ "Ordered Map Benchmarks"
+ '(("entries" . right) ("operation" . left) ("generic ns" . right)
+   ("fixnum ns" . right) ("samples" . left))
+ (reverse results))
