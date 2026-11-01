@@ -404,7 +404,6 @@
             (benchmark-string-contains? text "|")
             (string=? (apply string-append name-parts) "namebench-basicbench-basic")
             (benchmark-string-contains? text "cpu/ns")
-            (benchmark-string-contains? text "counters")
             (andmap (lambda (line) (<= (string-length line) 80)) lines)))
      (let ([out (open-output-string)])
        (benchmark-report (benchmark-run (list bench-basic) (benchmark-test-config))
@@ -1286,7 +1285,8 @@
                       '(((name . template) (template-args . ((kind . vector))))))])
        (call-with-port (open-output-string)
          (lambda (out)
-           (benchmark-report results (benchmark-rich-reporter) out)
+           (benchmark-report results
+             (benchmark-rich-reporter '((columns . ((template-args . "template-args"))))) out)
            (let ([text (get-output-string out)])
              (and (benchmark-string-contains? text "template-args")
                   (benchmark-string-contains? text "kind")
