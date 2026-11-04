@@ -20,6 +20,7 @@
           (cspp optional-library-check)
           (only (cspp crypto private)
                 with-crypto-mutex with-crypto-operation call-with-crypto-resource)
+          (only (cspp file) file-size)
           (cspp crypto ffi))
 
   #|proc:digest-algorithms
@@ -336,12 +337,6 @@
 ;;;;===----------------------------------------------------------------------===
 ;;;; Streaming files and algorithm-specific convenience procedures
 ;;;;===----------------------------------------------------------------------===
-
-  (define file-size
-    (lambda (path)
-      ;; The general file-size helper opens a port without continuation cleanup.
-      (call-with-crypto-resource 'digest-file
-        (lambda () (open-file-input-port path)) close-port file-length)))
 
   #|proc:digest-file
   The `digest-file` procedure returns a digest bytevector for the regular file at `path`

@@ -68,7 +68,8 @@
           (cspp net operation)
           (cspp net transfer)
           (cspp net ffi)
-          (cspp net private))
+          (cspp net private)
+          (only (cspp file) file-size))
 
   #|record:ftp-session
 The `ftp-session` record owns one FTP or FTPS control connection for its immutable URI and mode.
@@ -946,7 +947,7 @@ The optional `policy` controls resume, overwrite, chunk size, and progress. The 
                        [else
                         (let* ([offset (cond [(natural? resume) resume]
                                              [(and (eq? resume 'resume) exists?)
-                                              (local-file-size local-path)]
+                                              (file-size local-path)]
                                              [else 0])]
                                [effective (make-transfer-policy
                                            offset overwrite
@@ -1344,11 +1345,6 @@ The optional `policy` parameter defaults to `default-transfer-policy`.
           (when (and slash (fx> slash 0))
             (ensure-local-directory (substring path 0 slash)))
           (mkdir path)))))
-
-  (define local-file-size
-    (lambda (path)
-      (call-with-port (open-file-input-port path)
-        (lambda (port) (file-length port)))))
 
   #|proc:ftp-download-directory
 The `ftp-download-directory` procedure recursively downloads remote `remote-root` through
