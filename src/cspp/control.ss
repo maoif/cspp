@@ -137,9 +137,9 @@
                     (loop (cdr arg*) (cdr args) (add1 nslots) (cons '(slot) rres) dots?)]
                    [else (loop (cdr arg*) (cdr args) nslots (cons (cons 'expr (car args)) rres) dots?)]))))))
       (syntax-case stx ()
-        [(k ?curried proc e e* ...)
+        [(k ?curried proc e ...)
          ;; res*: ('expr . e) | '(slot) | '(dots)
-         (let-values ([(nslots res* dots?) (categorize-args #'(e e* ...) (datum ?curried))])
+         (let-values ([(nslots res* dots?) (categorize-args #'(e ...) (datum ?curried))])
            ;; x*: params for lambdas
            ;; p: bound to given procedure
            ;; varg*: bound to e*
@@ -184,11 +184,12 @@
   their values. Calling the result fills placeholders left to right and calls `proc` with the
   completed arguments, returning its values. A final `...` accepts additional trailing arguments.
   The callback must accept the completed argument list. Captured mutable objects remain shared.
+  With no arguments after `proc`, the result calls `proc` with zero arguments.
   A nonprocedure `proc` is rejected when constructing the section.
   |#
   (define-syntax sect
     (syntax-rules ()
-      [(_ proc e e* ...) ($sect #f proc e e* ...)]))
+      [(_ proc e ...) ($sect #f proc e ...)]))
   #|macro:sect+
   The `sect+` macro creates a curried section of `proc`, with one unary procedure per `_` slot.
   Fixed argument expressions and `proc` are evaluated and captured once. Supplying all slots calls
@@ -199,7 +200,7 @@
   |#
   (define-syntax sect+
     (syntax-rules ()
-      [(_ proc e e* ...) ($sect #t proc e e* ...)]))
+      [(_ proc e ...) ($sect #t proc e ...)]))
 
 
   #|macro:let/cc

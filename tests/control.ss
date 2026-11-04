@@ -168,6 +168,14 @@
 
 (mat section-capture-and-zero-slots
 
+     (null? ((sect list)))
+
+     (null? (call-with-values (sect values) list))
+
+     (let ([calls 0])
+       (let ([result (sect+ (lambda () (set! calls (+ calls 1)) 'done))])
+         (and (eq? 'done result) (= calls 1))))
+
      (let* ([value 2] [add (sect + value _)])
        (set! value 20)
        (= 5 (add 3)))
