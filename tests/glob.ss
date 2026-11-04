@@ -1,5 +1,33 @@
 (import (cspp) (cspp glob))
 
+(mat glob-adjacent-globstars
+     (let* ([root (format "glob-adjacent-stars-~a" (get-process-id))]
+            [leaf root]
+            [allocated
+             (lambda (pattern)
+               (collect)
+               (let* ([before (statistics)]
+                      [result (glob pattern)]
+                      [bytes (sstats-bytes (sstats-difference (statistics) before))])
+                 (cons result bytes)))])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (do ([i 0 (fx1+ i)]) ((fx= i 9))
+             (set! leaf (string-append leaf "/d"))
+             (mkdir leaf))
+           (file-touch (string-append leaf "/x")))
+         (lambda ()
+           (let ([single (allocated (string-append root "/**/x"))]
+                 [repeated (allocated (string-append root "/**/**/**/**/**/x"))])
+             (and (equal? (car single) (list (string-append leaf "/x")))
+                  (equal? (car single) (car repeated))
+                  ;; Equivalent recursive patterns must not multiply tree traversal.
+                  (< (cdr repeated) (* 5 (cdr single)))
+                  (glob-match? 'unix "**/**/**/x" "x")
+                  (glob-match? 'unix "**/**/**/x" "a/b/x"))))
+         (lambda () (file-removetree root)))))
+
 (mat glob-dot-components-respect-symlink-policy
      (let ([root (format "glob-dot-policy-~a" (get-process-id))])
        (dynamic-wind

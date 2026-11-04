@@ -273,13 +273,18 @@
         (%branch parsed
                  (let loop ([components (path-components parsed)] [literal-count home-count])
                    (if (null? components) '()
-                       (cons (if (fx> literal-count 0)
-                                 (%component
-                                  (sre->regex (list 'seq (car components))
-                                              (if (eq? flavor 'windows) '(i) '()))
-                                  (car components))
-                                 ($component-compile flavor (car components)))
-                             (loop (cdr components) (fx1- literal-count)))))
+                       (let ([component
+                              (if (fx> literal-count 0)
+                                  (%component
+                                   (sre->regex (list 'seq (car components))
+                                               (if (eq? flavor 'windows) '(i) '()))
+                                   (car components))
+                                  ($component-compile flavor (car components)))]
+                             [rest (loop (cdr components) (fx1- literal-count))])
+                         ;; Adjacent globstars describe the same recursive search.
+                         (if (and (not component) (pair? rest) (not (car rest)))
+                             rest
+                             (cons component rest)))))
                  separator
                  (and (> (string-length expanded) 0)
                       (let ([last (string-ref expanded (fx1- (string-length expanded)))])
