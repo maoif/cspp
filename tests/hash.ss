@@ -417,6 +417,21 @@
 
 (mat call-with-hasher
 
+     ;; A non-hasher argument must be rejected before hasher state is inspected.
+     (error? (hasher-update-bytevector! #f (bytevector 1) 0 1))
+
+     ;; Integer-valued inexact bounds must not reach fixnum or native operations.
+     (error? (xxhash32-bytevector (bytevector 1 2 3) 0 0.0 2.0))
+
+     ;; Cleanup must preserve a callback exception after explicit finalization.
+     (mat-requires (xxhash)
+       (guard (condition [(eq? condition 'callback-failure) #t] [else #f])
+         (call-with-hasher
+           (lambda (hasher)
+             (hasher-finalize! hasher)
+             (raise 'callback-failure)))
+         #f))
+
      (mat-requires (xxhash)
        (not (= (call-with-hasher 'xxhash32
                                  (lambda (h1)
@@ -502,3 +517,62 @@
                                    (hasher-update-flvector! h1 (flvector 1.1 2.2 3.3)))))))
 
      )
+
+
+(mat hash-boundary-and-lifetime
+
+     ;; Invalid handles must produce argument errors rather than memory faults.
+     (guard (condition
+              [else (and (who-condition? condition)
+                         (eq? (condition-who condition) 'pcheck))])
+       (hasher-update-bytevector! #f (bytevector 1) 0 1)
+       #f)
+
+     ;; Inexact and oversized slice bounds must fail at the argument boundary.
+     (guard (condition
+              [else (and (who-condition? condition)
+                         (eq? (condition-who condition) 'pcheck))])
+       (xxhash32-bytevector (bytevector 1 2 3) 0 0.0 2.0)
+       #f)
+
+     (error? (xxhash32-bytevector (bytevector 1) 0 0 #x80000000))
+
+     (mat-requires (xxhash)
+       (let ([saved #f])
+         (guard (condition [else #t])
+           (call-with-hasher
+             (lambda (hasher) (set! saved hasher) (raise 'callback-error))))
+         ;; The scope must release the hasher after an exception.
+         (guard (condition [else #t]) (hasher-get saved) #f)))
+
+     ;; A continuation cannot resume work after its owned hasher has been released.
+     (mat-requires (xxhash)
+       (let ([resume #f] [attempted? #f])
+         (guard (condition [else #t])
+           ;; A reusable continuation verifies rejection after the dynamic scope exits.
+           (call/cc
+             (lambda (leave)
+               (call-with-hasher
+                 (lambda (hasher)
+                   (call/cc (lambda (continuation)
+                              (set! resume continuation)
+                              (leave 'escaped)))))))
+           (if attempted?
+               #f
+               (begin (set! attempted? #t) (resume 'resumed))))))
+     )
+
+
+(mat hash-file-short-read-cleanup
+     ;; Sysfs reports a 4096-byte file size but supplies a shorter value before EOF.
+     (mat-requires (xxhash)
+       (if (file-regular? "/sys/kernel/uevent_seqnum")
+           (let ([before (length (directory-list "/proc/self/fd"))])
+             (and (guard (condition
+                           [else (and (message-condition? condition)
+                                      (string-contains? (condition-message condition)
+                                                        "unexpected end of file"))])
+                    (xxhash32-file "/sys/kernel/uevent_seqnum")
+                    #f)
+                  (= before (length (directory-list "/proc/self/fd")))))
+           #t)))
