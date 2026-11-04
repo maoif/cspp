@@ -188,6 +188,20 @@
                (fs-close-directory directory)
                (fs-read-directory directory))))
 
+(mat walk-files-cycle
+     (let ([root ($random-file)] [visits 0])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (file-symlink "." (path-build root "cycle")))
+         (lambda ()
+           (walk-files (lambda (directory directories files)
+                         (set! visits (fx1+ visits))
+                         (fx= visits 1))
+                       root #t)
+           (= visits 1))
+         (lambda () (when (file-directory? root #f) (file-removetree root))))))
+
 
 (mat simple-read/write
 
@@ -1476,6 +1490,42 @@
 
 
 (mat file-copytree
+
+     ;; A trailing separator on the source path must not prevent relative path calculation.
+     (let ([root ($random-file)])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (mkdir (path-build root "source"))
+           (write-string (path-build root "source/file.txt") "contents"))
+         (lambda ()
+           (let ([result
+                  (capture-process "../cspp" "--script=file-copytree-process.ss"
+                                   (string-append (path-build root "source") "/")
+                                   (path-build root "destination")
+                                   :timeout 5000 :stdout capture :stderr capture)])
+             (and (process-exit-success? (process-result-status result))
+                  (string=? "" (process-result-stdout result))
+                  (string=? "" (process-result-stderr result))
+                  (string=? "contents"
+                            (read-string (path-build root "destination/file.txt"))))))
+         (lambda () (when (file-directory? root #f) (file-removetree root)))))
+
+     ;; Error case: a destination inside the source must be rejected before copying starts.
+     (let ([root ($random-file)] [calls 0])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (write-string (path-build root "source.txt") "source"))
+         (lambda ()
+           (and (guard (failure [else #t])
+                  (file-copytree root (path-build root "nested")
+                                 (lambda (src dest)
+                                   (set! calls (fx1+ calls))
+                                   (file-copy src dest)))
+                  #f)
+                (fxzero? calls)))
+         (lambda () (when (file-directory? root #f) (file-removetree root)))))
 
      (begin (define dir "copy_test")
             (define dir1 "./copy_test1")

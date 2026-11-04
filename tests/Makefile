@@ -124,7 +124,7 @@ system-process.so: system-process-cleanup-probe.ss system-process-handoff.ss sys
 
 system-user.so: system-user-thread.ss
 
-file.so: fswatcher-blocking-process.ss
+file.so: fswatcher-blocking-process.ss file-copytree-process.ss
 
 fiber.so: fiber-quantum-process.ss fiber-inherited-timer-process.ss
 

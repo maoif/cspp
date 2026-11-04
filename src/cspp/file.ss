@@ -1234,6 +1234,11 @@
                     (set! finished? #f))
                   close-all)))]))
 
+  (define $absolute-file-path
+    (lambda (path)
+      (path-absolute (path-parse 'unix (current-directory))
+                     (path-parse 'unix path))))
+
   (define $statx
     (let ([ffi-statx (foreign-procedure "cspp_statx" (string boolean) scheme-object)])
       (lambda (who path follow-link?)
@@ -1698,37 +1703,52 @@
        (walk-files proc path follow-link? #t)]
       [(proc path follow-link? top-down?)
        (pcheck ([procedure? proc] [string? path] [boolean? follow-link? top-down?])
-               (define dir? (lambda (x)  (file-directory? x follow-link?)))
-               (unless (file-directory? path) ($err-file-not-directory who path))
-               (if top-down?
-                   (let loop ([dir path])
-                     ;; `directory-list` result is relative to `dir`
-                     (let ([fs (map! (lambda (x) (path-build dir x)) (directory-list dir))])
-                       (let-values ([(dirs files) (partition dir? fs)])
-                         (if (proc dir dirs files)
-                             ;; visit each dir in `dirs`
-                             (let lp ([ds dirs])
-                               (unless (null? ds)
-                                 ;; user can modify `dirs` to control whether a dir should be visited
-                                 (if (car ds)
-                                     (if (loop (car ds))
-                                         (lp (cdr ds))
-                                         #f)
-                                     (lp (cdr ds)))))
-                             #f))))
-                   (let loop ([dir path])
-                     ;; `directory-list` result is relative to `dir`
-                     (let ([fs (map! (lambda (x) (path-build dir x)) (directory-list dir))])
-                       (let-values ([(dirs files) (partition dir? fs)])
-                         (if (null? dirs)
-                             (proc dir dirs files)
-                             ;; there's no way to control the traversal by modifying `dirs` here
-                             (let lp ([ds dirs])
-                               (if (null? ds)
-                                   (proc dir dirs files)
-                                   (if (loop (car ds))
-                                       (lp (cdr ds))
-                                       #f)))))))))]))
+               (unless (file-directory? path)
+                 ($err-file-not-directory who path))
+               (let ([visited (make-hashtable equal-hash equal?)])
+                 (define dir? (lambda (candidate) (file-directory? candidate follow-link?)))
+                 (define visit-directory?
+                   (lambda (directory)
+                     (if (not follow-link?)
+                         #t
+                         (let* ([stat (file-stat directory)]
+                                [identity (list (file-stat-dev-major stat)
+                                                (file-stat-dev-minor stat)
+                                                (file-stat-inode stat))])
+                           (if (hashtable-contains? visited identity)
+                               #f
+                               (begin (hashtable-set! visited identity #t) #t))))))
+                 (define list-entries
+                   (lambda (directory)
+                     (map! (lambda (name) (path-build directory name))
+                           (directory-list directory))))
+                 (define walk-top-down
+                   (lambda (directory)
+                     (let-values ([(dirs files) (partition dir? (list-entries directory))])
+                       (if (proc directory dirs files)
+                           (let visit ([remaining dirs])
+                             (cond
+                              [(null? remaining) #t]
+                              [(not (car remaining)) (visit (cdr remaining))]
+                              [(not (visit-directory? (car remaining)))
+                               (visit (cdr remaining))]
+                              [(walk-top-down (car remaining)) (visit (cdr remaining))]
+                              [else #f]))
+                           #f))))
+                 (define walk-bottom-up
+                   (lambda (directory)
+                     (let-values ([(dirs files) (partition dir? (list-entries directory))])
+                       (let visit ([remaining dirs])
+                         (cond
+                          [(null? remaining) (proc directory dirs files)]
+                          [(not (visit-directory? (car remaining)))
+                           (visit (cdr remaining))]
+                          [(walk-bottom-up (car remaining)) (visit (cdr remaining))]
+                          [else #f])))))
+                 (visit-directory? path)
+                 (if top-down?
+                     (walk-top-down path)
+                     (walk-bottom-up path))))]))
 
   #|proc:print-file-tree
   Print the file tree rooted at `path`.
@@ -1905,11 +1925,8 @@
 
   (define $same-path?
     (lambda (path1 path2)
-      (let* ([flavor 'unix]
-             [base (path-parse flavor (current-directory))]
-             [absolute1 (path-absolute base (path-parse flavor path1))]
-             [absolute2 (path-absolute base (path-parse flavor path2))])
-        (string=? (path-render absolute1) (path-render absolute2)))))
+      (string=? (path-render ($absolute-file-path path1))
+                (path-render ($absolute-file-path path2)))))
 
   (define $link/copy-helper
     (lambda (who link/copy-what overwrite?)
@@ -2255,13 +2272,14 @@
        (file-copytree src dest (lambda (src dest) (file-copy src dest #f)))]
       [(src dest copy)
        (pcheck ([string? src dest] [file-directory? src] [procedure? copy])
-               (let* ([relativize (lambda (path)
-                                    (let loop ([parts '()] [path path])
-                                      (if (string=? path src)
-                                          (if (null? parts)
-                                              path
-                                              (apply make-path parts))
-                                          (loop (cons (path-last path) parts) (path-parent path)))))]
+               (let* ([source-path ($absolute-file-path src)]
+                      [destination-path ($absolute-file-path dest)]
+                      [destination-relative (path-components
+                                             (path-relative-to source-path destination-path))]
+                      [relativize (lambda (path)
+                                    (path-render
+                                     (path-relative-to source-path
+                                                       ($absolute-file-path path))))]
                       [do-copytree (lambda (dest)
                                      (walk-files (lambda (dir dirs files)
                                                    ;; paths are relative to `src`
@@ -2274,6 +2292,9 @@
                                                                  (copy f newd)))
                                                              files))
                                                  src #f #t))])
+                 (unless (and (pair? destination-relative)
+                              (string=? (car destination-relative) ".."))
+                   (errorf who "destination cannot be inside the source directory"))
                  (if (file-directory? dest #t)
                      (do-copytree dest)
                      ;; TODO (path-parent dest) is brittle
