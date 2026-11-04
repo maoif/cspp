@@ -281,7 +281,7 @@
                          (toml-table-ref build-system "build-backend")
                          (toml-table-ref define "Halide_WASM_BACKEND"))]
                 [result
-                 (capture-process
+                 (process-capture
                   "tomlq" "-r"
                   (string-append
                    ".project.name, .project[\"requires-python\"], "

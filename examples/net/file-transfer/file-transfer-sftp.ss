@@ -87,11 +87,11 @@
       (file-chmod home #o700)
       (file-chmod ssh-dir #o700)
       (write-string-file target-path dir)
-      (run-process/check "ssh-keygen" "-q" "-t" "ed25519" "-N" "" "-f"
+      (process-run/check "ssh-keygen" "-q" "-t" "ed25519" "-N" "" "-f"
                          (string-copy private-key)
                          :stdout null :stderr null)
       (write-bytevector-file authorized-keys (read-u8vec public-key))
-      (run-process/check "ssh-keygen" "-q" "-t" "ed25519" "-N" "" "-f"
+      (process-run/check "ssh-keygen" "-q" "-t" "ed25519" "-N" "" "-f"
                          (string-copy host-key)
                          :stdout null :stderr null)
       (file-chmod private-key #o600)
@@ -105,7 +105,7 @@
                authorized-keys
                dir
                user))
-      (let ([process (spawn-process "/usr/bin/sshd"
+      (let ([process (process-spawn "/usr/bin/sshd"
                                     (list "-D" "-f" config-path "-E" log-path)
                                     '((stdin . null)
                                       (stdout . null)

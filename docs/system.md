@@ -22,6 +22,17 @@ an empty list when that file is absent.
 
 ## Running commands
 
+Process creation uses `process-<operation>[-<target>]` names:
+
+| Behavior | Executable and arguments | Shell command string | Pipeline specifications |
+| --- | --- | --- | --- |
+| Return live handles | `process-spawn` | `process-spawn-shell` | `process-spawn-pipeline` |
+| Wait for exit status | `process-run` | `process-run-shell` | `process-run-pipeline` |
+| Wait and capture output | `process-capture` | `process-capture-shell` | `process-capture-pipeline` |
+
+Direct execution also provides `process-run/check` and `process-capture/check`. These are the
+current API names; the previous names are not exported as aliases.
+
 Command forms take a program followed by arguments and then optional `:keyword value` clauses.
 These are macros, not procedures with keyword parameters. A bare identifier in a command position
 becomes literal text. Wrap a variable in `(begin variable)` to evaluate it.
@@ -30,13 +41,13 @@ becomes literal text. Wrap a variable in `(begin variable)` to evaluate it.
 (import (cspp))
 
 (define text "hello")
-(define result (capture-process printf "%s" (begin text)))
+(define result (process-capture printf "%s" (begin text)))
 (string=? "hello" (process-result-stdout result)) ; => #t
 (process-exit-success? (process-result-status result)) ; => #t
 ```
 
-`run-process` returns an exit-status record. `capture-process` returns a process-result record.
-Neither invokes a shell. `shell-command` and `capture-shell-command` instead take one command
+`process-run` returns an exit-status record. `process-capture` returns a process-result record.
+Neither invokes a shell. `process-run-shell` and `process-capture-shell` instead take one command
 string interpreted by `sh -c`; construct shell text carefully when it includes external input.
 
 The `/check` variants require exit code zero by default. Ordinary variants accept any status.
@@ -73,11 +84,11 @@ forms, or the symbol `pipeline` for a pipeline. `process-result-pid` identifies 
 
 ```scheme
 (define binary-result
-  (capture-process cat :stdin #vu8(0 255 1) :encoding binary))
+  (process-capture cat :stdin #vu8(0 255 1) :encoding binary))
 (equal? #vu8(0 255 1) (process-result-stdout binary-result)) ; => #t
 
 (define accepted
-  (capture-process/check sh "-c" "exit 7" :success '(0 7)))
+  (process-capture/check sh "-c" "exit 7" :success '(0 7)))
 (= 7 (process-exit-status-code (process-result-status accepted))) ; => #t
 ```
 
@@ -89,7 +100,7 @@ output descriptor can keep capture waiting even after the immediate child exits.
 
 ## Live processes and port ownership
 
-`spawn-process` is a procedure with positional arguments `(program arguments options)`.
+`process-spawn` is a procedure with positional arguments `(program arguments options)`.
 `arguments` is a proper list of strings. `options` is an alist with `cwd`, `env`, `env-mode`, and
 stream keys. The first three have the same meaning as their command-form options. Each stream
 accepts `inherit` (the default), `null`, or `pipe`; stderr also accepts `stdout`.
@@ -101,7 +112,7 @@ as the child produces it. Waiting before draining a full output pipe can deadloc
 For arbitrary simultaneous input/output, use the capture forms or independent I/O threads.
 
 ```scheme
-(define child (spawn-process "cat" '() '((stdin . pipe) (stdout . pipe))))
+(define child (process-spawn "cat" '() '((stdin . pipe) (stdout . pipe))))
 (dynamic-wind
   void
   (lambda ()
@@ -132,7 +143,7 @@ terminates nor waits for the process. Port I/O and closing require caller coordi
 same port is shared between threads. The per-process status mutex does not serialize port I/O.
 `make-pipe` similarly returns two binary ports, input first and output second, both caller-owned.
 
-`process-command` stores the executable string; `spawn-shell-command` therefore records `sh`,
+`process-command` stores the executable string; `process-spawn-shell` therefore records `sh`,
 with `"-c"` and the shell text in `process-arguments`. The argument list is copied when spawning,
 but the strings and accessor results are shared mutable objects; coordinate mutations yourself.
 
@@ -143,18 +154,18 @@ with a program. All OS string restrictions apply.
 
 ```scheme
 (define pipeline-result
-  (capture-pipeline '(("printf" "hello") ("tr" "a-z" "A-Z"))))
+  (process-capture-pipeline '(("printf" "hello") ("tr" "a-z" "A-Z"))))
 (string=? "HELLO" (process-result-stdout pipeline-result)) ; => #t
 (not (process-result-stderr pipeline-result)) ; => #t
 ```
 
-`capture-pipeline` inherits stdin and stderr, captures only the final command's stdout as UTF-8,
-waits for all children, and returns the final child's status and pid. `run-pipeline` also waits
+`process-capture-pipeline` inherits stdin and stderr, captures only the final command's stdout as UTF-8,
+waits for all children, and returns the final child's status and pid. `process-run-pipeline` also waits
 for all children, discards final stdout without buffering, inherits stderr, and returns a list
 containing the final status. These APIs have no timeout or binary-capture options and do not
 implement pipefail: an earlier failure is not substituted for the final status.
 
-`pipe-processes` takes the specifications and a reserved options argument that must be `'()`.
+`process-spawn-pipeline` takes the specifications and a reserved options argument that must be `'()`.
 It returns a process object per command immediately, with no exposed stream ports. The first
 stdin, final stdout, and all stderrs are inherited. Wait for each returned process to inspect
 all statuses and reap every child.

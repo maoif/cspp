@@ -3,10 +3,10 @@
           ;; completed command results
           process-result? process-result-status process-result-stdout process-result-stderr
           process-result-pid process-result-command
-          capture-pipeline
+          process-capture-pipeline
 
           ;; implementation entry points for command macros
-          %run-process %capture-process %run-shell-command %capture-shell-command)
+          %process-run %process-capture %process-run-shell %process-capture-shell)
   (import (cspp chez) (cspp system common) (cspp system private)
           (cspp system process status) (cspp system process private) (cspp utils))
 
@@ -184,14 +184,14 @@
                            (if ($stderr-to-stdout? options) 1 0)
                            ($timeout-option options)))))
 
-  #|proc:%run-process
-  The internal `%run-process` procedure implements direct command forms and returns an exit status.
+  #|proc:%process-run
+  The internal `%process-run` procedure implements direct command forms and returns an exit status.
   `who` is the error-origin symbol; `program` is a NUL-free executable string; `arguments` is a
   proper list of NUL-free strings. `options` is the command option alist documented in
-  `run-process`.
+  `process-run`.
   Boolean `check?` chooses whether exit code zero is required when no `success` option is supplied.
   |#
-  (define %run-process
+  (define %process-run
     (lambda (who program arguments options check?)
       (pcheck ([symbol? who] [$os-string? program] [$os-string-list? arguments]
                [list? options] [boolean? check?])
@@ -201,13 +201,13 @@
                                   check?
                                   who))))
 
-  #|proc:%capture-process
-  The internal `%capture-process` procedure runs a direct command and returns a process result.
+  #|proc:%process-capture
+  The internal `%process-capture` procedure runs a direct command and returns a process result.
   `who` is the error-origin symbol; `program` is a NUL-free executable string; `arguments` is a
-  proper list of NUL-free strings. `options` follows `capture-process`, including stream encoding.
+  proper list of NUL-free strings. `options` follows `process-capture`, including stream encoding.
   Boolean `check?` chooses whether exit code zero is required when `success` is omitted.
   |#
-  (define %capture-process
+  (define %process-capture
     (lambda (who program arguments options check?)
       (pcheck ([symbol? who] [$os-string? program] [$os-string-list? arguments]
                [list? options] [boolean? check?])
@@ -217,13 +217,13 @@
                                       check?
                                       who))))
 
-  #|proc:%run-shell-command
-  The internal `%run-shell-command` procedure runs `sh -c` and returns an exit status.
+  #|proc:%process-run-shell
+  The internal `%process-run-shell` procedure runs `sh -c` and returns an exit status.
   `who` is the error-origin symbol; `command` is a NUL-free shell-command string.
-  `options` follows `shell-command`; boolean `check?` selects the default zero-exit requirement.
+  `options` follows `process-run-shell`; boolean `check?` selects the default zero-exit requirement.
   A supplied `success` option overrides that requirement.
   |#
-  (define %run-shell-command
+  (define %process-run-shell
     (lambda (who command options check?)
       (pcheck ([symbol? who] [$os-string? command] [list? options] [boolean? check?])
               ($run-vector->status command
@@ -232,13 +232,13 @@
                                   check?
                                   who))))
 
-  #|proc:%capture-shell-command
-  The internal `%capture-shell-command` procedure runs `sh -c` and returns a process result.
+  #|proc:%process-capture-shell
+  The internal `%process-capture-shell` procedure runs `sh -c` and returns a process result.
   `who` is the error-origin symbol; `command` is a NUL-free shell-command string.
-  `options` follows `capture-shell-command`; boolean `check?` selects a default zero-exit check.
+  `options` follows `process-capture-shell`; boolean `check?` selects a default zero-exit check.
   A supplied `success` option overrides that requirement.
   |#
-  (define %capture-shell-command
+  (define %process-capture-shell
     (lambda (who command options check?)
       (pcheck ([symbol? who] [$os-string? command] [list? options] [boolean? check?])
               ($capture-vector->result command
@@ -247,18 +247,18 @@
                                       check?
                                       who))))
 
-  #|proc:capture-pipeline
-  The `capture-pipeline` procedure runs string-list process specs as a pipeline.
+  #|proc:process-capture-pipeline
+  The `process-capture-pipeline` procedure runs string-list process specs as a pipeline.
   The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
   Command strings must contain no NUL characters. Returns a process result with captured stdout.
   Stdin and stderr are inherited. The result's stderr field is `#f`, and its command is `pipeline`.
   The status and pid belong to the final command; all children are waited for before returning.
   |#
-  (define capture-pipeline
+  (define process-capture-pipeline
     (lambda (process-specs)
       (pcheck ([$process-specs? process-specs])
               (let ([result (ffi-result-ref ($spawn-pipeline-capture-ffi process-specs -1))])
                 ($capture-vector->result 'pipeline result '((stdout . capture) (stderr . inherit)) #f
-                                        'capture-pipeline)))))
+                                        'process-capture-pipeline)))))
 
 )

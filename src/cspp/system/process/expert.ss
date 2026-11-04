@@ -19,8 +19,8 @@
           process-running?
 
           ;; process creation and waiting
-          spawn-process
-          spawn-shell-command
+          process-spawn
+          process-spawn-shell
           process-wait
           process-wait/no-hang
           process-wait/timeout
@@ -31,8 +31,8 @@
 
           ;; pipes and pipelines
           make-pipe
-          pipe-processes
-          run-pipeline
+          process-spawn-pipeline
+          process-run-pipeline
 
           ;; raw process APIs
           fork
@@ -85,7 +85,7 @@
   #|proc:process-command
   The `process-command` procedure returns the program or command for `process`.
   The `process` parameter is a process object.
-  For `spawn-shell-command` this is `"sh"`; shell text is stored among `process-arguments`.
+  For `process-spawn-shell` this is `"sh"`; shell text is stored among `process-arguments`.
   |#
   (define process-command
     (lambda (process)
@@ -137,7 +137,7 @@
       (pcheck ([process? process])
         (with-mutex (process-mutex process) ($process-status process)))))
 
-  (define $spawn-process-ffi
+  (define $process-spawn-ffi
     (foreign-procedure "cspp_spawn_process" (ptr ptr utf-8 int int int) ptr))
 
   (define $waitpid-ffi
@@ -152,7 +152,7 @@
   (define $spawn-pipeline-ffi
     (foreign-procedure "cspp_spawn_pipeline" (ptr) ptr))
 
-  (define $run-pipeline-ffi
+  (define $process-run-pipeline-ffi
     (foreign-procedure "cspp_run_pipeline" (ptr) ptr))
 
   (define $stream-mode
@@ -160,8 +160,8 @@
       (case ($option-ref options key 'inherit)
         [(inherit) 0] [(null) 1] [(pipe) 2] [(stdout) 3])))
 
-  #|proc:spawn-process
-  The `spawn-process` procedure starts executable string `program` with string-list `arguments`.
+  #|proc:process-spawn
+  The `process-spawn` procedure starts executable string `program` with string-list `arguments`.
   It returns a process object. `options` is an alist; `cwd` is a directory string or `#f`,
   and `env` is a string-pair alist or `#f` to inherit. An empty `env` clears the environment.
   Program, argument, directory, and environment strings must contain no NUL characters.
@@ -172,13 +172,13 @@
   Callers own these ports and must close them, including stdin to deliver EOF to the child.
   Waiting does not close ports. Concurrent waiters share one cached exit status.
   |#
-  (define-who spawn-process
+  (define-who process-spawn
     (lambda (program arguments options)
       (pcheck ([$os-string? program] [$os-string-list? arguments] [list? options])
         ($validate-process-options options #t)
         (let* ([argv (cons program arguments)]
                [result (ffi-result-ref
-                         ($spawn-process-ffi argv ($option-ref options 'env #f) ($cwd-option options)
+                         ($process-spawn-ffi argv ($option-ref options 'env #f) ($cwd-option options)
                            ($stream-mode options 'stdin) ($stream-mode options 'stdout)
                            ($stream-mode options 'stderr)))]
                [pid (vector-ref result 0)] [ports '()])
@@ -206,16 +206,16 @@
                      [stderr (open-stream 3 #f)])
                 (make-process pid program (list-copy arguments) stdin stdout stderr #f))))))))
 
-  #|proc:spawn-shell-command
-  The `spawn-shell-command` procedure starts `command` through the host shell.
+  #|proc:process-spawn-shell
+  The `process-spawn-shell` procedure starts `command` through the host shell.
   The `command` parameter is a NUL-free string interpreted by `sh -c`.
-  The `options` parameter is an option alist accepted by `spawn-process`.
+  The `options` parameter is an option alist accepted by `process-spawn`.
   Returns a live process object; callers own its pipe ports and must eventually reap the child.
   |#
-  (define-who spawn-shell-command
+  (define-who process-spawn-shell
     (lambda (command options)
       (pcheck ([$os-string? command] [list? options])
-              (spawn-process "sh" (list "-c" command) options))))
+              (process-spawn "sh" (list "-c" command) options))))
 
   (define $wait-vector->status
     (lambda (result)
@@ -345,8 +345,8 @@
         (values (open-fd-input-port (vector-ref fds 0) 'block #f)
                 (open-fd-output-port (vector-ref fds 1) 'block #f)))))
 
-  #|proc:pipe-processes
-  The `pipe-processes` procedure starts process specs as a live pipeline.
+  #|proc:process-spawn-pipeline
+  The `process-spawn-pipeline` procedure starts process specs as a live pipeline.
   The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
   Command strings must contain no NUL characters.
   The `options` parameter is reserved and should currently be the empty list.
@@ -355,7 +355,7 @@
   Stdin for the first command, stdout for the final command, and all stderrs are inherited.
   No pipe ports are exposed; the returned list follows specification order.
   |#
-  (define pipe-processes
+  (define process-spawn-pipeline
     (lambda (process-specs options)
       (pcheck ([$process-specs? process-specs] [null? options])
               (let ([pids (ffi-result-ref ($spawn-pipeline-ffi process-specs))])
@@ -370,18 +370,18 @@
                                                 #f #f #f #f)
                                   out))))))))
 
-  #|proc:run-pipeline
-  The `run-pipeline` procedure runs process specs as a pipeline and waits.
+  #|proc:process-run-pipeline
+  The `process-run-pipeline` procedure runs process specs as a pipeline and waits.
   The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
   Command strings must contain no NUL characters.
-  Unlike `pipe-processes`, this procedure does not return live process objects.
+  Unlike `process-spawn-pipeline`, this procedure does not return live process objects.
   It returns a list containing the final process exit status.
   The final process's stdout is discarded without buffering; stderr is inherited.
   |#
-  (define run-pipeline
+  (define process-run-pipeline
     (lambda (process-specs)
       (pcheck ([$process-specs? process-specs])
-              (let ([result (ffi-result-ref ($run-pipeline-ffi process-specs))])
+              (let ([result (ffi-result-ref ($process-run-pipeline-ffi process-specs))])
                 (list ($wait-status->exit-status (vector-ref result 1)))))))
 
 ;;;;===----------------------------------------------------------------------===

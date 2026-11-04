@@ -170,12 +170,12 @@
 
 (mat signal-send-child
 
-     (let ([p (spawn-process "sleep" '("5") '((stdout . null) (stderr . null)))])
+     (let ([p (process-spawn "sleep" '("5") '((stdout . null) (stderr . null)))])
        (send-process-signal p term)
        (let ([status (process-wait/timeout p 1000)])
          (eq? 'signal (process-exit-status-kind status))))
 
-     (let ([p (spawn-process "sleep" '("5") '((stdout . null) (stderr . null)))])
+     (let ([p (process-spawn "sleep" '("5") '((stdout . null) (stderr . null)))])
        (send-signal (process-pid p) "TERM")
        (let ([status (process-wait/timeout p 1000)])
          (eq? 'signal (process-exit-status-kind status)))))

@@ -416,7 +416,7 @@
      (or (not (external-tool-available? "readelf"))
          (let* ([file (parse-elf-file "../libcspp.so")]
                 [result
-                 (capture-process "/bin/sh" "-c"
+                 (process-capture "/bin/sh" "-c"
                                   "LC_ALL=C exec readelf -h -W \"$1\""
                                   "sh" "../libcspp.so"
                    :stdout capture

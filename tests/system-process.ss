@@ -1,30 +1,55 @@
 (import (cspp))
 
+(mat process-api-export-names
+
+     (andmap
+       (lambda (library)
+         (let ([exports (library-exports library)])
+           (andmap (lambda (name) (and (memq name exports) #t))
+             '(process-spawn process-spawn-shell process-spawn-pipeline
+               process-run process-run/check process-run-shell process-run-pipeline
+               process-capture process-capture/check process-capture-shell
+               process-capture-pipeline))))
+       '((cspp) (cspp system) (cspp system process)))
+
+     ;; Error case: discarded names must not survive as aliases in any process library or facade.
+     (andmap
+       (lambda (library)
+         (let ([exports (library-exports library)])
+           (andmap (lambda (name) (not (memq name exports)))
+             '(spawn-process spawn-shell-command pipe-processes
+               run-process run-process/check shell-command run-pipeline
+               capture-process capture-process/check capture-shell-command capture-pipeline
+               %run-process %capture-process %run-shell-command %capture-shell-command))))
+       '((cspp) (cspp system) (cspp system process)
+         (cspp system process expert) (cspp system process macros)
+         (cspp system process backend))))
+
 (mat process-argument-domains
 
      ;; Error case: every pipeline specification must contain a command and string arguments.
      (andmap
        (lambda (specs)
-         (and (guard (condition [else #t]) (capture-pipeline specs) #f)
-              (guard (condition [else #t]) (run-pipeline specs) #f)
-              (guard (condition [else #t]) (pipe-processes specs '()) #f)))
+         (and (guard (condition [else #t]) (process-capture-pipeline specs) #f)
+              (guard (condition [else #t]) (process-run-pipeline specs) #f)
+              (guard (condition [else #t]) (process-spawn-pipeline specs '()) #f)))
        '(() (()) (("true" . "extra")) (("true" 1)) (("true\x0;ignored"))))
 
      ;; Error case: reserved pipeline options must be rejected before starting a child.
      (guard (condition [else #t])
-       (let ([children (pipe-processes '(("/bin/true")) '((cwd . "/missing")))])
+       (let ([children (process-spawn-pipeline '(("/bin/true")) '((cwd . "/missing")))])
          (for-each process-wait children)
          #f))
 
      ;; Error case: an environment key cannot contain the separator or be empty.
      (and (guard (condition [else #t])
-            (capture-process "/bin/true" :env '(("A=B" . "C"))) #f)
+            (process-capture "/bin/true" :env '(("A=B" . "C"))) #f)
           (guard (condition [else #t])
-            (process-wait (spawn-process "/bin/true" '() '((env . (("" . "C")))))) #f)))
+            (process-wait (process-spawn "/bin/true" '() '((env . (("" . "C")))))) #f)))
 
 (mat process-macro-syntax
 
-     (let ([r (capture-process "printf" "hello"
+     (let ([r (process-capture "printf" "hello"
                 :stdout capture
                 :stderr capture)])
        (and (process-result? r)
@@ -32,7 +57,7 @@
             (string=? "hello" (process-result-stdout r))
             (string=? "" (process-result-stderr r))))
 
-     (let ([r (capture-process printf hello
+     (let ([r (process-capture printf hello
                 :stdout capture
                 :stderr capture)])
        (and (process-result? r)
@@ -42,24 +67,24 @@
 
      ;; Error case: duplicate option keyword should be rejected by macro expansion.
      (guard (c [else #t])
-       (eval '(capture-process "printf" "x" :stdout capture :stdout capture))
+       (eval '(process-capture "printf" "x" :stdout capture :stdout capture))
        #f)
 
      ;; Error case: unknown option keyword should be rejected by macro expansion.
      (guard (c [else #t])
-       (eval '(capture-process "printf" "x" :bad-option capture))
+       (eval '(process-capture "printf" "x" :bad-option capture))
        #f))
 
 (mat process-capture-behavior
 
-     (let ([r (capture-process "sh" "-c" "printf out; printf err >&2"
+     (let ([r (process-capture "sh" "-c" "printf out; printf err >&2"
                 :stdout capture
                 :stderr capture)])
        (and (process-exit-success? (process-result-status r))
             (string=? "out" (process-result-stdout r))
             (string=? "err" (process-result-stderr r))))
 
-     (let ([r (capture-process "cat"
+     (let ([r (process-capture "cat"
                 :stdin "abc"
                 :stdout capture
                 :stderr capture)])
@@ -68,14 +93,14 @@
 
 (mat process-option-surface
 
-     (let ([r (capture-process "cat"
+     (let ([r (process-capture "cat"
                 :stdin (string->utf8 "bytes")
                 :stdout capture
                 :stderr capture)])
        (and (process-exit-success? (process-result-status r))
             (string=? "bytes" (process-result-stdout r))))
 
-     (let ([r (capture-process "/bin/sh" "-c" "printf \"$CSPP_PROCESS_TEST\""
+     (let ([r (process-capture "/bin/sh" "-c" "printf \"$CSPP_PROCESS_TEST\""
                 :env '(("CSPP_PROCESS_TEST" . "env-ok"))
                 :env-mode replace
                 :stdout capture
@@ -83,21 +108,21 @@
        (and (process-exit-success? (process-result-status r))
             (string=? "env-ok" (process-result-stdout r))))
 
-     (let ([r (capture-process "/bin/sh" "-c" "pwd"
+     (let ([r (process-capture "/bin/sh" "-c" "pwd"
                 :cwd "/tmp"
                 :stdout capture
                 :stderr capture)])
        (and (process-exit-success? (process-result-status r))
             (string=? "/tmp\n" (process-result-stdout r))))
 
-     (let ([r (capture-process "/bin/sh" "-c" "printf out; printf err >&2"
+     (let ([r (process-capture "/bin/sh" "-c" "printf out; printf err >&2"
                 :stdout capture
                 :stderr stdout)])
        (and (process-exit-success? (process-result-status r))
             (string=? "outerr" (process-result-stdout r))
             (not (process-result-stderr r))))
 
-     (let ([s (run-process "/bin/sh" "-c" "exit 7"
+     (let ([s (process-run "/bin/sh" "-c" "exit 7"
                 :stdin null
                 :stdout null
                 :stderr null
@@ -105,7 +130,7 @@
        (and (eq? 'exit (process-exit-status-kind s))
             (= 7 (process-exit-status-code s))))
 
-     (let ([r (capture-process/check "/bin/sh" "-c" "exit 7"
+     (let ([r (process-capture/check "/bin/sh" "-c" "exit 7"
                 :stdout null
                 :stderr null
                 :success (lambda (status)
@@ -115,14 +140,14 @@
 
 (mat process-shell-helpers
 
-     (let ([s (shell-command "exit 7"
+     (let ([s (process-run-shell "exit 7"
                 :stdout null
                 :stderr null
                 :success '(7))])
        (and (eq? 'exit (process-exit-status-kind s))
             (= 7 (process-exit-status-code s))))
 
-     (let ([r (capture-shell-command "printf shell"
+     (let ([r (process-capture-shell "printf shell"
                 :stdout capture
                 :stderr capture)])
        (and (process-result? r)
@@ -131,7 +156,7 @@
 
 (mat process-spawn-apis
 
-     (let* ([p (spawn-process "sleep" '("1")
+     (let* ([p (process-spawn "sleep" '("1")
                               '((stdin . null) (stdout . null) (stderr . null)))]
             [running-before (process-running? p)])
        (process-terminate p)
@@ -141,7 +166,7 @@
               (process-exit-status? status)
               (not (process-running? p)))))
 
-     (let* ([p (spawn-process "sleep" '("1")
+     (let* ([p (process-spawn "sleep" '("1")
                               '((stdin . null) (stdout . null) (stderr . null)))]
             [status (process-wait/no-hang p)])
        (process-kill p 15)
@@ -149,13 +174,13 @@
          (and (not status)
               (process-exit-status? final-status))))
 
-     (let* ([p (spawn-process "true" '()
+     (let* ([p (process-spawn "true" '()
                               '((stdin . null) (stdout . null) (stderr . null)))]
             [status (process-wait/timeout p 1000)])
        (and (process-exit-success? status)
             (process-exit-success? (process-wait/no-hang p))))
 
-     (let* ([p (spawn-shell-command "exit 0"
+     (let* ([p (process-spawn-shell "exit 0"
                                     '((stdin . null) (stdout . null) (stderr . null)))]
             [status (process-wait p)])
        (and (process? p)
@@ -196,7 +221,7 @@
 
      ;; Error case: live spawning must report a missing executable as an error.
      (guard (c [(system-error? c) #t] [else #f])
-       (spawn-process "definitely-not-a-cspp-test-command" '() '())
+       (process-spawn "definitely-not-a-cspp-test-command" '() '())
        #f)
 
      ;; Error case: an executable script with a missing interpreter must fail to spawn.
@@ -210,11 +235,11 @@
          (lambda () (void))
          (lambda ()
            (guard (c [(system-error? c) #t] [else #f])
-             (capture-process path :stdout capture :stderr capture)
+             (process-capture path :stdout capture :stderr capture)
              #f))
          (lambda () (when (file-exists? path) (delete-file path)))))
 
-     (let ([status (run-process "/bin/sh" "-c" "exit 127"
+     (let ([status (process-run "/bin/sh" "-c" "exit 127"
                      :stdin null :stdout null :stderr null)])
        (and (eq? 'exit (process-exit-status-kind status))
             (= 127 (process-exit-status-code status)))))
@@ -222,8 +247,31 @@
 ;; Error case: check variant should raise for nonzero exit status.
 (mat process-check-errors
 
+     (process-exit-success?
+       (process-run/check "/bin/true" :stdout null :stderr null))
+
+     ;; Error case: the renamed checked run form still rejects nonzero exit codes.
+     (guard (condition [(system-exit-error? condition) #t] [else #f])
+       (process-run/check "/bin/sh" "-c" "exit 7" :stdout null :stderr null)
+       #f)
+
+     ;; Error case: shell status rejection identifies the renamed API in its condition.
+     (guard (condition
+              [(system-exit-error? condition)
+               (eq? 'process-capture-shell (system-error-operation condition))]
+              [else #f])
+       (process-capture-shell "exit 7" :success '(0))
+       #f)
+
+     ;; Error case: a native spawn failure must identify the renamed creation procedure.
+     (guard (condition
+              [(system-error? condition) (eq? 'process-spawn (system-error-operation condition))]
+              [else #f])
+       (process-spawn "definitely-not-a-cspp-test-command" '() '())
+       #f)
+
      (guard (c [(system-exit-error? c) #t] [else #f])
-       (capture-process/check "sh" "-c" "exit 7" :stdout capture :stderr capture)
+       (process-capture/check "sh" "-c" "exit 7" :stdout capture :stderr capture)
        #f))
 
 ;; Error case: process timeout should raise and clean up the child.
@@ -231,28 +279,28 @@
 
      ;; Error case: waiting with no I/O must still honor an explicit deadline.
      (guard (condition [(system-timeout-error? condition) #t] [else #f])
-       (run-process "/bin/sleep" "1" :timeout 25 :stdout null :stderr null)
+       (process-run "/bin/sleep" "1" :timeout 25 :stdout null :stderr null)
        #f)
 
      (guard (c [(system-timeout-error? c) #t] [else #f])
-       (capture-process/check "sh" "-c" "sleep 2" :timeout 50 :stdout capture :stderr capture)
+       (process-capture/check "sh" "-c" "sleep 2" :timeout 50 :stdout capture :stderr capture)
        #f))
 
 (mat process-pipeline
 
      ;; Error case: inherited pipeline stderr must not be reported as an empty capture.
-     (let ([result (capture-pipeline '(("printf" "pipeline")))])
+     (let ([result (process-capture-pipeline '(("printf" "pipeline")))])
        (and (string=? "pipeline" (process-result-stdout result))
             (not (process-result-stderr result))
             (eq? 'pipeline (process-result-command result))))
 
-     (let ([r (capture-pipeline
+     (let ([r (process-capture-pipeline
                (list (list "printf" "abc")
                      (list "tr" "a-z" "A-Z")))])
        (and (process-result? r)
             (string=? "ABC" (process-result-stdout r))))
 
-     (let ([r (capture-pipeline
+     (let ([r (process-capture-pipeline
                (list (list "printf" "abc")
                      (list "cat")
                      (list "cat")
@@ -266,21 +314,21 @@
 
      ;; Error case: a pipeline member that cannot exec must raise a system error.
      (guard (c [(system-error? c) #t] [else #f])
-       (capture-pipeline (list (list "definitely-not-a-cspp-test-command")))
+       (process-capture-pipeline (list (list "definitely-not-a-cspp-test-command")))
        #f)
 
      ;; Error case: live pipeline startup must clean up when a member cannot exec.
      (guard (c [(system-error? c) #t] [else #f])
-       (pipe-processes (list (list "true")
+       (process-spawn-pipeline (list (list "true")
                              (list "definitely-not-a-cspp-test-command"))
                        '())
        #f)
 
 (mat process-expert-pipes
 
-     ;; Error case: run-pipeline must discard large stdout without allocating a captured copy.
+     ;; Error case: process-run-pipeline must discard large stdout without allocating a captured copy.
      (let* ([allocated (+ (bytes-allocated) (bytes-deallocated))]
-            [statuses (run-pipeline '(("head" "-c" "4194304" "/dev/zero") ("cat")))]
+            [statuses (process-run-pipeline '(("head" "-c" "4194304" "/dev/zero") ("cat")))]
             [used (- (+ (bytes-allocated) (bytes-deallocated)) allocated)])
        (and (process-exit-success? (car statuses)) (< used 1048576)))
 
@@ -292,13 +340,13 @@
            (close-input-port in)
            (string=? "pipe" (utf8->string data)))))
 
-     (let ([statuses (run-pipeline
+     (let ([statuses (process-run-pipeline
                       (list (list "printf" "abc")
                             (list "tr" "a-z" "A-Z")))])
        (and (= 1 (length statuses))
             (process-exit-success? (car statuses))))
 
-     (let ([statuses (run-pipeline
+     (let ([statuses (process-run-pipeline
                       (list (list "printf" "abc")
                             (list "cat")
                             (list "cat")
@@ -311,7 +359,7 @@
 
 (mat process-pipe-processes
 
-     (let* ([processes (pipe-processes
+     (let* ([processes (process-spawn-pipeline
                         (list (list "printf" "abc")
                               (list "sh" "-c" "cat >/dev/null"))
                         '())]
@@ -320,7 +368,7 @@
             (andmap process? processes)
             (andmap process-exit-success? statuses)))
 
-     (let* ([processes (pipe-processes
+     (let* ([processes (process-spawn-pipeline
                         (list (list "printf" "abc")
                               (list "cat")
                               (list "cat")
@@ -344,7 +392,7 @@
          (let ([r (dynamic-wind
                     (lambda () (close 0) (close 1))
                     (lambda ()
-                      (capture-process "sh" "-c" "printf out; printf err >&2"
+                      (process-capture "sh" "-c" "printf out; printf err >&2"
                                        :stdout capture
                                        :stderr capture))
                     (lambda ()

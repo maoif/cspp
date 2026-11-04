@@ -92,7 +92,7 @@
          (let* ([path "data/New-Zealand-period-life-tables-2017-2019-CSV.csv"]
                 [records (csv-document-records (parse-csv-file path))]
                 [result
-                 (capture-process
+                 (process-capture
                   "python3" "-c"
                   (string-append
                    "import csv,sys\n"

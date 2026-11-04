@@ -92,7 +92,7 @@
       (make-system-timeout-error 'wait "timed out" '((timeout . 10))))
 
      (system-exit-error?
-      (make-system-exit-error 'run-process "failed" '((status . 1))))
+      (make-system-exit-error 'process-run "failed" '((status . 1))))
 
      (system-unsupported-error?
       (make-system-unsupported-error 'feature "unsupported"))

@@ -4678,7 +4678,7 @@
   (lambda (path)
     (let* ([module (parse-wasm-binary-module-file path)]
            [result
-            (capture-process "wasm-objdump" "-x" (begin path)
+            (process-capture "wasm-objdump" "-x" (begin path)
               :stdout capture
               :stderr capture
               :timeout 10000)]

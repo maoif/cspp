@@ -20,8 +20,8 @@
           process-running?
 
           ;; expert process controls re-exported for convenience
-          spawn-process
-          spawn-shell-command
+          process-spawn
+          process-spawn-shell
           process-wait
           process-wait/no-hang
           process-wait/timeout
@@ -30,8 +30,8 @@
           process-interrupt
           process-close-ports!
           make-pipe
-          pipe-processes
-          run-pipeline
+          process-spawn-pipeline
+          process-run-pipeline
           fork
           vfork
           getpid
@@ -47,13 +47,13 @@
           process-result-command
 
           ;; high-level process forms
-          run-process
-          run-process/check
-          capture-process
-          capture-process/check
-          shell-command
-          capture-shell-command
-          capture-pipeline)
+          process-run
+          process-run/check
+          process-capture
+          process-capture/check
+          process-run-shell
+          process-capture-shell
+          process-capture-pipeline)
   (import (cspp system process expert)
           (cspp system process backend)
           (cspp system process macros)))

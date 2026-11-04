@@ -1522,7 +1522,7 @@
       (lambda (case)
         (guard (failure [else #f])
           (let ([result
-                 (capture-process "../cspp" "--script=fiber-quantum-process.ss" "--"
+                 (process-capture "../cspp" "--script=fiber-quantum-process.ss" "--"
                    (car case) :timeout 5000 :stdin null :stdout capture :stderr capture)])
             (and (process-exit-success? (process-result-status result))
                  (string=? (cdr case) (process-result-stdout result))
@@ -1538,7 +1538,7 @@
       (lambda (mode)
         (guard (failure [else #f])
           (let ([result
-                 (capture-process "../cspp" "--script=fiber-inherited-timer-process.ss" "--"
+                 (process-capture "../cspp" "--script=fiber-inherited-timer-process.ss" "--"
                    mode :timeout 5000 :stdin null :stdout capture :stderr null)])
             (and (process-exit-success? (process-result-status result))
                  (string=? "completed\n" (process-result-stdout result))))))

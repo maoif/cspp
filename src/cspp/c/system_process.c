@@ -644,7 +644,7 @@ ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
 ptr cspp_spawn_process(ptr argv, ptr env, const char *cwd,
                          int stdin_mode, int stdout_mode, int stderr_mode) {
 #if defined(__unix__) || defined(__APPLE__)
-  const char *operation = "spawn-process";
+  const char *operation = "process-spawn";
   char **cargv = argv_from_list(argv);
   char **cenv = env_from_alist(env);
   char *program = NULL;
@@ -684,7 +684,7 @@ ptr cspp_spawn_process(ptr argv, ptr env, const char *cwd,
   return cspp_ok(value);
 #else
   (void)argv; (void)env; (void)cwd; (void)stdin_mode; (void)stdout_mode; (void)stderr_mode;
-  return cspp_unsupported_result("spawn-process");
+  return cspp_unsupported_result("process-spawn");
 #endif
 }
 

@@ -1,6 +1,6 @@
 (library (cspp system process macros)
-  (export run-process run-process/check capture-process capture-process/check
-          shell-command capture-shell-command)
+  (export process-run process-run/check process-capture process-capture/check
+          process-run-shell process-capture-shell)
   (import (cspp chez) (cspp system process backend))
 
 ;;;;===----------------------------------------------------------------------===
@@ -93,23 +93,23 @@
                                [(option ...) option-forms]
                                [check check?])
                    (case kind
-                     [(run-process)
-                      #'(%run-process 'run-process command-expr (list argument ...) (list option ...) check)]
-                     [(capture-process)
-                      #'(%capture-process 'capture-process command-expr (list argument ...) (list option ...) check)]
-                     [(shell-command)
+                     [(process-run)
+                      #'(%process-run 'process-run command-expr (list argument ...) (list option ...) check)]
+                     [(process-capture)
+                      #'(%process-capture 'process-capture command-expr (list argument ...) (list option ...) check)]
+                     [(process-run-shell)
                       (unless (null? arguments)
-                        (syntax-error stx "shell-command accepts one command expression"))
-                      #'(%run-shell-command 'shell-command command-expr (list option ...) check)]
-                     [(capture-shell-command)
+                        (syntax-error stx "process-run-shell accepts one command expression"))
+                      #'(%process-run-shell 'process-run-shell command-expr (list option ...) check)]
+                     [(process-capture-shell)
                       (unless (null? arguments)
-                        (syntax-error stx "capture-shell-command accepts one command expression"))
-                      #'(%capture-shell-command 'capture-shell-command command-expr (list option ...) check)]
+                        (syntax-error stx "process-capture-shell accepts one command expression"))
+                      #'(%process-capture-shell 'process-capture-shell command-expr (list option ...) check)]
                      [else
                       (syntax-error #'kind "unknown process macro kind")])))))]))))
 
-  #|macro:run-process
-  The `run-process` macro runs `program` with arguments and returns an exit status.
+  #|macro:process-run
+  The `process-run` macro runs `program` with arguments and returns an exit status.
   Bare identifiers in `program` and arguments are literal command words.
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
   The `:cwd` option accepts a string working directory or `#f`.
@@ -130,12 +130,12 @@
   Without `:success`, any status is accepted. A code list accepts only normal exits.
   Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
   |#
-  (define-syntax run-process
+  (define-syntax process-run
     (syntax-rules ()
-      [(_ form ...) ($process-form run-process #f form ...)]))
+      [(_ form ...) ($process-form process-run #f form ...)]))
 
-  #|macro:run-process/check
-  The `run-process/check` macro runs `program` and raises on an unacceptable exit.
+  #|macro:process-run/check
+  The `process-run/check` macro runs `program` and raises on an unacceptable exit.
   Bare identifiers in `program` and arguments are literal command words.
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
   The `:cwd` option accepts a string working directory or `#f`.
@@ -156,12 +156,12 @@
   Without `:success`, only exit code zero is accepted. `#f` accepts any status.
   Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
   |#
-  (define-syntax run-process/check
+  (define-syntax process-run/check
     (syntax-rules ()
-      [(_ form ...) ($process-form run-process #t form ...)]))
+      [(_ form ...) ($process-form process-run #t form ...)]))
 
-  #|macro:capture-process
-  The `capture-process` macro runs `program` with arguments and returns a result.
+  #|macro:process-capture
+  The `process-capture` macro runs `program` with arguments and returns a result.
   Bare identifiers in `program` and arguments are literal command words.
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
   The `:cwd` option accepts a string working directory or `#f`.
@@ -182,12 +182,12 @@
   Without `:success`, any status is accepted. A code list accepts only normal exits.
   Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
   |#
-  (define-syntax capture-process
+  (define-syntax process-capture
     (syntax-rules ()
-      [(_ form ...) ($process-form capture-process #f form ...)]))
+      [(_ form ...) ($process-form process-capture #f form ...)]))
 
-  #|macro:capture-process/check
-  The `capture-process/check` macro runs `program` and raises on an unacceptable exit.
+  #|macro:process-capture/check
+  The `process-capture/check` macro runs `program` and raises on an unacceptable exit.
   Bare identifiers in `program` and arguments are literal command words.
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
   The `:cwd` option accepts a string working directory or `#f`.
@@ -208,12 +208,12 @@
   Without `:success`, only exit code zero is accepted. `#f` accepts any status.
   Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
   |#
-  (define-syntax capture-process/check
+  (define-syntax process-capture/check
     (syntax-rules ()
-      [(_ form ...) ($process-form capture-process #t form ...)]))
+      [(_ form ...) ($process-form process-capture #t form ...)]))
 
-  #|macro:shell-command
-  The `shell-command` macro runs `command` through the host shell.
+  #|macro:process-run-shell
+  The `process-run-shell` macro runs `command` through the host shell.
   A bare `command` identifier is literal text; other forms evaluate to a command string.
   Use `(begin command)` for a variable, followed by optional keyword clauses.
   The `:cwd` option accepts a string working directory or `#f`.
@@ -234,12 +234,12 @@
   Without `:success`, any status is accepted. A code list accepts only normal exits.
   Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
   |#
-  (define-syntax shell-command
+  (define-syntax process-run-shell
     (syntax-rules ()
-      [(_ form ...) ($process-form shell-command #f form ...)]))
+      [(_ form ...) ($process-form process-run-shell #f form ...)]))
 
-  #|macro:capture-shell-command
-  The `capture-shell-command` macro runs `command` through the host shell.
+  #|macro:process-capture-shell
+  The `process-capture-shell` macro runs `command` through the host shell.
   A bare `command` identifier is literal text; other forms evaluate to a command string.
   Use `(begin command)` for a variable, followed by optional keyword clauses.
   The `:cwd` option accepts a string working directory or `#f`.
@@ -260,8 +260,8 @@
   Without `:success`, any status is accepted. A code list accepts only normal exits.
   Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
   |#
-  (define-syntax capture-shell-command
+  (define-syntax process-capture-shell
     (syntax-rules ()
-      [(_ form ...) ($process-form capture-shell-command #f form ...)]))
+      [(_ form ...) ($process-form process-capture-shell #f form ...)]))
 
   )

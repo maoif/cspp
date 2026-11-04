@@ -14,7 +14,7 @@
 
 (define pkg-run
   (lambda arguments
-    (capture-shell-command (pkg-join (map pkg-quote arguments) " ")
+    (process-capture-shell (pkg-join (map pkg-quote arguments) " ")
                            :stdout capture :stderr capture)))
 
 (define pkg-command

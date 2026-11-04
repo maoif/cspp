@@ -34,7 +34,7 @@
    ;; Error case: circular nested argv lists must be rejected before native traversal.
    (let ([spec (list "/bin/true")])
      (set-cdr! spec spec)
-     (check (rejects? (lambda () (capture-pipeline (list spec))))) )]
+     (check (rejects? (lambda () (process-capture-pipeline (list spec))))) )]
 
   [(user-race)
    (let* ([first (current-user)] [second (user-ref/default "daemon" first)])
@@ -58,7 +58,7 @@
    (run-threads
      (list (lambda ()
              (do ([index 0 (+ index 1)]) ((= index 300))
-               (let ([child (spawn-process "/bin/true" '() '())])
+               (let ([child (process-spawn "/bin/true" '() '())])
                  (check (process-exit-success? (process-wait child))))))
            (lambda ()
              (do ([index 0 (+ index 1)]) ((= index 3000))
@@ -71,48 +71,48 @@
 
   [(boundaries)
    (check (string=? "é中文" (process-result-stdout
-                             (capture-process "/usr/bin/printf" "%s" "é中文"))))
+                             (process-capture "/usr/bin/printf" "%s" "é中文"))))
    (putenv "CSPP_EMPTY_ENV_TEST" "must-not-inherit")
    (check (string=? "" (process-result-stdout
-                         (capture-process "/bin/sh" "-c" "printf %s \"${CSPP_EMPTY_ENV_TEST-}\""
+                         (process-capture "/bin/sh" "-c" "printf %s \"${CSPP_EMPTY_ENV_TEST-}\""
                            :env '() :env-mode replace))))
    ;; Error case: embedded NUL and invalid options must be rejected before spawning.
-   (check (rejects? (lambda () (capture-process "printf" "a\x0;b"))))
-   (check (rejects? (lambda () (capture-process "true" :timeout 1.0))))
-   (check (rejects? (lambda () (capture-process "true" :encoding 'invalid))))]
+   (check (rejects? (lambda () (process-capture "printf" "a\x0;b"))))
+   (check (rejects? (lambda () (process-capture "true" :timeout 1.0))))
+   (check (rejects? (lambda () (process-capture "true" :encoding 'invalid))))]
 
   [(capture)
    (let* ([input (make-string 1048576 #\a)]
-          [result (capture-process "/bin/cat" :stdin input :timeout 3000)])
+          [result (process-capture "/bin/cat" :stdin input :timeout 3000)])
      (check (string=? input (process-result-stdout result))))
    ;; Error case: early stdin closure is not a timeout.
    (check (process-exit-success? (process-result-status
-            (capture-process "/bin/true" :stdin (make-string 1048576 #\a)))))
+            (process-capture "/bin/true" :stdin (make-string 1048576 #\a)))))
    ;; Error case: input to a child that never reads must obey the capture deadline.
    (check (guard (condition [(system-timeout-error? condition) #t])
-            (capture-process "/bin/sleep" "1" :stdin (make-string 1048576 #\a) :timeout 25)
+            (process-capture "/bin/sleep" "1" :stdin (make-string 1048576 #\a) :timeout 25)
             #f))
    ;; Error case: a descendant retaining stdout must not trigger a second reap.
    (check (guard (condition [(system-timeout-error? condition) #t])
-            (capture-process "/bin/sh" "-c" "sleep 0.2 & exit 0" :timeout 25)
+            (process-capture "/bin/sh" "-c" "sleep 0.2 & exit 0" :timeout 25)
             #f))
    (check (equal? #vu8(0 255 1)
             (process-result-stdout
-              (capture-process "/bin/cat" :stdin #vu8(0 255 1) :encoding binary))))]
+              (process-capture "/bin/cat" :stdin #vu8(0 255 1) :encoding binary))))]
 
   [(gc)
    ;; Error case: native capture must permit another Scheme thread to collect.
    (run-threads
-     (list (lambda () (capture-process "/bin/sleep" "0.2"))
+     (list (lambda () (process-capture "/bin/sleep" "0.2"))
            ;; Error case: waiting with no native streams must also permit GC in another thread.
-           (lambda () (run-process "/bin/sleep" "0.2" :stdout null :stderr null))
+           (lambda () (process-run "/bin/sleep" "0.2" :stdout null :stderr null))
            (lambda ()
              (milisleep 50)
              (do ([index 0 (+ index 1)]) ((= index 100))
                (make-bytevector 1000000)))))]
 
   [(wait)
-   (let ([child (spawn-process "/bin/sleep" '("0.2") '())])
+   (let ([child (process-spawn "/bin/sleep" '("0.2") '())])
      ;; Error case: all concurrent waiters must receive the same successful status.
      (run-threads
        (list (lambda () (check (process-exit-success? (process-wait child))))
@@ -120,7 +120,7 @@
              (lambda () (check (process-exit-success? (process-wait/timeout child 2000)))))))]
 
   [(ports)
-   (let ([child (spawn-process "/bin/cat" '() '((stdin . pipe) (stdout . pipe)))])
+   (let ([child (process-spawn "/bin/cat" '() '((stdin . pipe) (stdout . pipe)))])
      (check (and (output-port? (process-stdin child)) (input-port? (process-stdout child))))
      (put-bytevector (process-stdin child) (string->utf8 "live-é中文"))
      (close-output-port (process-stdin child))
@@ -128,20 +128,20 @@
      (check (process-exit-success? (process-wait child)))
      (process-close-ports! child)
      (process-close-ports! child))
-   (let ([child (spawn-process "/bin/sh" '("-c" "printf out; printf err >&2")
+   (let ([child (process-spawn "/bin/sh" '("-c" "printf out; printf err >&2")
                               '((stdout . pipe) (stderr . stdout)))])
      (check (not (process-stderr child)))
      (check (string=? "outerr" (utf8->string (get-bytevector-all (process-stdout child)))))
      (check (process-exit-success? (process-wait child)))
      (process-close-ports! child))
    ;; Error case: live stream modes and duplicate keys must not be silently ignored.
-   (check (rejects? (lambda () (spawn-process "/bin/true" '() '((stdout . capture))))))
-   (check (rejects? (lambda () (spawn-process "/bin/true" '()
+   (check (rejects? (lambda () (process-spawn "/bin/true" '() '((stdout . capture))))))
+   (check (rejects? (lambda () (process-spawn "/bin/true" '()
                                            '((stdin . null) (stdin . pipe))))))
    ;; Error case: an unrelated child must not inherit a pipe writer and suppress EOF.
    (call-with-values make-pipe
      (lambda (input output)
-       (let ([child (spawn-process "/bin/sleep" '("0.2") '())])
+       (let ([child (process-spawn "/bin/sleep" '("0.2") '())])
          (close-output-port output)
          (check (eof-object? (get-u8 input)))
          (close-input-port input)
@@ -149,7 +149,7 @@
 
   [(inherit)
    (check (string=? "inherited-input"
-            (process-result-stdout (capture-process "/bin/cat" :stdin inherit))))]
+            (process-result-stdout (process-capture "/bin/cat" :stdin inherit))))]
 
   [(signals)
    (let ([original (signal-mask)] [sig (signal usr1)])
