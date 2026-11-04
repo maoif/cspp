@@ -80,7 +80,7 @@ Callback exceptions propagate to the caller. A rejected status raises `system-ex
 | `:success` | `#f`, a proper list of exact exit codes from 0 through 255, or a status callback |
 
 Stream defaults are chosen independently: setting `:stdout null` does not change stderr's
-default. Capturing a stream with a run form drains it and discards the captured data.
+default. Capturing a stream with a run form drains its pipe without accumulating output data.
 Omitted stdin is connected to `/dev/null`; `inherit` connects the child's stdin to OS descriptor 0.
 Payload strings are UTF-8 encoded and may contain NUL; bytevectors pass arbitrary bytes.
 Other OS strings—programs, arguments, directories, and environment names/values—must contain no
@@ -268,7 +268,8 @@ without a second legacy error protocol.
 
 The shared native I/O loop is reused by each synchronous capture call. It feeds stdin while
 draining outputs and checking one monotonic deadline. It has no global reactor or background
-thread. Buffers and strings used while Chez's thread is inactive are native-owned; Scheme
+thread. Run forms use the same loop with retention disabled for discarded capture streams.
+Buffers and strings used while Chez's thread is inactive are native-owned; Scheme
 objects are constructed only after activation. With no streams or deadline left, it blocks in
 `waitpid` instead of polling. Live waits use short nonblocking polls under a per-process mutex
 and sleep outside that mutex. These are OS-thread operations, not fiber-aware scheduling APIs.

@@ -31,6 +31,7 @@ ptr cspp_timeout_result(const char *operation, ptr context);
 
 ptr cspp_filesystem_info(const char *path);
 ptr cspp_send_signal(int pid, int sig);
+/* Capture modes: 0 leaves a stream unpiped, 1 retains bytes, 2 drains without retention. */
 ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
                          ptr stdin_payload, int capture_stdout, int capture_stderr,
                          int stdout_null, int stderr_null, int stderr_to_stdout,

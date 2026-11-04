@@ -423,9 +423,11 @@ static int terminate_child(pid_t pid) {
 
 static ptr capture_child(pid_t pid, int input_fd, const unsigned char *input,
                          size_t input_size, int stdout_fd, int stderr_fd,
+                         int retain_stdout, int retain_stderr,
                          int timeout_ms, const char *operation) {
   byte_buffer buffers[2] = {{0}, {0}};
   int output_fds[2] = {stdout_fd, stderr_fd};
+  int retain[2] = {retain_stdout, retain_stderr};
   int status = 0, reaped = 0, error = 0, timed_out = 0, broken_pipe = 0;
   size_t sent = 0;
   int64_t start = monotonic_ms();
@@ -486,7 +488,7 @@ static ptr capture_child(pid_t pid, int input_fd, const unsigned char *input,
       char chunk[65536];
       ssize_t length = read(output_fds[i], chunk, sizeof(chunk));
       if (length > 0) {
-        if (!buffer_append(&buffers[i], chunk, (size_t)length)) error = ENOMEM;
+        if (retain[i] && !buffer_append(&buffers[i], chunk, (size_t)length)) error = ENOMEM;
       } else if (!length) close_fd(&output_fds[i]);
       else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) error = errno;
     }
@@ -621,6 +623,7 @@ ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
   ptr result = capture_child(pid, stdin_pipe[1], input, input_size,
                              capture_stdout ? stdout_pipe[0] : -1,
                              capture_stderr ? stderr_pipe[0] : -1,
+                             capture_stdout == 1, capture_stderr == 1,
                              timeout_ms, "spawn-capture");
   free(input);
   return result;
@@ -1019,7 +1022,8 @@ static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
   }
   close_fd(&capture_pipe[1]);
 
-  ptr result = capture_child(pids[count - 1], -1, NULL, 0, capture_pipe[0], -1, timeout_ms, "spawn-pipeline");
+  ptr result = capture_child(pids[count - 1], -1, NULL, 0, capture_pipe[0], -1,
+                             capture_stdout, 0, timeout_ms, "spawn-pipeline");
   Slock_object(result);
   Sdeactivate_thread();
   for (int i = 0; i < count - 1; i += 1) {

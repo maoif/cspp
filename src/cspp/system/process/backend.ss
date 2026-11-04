@@ -117,13 +117,13 @@
       (let ([timeout ($option-ref options 'timeout #f)])
         (if timeout timeout -1))))
 
-  (define $capture-stdout?
-    (lambda (options default)
-      (eq? 'capture ($option-ref options 'stdout default))))
-
-  (define $capture-stderr?
-    (lambda (options default)
-      (eq? 'capture ($option-ref options 'stderr default))))
+  ;; Native capture modes: 0 leaves the stream unpiped, 1 retains bytes for a result,
+  ;; and 2 drains the pipe without retaining bytes for a status-only run.
+  (define $capture-mode
+    (lambda (options key default)
+      (if (eq? 'capture ($option-ref options key default))
+          (if (eq? default 'capture) 1 2)
+          0)))
 
   (define $null-stdout?
     (lambda (options)
@@ -177,8 +177,8 @@
                            ($option-ref options 'env #f)
                            ($cwd-option options)
                            ($stdin-payload options)
-                           (if ($capture-stdout? options capture-default) 1 0)
-                           (if ($capture-stderr? options capture-default) 1 0)
+                           ($capture-mode options 'stdout capture-default)
+                           ($capture-mode options 'stderr capture-default)
                            (if ($null-stdout? options) 1 0)
                            (if ($null-stderr? options) 1 0)
                            (if ($stderr-to-stdout? options) 1 0)

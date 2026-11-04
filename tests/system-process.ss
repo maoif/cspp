@@ -1,5 +1,37 @@
 (import (cspp))
 
+(mat process-run-discarded-captures
+
+     ;; Error case: status-only runs must drain capture pipes without retaining stream-sized data.
+     (for-all
+       (lambda (run)
+         (run)
+         (collect)
+         (let* ([before (+ (bytes-allocated) (bytes-deallocated))] [status (run)]
+                [allocated (- (+ (bytes-allocated) (bytes-deallocated)) before)])
+           (and (process-exit-success? status) (< allocated 1048576))))
+       (list
+         (lambda ()
+           (process-run "/usr/bin/head" "-c" "16777216" "/dev/zero"
+             :stdout capture :stderr stdout))
+         (lambda ()
+           (process-run/check "/usr/bin/head" "-c" "16777216" "/dev/zero" :stdout capture))
+         (lambda ()
+           (process-run-shell
+             "/usr/bin/head -c 16777216 /dev/zero; /usr/bin/head -c 16777216 /dev/zero >&2"
+             :stdout capture :stderr capture))))
+
+     ;; Captured run streams remain pipes, preserving child behavior compared with /dev/null.
+     (process-exit-success?
+       (process-run "/bin/sh" "-c" "test -p /proc/self/fd/1 && test -p /proc/self/fd/2"
+         :stdout capture :stderr capture))
+
+     ;; Error case: discarding a busy stream must still enforce the command timeout.
+     (guard (condition [(system-timeout-error? condition) #t])
+       (process-run "/bin/sh" "-c" "while :; do printf busy; done"
+         :stdout capture :timeout 25)
+       #f))
+
 (mat process-path-exec-errors
 
      ;; Error case: exec-time failures must not hide a working command in a later PATH entry.
