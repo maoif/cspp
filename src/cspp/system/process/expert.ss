@@ -44,59 +44,11 @@
           $validate-process-options $wait-status->exit-status)
   (import (cspp chez)
           (cspp system common)
-          (cspp system info)
+          (only (cspp system time) milisleep)
+          (cspp system process status)
+          (cspp system process private)
           (cspp system private)
           (cspp utils))
-
-;;;;===----------------------------------------------------------------------===
-;;;; process status records
-;;;;===----------------------------------------------------------------------===
-
-  #|proc:process-exit-status?
-The `process-exit-status?` procedure returns whether `object` is a status.
-The `object` parameter is any Scheme object.
-|#
-  (define-record-type ($process-exit-status %make-process-exit-status
-                                             process-exit-status?)
-    (nongenerative)
-    (fields (immutable kind $process-exit-status-kind)
-            (immutable code $process-exit-status-code)))
-
-  #|proc:process-exit-status-kind
-  The `process-exit-status-kind` procedure returns the kind stored in `status`.
-  The `status` parameter is a process exit-status record.
-  |#
-  (define process-exit-status-kind
-    (lambda (status)
-      (pcheck ([process-exit-status? status]) ($process-exit-status-kind status))))
-
-  #|proc:process-exit-status-code
-  The `process-exit-status-code` procedure returns the numeric code in `status`.
-  The `status` parameter is a process exit-status record.
-  |#
-  (define process-exit-status-code
-    (lambda (status)
-      (pcheck ([process-exit-status? status]) ($process-exit-status-code status))))
-
-  #|proc:make-process-exit-status
-  The `make-process-exit-status` procedure returns an exit-status record.
-  `kind` is `exit`, `signal`, or `stopped`; `code` is an exact nonnegative integer.
-  For `exit` the code is an exit code; for the other kinds it is a signal number.
-  |#
-  (define make-process-exit-status
-    (lambda (kind code)
-      (pcheck ([(lambda (value) (memq value '(exit signal stopped))) kind] [natural? code])
-        (%make-process-exit-status kind code))))
-
-  #|proc:process-exit-success?
-The `process-exit-success?` procedure returns whether `status` is exit code 0.
-The `status` parameter is a process exit-status record.
-|#
-  (define process-exit-success?
-    (lambda (status)
-      (pcheck ([process-exit-status? status])
-              (and (eq? 'exit (process-exit-status-kind status))
-                   (= 0 (process-exit-status-code status))))))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; process records
@@ -178,16 +130,6 @@ The `object` parameter is any Scheme object.
       (pcheck ([process? process])
         (with-mutex (process-mutex process) ($process-status process)))))
 
-  (define $env-option
-    (lambda (options)
-      (let ([env ($option-ref options 'env #f)])
-        (if env env #f))))
-
-  (define $cwd-option
-    (lambda (options)
-      (let ([cwd ($option-ref options 'cwd #f)])
-        (if cwd cwd ""))))
-
   (define $spawn-process-ffi
     (foreign-procedure "cspp_spawn_process" (ptr ptr utf-8 int int int) ptr))
 
@@ -205,51 +147,6 @@ The `object` parameter is any Scheme object.
 
   (define $run-pipeline-ffi
     (foreign-procedure "cspp_run_pipeline" (ptr) ptr))
-
-  (define $wait-status->exit-status
-    (lambda (raw)
-      (cond [(fx= (fxand raw #x7f) 0)
-             (make-process-exit-status 'exit (fxsrl raw 8))]
-            [(fx= (fxand raw #x7f) #x7f)
-             (make-process-exit-status 'stopped (fxsrl raw 8))]
-            [else
-             (make-process-exit-status 'signal (fxand raw #x7f))])))
-
-  (define $validate-process-options
-    (lambda (options live?)
-      (pcheck ([list? options] [boolean? live?])
-        (let ([seen '()])
-          (for-each
-            (lambda (entry)
-              (unless (and (pair? entry) (symbol? (car entry)))
-                (errorf 'process "invalid option entry: ~s" entry))
-              (let ([key (car entry)] [value (cdr entry)])
-                (when (memq key seen) (errorf 'process "duplicate option: ~s" key))
-                (set! seen (cons key seen))
-                (unless
-                  (case key
-                    [(cwd) (or (not value) ($os-string? value))]
-                    [(env) (or (not value)
-                               (and (list? value)
-                                    (andmap (lambda (pair) (and (pair? pair) ($environment-name? (car pair))
-                                                               ($os-string? (cdr pair)))) value)))]
-                    [(env-mode) (eq? value 'replace)]
-                    [(stdin) (if live? (memq value '(inherit null pipe))
-                                  (or (not value) (memq value '(inherit null))
-                                 (string? value) (bytevector? value)))]
-                    [(stdout) (memq value (if live? '(inherit null pipe) '(inherit null capture)))]
-                    [(stderr) (memq value (if live? '(inherit null pipe stdout)
-                                                    '(inherit null capture stdout)))]
-                    [(encoding) (and (not live?) (memq value '(utf-8 binary)))]
-                    [(timeout) (and (not live?) (or (not value) (and (integer? value) (exact? value)
-                                                  (<= 0 value #x7fffffff))))]
-                    [(success) (and (not live?) (or (not value) (procedure? value)
-                                   (and (list? value)
-                                        (andmap (lambda (code) (and (fixnum? code)
-                                                                   (<= 0 code 255))) value))))]
-                    [else #f])
-                  (errorf 'process "invalid ~s option: ~s" key value))))
-            options)))))
 
   (define $stream-mode
     (lambda (options key)
@@ -274,7 +171,7 @@ The `object` parameter is any Scheme object.
         ($validate-process-options options #t)
         (let* ([argv (cons program arguments)]
                [result (ffi-result-ref
-                         ($spawn-process-ffi argv ($env-option options) ($cwd-option options)
+                         ($spawn-process-ffi argv ($option-ref options 'env #f) ($cwd-option options)
                            ($stream-mode options 'stdin) ($stream-mode options 'stdout)
                            ($stream-mode options 'stderr)))]
                [pid (vector-ref result 0)] [ports '()])

@@ -59,6 +59,7 @@ static ptr user_lookup(const char *name, unsigned int id, int group) {
     Svector_set(result, 5, Sstring_utf8(pw.pw_dir, -1));
     Svector_set(result, 6, Sstring_utf8(pw.pw_shell, -1));
   }
+  if (!error && (group ? gr_result != NULL : pw_result != NULL)) result = cspp_ok(result);
   free(buffer);
   free(owned_name);
   return result;

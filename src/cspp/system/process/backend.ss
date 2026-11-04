@@ -2,7 +2,7 @@
   (export process-result? process-result-status process-result-stdout process-result-stderr process-result-pid process-result-command
           %run-process %capture-process %run-shell-command %capture-shell-command capture-pipeline)
   (import (cspp chez) (cspp system common) (cspp system private)
-          (cspp system process expert) (cspp utils))
+          (cspp system process status) (cspp system process private) (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; process result records
@@ -101,16 +101,6 @@
               [(bytevector? stdin) stdin]
               [else (errorf 'process "unsupported stdin option: ~a" stdin)]))))
 
-  (define $env-option
-    (lambda (options)
-      (let ([env ($option-ref options 'env #f)])
-        (if env env #f))))
-
-  (define $cwd-option
-    (lambda (options)
-      (let ([cwd ($option-ref options 'cwd #f)])
-        (if cwd cwd ""))))
-
   (define $timeout-option
     (lambda (options)
       (let ([timeout ($option-ref options 'timeout #f)])
@@ -173,7 +163,7 @@
       ($validate-process-options options #f)
       (ffi-result-ref
        ($spawn-capture-ffi argv
-                           ($env-option options)
+                           ($option-ref options 'env #f)
                            ($cwd-option options)
                            ($stdin-payload options)
                            (if ($capture-stdout? options capture-default) 1 0)

@@ -1,6 +1,6 @@
 (library (cspp system private)
   (export $unsigned-32? $positive-pid? $os-string? $os-string-list?
-          $environment-name? $process-specs? $option-ref)
+          $environment-name? $process-specs?)
   (import (cspp chez) (cspp utils) (cspp string))
 
   ;; Shared contracts for values passed to native system helpers.
@@ -25,9 +25,4 @@
       (and (pair? specs) (list? specs)
            (andmap (lambda (spec) (and (pair? spec) ($os-string-list? spec))) specs))))
 
-  ;; Options have already been validated before native argument construction.
-  (define $option-ref
-    (lambda (options key default)
-      (let ([entry (assq key options)])
-        (if entry (cdr entry) default))))
 )

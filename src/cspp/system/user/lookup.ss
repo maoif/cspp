@@ -10,50 +10,24 @@
 ;;;; credentials
 ;;;;===----------------------------------------------------------------------===
 
-  (define $raise-user-not-found
-    (lambda (who kind id)
-      (raise (make-system-not-found-error who
-                                          (format "~a not found: ~a" kind id)
-                                          `((kind . ,kind) (id . ,id))))))
-
-  (define $ffi-lookup
-    (lambda (who kind id ffi)
-      (let ([x (ffi id)])
-        (cond [(string? x)
-               ;; The current C helper returns "internal error" for passwd/group
-               ;; misses where errno is 0.
-               (if (string=? x "internal error")
-                   ($raise-user-not-found who kind id)
-                   (raise-system-error who #f x `((kind . ,kind) (id . ,id))))]
-              [(and (vector? x)
-                    (fx< 0 (vector-length x))
-                    (let ([tag (vector-ref x 0)])
-                      (memq tag '(ok errno not-found unsupported))))
-               (ffi-result-ref x)]
-              [else x]))))
-
   (define $user-key?
     (lambda (id) (or ($unsigned-32? id) ($os-string? id))))
 
   (define $getpwnam
     (let ([ffi (foreign-procedure "cspp_getpwnam" (string) scheme-object)])
-      (lambda (who id)
-        ($ffi-lookup who 'user id ffi))))
+      (lambda (id) (ffi-result-ref (ffi id)))))
 
   (define $getpwuid
     (let ([ffi (foreign-procedure "cspp_getpwuid" (unsigned-32) scheme-object)])
-      (lambda (who id)
-        ($ffi-lookup who 'user id ffi))))
+      (lambda (id) (ffi-result-ref (ffi id)))))
 
   (define $getgrnam
     (let ([ffi (foreign-procedure "cspp_getgrnam" (string) scheme-object)])
-      (lambda (who id)
-        ($ffi-lookup who 'group id ffi))))
+      (lambda (id) (ffi-result-ref (ffi id)))))
 
   (define $getgrgid
     (let ([ffi (foreign-procedure "cspp_getgrgid" (unsigned-32) scheme-object)])
-      (lambda (who id)
-        ($ffi-lookup who 'group id ffi))))
+      (lambda (id) (ffi-result-ref (ffi id)))))
 
   (define $getpw-name   (lambda (v) (vector-ref v 0)))
   (define $getpw-passwd (lambda (v) (vector-ref v 1)))
@@ -95,9 +69,9 @@
     (lambda (id)
       (pcheck ([$user-key? id])
         (cond [($unsigned-32? id)
-             (mk-unix-user ($getpwuid who id))]
+             (mk-unix-user ($getpwuid id))]
             [($os-string? id)
-             (mk-unix-user ($getpwnam who id))]
+             (mk-unix-user ($getpwnam id))]
             [else (errorf who "invalid user id: ~a" id)]))))
 
   #|proc:getuser
@@ -114,9 +88,9 @@
     (lambda (id)
       (pcheck ([$user-key? id])
         (cond [($unsigned-32? id)
-             (mk-unix-group ($getgrgid who id))]
+             (mk-unix-group ($getgrgid id))]
             [($os-string? id)
-             (mk-unix-group ($getgrnam who id))]
+             (mk-unix-group ($getgrnam id))]
             [else (errorf who "invalid group id: ~a" id)]))))
 
   #|proc:getgroup
@@ -151,10 +125,10 @@
   The `uid->user` procedure returns the user name for `id`.
   The `id` parameter is a exact unsigned 32-bit user ID.
   |#
-  (define-who uid->user
+  (define uid->user
     (lambda (id)
       (pcheck ([$unsigned-32? id])
-                      ($getpw-name ($getpwuid who id)))))
+                      ($getpw-name ($getpwuid id)))))
 
   #|proc:uid->user-name
   The `uid->user-name` procedure returns the user name for `uid`.
@@ -166,10 +140,10 @@
   The `user->uid` procedure returns the numeric user ID for `name`.
   The `name` parameter is a user name string.
   |#
-  (define-who user->uid
+  (define user->uid
     (lambda (name)
       (pcheck ([$os-string? name])
-                     ($getpw-uid ($getpwnam who name)))))
+                     ($getpw-uid ($getpwnam name)))))
 
   #|proc:user-name->uid
   The `user-name->uid` procedure returns the numeric user ID for `name`.
@@ -181,10 +155,10 @@
   The `gid->group` procedure returns the group name for `id`.
   The `id` parameter is a exact unsigned 32-bit group ID.
   |#
-  (define-who gid->group
+  (define gid->group
     (lambda (id)
       (pcheck ([$unsigned-32? id])
-                      ($getgr-name ($getgrgid who id)))))
+                      ($getgr-name ($getgrgid id)))))
 
   #|proc:gid->group-name
   The `gid->group-name` procedure returns the group name for `gid`.
@@ -196,10 +170,10 @@
   The `group->gid` procedure returns the numeric group ID for `name`.
   The `name` parameter is a group name string.
   |#
-  (define-who group->gid
+  (define group->gid
     (lambda (name)
       (pcheck ([$os-string? name])
-                     ($getgr-gid ($getgrnam who name)))))
+                     ($getgr-gid ($getgrnam name)))))
 
   #|proc:group-name->gid
   The `group-name->gid` procedure returns the numeric group ID for `name`.
@@ -214,8 +188,8 @@
   (define-who get-user-dir
     (lambda (id)
       (pcheck ([$user-key? id])
-        (cond [($os-string? id)  ($getpw-dir ($getpwnam who id))]
-            [($unsigned-32? id) ($getpw-dir ($getpwuid who id))]
+        (cond [($os-string? id)  ($getpw-dir ($getpwnam id))]
+            [($unsigned-32? id) ($getpw-dir ($getpwuid id))]
             [else (errorf who "invalid user id: ~a" id)]))))
 
   #|proc:get-user-shell
@@ -225,8 +199,8 @@
   (define-who get-user-shell
     (lambda (id)
       (pcheck ([$user-key? id])
-        (cond [($os-string? id)  ($getpw-shell ($getpwnam who id))]
-            [($unsigned-32? id) ($getpw-shell ($getpwuid who id))]
+        (cond [($os-string? id)  ($getpw-shell ($getpwnam id))]
+            [($unsigned-32? id) ($getpw-shell ($getpwuid id))]
             [else (errorf who "invalid user id: ~a" id)]))))
 
   #|proc:get-user-group
@@ -236,15 +210,15 @@
   (define-who get-user-group
     (lambda (id)
       (pcheck ([$user-key? id])
-        (cond [($os-string? id)  ($getpw-gid ($getpwnam who id))]
-            [($unsigned-32? id) ($getpw-gid ($getpwuid who id))]
+        (cond [($os-string? id)  ($getpw-gid ($getpwnam id))]
+            [($unsigned-32? id) ($getpw-gid ($getpwuid id))]
             [else (errorf who "invalid user id: ~a" id)]))))
 
   #|proc:user-exists?
   The `user-exists?` procedure returns `#t` when `id` identifies an existing user, otherwise `#f`.
   The `id` parameter is either a exact unsigned 32-bit user ID or a user name string.
   |#
-  (define-who user-exists?
+  (define user-exists?
     (lambda (id)
       (guard (c [(system-not-found-error? c) #f])
         (if (user-ref id) #t #f))))
@@ -254,7 +228,7 @@
   `#f`.
   The `id` parameter is either a exact unsigned 32-bit group ID or a group name string.
   |#
-  (define-who group-exists?
+  (define group-exists?
     (lambda (id)
       (guard (c [(system-not-found-error? c) #f])
         (if (group-ref id) #t #f))))
