@@ -1876,10 +1876,6 @@
   (define $touch-empty-file
     (lambda (path) ($with-port (open-file-output-port path) (lambda (port) (void)))))
 
-  (define $path-seen?
-    (lambda (path seen)
-      (exists (lambda (p) (string=? p path)) seen)))
-
   (define $readlink
     (let ([ffi (let ([ffi-readlink (foreign-procedure "cspp_readlink" (string) scheme-object)])
                  (lambda (who path)
@@ -1892,18 +1888,20 @@
         [(who path recursive?)
          ;; we don't care about whether the link is dangling or not
          (pcheck ([file-exists?-no-follow path] [file-symbolic-link? path])
-                 (let loop ([path path] [seen '()])
-                   (if ($path-seen? path seen)
-                       (errorf who "symlink cycle detected at: ~a" path)
-                       (let* ([ln (ffi who path)]
-                              [target (path-build (path-parent path) ln)])
-                         (if (file-symbolic-link? target)
-                             (if recursive?
-                                 (loop target (cons path seen))
-                                 ln)
-                             (if recursive?
-                                 (values ln (path-parent path))
-                                 ln))))))])))
+                 (let ([seen (make-hashtable string-hash string=?)])
+                   (let loop ([path path])
+                     (if (hashtable-contains? seen path)
+                         (errorf who "symlink cycle detected at: ~a" path)
+                         (let* ([_ (hashtable-set! seen path #t)]
+                                [ln (ffi who path)]
+                                [target (path-build (path-parent path) ln)])
+                           (if (file-symbolic-link? target)
+                               (if recursive?
+                                   (loop target)
+                                   ln)
+                               (if recursive?
+                                   (values ln (path-parent path))
+                                   ln)))))))])))
 
 
   #|proc:readlink
