@@ -6,6 +6,7 @@
           (cspp file)
           (cspp iter)
           (cspp regex)
+          (only (cspp string) string-search)
           (cspp utils)
           (cspp list)
           (cspp system platform))
@@ -227,18 +228,34 @@
                           [else (loop (+ i 1) (cons (string c) atoms)
                                       (cons c literal) magic?)]))))))))
 
+  (define $normalize-unix-slashes
+    (lambda (s)
+      (if (not (string-search s "\\/")) s
+          (let* ([n (string-length s)] [out (make-string n)])
+            (let loop ([i 0] [j 0])
+              (cond [(fx= i n) (substring out 0 j)]
+                    [(and (char=? (string-ref s i) #\\)
+                          (fx< (fx1+ i) n)
+                          (char=? (string-ref s (fx1+ i)) #\/))
+                     (string-set! out j #\/)
+                     (loop (fx+ i 2) (fx1+ j))]
+                    [else
+                     (string-set! out j (string-ref s i))
+                     (loop (fx1+ i) (fx1+ j))]))))))
+
+  (define $normalize-windows-slashes
+    (lambda (s)
+      (let ([first (string-search s #\\)])
+        (if (not first) s
+            (let ([out (string-copy s)] [n (string-length s)])
+              (do ([i first (fx1+ i)])
+                  ((fx= i n) out)
+                (when (char=? (string-ref out i) #\\)
+                  (string-set! out i #\/))))))))
+
   (define $compile
     (lambda (flavor s separator)
-      (let* ([source
-              (if (eq? flavor 'windows) s
-                  (let ([n (string-length s)])
-                    (let loop ([i 0] [chars '()])
-                      (cond [(fx= i n) (list->string (reverse chars))]
-                            [(and (char=? (string-ref s i) #\\)
-                                  (fx< (fx1+ i) n)
-                                  (char=? (string-ref s (fx1+ i)) #\/))
-                             (loop (fx+ i 2) (cons #\/ chars))]
-                            [else (loop (fx1+ i) (cons (string-ref s i) chars))]))))]
+      (let* ([source (if (eq? flavor 'windows) s ($normalize-unix-slashes s))]
              [parsed (path-parse flavor source)])
         (%branch parsed (map (lambda (c) ($component-compile flavor c))
                              (path-components parsed))
@@ -286,14 +303,6 @@
                ($error "named-user tilde is unsupported")]
               [else s]))))
 
-  (define $root=?
-    (lambda (flavor a b)
-      (if (eq? flavor 'unix) (equal? a b)
-          (and (= (length a) (length b))
-               (for-all (lambda (x y)
-                          (if (and (string? x) (string? y)) (string-ci=? x y) (equal? x y)))
-                        a b)))))
-
   #|proc:make-glob
   Compile string `pattern` and return an immutable, opaque glob object.
   Optional `flavor` follows the host OS: `'windows` on Windows, `'unix`
@@ -309,12 +318,10 @@
       [(flavor pattern)
        (pcheck ([path-flavor? flavor] [string? pattern])
                (let ([separator (if (or (eq? flavor 'unix)
-                                        (exists (lambda (c) (char=? c #\/)) (string->list pattern)))
+                                        (string-search pattern #\/))
                                     #\/ #\\)]
                      [source (if (eq? flavor 'windows)
-                                 (list->string (map (lambda (c) (if (char=? c #\\) #\/ c))
-                                                    (string->list pattern)))
-                                 pattern)])
+                                 ($normalize-windows-slashes pattern) pattern)])
                  (%make-glob flavor
                              (map (lambda (s) ($compile flavor ($expand-tilde flavor s) separator))
                                   ($expand-braces source)))))]))
@@ -407,7 +414,9 @@
                   found))))
         (define identity
           (lambda (name)
-            (list (file-dev-major name) (file-dev-minor name) (file-inode name))))
+            (let ([stat (file-stat name)])
+              (list (file-stat-dev-major stat) (file-stat-dev-minor stat)
+                    (file-stat-inode stat)))))
         (define open-scan
           (lambda (logical physical cs ancestors separator known-type)
             (let ([name ($physical physical)])
@@ -516,15 +525,20 @@
            (set! seen (make-hashtable string-hash string=?)) (set! finished? #f))
          (lambda () (close-all) (set! finished? #t))))))
 
-  (define $path<?
-    (lambda (flavor a b)
-      (let loop ([xs (path-components (path-parse flavor a))]
-                 [ys (path-components (path-parse flavor b))])
+  (define $components<?
+    (lambda (a b)
+      (let loop ([xs a] [ys b])
         (cond [(null? xs) (pair? ys)] [(null? ys) #f]
               [else
-               (let ([x (if (eq? flavor 'windows) (string-foldcase (car xs)) (car xs))]
-                     [y (if (eq? flavor 'windows) (string-foldcase (car ys)) (car ys))])
-                 (if (string=? x y) (loop (cdr xs) (cdr ys)) (string<? x y)))]))))
+               (if (string=? (car xs) (car ys))
+                   (loop (cdr xs) (cdr ys))
+                   (string<? (car xs) (car ys)))]))))
+  (define $path-sort-key
+    (lambda (flavor path)
+      (let ([components (path-components (path-parse flavor path))])
+        (if (eq? flavor 'windows)
+            (map string-foldcase components)
+            components))))
 
   (define $glob-expand
     (lambda (flavor pattern follow-link? include-directories? unmatched)
@@ -536,7 +550,10 @@
             (let loop ([value (iter-next! iterator)])
               (unless (eq? value iter-end) (results value) (loop (iter-next! iterator)))))
           (lambda () (iter-finalize! iterator)))
-        (let ([values (sort (lambda (a b) ($path<? flavor a b)) (results))])
+        (let* ([entries (map (lambda (path) (cons ($path-sort-key flavor path) path))
+                             (results))]
+               [sorted (sort (lambda (a b) ($components<? (car a) (car b))) entries)]
+               [values (map cdr sorted)])
           (if (and (null? values) (eq? unmatched 'literal)) (list pattern) values)))))
 
   #|proc:glob
@@ -599,9 +616,9 @@
     (case-lambda
       [(glob path)
        (pcheck ([glob? glob] [string? path])
-               (let* ([p (path-parse (glob-flavor glob) path)] [root (path-root-info p)]
+               (let* ([p (path-parse (glob-flavor glob) path)]
                       [values (path-components p)])
-                 (exists (lambda (x) (and ($root=? (glob-flavor glob) root (path-root-info (branch-path x)))
+                 (exists (lambda (x) (and (path-same-root? p (branch-path x))
                                          ($match? (branch-components x) values)))
                          (glob-patterns glob))))]
       [(flavor pattern path)
