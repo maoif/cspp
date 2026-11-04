@@ -12,18 +12,26 @@
   The `signal?` procedure returns `#t` when its argument is a signal record, otherwise `#f`.
   The `object` parameter is the object to test.
   |#
+  (define-record-type ($signal make-signal signal?)
+    (nongenerative)
+    (fields (immutable name $signal-name)
+            (immutable number $signal-number)))
+
   #|proc:signal-name
   The `signal-name` procedure returns the canonical symbolic name of `sig`.
   The `sig` parameter is a signal record returned by `signal`, `string->signal`, or `signal-list`.
   |#
+  (define signal-name
+    (lambda (sig)
+      (pcheck ([signal? sig]) ($signal-name sig))))
+
   #|proc:signal-number
   The `signal-number` procedure returns the operating-system signal number of `sig`.
   The `sig` parameter is a signal record returned by `signal`, `string->signal`, or `signal-list`.
   |#
-  (define-record-type ($signal make-signal signal?)
-    (nongenerative)
-    (fields (immutable name signal-name)
-            (immutable number signal-number)))
+  (define signal-number
+    (lambda (sig)
+      (pcheck ([signal? sig]) ($signal-number sig))))
 
   (define $signal-table
     (guard (condition [(system-unsupported-error? condition) '()])
@@ -143,6 +151,5 @@
   (define signal-list
     (lambda ()
       (list-copy $signal-table)))
-
 
 )

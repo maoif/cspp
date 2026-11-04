@@ -1,4 +1,52 @@
-(import (cspp))
+(import (cspp)
+        (only (cspp system process expert) make-process-exit-status)
+        (only (cspp system user records) make-unix-user make-unix-group))
+
+(mat system-record-constructor-safety
+
+     ;; Error case: exit statuses require a known kind and an exact nonnegative code.
+     (and (guard (condition [else #t]) (make-process-exit-status 'unknown 0) #f)
+          (guard (condition [else #t]) (make-process-exit-status 'exit "zero") #f)
+          (guard (condition [else #t]) (make-process-exit-status 'exit -1) #f))
+
+     ;; Error case: Unix records require string fields and unsigned 32-bit identities.
+     (and (guard (condition [else #t])
+            (make-unix-user #f "x" 0 0 "" "/" "/bin/sh") #f)
+          (guard (condition [else #t])
+            (make-unix-user "user" "x" -1 0 "" "/" "/bin/sh") #f)
+          (guard (condition [else #t])
+            (make-unix-group "group" "x" #x100000000 #f) #f))
+
+     ;; Error case: group members must be a vector of strings or #f.
+     (and (guard (condition [else #t]) (make-unix-group "g" "x" 0 '("member")) #f)
+          (guard (condition [else #t]) (make-unix-group "g" "x" 0 '#(1)) #f))
+
+     (and (process-exit-success? (make-process-exit-status 'exit 0))
+          (unix-user? (make-unix-user "u" "x" 0 0 "" "/" "/bin/sh"))
+          (equal? '#("member") (unix-group-mems (make-unix-group "g" "x" 0 '#("member"))))))
+
+(mat system-record-argument-safety
+
+     ;; Error case: a vector with plausible fields is not a record of any system type.
+     (let ([invalid (make-vector 16 0)])
+       (andmap
+         (lambda (accessor)
+           (guard (condition [else #t]) (accessor invalid) #f))
+         (list process-exit-status-kind process-exit-status-code
+               process-pid process-command process-arguments
+               process-stdin process-stdout process-stderr
+               process-result-status process-result-stdout process-result-stderr
+               process-result-pid process-result-command
+               filesystem-info-path filesystem-info-device filesystem-info-type
+               filesystem-info-block-size filesystem-info-blocks filesystem-info-blocks-free
+               filesystem-info-blocks-available filesystem-info-files filesystem-info-files-free
+               filesystem-info-read-only?
+               mounted-filesystem-source mounted-filesystem-target
+               mounted-filesystem-type mounted-filesystem-options
+               signal-name signal-number
+               unix-user-name unix-user-passwd unix-user-uid unix-user-gid
+               unix-user-gecos unix-user-dir unix-user-shell
+               unix-group-name unix-group-passwd unix-group-gid unix-group-mems))))
 
 (mat system-errors
 

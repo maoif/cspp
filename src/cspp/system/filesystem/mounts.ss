@@ -16,32 +16,48 @@
   record, otherwise `#f`.
   The `object` parameter is the object to test.
   |#
+  (define-record-type ($mounted-filesystem make-mounted-filesystem mounted-filesystem?)
+    (nongenerative)
+    (fields (immutable source $mounted-filesystem-source)
+            (immutable target $mounted-filesystem-target)
+            (immutable type $mounted-filesystem-type)
+            (immutable options $mounted-filesystem-options)))
+
   #|proc:mounted-filesystem-source
   The `mounted-filesystem-source` procedure returns the source device or pseudo-device of a
   mounted filesystem record.
   The `mount` parameter is a mounted filesystem record returned by `mounted-filesystems`.
   |#
+  (define mounted-filesystem-source
+    (lambda (mount)
+      (pcheck ([mounted-filesystem? mount]) ($mounted-filesystem-source mount))))
+
   #|proc:mounted-filesystem-target
   The `mounted-filesystem-target` procedure returns the mount target path of a mounted filesystem
   record.
   The `mount` parameter is a mounted filesystem record returned by `mounted-filesystems`.
   |#
+  (define mounted-filesystem-target
+    (lambda (mount)
+      (pcheck ([mounted-filesystem? mount]) ($mounted-filesystem-target mount))))
+
   #|proc:mounted-filesystem-type
   The `mounted-filesystem-type` procedure returns the filesystem type string of a mounted
   filesystem record.
   The `mount` parameter is a mounted filesystem record returned by `mounted-filesystems`.
   |#
+  (define mounted-filesystem-type
+    (lambda (mount)
+      (pcheck ([mounted-filesystem? mount]) ($mounted-filesystem-type mount))))
+
   #|proc:mounted-filesystem-options
   The `mounted-filesystem-options` procedure returns the raw mount options string of a mounted
   filesystem record.
   The `mount` parameter is a mounted filesystem record returned by `mounted-filesystems`.
   |#
-  (define-record-type ($mounted-filesystem make-mounted-filesystem mounted-filesystem?)
-    (nongenerative)
-    (fields (immutable source mounted-filesystem-source)
-            (immutable target mounted-filesystem-target)
-            (immutable type mounted-filesystem-type)
-            (immutable options mounted-filesystem-options)))
+  (define mounted-filesystem-options
+    (lambda (mount)
+      (pcheck ([mounted-filesystem? mount]) ($mounted-filesystem-options mount))))
 
   (define $list-ref/default
     (lambda (items index default)
@@ -117,4 +133,4 @@
             ($read-mounted-filesystems mountinfo)
             '()))))
 
-  )
+)

@@ -55,19 +55,37 @@
 The `process-exit-status?` procedure returns whether `object` is a status.
 The `object` parameter is any Scheme object.
 |#
-  #|proc:process-exit-status-kind
-The `process-exit-status-kind` procedure returns the kind stored in `status`.
-The `status` parameter is a process exit-status record.
-|#
-  #|proc:process-exit-status-code
-The `process-exit-status-code` procedure returns the numeric code in `status`.
-The `status` parameter is a process exit-status record.
-|#
-  (define-record-type ($process-exit-status make-process-exit-status
+  (define-record-type ($process-exit-status %make-process-exit-status
                                              process-exit-status?)
     (nongenerative)
-    (fields (immutable kind process-exit-status-kind)
-            (immutable code process-exit-status-code)))
+    (fields (immutable kind $process-exit-status-kind)
+            (immutable code $process-exit-status-code)))
+
+  #|proc:process-exit-status-kind
+  The `process-exit-status-kind` procedure returns the kind stored in `status`.
+  The `status` parameter is a process exit-status record.
+  |#
+  (define process-exit-status-kind
+    (lambda (status)
+      (pcheck ([process-exit-status? status]) ($process-exit-status-kind status))))
+
+  #|proc:process-exit-status-code
+  The `process-exit-status-code` procedure returns the numeric code in `status`.
+  The `status` parameter is a process exit-status record.
+  |#
+  (define process-exit-status-code
+    (lambda (status)
+      (pcheck ([process-exit-status? status]) ($process-exit-status-code status))))
+
+  #|proc:make-process-exit-status
+  The `make-process-exit-status` procedure returns an exit-status record.
+  `kind` is `exit`, `signal`, or `stopped`; `code` is an exact nonnegative integer.
+  For `exit` the code is an exit code; for the other kinds it is a signal number.
+  |#
+  (define make-process-exit-status
+    (lambda (kind code)
+      (pcheck ([(lambda (value) (memq value '(exit signal stopped))) kind] [natural? code])
+        (%make-process-exit-status kind code))))
 
   #|proc:process-exit-success?
 The `process-exit-success?` procedure returns whether `status` is exit code 0.
@@ -87,40 +105,64 @@ The `status` parameter is a process exit-status record.
 The `process?` procedure returns whether `object` is a CSPP process object.
 The `object` parameter is any Scheme object.
 |#
-  #|proc:process-pid
-The `process-pid` procedure returns the operating-system process id of `process`.
-The `process` parameter is a process object.
-|#
-  #|proc:process-command
-The `process-command` procedure returns the program or command for `process`.
-The `process` parameter is a process object.
-|#
-  #|proc:process-arguments
-The `process-arguments` procedure returns the argument list stored in `process`.
-The `process` parameter is a process object.
-|#
-  #|proc:process-stdin
-The `process-stdin` procedure returns the stdin port for `process`, or `#f`.
-The `process` parameter is a process object.
-|#
-  #|proc:process-stdout
-The `process-stdout` procedure returns the stdout port for `process`, or `#f`.
-The `process` parameter is a process object.
-|#
-  #|proc:process-stderr
-The `process-stderr` procedure returns the stderr port for `process`, or `#f`.
-The `process` parameter is a process object.
-|#
   (define-record-type ($process %make-process process?)
     (nongenerative)
-    (fields (immutable pid process-pid)
-            (immutable command process-command)
-            (immutable arguments process-arguments)
-            (immutable stdin process-stdin)
-            (immutable stdout process-stdout)
-            (immutable stderr process-stderr)
+    (fields (immutable pid $process-pid)
+            (immutable command $process-command)
+            (immutable arguments $process-arguments)
+            (immutable stdin $process-stdin)
+            (immutable stdout $process-stdout)
+            (immutable stderr $process-stderr)
             (mutable status $process-status set-process-status!)
             (immutable mutex process-mutex)))
+
+  #|proc:process-pid
+  The `process-pid` procedure returns the operating-system process id of `process`.
+  The `process` parameter is a process object.
+  |#
+  (define process-pid
+    (lambda (process)
+      (pcheck ([process? process]) ($process-pid process))))
+
+  #|proc:process-command
+  The `process-command` procedure returns the program or command for `process`.
+  The `process` parameter is a process object.
+  |#
+  (define process-command
+    (lambda (process)
+      (pcheck ([process? process]) ($process-command process))))
+
+  #|proc:process-arguments
+  The `process-arguments` procedure returns the argument list stored in `process`.
+  The `process` parameter is a process object.
+  |#
+  (define process-arguments
+    (lambda (process)
+      (pcheck ([process? process]) ($process-arguments process))))
+
+  #|proc:process-stdin
+  The `process-stdin` procedure returns the stdin port for `process`, or `#f`.
+  The `process` parameter is a process object.
+  |#
+  (define process-stdin
+    (lambda (process)
+      (pcheck ([process? process]) ($process-stdin process))))
+
+  #|proc:process-stdout
+  The `process-stdout` procedure returns the stdout port for `process`, or `#f`.
+  The `process` parameter is a process object.
+  |#
+  (define process-stdout
+    (lambda (process)
+      (pcheck ([process? process]) ($process-stdout process))))
+
+  #|proc:process-stderr
+  The `process-stderr` procedure returns the stderr port for `process`, or `#f`.
+  The `process` parameter is a process object.
+  |#
+  (define process-stderr
+    (lambda (process)
+      (pcheck ([process? process]) ($process-stderr process))))
 
   (define make-process
     (lambda (pid command arguments stdin stdout stderr status)
@@ -490,4 +532,4 @@ The `getppid` procedure returns the parent process id.
 |#
   (define getppid (foreign-procedure "cspp_getppid" () int))
 
-  )
+)

@@ -12,36 +12,56 @@
   otherwise `#f`.
   The `object` parameter is the object to test.
   |#
+  (define-record-type ($process-result make-process-result process-result?)
+    (nongenerative)
+    (fields (immutable status $process-result-status)
+            (immutable stdout $process-result-stdout)
+            (immutable stderr $process-result-stderr)
+            (immutable pid $process-result-pid)
+            (immutable command $process-result-command)))
+
   #|proc:process-result-status
   The `process-result-status` procedure returns the process exit-status record stored in `result`.
   The `result` parameter is a process result record.
   |#
+  (define process-result-status
+    (lambda (result)
+      (pcheck ([process-result? result]) ($process-result-status result))))
+
   #|proc:process-result-stdout
   The `process-result-stdout` procedure returns captured standard output as a string or bytevector,
   or `#f` when output was not requested.
   The `result` parameter is a process result record.
   |#
+  (define process-result-stdout
+    (lambda (result)
+      (pcheck ([process-result? result]) ($process-result-stdout result))))
+
   #|proc:process-result-stderr
   The `process-result-stderr` procedure returns captured standard error as a string or bytevector,
   or `#f` when error output was not requested.
   The `result` parameter is a process result record.
   |#
+  (define process-result-stderr
+    (lambda (result)
+      (pcheck ([process-result? result]) ($process-result-stderr result))))
+
   #|proc:process-result-pid
   The `process-result-pid` procedure returns the process id stored in `result`, or `#f` when no
   process id is available.
   The `result` parameter is a process result record.
   |#
+  (define process-result-pid
+    (lambda (result)
+      (pcheck ([process-result? result]) ($process-result-pid result))))
+
   #|proc:process-result-command
   The `process-result-command` procedure returns the shell command string stored in `result`.
   The `result` parameter is a process result record.
   |#
-  (define-record-type ($process-result make-process-result process-result?)
-    (nongenerative)
-    (fields (immutable status process-result-status)
-            (immutable stdout process-result-stdout)
-            (immutable stderr process-result-stderr)
-            (immutable pid process-result-pid)
-            (immutable command process-result-command)))
+  (define process-result-command
+    (lambda (result)
+      (pcheck ([process-result? result]) ($process-result-command result))))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; process backend
@@ -234,6 +254,5 @@
               (let ([result (ffi-result-ref ($spawn-pipeline-capture-ffi process-specs -1))])
                 ($capture-vector->result 'pipeline result '((stdout . capture)) #f
                                         'capture-pipeline)))))
-
 
 )
