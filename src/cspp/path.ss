@@ -284,7 +284,12 @@
              [root ($path-root p)]
              [base
               (case root-kind
-                [(relative) body]
+                [(relative)
+                 ;; Keep a colon in the first component from becoming a drive prefix.
+                 (if (and (fx>= (string-length body) 2)
+                          (char=? (string-ref body 1) #\:))
+                     (string-append "." (string sep) body)
+                     body)]
                 [(rooted)
                  (if (null? components) (string sep) (string-append (string sep) body))]
                 [(drive-relative)
@@ -315,7 +320,8 @@
   #|proc:path-render
   The `path-render` procedure renders a path object as a string.
   With one argument it uses the flavor's default separator; with two arguments
-  it uses the given separator character.
+  it uses the given separator character. Windows relative paths whose first component
+  looks like a drive prefix receive a leading dot component to preserve their root kind.
   |#
   (define path-render
     (case-lambda
@@ -411,13 +417,16 @@
 
   #|proc:path-unc
   Create a Windows UNC path using string names `server` and `share`, and optional
-  component strings `components`. Return the new path object.
+  component strings `components`. Return the new path object. Reserved server names
+  `.` and `?` are rejected because they select Windows device namespaces.
   |#
   (define path-unc
     (lambda (server share . components)
       (pcheck ([string? server share] [$component-list? components])
               ($check-component 'path-unc 'windows server)
               ($check-component 'path-unc 'windows share)
+              (when (member server '("." "?"))
+                ($err 'path-unc "reserved UNC server name: ~s" server))
               ($check-components 'path-unc 'windows components)
               ($make-path-object 'windows 'unc
                                  (list (string-copy server) (string-copy share))
@@ -836,10 +845,12 @@
     (case-lambda
       [(p)
        (pcheck ([path? p])
-               (let ([home ($home-from-environment ($path-flavor p))])
-                 (if home
-                     (path-expand-user p home)
-                     ($err 'path-expand-user "no usable home directory in environment"))))]
+               (if (not (path-starts-with-user-home? p))
+                   p
+                   (let ([home ($home-from-environment ($path-flavor p))])
+                     (if home
+                         (path-expand-user p home)
+                         ($err 'path-expand-user "no usable home directory in environment")))))]
       [(p home)
        (pcheck ([path? p] [(lambda (value) (or (string? value) (path? value))) home])
                (if (not (path-starts-with-user-home? p))

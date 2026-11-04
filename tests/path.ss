@@ -5,6 +5,39 @@
   (lambda (p s)
     (string=? (path-render p) s)))
 
+(mat path-windows-relative-rendering
+     (for-all
+      (lambda (p)
+        (for-all
+         (lambda (separator)
+           (let ([parsed (path-parse 'windows (path-render p separator))])
+             (and (equal? (path-root-info p) (path-root-info parsed))
+                  (equal? (path-components (path-normalize p))
+                          (path-components (path-normalize parsed))))))
+         '(#\/ #\\)))
+      (list (path 'windows "C:foo")
+            (path 'windows "1:foo" "child")
+            (path-normalize (path-parse 'windows ".\\C:foo"))))
+
+     ;; Reserved UNC server names select Windows device namespaces instead.
+     (error? (path-unc "." "COM1" "child"))
+
+     ;; The question-mark server prefix selects the extended namespace.
+     (error? (path-unc "?" "C:" "child")))
+
+(mat path-plain-input-needs-no-home
+     (let* ([names '("HOME" "USERPROFILE" "HOMEDRIVE" "HOMEPATH")]
+            [saved (map getenv names)]
+            [unset (foreign-procedure "unsetenv" (string) int)])
+       (dynamic-wind
+         (lambda () (for-each unset names))
+         (lambda ()
+           (and (same-path? (path-expand-user (path 'unix "file")) "file")
+                (same-path? (path-expand-user (path 'windows "file")) "file")))
+         (lambda ()
+           (for-each (lambda (name value) (if value (putenv name value) (unset name)))
+                     names saved)))))
+
 (mat path-special-render-owns-result
      ;; Rendered device roots must not expose storage shared by derived paths.
      (let* ([original (path-parse 'windows "\\\\.\\COM1")]
