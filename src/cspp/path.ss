@@ -305,7 +305,7 @@
                                   (char=? (string-ref root 5) #\:))
                              ($prefix-special-unc? root))
                          (string-append root (string sep))
-                         root)
+                         (string-copy root))
                      (string-append root (string sep) body))]
                 [else ($err 'path-render "invalid root kind: ~s" root-kind)])])
         (if (and ($path-trailing? p) (not (null? components)))

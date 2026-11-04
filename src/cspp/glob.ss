@@ -488,7 +488,11 @@
                                                (or (not (branch-directory? active-branch))
                                                    (file-directory? name follow-link?))
                                                (not (hashtable-contains? seen result)))
-                                          (begin (hashtable-set! seen result #t) result) (loop)))]
+                                          (begin
+                                            ;; Caller-owned results may be mutated after yielding.
+                                            (hashtable-set! seen (string-copy result) #t)
+                                            result)
+                                          (loop)))]
                                    [(not (car cs))
                                     (open-scan p physical cs ancestors separator)
                                     (set! stack (cons (vector 'node p physical (cdr cs) ancestors separator) stack))

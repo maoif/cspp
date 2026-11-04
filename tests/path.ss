@@ -5,6 +5,15 @@
   (lambda (p s)
     (string=? (path-render p) s)))
 
+(mat path-special-render-owns-result
+     ;; Rendered device roots must not expose storage shared by derived paths.
+     (let* ([original (path-parse 'windows "\\\\.\\COM1")]
+            [derived (path-add-component original "child")]
+            [rendered (path-render original)])
+       (string-set! rendered 4 #\X)
+       (and (same-path? original "\\\\.\\COM1")
+            (same-path? derived "\\\\.\\COM1\\child"))))
+
 (mat path-drive-relative-relativization
      ;; Internal parents are cancellable even though path-normalize preserves their spelling.
      (same-path? (path-relative-to (path-parse 'windows "C:a/../b")

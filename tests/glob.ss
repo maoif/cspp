@@ -1,5 +1,20 @@
 (import (cspp) (cspp glob))
 
+(mat glob-iterator-owns-deduplication-keys
+     (let ([root (format "glob-mutable-result-~a" (get-process-id))])
+       (dynamic-wind
+         (lambda () (mkdir root) (file-touch (string-append root "/a")))
+         (lambda ()
+           (let ([iterator (glob->iter (string-append root "/{a,a}"))])
+             (dynamic-wind
+               void
+               (lambda ()
+                 (let ([result (iter-next! iterator)])
+                   (string-set! result (fx1- (string-length result)) #\b)
+                   (eq? iter-end (iter-next! iterator))))
+               (lambda () (iter-finalize! iterator)))))
+         (lambda () (file-removetree root)))))
+
 (mat glob-unix-backslash-parity
      ;; Pairs of backslashes encode literal backslashes before the path separator.
      (for-all
