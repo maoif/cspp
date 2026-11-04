@@ -128,6 +128,11 @@
             ($benchmark-registry-snapshot-set! registry snapshot)
             snapshot))))
 
+  ;; Baseline formats and count options retain integer-valued inexact inputs.
+  ;; Metric arithmetic already converts iteration counts to exact values explicitly.
+  (define $benchmark-count?
+    (lambda (value) (and (integer? value) (>= value 0))))
+
   (define $void-procedure (lambda args (void)))
 
   (define $false-procedure (lambda args #f))
@@ -827,7 +832,7 @@
       (for-each
         (lambda (key)
           ($baseline-check (lambda (value)
-                             (and (natural? value)
+                             (and ($benchmark-count? value)
                                   (or (eq? key 'iterations) (exact? value))))
                            ($alist-ref datum key 0) key))
         '(iterations cpu-ns real-ns bytes gc-count gc-cpu-ns gc-real-ns gc-bytes))
@@ -939,7 +944,7 @@ Both argument alists must have unique symbolic keys; their values may be arbitra
     (lambda (name suite args template-args iteration iterations sample)
       (pcheck ([symbol? name]
                [(lambda (value) (or (not value) (symbol? value))) suite]
-               [$symbol-alist? args template-args] [natural? iteration iterations sample])
+               [$symbol-alist? args template-args] [$benchmark-count? iteration iterations sample])
               ($make-benchmark-state name suite args template-args iteration iterations sample '() '() #f))))
 
   #|proc:benchmark-state-name
@@ -1635,8 +1640,8 @@ The error column renders condition origins and irritants as in `benchmark-text-r
   (define $make-checked-config
     (lambda (warmup samples min-time max-iterations output selector reporter
              cost-center? stop-on-error? explicit-options)
-      (unless (and (natural? warmup) (natural? samples)
-                   (natural? max-iterations) (> max-iterations 0)
+      (unless (and ($benchmark-count? warmup) ($benchmark-count? samples)
+                   ($benchmark-count? max-iterations) (> max-iterations 0)
                    (real? min-time) (finite? min-time) (>= min-time 0)
                    (or (not output) (output-port? output))
                    ($benchmark-selector? selector)
@@ -1648,9 +1653,10 @@ The error column renders condition origins and irritants as in `benchmark-text-r
 
   #|proc:make-benchmark-config
   The `make-benchmark-config` procedure returns a runner configuration whose fields
-  are explicit overrides of descriptor defaults. `warmup` and `samples` are natural
-  sample counts, `min-time` is a finite nonnegative target in seconds, and
-  `max-iterations` is a positive iteration cap. `output` is an output port or `#f`;
+  are explicit overrides of descriptor defaults. `warmup` and `samples` are nonnegative
+  integer-valued sample counts, `min-time` is a finite nonnegative target in seconds, and
+  `max-iterations` is a positive iteration cap. Counts may be exact or integer-valued inexact.
+  `output` is an output port or `#f`;
   `filter` is `#f`, a name symbol, a name prefix string, or a predicate receiving a
   benchmark descriptor and returning whether to select it. The predicate must accept one argument.
   `reporter` is a reporter or `#f`. Boolean `cost-center?` requests optional instrumentation.
@@ -1659,7 +1665,7 @@ The error column renders condition origins and irritants as in `benchmark-text-r
   |#
   (define make-benchmark-config
     (lambda (warmup samples min-time max-iterations output filter reporter cost-center? stop-on-error?)
-      (pcheck ([natural? warmup samples max-iterations] [real? min-time]
+      (pcheck ([$benchmark-count? warmup samples max-iterations] [real? min-time]
                [boolean? cost-center? stop-on-error?])
               ($make-checked-config warmup samples min-time max-iterations output filter reporter
                                     cost-center? stop-on-error? $benchmark-config-keys))))

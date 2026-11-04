@@ -1555,7 +1555,7 @@
 
 
 (mat benchmark-inexact-iteration-cap-baseline-roundtrip
-     ;; Natural-number API arguments may be represented as inexact integral values.
+     ;; Benchmark count options preserve integer-valued inexact representations.
      (let* ([benchmark (make-benchmark 'inexact-cap (lambda (state) (void)) '())]
             [results (benchmark-run benchmark
                        (benchmark-config-with (benchmark-test-config)
