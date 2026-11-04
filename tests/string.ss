@@ -197,6 +197,13 @@
      (error? (string-for-each values "a" 1)))
 
 (mat string-slice
+     ;; Extreme steps must terminate before advancing an index beyond the fixnum range.
+     (string=? "b" (string-slice "abc" 1 3 (most-positive-fixnum)))
+
+     (string=? "c" (string-slice "abc" 2 -4 (most-negative-fixnum)))
+
+     (string=? "b" (string-slice "abc" 1 3 (fx1- (most-positive-fixnum))))
+
      (string=? "01234" (string-slice "0123456789" 5))
      (string=? "864" (string-slice "0123456789" 8 2 -2))
      (string=? "" (string-slice "0123456789" 2 9 -1))

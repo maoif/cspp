@@ -449,25 +449,20 @@
                               (make-string
                                (ceiling (/ (fx- normalized-end normalized-start) step)))])
                          (let loop ([source-index normalized-start] [result-index 0])
-                           (if (fx>= source-index normalized-end)
+                           (string-set! result result-index (string-ref str source-index))
+                           ;; Do not add an arbitrary fixnum step after the final character.
+                           (if (fx= result-index (fx1- (string-length result)))
                                result
-                               (begin
-                                 (string-set! result result-index
-                                              (string-ref str source-index))
-                                 (loop (fx+ source-index step)
-                                       (fx1+ result-index))))))]
+                               (loop (fx+ source-index step) (fx1+ result-index)))))]
                       [(and (fx> normalized-start normalized-end) (fx< step 0))
                        (let ([result
                               (make-string
                                (ceiling (/ (fx- normalized-end normalized-start) step)))])
                          (let loop ([source-index normalized-start] [result-index 0])
-                           (if (fx<= source-index normalized-end)
+                           (string-set! result result-index (string-ref str source-index))
+                           (if (fx= result-index (fx1- (string-length result)))
                                result
-                               (begin
-                                 (string-set! result result-index
-                                              (string-ref str source-index))
-                                 (loop (fx+ source-index step)
-                                       (fx1+ result-index))))))]
+                               (loop (fx+ source-index step) (fx1+ result-index)))))]
                       [else ""]))))]))
 
   #|proc:string-split
