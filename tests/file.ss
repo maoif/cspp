@@ -704,6 +704,39 @@
      (eq? 'FT_chardev (file-type "/dev/null"))
      )
 
+(mat file-stat-snapshot-accessors
+     ($with-fs-fixture
+       (lambda (root)
+         (let* ([path (path-build root "top.txt")]
+                [stat (file-stat path)])
+           (and (file-stat? stat)
+                (not (file-stat? #f))
+                (eq? 'FT_regular (file-type->symbol (file-stat-type stat)))
+                (= (file-stat-mode stat) (file-mode path))
+                (= (file-stat-inode stat) (file-inode path))
+                (= (file-stat-owner stat) (file-owner path))
+                (= (file-stat-group stat) (file-group path))
+                (= (file-stat-nlinks stat) (file-nlinks path))
+                (= (file-stat-size stat) (file-size path))
+                (= (file-stat-blocks stat) (file-blocks path))
+                (= (file-stat-dev-major stat) (file-dev-major path))
+                (= (file-stat-dev-minor stat) (file-dev-minor path))
+                (time? (file-stat-access-time stat))
+                (time? (file-stat-modification-time stat))
+                (time? (file-stat-change-time stat))
+                (or (not (file-stat-creation-time stat))
+                    (time? (file-stat-creation-time stat)))
+                (begin (write-string! path "longer")
+                       (and (= 0 (file-stat-size stat)) (= 6 (file-size path))))))))
+
+     ;; Every exported field accessor rejects a non-stat object before accessing fields.
+     (for-all (lambda (accessor)
+                (guard (condition [else #t]) (accessor #f) #f))
+              (list file-stat-type file-stat-mode file-stat-inode file-stat-owner
+                    file-stat-group file-stat-nlinks file-stat-size file-stat-blocks
+                    file-stat-dev-major file-stat-dev-minor file-stat-access-time
+                    file-stat-modification-time file-stat-change-time file-stat-creation-time)))
+
 
 (mat file-access
 

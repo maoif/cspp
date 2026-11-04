@@ -41,6 +41,15 @@
          (lambda () (make-glob 'windows "src\\one\\two\\three\\**\\*.ss")))
 (measure 'glob-sort 30 (lambda () (glob "src/cspp/*.ss")))
 
+;; Compare the original three-query identity with access through one stat snapshot.
+(measure 'file-identity-three-queries 10000
+         (lambda () (list (file-dev-major ".") (file-dev-minor ".") (file-inode "."))))
+(measure 'file-identity-one-snapshot 10000
+         (lambda ()
+           (let ([stat (file-stat ".")])
+             (list (file-stat-dev-major stat) (file-stat-dev-minor stat)
+                   (file-stat-inode stat)))))
+
 ;; Include the link-following identity checks without traversing the repository's
 ;; varying build products. The fixture belongs to this process and is always removed.
 (let ([root (format "glob-perf-~a" (get-process-id))])

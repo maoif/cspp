@@ -19,6 +19,12 @@
           file-inode file-blocks file-nlinks file-owner file-group
           file-dev-major file-dev-minor
 
+          file-stat? file-stat-type file-stat-mode file-stat-inode
+          file-stat-owner file-stat-group file-stat-nlinks file-stat-size file-stat-blocks
+          file-stat-dev-major file-stat-dev-minor
+          file-stat-access-time file-stat-modification-time file-stat-change-time
+          file-stat-creation-time
+
           file-readable? file-writable? file-executable? file-hidden? file-special? same-file? same-file-contents?
 
           file-mode->symbols symbols->file-mode
@@ -961,23 +967,108 @@
 
 ;;;; file stats
 
-  (define-record-type $file-stat
+  #|proc:file-stat?
+  Return whether arbitrary `object` is a filesystem metadata snapshot returned by `file-stat`.
+  |#
+  (define-record-type ($file-stat make-$file-stat file-stat?)
     (nongenerative)
-    (fields (immutable type   file-stat-type)
-            (immutable mode   file-stat-mode)
-            (immutable inode  file-stat-inode)
-            (immutable owner  file-stat-owner)
-            (immutable group  file-stat-group)
-            (immutable nlinks file-stat-nlinks)
-            (immutable size   file-stat-size)
-            (immutable blocks file-stat-blocks)
-            (immutable dev-major file-stat-dev-major)
-            (immutable dev-minor file-stat-dev-minor)
+    (fields (immutable type   $file-stat-type)
+            (immutable mode   $file-stat-mode)
+            (immutable inode  $file-stat-inode)
+            (immutable owner  $file-stat-owner)
+            (immutable group  $file-stat-group)
+            (immutable nlinks $file-stat-nlinks)
+            (immutable size   $file-stat-size)
+            (immutable blocks $file-stat-blocks)
+            (immutable dev-major $file-stat-dev-major)
+            (immutable dev-minor $file-stat-dev-minor)
             ;;(immutable attributes  file-stat-attributes)
-            (immutable access-time       file-stat-access-time)
-            (immutable modification-time file-stat-modification-time)
-            (immutable change-time       file-stat-change-time)
-            (immutable creation-time     file-stat-creation-time)))
+            (immutable access-time       $file-stat-access-time)
+            (immutable modification-time $file-stat-modification-time)
+            (immutable change-time       $file-stat-change-time)
+            (immutable creation-time     $file-stat-creation-time)))
+
+  ;; Preserve checked public boundaries when record accessors compile without checks.
+  (define-syntax $define-stat-accessor
+    (syntax-rules ()
+      [(_ name raw)
+       (define name
+         (lambda (stat)
+           (pcheck ([file-stat? stat]) (raw stat))))]))
+
+  #|proc:file-stat-type
+  Return the numeric file-type bits in snapshot `stat`. Use `file-type->symbol` to name them.
+  |#
+  ($define-stat-accessor file-stat-type $file-stat-type)
+
+  #|proc:file-stat-mode
+  Return the integer permission and special mode bits in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-mode $file-stat-mode)
+
+  #|proc:file-stat-inode
+  Return the nonnegative integer inode number in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-inode $file-stat-inode)
+
+  #|proc:file-stat-owner
+  Return the nonnegative integer user ID of the owner in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-owner $file-stat-owner)
+
+  #|proc:file-stat-group
+  Return the nonnegative integer group ID in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-group $file-stat-group)
+
+  #|proc:file-stat-nlinks
+  Return the nonnegative integer hard-link count in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-nlinks $file-stat-nlinks)
+
+  #|proc:file-stat-size
+  Return the nonnegative integer size in bytes in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-size $file-stat-size)
+
+  #|proc:file-stat-blocks
+  Return the nonnegative integer count of allocated 512-byte blocks in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-blocks $file-stat-blocks)
+
+  #|proc:file-stat-dev-major
+  Return the nonnegative integer major number of the containing device in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-dev-major $file-stat-dev-major)
+
+  #|proc:file-stat-dev-minor
+  Return the nonnegative integer minor number of the containing device in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-dev-minor $file-stat-dev-minor)
+
+  #|proc:file-stat-access-time
+  Return the recorded access time in snapshot `stat`, or `#f` when unavailable.
+  The result is a Chez `time-utc` object; no filesystem call is made.
+  |#
+  ($define-stat-accessor file-stat-access-time $file-stat-access-time)
+
+  #|proc:file-stat-modification-time
+  Return the recorded content modification time in snapshot `stat`, or `#f` when unavailable.
+  The result is a Chez `time-utc` object; no filesystem call is made.
+  |#
+  ($define-stat-accessor file-stat-modification-time $file-stat-modification-time)
+
+  #|proc:file-stat-change-time
+  Return the recorded metadata change time in snapshot `stat`, or `#f` when unavailable.
+  The result is a Chez `time-utc` object; no filesystem call is made.
+  |#
+  ($define-stat-accessor file-stat-change-time $file-stat-change-time)
+
+  #|proc:file-stat-creation-time
+  Return the recorded creation time in snapshot `stat`, or `#f` when unavailable.
+  The result is a Chez `time-utc` object; no filesystem call is made.
+  |#
+  ($define-stat-accessor file-stat-creation-time $file-stat-creation-time)
 
   #|FT_unknown
   The symbol identifying unavailable or unrecognized filesystem entry types.
@@ -1208,6 +1299,12 @@
   (define $statx-dev-major (lambda (v) (vector-ref v 16)))
   (define $statx-dev-minor (lambda (v) (vector-ref v 17)))
 
+  #|proc:file-stat
+  Read filesystem metadata for string `path` and return a snapshot accepted by `file-stat?`.
+  Boolean `follow-link?` defaults to `#t`; use `#f` to inspect a symlink itself. Missing or
+  inaccessible paths raise an error. The `file-stat-` accessors read the snapshot without
+  querying the filesystem again. Timestamp objects are shared with the snapshot.
+  |#
   (define-who file-stat
     (case-lambda [(path)
                   (file-stat path #t)]
