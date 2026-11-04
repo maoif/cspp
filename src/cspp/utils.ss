@@ -316,45 +316,52 @@
     (syntax-rules ()
       [(_ n) (decr! n)]))
 
+  (define-syntax $fixnum-update!
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ operation target operand ...)
+         (identifier? #'target)
+         (with-syntax ([(current-value value ...)
+                        (generate-temporaries #'(target operand ...))])
+           #'(let ([current-value target] [value operand] ...)
+               (pcheck ([fixnum? current-value value ...])
+                 (set! target (operation current-value value ...)))))])))
+
   #|macro:fx+!
   The `fx+!` macro assigns `(fx+ n x ...)` to fixnum variable `n`, returning unspecified values.
   Each `x` is a fixnum addend. The update is not atomic and requires caller synchronization.
+  Operands are evaluated once and checked; overflow raises before assigning `n`, even in release.
   |#
   (define-syntax fx+!
-    (lambda (stx)
-      (syntax-case stx ()
-        [(_ n x ...) (identifier? #'n)
-         #'(set! n (fx+ n x ...))])))
+    (syntax-rules ()
+      [(_ n x ...) ($fixnum-update! #2%fx+ n x ...)]))
 
   #|macro:fx-!
   The `fx-!` macro assigns `(fx- n x ...)` to fixnum variable `n`, returning unspecified values.
   Each `x` is a fixnum subtrahend. The update is not atomic and requires caller synchronization.
+  Operands are evaluated once and checked; overflow raises before assigning `n`, even in release.
   |#
   (define-syntax fx-!
-    (lambda (stx)
-      (syntax-case stx ()
-        [(_ n x ...) (identifier? #'n)
-         #'(set! n (fx- n x ...))])))
+    (syntax-rules ()
+      [(_ n x ...) ($fixnum-update! #2%fx- n x ...)]))
 
   #|macro:fx*!
   The `fx*!` macro assigns `(fx* n x ...)` to fixnum variable `n`, returning unspecified values.
   Each `x` is a fixnum factor. The update is not atomic and requires caller synchronization.
+  Operands are evaluated once and checked; overflow raises before assigning `n`, even in release.
   |#
   (define-syntax fx*!
-    (lambda (stx)
-      (syntax-case stx ()
-        [(_ n x ...) (identifier? #'n)
-         #'(set! n (fx* n x ...))])))
+    (syntax-rules ()
+      [(_ n x ...) ($fixnum-update! #2%fx* n x ...)]))
 
   #|macro:fx/!
   The `fx/!` macro assigns `(fx/ n x ...)` to fixnum variable `n`, returning unspecified values.
   Each `x` is a fixnum divisor. The update is not atomic and requires caller synchronization.
+  Operands are evaluated once and checked; arithmetic errors raise before assignment in release.
   |#
   (define-syntax fx/!
-    (lambda (stx)
-      (syntax-case stx ()
-        [(_ n x ...) (identifier? #'n)
-         #'(set! n (fx/ n x ...))])))
+    (syntax-rules ()
+      [(_ n x ...) ($fixnum-update! #2%fx/ n x ...)]))
 
   #|macro:cons!
   The `cons!` macro sets variable `p` to a new pair with car `a` and cdr equal to its old value.
@@ -374,7 +381,7 @@
     (lambda (stx)
       (syntax-case stx ()
         [(_ v) (identifier? #'v)
-         #'(set! v (cdr v))])))
+         #'(pcheck ([pair? v]) (set! v (cdr v)))])))
 
 
   #|macro:neq?

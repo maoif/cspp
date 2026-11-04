@@ -1,5 +1,56 @@
 (import (cspp chez) (cspp utils))
 
+(mat mutation-macro-argument-safety
+
+     ;; Error case: release arithmetic must reject nonfixnum operands before changing the target.
+     (parameterize ([optimize-level 3])
+       (eval '(let ([invalid #f])
+                (and
+                  (let ([value 0])
+                    (and (guard (condition [else #t]) (fx+! value invalid) #f) (= value 0)))
+                  (let ([value 0])
+                    (and (guard (condition [else #t]) (fx-! value invalid) #f) (= value 0)))
+                  (let ([value 0])
+                    (and (guard (condition [else #t]) (fx*! value invalid) #f) (= value 0)))
+                  (let ([value 0])
+                    (and (guard (condition [else #t]) (fx/! value invalid) #f) (= value 0)))
+                  (let ([value invalid])
+                    (and (guard (condition [else #t]) (fx+! value 1) #f) (eq? value invalid)))))
+             (environment '(cspp chez) '(cspp utils))))
+
+     ;; Error case: cdr! must reject a nonpair and leave the target unchanged.
+     (parameterize ([optimize-level 3])
+       (eval '(let* ([original '#(1 2)] [value original])
+                (and (guard (condition [else #t]) (cdr! value) #f) (eq? original value)))
+             (environment '(cspp chez) '(cspp utils))))
+
+     (let ([value 5] [calls 0])
+       (fx+! value (begin (set! calls (+ calls 1)) 2) (begin (set! calls (+ calls 1)) 3))
+       (fx-! value 1 2)
+       (fx*! value 2)
+       (fx/! value 7)
+       (and (= value 2) (= calls 2)))
+
+     (let ([value '(1 2 3)]) (cdr! value) (equal? value '(2 3))))
+
+(mat mutation-macro-arithmetic-boundaries
+
+     ;; Error case: overflow and zero divisors must raise without changing the target in release.
+     (parameterize ([optimize-level 3])
+       (eval '(and
+                (let ([value (most-positive-fixnum)])
+                  (and (guard (condition [else #t]) (fx+! value 1) #f)
+                       (= value (most-positive-fixnum))))
+                (let ([value (most-negative-fixnum)])
+                  (and (guard (condition [else #t]) (fx-! value 1) #f)
+                       (= value (most-negative-fixnum))))
+                (let ([value (most-positive-fixnum)])
+                  (and (guard (condition [else #t]) (fx*! value 2) #f)
+                       (= value (most-positive-fixnum))))
+                (let ([value 1])
+                  (and (guard (condition [else #t]) (fx/! value 0) #f) (= value 1))))
+             (environment '(cspp chez) '(cspp utils)))))
+
 (mat port-check-argument-safety
 
      ;; Error case: nonports must fail the predicate check before inspecting port state.
