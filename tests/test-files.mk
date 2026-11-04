@@ -6,7 +6,7 @@ NET_TESTS := net-operation.ss net-transfer.ss net-core.ss net-http-contract.ss n
              net-ssh.ss net-sftp.ss \
              net-scp.ss net-websocket.ss net-grpc.ss net-examples.ss
 
-SRCS_TEST := test.ss examples.ss benchmarks.ss record.ss datatype.ss match.ss for.ss control.ss utils.ss system.ss system-user.ss system-filesystem.ss system-signal.ss system-process.ss iter.ss transducer.ss file.ss path.ss glob.ss navigator.ss \
+SRCS_TEST := test.ss examples.ss benchmarks.ss record.ss datatype.ss match.ss for.ss control.ss utils.ss system.ss system-user.ss system-filesystem.ss system-signal.ss system-process.ss system-runtime-suite.ss iter.ss transducer.ss file.ss path.ss glob.ss navigator.ss \
              list.ss string.ss regex.ss vector.ss array.ss dlist.ss stack.ss queue.ss heap.ss \
              hashset.ss treemap.ss treeset.ss rbtree-specialized.ss \
              bittree.ss bitvec.ss dset.ss \

@@ -100,7 +100,8 @@
   (define $stdin-payload
     (lambda (options)
       (let ([stdin ($option-ref options 'stdin 'null)])
-        (cond [(or (not stdin) (eq? stdin 'null) (eq? stdin 'inherit)) #f]
+        (cond [(eq? stdin 'inherit) 'inherit]
+              [(or (not stdin) (eq? stdin 'null)) #f]
               [(string? stdin) (string->utf8 stdin)]
               [(bytevector? stdin) stdin]
               [else (errorf 'process "unsupported stdin option: ~a" stdin)]))))
@@ -148,6 +149,41 @@
   (define $spawn-pipeline-capture-ffi
     (foreign-procedure "cspp_spawn_pipeline_capture" (ptr int) ptr))
 
+  (define $decode-output
+    (lambda (bytes options)
+      (let ([encoding ($option-ref options 'encoding 'utf-8)])
+        (if (eq? encoding 'binary) bytes (utf8->string bytes)))))
+
+  (define $validate-options
+    (lambda (options)
+      (for-each
+        (lambda (entry)
+          (unless (and (pair? entry) (symbol? (car entry)))
+            (errorf 'process "invalid option entry: ~s" entry))
+          (let ([key (car entry)] [value (cdr entry)])
+            (unless
+              (case key
+                [(cwd) (or (not value) (string? value))]
+                [(env) (or (not value)
+                           (and (list? value)
+                                (andmap (lambda (pair) (and (pair? pair) (string? (car pair))
+                                                           (string? (cdr pair)))) value)))]
+                [(env-mode) (eq? value 'replace)]
+                [(stdin) (or (not value) (memq value '(inherit null))
+                             (string? value) (bytevector? value))]
+                [(stdout) (memq value '(inherit null capture))]
+                [(stderr) (memq value '(inherit null capture stdout))]
+                [(encoding) (memq value '(utf-8 binary))]
+                [(timeout) (or (not value) (and (integer? value) (exact? value)
+                                              (<= 0 value #x7fffffff)))]
+                [(success) (or (not value) (procedure? value)
+                               (and (list? value)
+                                    (andmap (lambda (code) (and (fixnum? code)
+                                                               (<= 0 code 255))) value)))]
+                [else #f])
+              (errorf 'process "invalid ~s option: ~s" key value))))
+        options)))
+
   (define $capture-vector->result
     (lambda (command result options check? who)
       (let* ([pid (vector-ref result 0)]
@@ -156,8 +192,8 @@
              [stderr-mode ($option-ref options 'stderr 'capture)])
         ($check-accepted-status who command status options check?)
         (make-process-result status
-                             (if (eq? stdout-mode 'capture) (vector-ref result 2) #f)
-                             (if (eq? stderr-mode 'capture) (vector-ref result 3) #f)
+                             (if (eq? stdout-mode 'capture) ($decode-output (vector-ref result 2) options) #f)
+                             (if (eq? stderr-mode 'capture) ($decode-output (vector-ref result 3) options) #f)
                              pid
                              command))))
 
@@ -169,6 +205,7 @@
 
   (define $spawn-capture
     (lambda (argv options capture-default)
+      ($validate-options options)
       (ffi-result-ref
        ($spawn-capture-ffi argv
                            ($env-option options)

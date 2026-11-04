@@ -114,6 +114,10 @@ crypto-hardening.so: crypto-thread-process.py crypto-thread-process.ss
 crypto-hardening.so: crypto-continuation-process.py crypto-continuation-process.ss
 crypto-hardening.so: crypto-input-process.py crypto-input-process.ss
 
+system-runtime-suite.so: system-runtime.ss system-runtime-runner.ss
+
+system-user.so: system-user-thread.ss
+
 file.so: fswatcher-blocking-process.ss
 
 fiber.so: fiber-quantum-process.ss fiber-inherited-timer-process.ss

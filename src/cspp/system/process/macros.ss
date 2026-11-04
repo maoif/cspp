@@ -12,7 +12,7 @@
       (define known-option-keywords
         '(:cwd :env :env-mode :stdin :stdout :stderr :encoding :timeout :success))
       (define literal-option-values
-        '(capture inherit null stdout replace))
+        '(capture inherit null stdout replace binary utf-8))
       (define colon-symbol?
         (lambda (x)
           (and (symbol? x)
@@ -117,7 +117,7 @@
   The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
   The `:stdout` option accepts `inherit`, `null`, or `capture`; captured output is ignored.
   The `:stderr` option accepts `inherit`, `null`, `capture`, or `stdout`.
-  The `:encoding` option is parsed for future use and is currently ignored.
+  The `:encoding` option is `utf-8` (default) for strings or `binary` for bytevectors.
   The `:timeout` option accepts `#f` or an exact millisecond timeout.
   The `:success` option accepts `#f`, a list of exit codes, or a status predicate.
   Bare `capture`, `inherit`, `null`, `stdout`, and `replace` are treated as symbols.
@@ -135,7 +135,7 @@
   The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
   The `:stdout` option accepts `inherit`, `null`, or `capture`; captured output is ignored.
   The `:stderr` option accepts `inherit`, `null`, `capture`, or `stdout`.
-  The `:encoding` option is parsed for future use and is currently ignored.
+  The `:encoding` option is `utf-8` (default) for strings or `binary` for bytevectors.
   The `:timeout` option accepts `#f` or an exact millisecond timeout.
   The `:success` option accepts `#f`, a list of exit codes, or a status predicate.
   Bare `capture`, `inherit`, `null`, `stdout`, and `replace` are treated as symbols.
@@ -153,7 +153,7 @@
   The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
   The `:stdout` option accepts `capture`, `inherit`, or `null`.
   The `:stderr` option accepts `capture`, `inherit`, `null`, or `stdout`.
-  The `:encoding` option is parsed for future use and is currently ignored.
+  The `:encoding` option is `utf-8` (default) for strings or `binary` for bytevectors.
   The `:timeout` option accepts `#f` or an exact millisecond timeout.
   The `:success` option accepts `#f`, a list of exit codes, or a status predicate.
   Bare `capture`, `inherit`, `null`, `stdout`, and `replace` are treated as symbols.
@@ -171,7 +171,7 @@
   The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
   The `:stdout` option accepts `capture`, `inherit`, or `null`.
   The `:stderr` option accepts `capture`, `inherit`, `null`, or `stdout`.
-  The `:encoding` option is parsed for future use and is currently ignored.
+  The `:encoding` option is `utf-8` (default) for strings or `binary` for bytevectors.
   The `:timeout` option accepts `#f` or an exact millisecond timeout.
   The `:success` option accepts `#f`, a list of exit codes, or a status predicate.
   Bare `capture`, `inherit`, `null`, `stdout`, and `replace` are treated as symbols.
@@ -189,7 +189,7 @@
   The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
   The `:stdout` option accepts `inherit`, `null`, or `capture`; captured output is ignored.
   The `:stderr` option accepts `inherit`, `null`, `capture`, or `stdout`.
-  The `:encoding` option is parsed for future use and is currently ignored.
+  The `:encoding` option is `utf-8` (default) for strings or `binary` for bytevectors.
   The `:timeout` option accepts `#f` or an exact millisecond timeout.
   The `:success` option accepts `#f`, a list of exit codes, or a status predicate.
   Bare `capture`, `inherit`, `null`, `stdout`, and `replace` are treated as symbols.
@@ -207,7 +207,7 @@
   The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
   The `:stdout` option accepts `capture`, `inherit`, or `null`.
   The `:stderr` option accepts `capture`, `inherit`, `null`, or `stdout`.
-  The `:encoding` option is parsed for future use and is currently ignored.
+  The `:encoding` option is `utf-8` (default) for strings or `binary` for bytevectors.
   The `:timeout` option accepts `#f` or an exact millisecond timeout.
   The `:success` option accepts `#f`, a list of exit codes, or a status predicate.
   Bare `capture`, `inherit`, `null`, `stdout`, and `replace` are treated as symbols.
