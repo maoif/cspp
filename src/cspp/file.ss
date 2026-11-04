@@ -51,6 +51,7 @@
           make-i/o-file-not-directory-error i/o-file-not-directory-error?)
   (import (cspp chez)
           (cspp private os)
+          (cspp path)
           (cspp internal)
           (cspp utils)
           (cspp list)
@@ -1497,7 +1498,7 @@
 
   (define file-mode->symbols
     (lambda (mode)
-      (pcheck ([$mode-num? mode])
+          (pcheck ([$mode-num? mode])
               (let* ([ss '((su . 11) (sg . 10) (t . 9))]
                      [us '((r . 8) (w . 7) (x . 6))]
                      [gs '((r . 5) (w . 4) (x . 3))]
@@ -1902,22 +1903,32 @@
 
 ;;;; soft and hard links
 
+  (define $same-path?
+    (lambda (path1 path2)
+      (let* ([flavor 'unix]
+             [base (path-parse flavor (current-directory))]
+             [absolute1 (path-absolute base (path-parse flavor path1))]
+             [absolute2 (path-absolute base (path-parse flavor path2))])
+        (string=? (path-render absolute1) (path-render absolute2)))))
+
   (define $link/copy-helper
     (lambda (who link/copy-what overwrite?)
       (case-lambda
-        [(src dest) (($link/copy-helper who link/copy-what overwrite?) src dest src)]
+        [(src dest) (($link/copy-helper who link/copy-what overwrite?) src dest src #f)]
         [(src dest name-src)
+         (($link/copy-helper who link/copy-what overwrite?) src dest name-src #f)]
+        [(src dest name-src source-path)
          (if (file-exists? dest #f)
              (let ([overwrite/error
                     (lambda (dest)
                       (if (file-exists? dest #f)
                           (if overwrite?
-                              ;; `dest` is file or symlink to file
-                              ;; If `dest` is symlink, always overwrite the symlink itself.
-                              ;; This is different from `cp` semantics,
-                              ;; but it matches `ln` semantics.
-                              (begin (delete-file dest)
-                                     (link/copy-what src dest))
+                              (begin
+                                (when (and source-path ($same-path? source-path dest))
+                                  ($err-file who dest "source and destination are the same file"))
+                                ;; Replace the destination symlink itself, matching `ln` semantics.
+                                (delete-file dest)
+                                (link/copy-what src dest))
                               ($err-file-exists who dest))
                           (link/copy-what src dest)))])
                (if (file-directory? dest #t)
@@ -1939,7 +1950,7 @@
                            (when (string? x)
                              ($err-file who x)))))]
               [link ($link/copy-helper who $link overwrite?)])
-         (link src dest name-src))]))
+         (link src dest name-src src))]))
 
   ;; TODO use macro in the following?
   #|proc:file-link
@@ -1982,7 +1993,7 @@
                              (when (string? x)
                                ($err-file who x)))))]
              [link ($link/copy-helper who $symlink overwrite?)])
-        (link src dest))))
+        (link src dest src #f))))
 
 
   #|proc:file-symlink
@@ -2182,9 +2193,9 @@
          (cond
           [(file-symbolic-link? src)
            (let ([ln (readlink src)])
-             (copy-link ln dest name-src))]
+             (copy-link ln dest name-src src))]
           [(file-regular? src #f)
-           (copy-file src dest name-src)]
+           (copy-file src dest name-src src)]
           [else (unreachable! who)]))]))
 
 
@@ -2291,7 +2302,8 @@
       [(src dest)
        (file-move src dest (lambda (src dest) (file-copy src dest #f)))]
       [(src dest copy)
-       (pcheck ([string? src dest] [file-exists? src] [procedure? copy])
+       (pcheck ([string? src dest] [(lambda (path) (file-exists? path #f)) src]
+                [procedure? copy])
                (if (and (file-directory? src #f)
                         (not (file-symbolic-link? src)))
                    (begin (file-copytree src dest copy)

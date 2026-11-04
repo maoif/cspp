@@ -1112,6 +1112,16 @@
 
 (mat file-link
 
+     ;; Error case: overwriting a hard link with itself must preserve the source.
+     (let ([path ($random-file)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (write-string path "link source")
+           (and (guard (failure [else #t]) (file-link! path path) #f)
+                (string=? "link source" (read-string path))))
+         (lambda () (when (file-exists? path) (delete-file path)))))
+
      (begin (define dir "link_test")
             (define atdir (lambda (x) (path-build dir x)))
             (when (file-directory? dir) (file-removetree dir))
@@ -1260,6 +1270,16 @@
 
 
 (mat file-copy
+
+     ;; Error case: overwriting a file with itself must preserve its contents.
+     (let ([path ($random-file)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (write-string path "copy source")
+           (and (guard (failure [else #t]) (file-copy! path path) #f)
+                (string=? "copy source" (read-string path))))
+         (lambda () (when (file-exists? path) (delete-file path)))))
 
      (begin (define dir "copy_test")
             (define atdir (lambda (x) (path-build dir x)))
@@ -1515,6 +1535,20 @@
 
 
 (mat file-move
+
+     ;; A dangling symlink is a movable filesystem entry even though its target is absent.
+     (let ([src ($random-file)] [dest ($random-file)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (file-symlink "missing-target" src)
+           (and (file-move src dest)
+                (not (file-exists? src #f))
+                (file-symbolic-link? dest)
+                (string=? "missing-target" (readlink dest))))
+         (lambda ()
+           (when (file-exists? src #f) (delete-file src))
+           (when (file-exists? dest #f) (delete-file dest)))))
 
      (begin (define dir "move_test")
             (define dir1 "./move_test1")
