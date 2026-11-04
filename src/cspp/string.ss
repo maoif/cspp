@@ -99,11 +99,15 @@
        (pcheck ([string? str] [fixnum? start end step])
                (when (fx= step 0) (errorf who "step cannot be 0"))
                (let* ([len (string-length str)]
+                      [raw-start (if (fx>= start 0) start (fx+ len start))]
                       [normalized-start
-                       (let ([index (if (fx>= start 0) start (fx+ len start))])
-                         (cond [(fx< index 0) 0]
-                               [(fx> index len) (fx1- len)]
-                               [else index]))]
+                       (if (fx> step 0)
+                           (cond [(fx< raw-start 0) 0]
+                                 [(fx> raw-start len) len]
+                                 [else raw-start])
+                           (cond [(fx< raw-start 0) -1]
+                                 [(fx>= raw-start len) (fx1- len)]
+                                 [else raw-start]))]
                       [normalized-end
                        (let ([index (if (fx>= end 0) end (fx+ len end))])
                          (cond [(fx<= index -1) -1]
@@ -153,20 +157,13 @@
        (cond [(equal? str "") '("")]
              [(string? delim)
               (let ([dlen (string-length delim)] [len (string-length str)])
-                (case dlen
-                  [1 (string-split str (string-ref delim 0))]
-                  [else (let ([i* (string-search-all str delim)])
-                          (if i*
-                              (let loop ([i* i*] [res '()] [lefti 0])
-                                (if (null? i*)
-                                    (if (fx= lefti len)
-                                        ;; align with delim being char case:
-                                        ;; add empty string when `delim` is on the side
-                                        (reverse (cons "" res))
-                                        (reverse (cons (substring str lefti len) res)))
-                                    (let ([i (car i*)])
-                                      (loop (cdr i*) (cons (substring str lefti i) res) (fx+ i dlen)))))
-                              (list str)))]))]
+                (if (fx= dlen 1)
+                    (string-split str (string-ref delim 0))
+                    (let loop ([lefti 0] [res '()])
+                      (let ([i ($string-search str delim lefti)])
+                        (if i
+                            (loop (fx+ i dlen) (cons (substring str lefti i) res))
+                            (reverse (cons (substring str lefti len) res)))))))]
              [(char? delim)
               (let ([lb (make-list-builder)] [len (string-length str)])
                 (let loop-next ([leftcur 0])

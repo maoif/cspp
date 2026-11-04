@@ -32,6 +32,9 @@
      (string=? "864" (string-slice "0123456789" 8 2 -2))
      (string=? "" (string-slice "0123456789" 2 9 -1))
      (string=? "89" (string-slice "0123456789" -2 20))
+     (string=? "" (string-slice "abc" 9 10))
+     (string=? "cba" (string-slice "abc" 3 -4 -1))
+     (string=? "" (string-slice "abc" -9 -4 -1))
      (error? (string-slice 123 1))
      (error? (string-slice "abc" 0 2 0)))
 
@@ -116,6 +119,8 @@
      (equal? '("" "quick" "fat" "fox" "") (string-split "@@quick@@fat@@fox@@" "@@"))
      (equal? '("quick" "fat" "fox" "") (string-split "quick@@fat@@fox@@" "@@"))
      (equal? '("" "quick" "fat" "fox") (string-split "@@quick@@fat@@fox" "@@"))
+     (equal? '("" "a") (string-split "aaa" "aa"))
+     (equal? '("" "" "") (string-split "aaaa" "aa"))
 
 
      (equal? '("Lorem" "Ipsum" "is" "simply" "dummy" "text" "of" "the" "printing" "and" "typesetting" "industry")
