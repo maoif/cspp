@@ -2,7 +2,6 @@
 #include "common.h"
 #include <signal.h>
 #include <pthread.h>
-#include <sys/stat.h>
 
 typedef struct {
   char *data;
@@ -161,74 +160,50 @@ static const char *environment_value(char **env, const char *name) {
   return NULL;
 }
 
-// Check the executable before spawning.  Some emulators report an exec failure
-// as a child exit status instead of returning the POSIX spawn error to the parent.
-static int executable_file_access(const char *path) {
-  if (access(path, X_OK) != 0) return errno;
-  struct stat info;
-  if (stat(path, &info) != 0) return errno;
-  // Directories can satisfy X_OK but must not end a PATH search.
-  return S_ISREG(info.st_mode) ? 0 : EACCES;
-}
-
-static int executable_access(const char *path, const char *cwd) {
-  if (cwd == NULL || cwd[0] == '\0' || path[0] == '/') {
-    return executable_file_access(path);
-  }
-  size_t cwd_len = strlen(cwd);
-  size_t path_len = strlen(path);
-  char *candidate = (char *)malloc(cwd_len + path_len + 2);
-  if (candidate == NULL) return ENOMEM;
-  memcpy(candidate, cwd, cwd_len);
-  candidate[cwd_len] = '/';
-  memcpy(candidate + cwd_len + 1, path, path_len + 1);
-  int result = executable_file_access(candidate);
-  free(candidate);
-  return result;
-}
-
-static char *copy_c_string(const char *value) {
-  size_t length = strlen(value);
-  char *copy = (char *)malloc(length + 1);
-  if (copy == NULL) return NULL;
-  memcpy(copy, value, length + 1);
-  return copy;
-}
-
-// Resolve PATH in the parent, but leave the actual execve to the child.  The
-// error pipe below reports exec-time failures without relying on preflight checks.
-static int resolve_executable(const char *program, char **env, const char *cwd,
-                              char **resolved) {
-  if (strchr(program, '/') != NULL) {
-    *resolved = copy_c_string(program);
-    return *resolved == NULL ? ENOMEM : 0;
-  }
-
+// Prepare native-owned PATH candidates before fork. Relative candidates are
+// interpreted after the child's chdir; only execve decides whether they work.
+static int executable_candidates(const char *program, char **env, char ***result) {
+  if (program[0] == '\0') return ENOENT;
+  int explicit_path = strchr(program, '/') != NULL;
   const char *path = environment_value(env, "PATH");
   if (path == NULL) path = "/bin:/usr/bin";
-  int saved_errno = ENOENT;
+  size_t count = 1;
+  if (!explicit_path) {
+    for (const char *p = path; *p; p++) {
+      if (*p == ':') count++;
+    }
+  }
+  if (count > SIZE_MAX / sizeof(char *) - 1) return ENOMEM;
+  char **candidates = calloc(count + 1, sizeof(char *));
+  if (!candidates) return ENOMEM;
+  if (explicit_path) {
+    candidates[0] = strdup(program);
+    if (!candidates[0]) { free(candidates); return ENOMEM; }
+    *result = candidates;
+    return 0;
+  }
+
+  size_t program_len = strlen(program);
   const char *start = path;
-  for (;;) {
+  for (size_t i = 0; i < count; i++) {
     const char *end = strchr(start, ':');
     size_t directory_len = end == NULL ? strlen(start) : (size_t)(end - start);
-    size_t program_len = strlen(program);
     size_t separator_len = directory_len == 0 ? 0 : 1;
+    if (program_len > SIZE_MAX - 2 || directory_len > SIZE_MAX - program_len - 2) {
+      free_string_array(candidates);
+      return ENOMEM;
+    }
     char *candidate = (char *)malloc(directory_len + separator_len + program_len + 1);
-    if (candidate == NULL) return ENOMEM;
+    if (candidate == NULL) { free_string_array(candidates); return ENOMEM; }
     memcpy(candidate, start, directory_len);
     if (separator_len != 0) candidate[directory_len] = '/';
     memcpy(candidate + directory_len + separator_len, program, program_len + 1);
-    int access_error = executable_access(candidate, cwd);
-    if (access_error == 0) {
-      *resolved = candidate;
-      return 0;
-    }
-    if (access_error == EACCES) saved_errno = EACCES;
-    free(candidate);
+    candidates[i] = candidate;
     if (end == NULL) break;
     start = end + 1;
   }
-  return saved_errno;
+  *result = candidates;
+  return 0;
 }
 
 static int make_pipe(int fds[2]);
@@ -268,7 +243,7 @@ static void wait_child_after_exec_error(pid_t pid) {
 }
 
 static int spawn_native(pid_t *pid, char *const argv[], char *const env[],
-                         const char *program, const char *cwd,
+                         char *const candidates[], const char *cwd,
                          int stdin_source, int stdout_source,
                          int stderr_source, int stderr_to_stdout,
                          const int *child_fds, size_t child_fd_count) {
@@ -308,8 +283,18 @@ static int spawn_native(pid_t *pid, char *const argv[], char *const env[],
     for (size_t i = 0; i < child_fd_count; i += 1) {
       if (child_fds[i] >= 0) close(child_fds[i]);
     }
-    execve(program, argv, env);
-    child_report_errno(error_pipe[1], errno);
+    int error = ENOENT, permission_denied = 0;
+    for (size_t i = 0; candidates[i] != NULL; i++) {
+      execve(candidates[i], argv, env);
+      error = errno;
+      switch (error) {
+        case EACCES: permission_denied = 1; break;
+        case ENOENT: case ENOTDIR: case ESTALE: case ENODEV: case ETIMEDOUT: break;
+        // No implicit shell fallback for ENOEXEC. The kernel handles shebangs.
+        default: child_report_errno(error_pipe[1], error);
+      }
+    }
+    child_report_errno(error_pipe[1], permission_denied ? EACCES : error);
   }
 
   close(error_pipe[1]);
@@ -339,13 +324,13 @@ static int spawn_native(pid_t *pid, char *const argv[], char *const env[],
 }
 /* Caller strings used by fork/exec are copied before allowing Scheme GC. */
 static int spawn_checked(pid_t *pid, char *const argv[], char *const env[],
-                         const char *program, const char *cwd,
+                         char *const candidates[], const char *cwd,
                          int stdin_source, int stdout_source, int stderr_source,
                          int stderr_to_stdout, const int *child_fds, size_t child_fd_count) {
   char *directory = strdup(cwd ? cwd : "");
   if (!directory) return ENOMEM;
   Sdeactivate_thread();
-  int error = spawn_native(pid, argv, env, program, directory, stdin_source,
+  int error = spawn_native(pid, argv, env, candidates, directory, stdin_source,
                             stdout_source, stderr_source, stderr_to_stdout,
                             child_fds, child_fd_count);
   Sactivate_thread();
@@ -549,8 +534,8 @@ ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
     errno = EINVAL;
     return cspp_errno_result("spawn-capture", Snil);
   }
-  char *resolved_program = NULL;
-  int resolve_error = resolve_executable(cargv[0], cenv, cwd, &resolved_program);
+  char **candidates = NULL;
+  int resolve_error = executable_candidates(cargv[0], cenv, &candidates);
   if (resolve_error != 0) {
     free_string_array(cargv);
     free_string_array(cenv);
@@ -582,7 +567,7 @@ ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
     close_fd(&stdout_pipe[1]);
     close_fd(&stderr_pipe[0]);
     close_fd(&stderr_pipe[1]);
-    free(resolved_program);
+    free_string_array(candidates);
     free_string_array(cargv);
     free_string_array(cenv);
     return cspp_errno_result("spawn-capture", Snil);
@@ -592,12 +577,12 @@ ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
   int child_fds[] = {stdin_pipe[0], stdin_pipe[1], stdout_pipe[0], stdout_pipe[1],
                      stderr_pipe[0], stderr_pipe[1]};
   Slock_object(stdin_payload);
-  rc = spawn_checked(&pid, cargv, cenv, resolved_program, cwd,
+  rc = spawn_checked(&pid, cargv, cenv, candidates, cwd,
                      Sbytevectorp(stdin_payload) ? stdin_pipe[0] : (Ssymbolp(stdin_payload) ? -1 : -2),
                      capture_stdout ? stdout_pipe[1] : (stdout_null ? -2 : -1),
                      capture_stderr ? stderr_pipe[1] : (stderr_null ? -2 : -1),
                      stderr_to_stdout, child_fds, sizeof(child_fds) / sizeof(child_fds[0]));
-  free(resolved_program);
+  free_string_array(candidates);
   close_fd(&stdin_pipe[0]);
   close_fd(&stdout_pipe[1]);
   close_fd(&stderr_pipe[1]);
@@ -655,13 +640,13 @@ ptr cspp_spawn_process(ptr argv, ptr env, const char *cwd,
   const char *operation = "process-spawn";
   char **cargv = argv_from_list(argv);
   char **cenv = env_from_alist(env);
-  char *program = NULL;
+  char **candidates = NULL;
   int pipes[3][2] = {{-1, -1}, {-1, -1}, {-1, -1}};
   int modes[3] = {stdin_mode, stdout_mode, stderr_mode};
   int sources[3], error = 0;
   pid_t pid = -1;
   if (!cargv || !cenv) { error = EINVAL; goto done; }
-  error = resolve_executable(cargv[0], cenv, cwd, &program);
+  error = executable_candidates(cargv[0], cenv, &candidates);
   if (error) goto done;
   for (int i = 0; i < 3; i++) {
     if (modes[i] < 0 || modes[i] > (i == 2 ? 3 : 2)) { error = EINVAL; goto done; }
@@ -670,11 +655,11 @@ ptr cspp_spawn_process(ptr argv, ptr env, const char *cwd,
       sources[i] = pipes[i][i == 0 ? 0 : 1];
     } else sources[i] = modes[i] == 1 ? -2 : -1;
   }
-  error = spawn_checked(&pid, cargv, cenv, program, cwd,
+  error = spawn_checked(&pid, cargv, cenv, candidates, cwd,
                          sources[0], sources[1], sources[2], stderr_mode == 3,
                          &pipes[0][0], 6);
  done:
-  free(program);
+  free_string_array(candidates);
   free_string_array(cargv);
   free_string_array(cenv);
   if (error) {
@@ -826,15 +811,15 @@ ptr cspp_spawn_pipeline(ptr specs) {
 
   int spawned = 0;
   for (int i = 0; i < count; i += 1) {
-    char *resolved_program = NULL;
-    int rc = resolve_executable(argvs[i][0], cenv, "", &resolved_program);
+    char **candidates = NULL;
+    int rc = executable_candidates(argvs[i][0], cenv, &candidates);
     if (rc == 0) {
-      rc = spawn_checked(&pids[i], argvs[i], cenv, resolved_program, "",
+      rc = spawn_checked(&pids[i], argvs[i], cenv, candidates, "",
                          i > 0 ? pipes[i - 1][0] : -1,
                          i < count - 1 ? pipes[i][1] : -1,
                          -1, 0, child_fds, (size_t)child_fd_count);
     }
-    free(resolved_program);
+    free_string_array(candidates);
     if (rc != 0) {
       errno = rc;
       for (int j = 0; j < spawned; j += 1) kill(pids[j], SIGKILL);
@@ -995,15 +980,15 @@ static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
 
   int spawned = 0;
   for (int i = 0; i < count; i += 1) {
-    char *resolved_program = NULL;
-    int rc = resolve_executable(argvs[i][0], cenv, "", &resolved_program);
+    char **candidates = NULL;
+    int rc = executable_candidates(argvs[i][0], cenv, &candidates);
     if (rc == 0) {
-      rc = spawn_checked(&pids[i], argvs[i], cenv, resolved_program, "",
+      rc = spawn_checked(&pids[i], argvs[i], cenv, candidates, "",
                          i > 0 ? pipes[i - 1][0] : -1,
                          i < count - 1 ? pipes[i][1] : (capture_stdout ? capture_pipe[1] : -2),
                          -1, 0, child_fds, (size_t)child_fd_count);
     }
-    free(resolved_program);
+    free_string_array(candidates);
     if (rc != 0) {
       errno = rc;
       for (int j = 0; j < spawned; j += 1) kill(pids[j], SIGKILL);

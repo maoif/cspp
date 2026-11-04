@@ -55,6 +55,12 @@ becomes literal text. Wrap a variable in `(begin variable)` to evaluate it.
 Neither invokes a shell. `process-run-shell` and `process-capture-shell` instead take one command
 string interpreted by `sh -c`; construct shell text carefully when it includes external input.
 
+Command names without `/` are searched in the child's `PATH`, using `/bin:/usr/bin` when it is
+unset. Relative entries use the child's working directory. Failed candidates such as directories,
+unexecutable files, and scripts with missing interpreters permit trying later entries. Explicit
+paths bypass this search. The kernel handles shebangs; direct execution has no automatic shell
+fallback for executable text without a shebang.
+
 The `/check` variants require exit code zero by default. Ordinary variants accept any status.
 The `:success` option overrides either default: `#f` accepts any status, a list accepts only normal
 exits with one of those codes, and a callback `(status -> object)` accepts a nonfalse result.

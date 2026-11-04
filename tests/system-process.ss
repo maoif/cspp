@@ -1,5 +1,79 @@
 (import (cspp))
 
+(mat process-path-exec-errors
+
+     ;; Error case: exec-time failures must not hide a working command in a later PATH entry.
+     (let* ([root (format "/tmp/cspp-path-exec-~a" (getpid))]
+            [first (string-append root "/first")]
+            [second (string-append root "/second")]
+            [first-tool (string-append first "/cspp-path-tool")]
+            [second-tool (string-append second "/cspp-path-tool")]
+            [path (string-append first ":" second)]
+            [original-path (getenv "PATH")]
+            [environment (list (cons "PATH" path))]
+            [chmod (foreign-procedure "chmod" (string unsigned-32) int)]
+            [rmdir (foreign-procedure "rmdir" (string) int)])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (mkdir first)
+           (mkdir second)
+           (call-with-output-file first-tool
+             (lambda (port) (put-string port "#!/no-such-cspp-interpreter\n")))
+           (call-with-output-file second-tool
+             (lambda (port) (put-string port "#!/bin/sh\nprintf found\n")))
+           (chmod first-tool #o700)
+           (chmod second-tool #o700))
+         (lambda ()
+           (putenv "PATH" path)
+           (and (string=? "found"
+                  (process-result-stdout
+                    (process-capture cspp-path-tool :env (begin environment))))
+                (let ([child (process-spawn "cspp-path-tool" '("argument")
+                               (list (cons 'env environment) '(stdout . null)))])
+                  (process-exit-success? (process-wait child)))
+                (string=? "found"
+                  (process-result-stdout (process-capture-pipeline '(("cspp-path-tool")))))
+                (for-all process-exit-success? (process-run-pipeline '(("cspp-path-tool"))))
+                (for-all (lambda (child) (process-exit-success? (process-wait child)))
+                  (process-spawn-pipeline
+                    '(("cspp-path-tool") ("/bin/sh" "-c" "exec /bin/cat >/dev/null")) '()))
+                (string=? "found"
+                  (process-result-stdout
+                    (process-capture cspp-path-tool :cwd (begin root)
+                      :env '(("PATH" . "missing:first:second")))))
+                ;; Error case: explicit paths do not fall back to another PATH entry.
+                (guard (condition [(system-error? condition)
+                                   (= 2 (system-error-code condition))])
+                  (process-capture (begin first-tool)) #f)
+                (begin
+                  (chmod first-tool #o600)
+                  (string=? "found" (process-result-stdout (process-capture cspp-path-tool))))
+                ;; Error case: preserve EACCES when every candidate fails, even after misses.
+                (begin
+                  (chmod second-tool #o600)
+                  (guard (condition [(system-permission-error? condition)
+                                     (= 13 (system-error-code condition))])
+                    (process-capture cspp-path-tool :env
+                      (list (cons "PATH" (string-append path ":/no-such-cspp-path"))))
+                    #f))
+                ;; Error case: direct execution must not silently run text through a shell.
+                (begin
+                  (delete-file first-tool)
+                  (call-with-output-file first-tool
+                    (lambda (port) (put-string port "exit 0\n")))
+                  (chmod first-tool #o700)
+                  (guard (condition [(system-error? condition)
+                                     (= 8 (system-error-code condition))])
+                    (process-capture cspp-path-tool) #f))))
+         (lambda ()
+           (putenv "PATH" (or original-path "/bin:/usr/bin"))
+           (delete-file first-tool)
+           (delete-file second-tool)
+           (rmdir first)
+           (rmdir second)
+           (rmdir root)))))
+
 (mat process-path-search
 
      ;; Error case: a searchable directory must not hide an executable later in PATH.
