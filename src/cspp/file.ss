@@ -14,16 +14,15 @@
 
           make-path
 
-          file-stat file-type file-type->symbol file-mode file-size file-size-h
+          file-stat file-stat? file-stat-type file-stat-mode file-stat-inode
+          file-stat-owner file-stat-group file-stat-nlinks file-stat-size
+          file-stat-blocks file-stat-dev-major file-stat-dev-minor
+          file-stat-access-time file-stat-modification-time file-stat-change-time
+          file-stat-creation-time
+          file-type file-type->symbol file-mode file-size file-size-h
           file-access-time file-modification-time file-change-time file-creation-time
           file-inode file-blocks file-nlinks file-owner file-group
           file-dev-major file-dev-minor
-
-          file-stat? file-stat-type file-stat-mode file-stat-inode
-          file-stat-owner file-stat-group file-stat-nlinks file-stat-size file-stat-blocks
-          file-stat-dev-major file-stat-dev-minor
-          file-stat-access-time file-stat-modification-time file-stat-change-time
-          file-stat-creation-time
 
           file-readable? file-writable? file-executable? file-hidden? file-special? same-file? same-file-contents?
 
@@ -2151,13 +2150,11 @@
 
 
   #|proc:file-copymeta
-  Copy metadata from `src` to `dest`.
-  Metadata includes permission bits, last access time, and last modification time.
-
-  If `follow-link?` is #f and `src` is a symlink, the metadata excluding the permission bits
-  of the symlink per se is copied. Permission bits are copied from the symlink target.
-
-  If `dest` is a symlink, it is always dereferenced.
+  Copy permission bits and access/modification times from path string `src` to `dest`.
+  Optional booleans `follow-link-src?` and `follow-link-dest?` default to `#t` and control
+  which entry supplies or receives timestamps. Permission bits always come from the source
+  target and are copied only when `follow-link-dest?` is true. Both selected entries must
+  exist. Return unspecified values; ownership, creation times, and xattrs are not copied.
   |#
   (define-who file-copymeta
     (case-lambda
@@ -2272,19 +2269,13 @@
 
 
   #|proc:file-copytree
-  Copy a directory recursively from `src` to `dest`.
-
-  It is an error if `src` is not a directory.
-  If `src` is a symlink, it is dereferenced automatically.
-
-  `dest` has to exist as a directory or its parent directory has to exist.
-  In the former case, contents in `src` are copied under `dest`;
-  in the latter case, a new directory with the same basename as that of `src`
-  is created under `dest`, then contents in `src` are copied under the new directory.
-  Symlinks are always followed in the process.
-
-  `copy` is a procedure used to copy individual files.
-  It is `file-copy` with `follow-link?` set to #f by default.
+  Copy the contents of directory path string `src` into directory path string `dest`.
+  An existing `dest` receives the contents directly; otherwise its parent must exist and
+  `dest` itself is created. A destination within `src` is rejected. A source root symlink is
+  followed, but nested directory symlinks are not traversed.
+  Optional `copy` has signature `(lambda (source-path destination-path) ...)` and copies
+  each file or symlink; its return values are ignored. By default `file-copy` preserves
+  symlinks. Directory metadata is not copied. Return unspecified values.
   |#
   (define-who file-copytree
     (case-lambda

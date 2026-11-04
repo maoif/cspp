@@ -765,6 +765,14 @@
 
 (mat file-stat
 
+     (let ([stat (file-stat "file.ss")])
+       (and (file-stat? stat)
+            (eq? 'FT_regular (file-type->symbol (file-stat-type stat)))
+            (positive? (file-stat-size stat))))
+
+     ;; File-stat accessors reject values that are not stat snapshots.
+     (error? (file-stat-size #f))
+
      ;; Directory size comes from metadata without opening the directory as a file.
      (let ([directory ($random-file)])
        (dynamic-wind
@@ -2069,3 +2077,16 @@
             (and (process-exit-success? (process-result-status result))
                  (string=? "" (process-result-stdout result))
                  (string=? "" (process-result-stderr result))))))))
+
+
+(mat file-stat-snapshot
+     (let ([path ($random-file)])
+       (dynamic-wind
+         (lambda () (write-string path "abc"))
+         (lambda ()
+           (let ([stat (file-stat path)])
+             (write-string! path "longer")
+             (delete-file path)
+             (and (= (file-stat-size stat) 3)
+                  (not (file-stat? path)))))
+         (lambda () (when (file-exists? path) (delete-file path))))))
