@@ -32,6 +32,14 @@
     (let loop ([paths paths] [index 0])
       (if (string=? (car paths) path) index (loop (cdr paths) (+ index 1))))))
 
+(define-record-type $escaped-file-datum
+  (fields))
+
+(define $escape-file-write #f)
+(record-writer (record-type-descriptor $escaped-file-datum)
+  (lambda (datum port write)
+    ($escape-file-write 'escaped)))
+
 (mat fs-directory-stream
      ($with-fs-fixture
       (lambda (root)
@@ -182,6 +190,31 @@
 
 
 (mat simple-read/write
+
+     ;; Error case: a malformed datum must close the opened input port.
+     (let ([path ($random-file)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (write-string path "(")
+           (let ([before (length (directory-list "/proc/self/fd"))])
+             (do ([index 0 (fx1+ index)]) ((fx= index 8))
+               (guard (failure [else (void)]) (read-datum path)))
+             (= before (length (directory-list "/proc/self/fd")))))
+         (lambda () (when (file-exists? path) (delete-file path)))))
+
+     ;; Error case: continuation escape from a writer must close its output port.
+     (let ([path ($random-file)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (let ([before (length (directory-list "/proc/self/fd"))])
+             (call/cc (lambda (continuation)
+                        (set! $escape-file-write continuation)
+                        (write-datum path (make-$escaped-file-datum))))
+             (= before (length (directory-list "/proc/self/fd")))))
+         (lambda ()
+           (when (file-exists? path) (delete-file path)))))
 
      ;; errors
      ;; path not string

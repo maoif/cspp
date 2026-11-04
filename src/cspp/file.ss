@@ -107,6 +107,15 @@
 ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+  (define $with-port
+    (lambda (port proc)
+      (dynamic-wind
+        void
+        (lambda () (proc port))
+        (lambda ()
+          (unless (port-closed? port)
+            (close-port port))))))
+
   #|proc:read-lines
   The `read-lines` procedure reads the text file at `path` and returns a list of lines.
   The `path` parameter is the filesystem path string to read.
@@ -115,7 +124,7 @@
     (lambda (path)
       (pcheck-file
        (path)
-       (call-with-input-file path
+       ($with-port (open-input-file path)
          (lambda (p)
            (let ([lb (make-list-builder)])
              (let loop ()
@@ -132,7 +141,7 @@
     (lambda (path)
       (pcheck-file
        (path)
-       (call-with-input-file path
+       ($with-port (open-input-file path)
          (lambda (p)
            (let ([x (get-string-all p)])
              (if (eof-object? x) "" x)))))))
@@ -144,7 +153,7 @@
     (lambda (path)
       (pcheck-file
        (path)
-       (call-with-input-file path
+       ($with-port (open-input-file path)
          (lambda (p)
            (let ([lb (make-list-builder)])
              (let loop ()
@@ -161,7 +170,7 @@
     (lambda (path)
       (pcheck-file
        (path)
-       (call-with-input-file path
+       ($with-port (open-input-file path)
          (lambda (p)
            (let ([lb (make-list-builder)])
              (let loop ()
@@ -178,7 +187,7 @@
     (lambda (path)
       (pcheck-file
        (path)
-       (call-with-input-file path
+       ($with-port (open-input-file path)
          (lambda (p) (get-datum p))))))
   #|proc:read-data-fasl
   The `read-data-fasl` procedure reads fasl datums from `path` as a list.
@@ -188,7 +197,7 @@
     (lambda (path)
       (pcheck-file
        (path)
-       (call-with-port (open-file-input-port path)
+       ($with-port (open-file-input-port path)
          (lambda (p)
            (let ([lb (make-list-builder)])
              (let loop ()
@@ -205,7 +214,7 @@
     (lambda (path)
       (pcheck-file
        (path)
-       (call-with-port (open-file-input-port path)
+       ($with-port (open-file-input-port path)
          (lambda (p) (fasl-read p))))))
   #|proc:read-u8vec
   The `read-u8vec` procedure reads the binary file at `path` as a bytevector.
@@ -215,7 +224,7 @@
     (lambda (path)
       (pcheck-file
        (path)
-       (call-with-port (open-file-input-port path)
+       ($with-port (open-file-input-port path)
          (lambda (p) (get-bytevector-all p))))))
 
   (define all-strings? (lambda (x) (andmap string? x)))
@@ -232,7 +241,7 @@
                                   [append   (file-options no-truncate no-fail append)]
                                   [else ($err-bad-write-mode who mode)])
                                 (file-options))])
-                    (call-with-port (open-file-output-port path op (buffer-mode block)
+                    ($with-port (open-file-output-port path op (buffer-mode block)
                                                            (if bin? #f (current-transcoder)))
                       (lambda (p) (writer p)))))])
         (if (file-exists? path)
@@ -1361,7 +1370,7 @@
     (lambda (who path)
       ;; dir and regular files are both OK
       (pcheck ([file-exists? path])
-              (call-with-port (open-file-input-port path)
+              ($with-port (open-file-input-port path)
                 (lambda (p) (file-length p))))))
 
   (define-who file-size
@@ -1461,9 +1470,9 @@
     (lambda (path1 path2)
       (pcheck ([string? path1 path2])
               (if (and (file-regular? path1 #t) (file-regular? path2 #t))
-                  (call-with-port (open-file-input-port path1)
+                  ($with-port (open-file-input-port path1)
                     (lambda (p1)
-                      (call-with-port (open-file-input-port path2)
+                      ($with-port (open-file-input-port path2)
                         (lambda (p2)
                           (and (fx= (file-length p1) (file-length p2))
                                (let loop ()
@@ -1832,7 +1841,8 @@
 
   ;; Some procedures only need the presence of the symlink per se, not its target.
   (define file-exists?-no-follow (lambda (path) (file-exists? path #f)))
-  (define $touch-empty-file (lambda (path) (call-with-port (open-file-output-port path) (lambda (x) (void)))))
+  (define $touch-empty-file
+    (lambda (path) ($with-port (open-file-output-port path) (lambda (port) (void)))))
 
   (define $path-seen?
     (lambda (path seen)
@@ -2162,9 +2172,9 @@
       [(who src dest overwrite? name-src)
        ;; `src` can only be regular or symlink
        (let ([copy-file ($link/copy-helper who (lambda (src dest)
-                                                 (call-with-port (open-file-input-port src)
+                                                 ($with-port (open-file-input-port src)
                                                    (lambda (pin)
-                                                     (call-with-port (open-file-output-port dest)
+                                                     ($with-port (open-file-output-port dest)
                                                        (lambda (pout)
                                                          ($copy-port who pin pout))))))
                                            overwrite?)]
