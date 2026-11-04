@@ -3,6 +3,17 @@
         (only (cspp system process expert) make-process-exit-status)
         (only (cspp system user records) make-unix-user make-unix-group))
 
+(mat shared-object-unicode-path
+
+     ;; Error case: native UTF-8 library paths must retain their Unicode characters.
+     (let ([path (format "/tmp/cspp-shared-é中文-~a.so" (getpid))])
+       (dynamic-wind
+         (lambda () (file-copy "../libcspp.so" path))
+         (lambda ()
+           (load-shared-object path)
+           (and (member path (shared-object-list)) #t))
+         (lambda () (delete-file path)))))
+
 (mat linux-os-release-quoting
 
      ;; Error case: shell escapes in quoted release names must not leak into returned values.
