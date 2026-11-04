@@ -641,38 +641,12 @@
   #|proc:make-list-builder
   The `make-list-builder` procedure returns a builder initialized with the values in `item*`.
   Calling the builder with values appends them and returns the builder itself. Calling it without
-  values returns the list built so far.
+  values returns the list built so far. The returned procedure has signature
+  `(object ... -> builder)` with at least one object, and `(() -> list)` with no arguments.
+  Each builder owns independent mutable state; calls on one builder require caller ordering.
+  Returned lists share the builder's pairs and must not be mutated while it remains in use.
   |#
-  (define make-list-builder
-    (lambda item*
-      (pcheck ()
-              (let ([res item*])
-                (let ([current-cell (if (null? res)
-                                        (cons #f '())
-                                        (let loop ([res res])
-                                          (if (null? (cdr res))
-                                              res
-                                              (loop (cdr res)))))]
-                      [next-cell (cons #f '())])
-                  (define add-item!
-                    (lambda (item)
-                      (if (null? res)
-                          (begin (set-car! current-cell item)
-                                 (set! res current-cell))
-                          (begin
-                            (set-car! next-cell item)
-                            (set-cdr! current-cell next-cell)
-                            (set! current-cell next-cell)
-                            (set! next-cell (cons #f '()))))))
-                  (rec lb
-                    (case-lambda
-                      [() res]
-                      [(item)
-                       (add-item! item)
-                       lb]
-                      [item*
-                       (for-each add-item! item*)
-                       lb])))))))
+  (define make-list-builder $make-list-builder)
 
 
   #|proc:nums

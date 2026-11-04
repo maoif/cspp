@@ -301,7 +301,7 @@
          #'(set! n (- n 1))])))
 
   #|macro:add1!
-  The `add1!` macro increments numeric variable `n` by one and returns unspecified values.
+  The `add1!` macro increments numeric variable `n` by one. Its return value is unspecified.
   The update is not atomic; callers synchronize concurrent access.
   |#
   (define-syntax add1!
@@ -309,7 +309,7 @@
       [(_ n) (incr! n)]))
 
   #|macro:sub1!
-  The `sub1!` macro decrements numeric variable `n` by one and returns unspecified values.
+  The `sub1!` macro decrements numeric variable `n` by one. Its return value is unspecified.
   The update is not atomic; callers synchronize concurrent access.
   |#
   (define-syntax sub1!
@@ -365,7 +365,7 @@
 
   #|macro:cons!
   The `cons!` macro sets variable `p` to a new pair with car `a` and cdr equal to its old value.
-  It returns unspecified values. The update is not atomic; callers synchronize concurrent access.
+  Its return value is unspecified. Updates are not atomic; callers synchronize concurrent access.
   |#
   (define-syntax cons!
     (lambda (stx)
@@ -446,38 +446,6 @@
                (string-append (if readable? "#b" "0b") (number->string number 2)))]))
 
 
-  ;; same in list.ss, to avoid cyclic dependency
-  (define make-list-builder
-    (lambda item*
-      (let ([res item*])
-        (let ([current-cell (if (null? res)
-                                (cons #f '())
-                                (let loop ([res res])
-                                  (if (null? (cdr res))
-                                      res
-                                      (loop (cdr res)))))]
-              [next-cell (cons #f '())])
-          (define add-item!
-            (lambda (item)
-              (if (null? res)
-                  (begin (set-car! current-cell item)
-                         (set! res current-cell))
-                  (begin
-                    (set-car! next-cell item)
-                    (set-cdr! current-cell next-cell)
-                    (set! current-cell next-cell)
-                    (set! next-cell (cons #f '()))))))
-          (rec lb
-            (case-lambda
-              [() res]
-              [(item)
-               (add-item! item)
-               lb]
-              [item*
-               (for-each add-item! item*)
-               lb]))))))
-
-
   #|macro:define-who
   The `define-who` macro defines `id` from an expression with `who` bound to the name symbol.
   The `(id . arguments)` form defines a procedure from body expressions. The `#(prefix id)` form
@@ -502,7 +470,7 @@
   #|macro:trace-define-who
   The `trace-define-who` macro defines a traced procedure named `id`, binding `who` to its symbol
   while evaluating the defining expression. Its `(id . arguments)` form accepts a procedure body.
-  Calling the procedure traces its arguments and return values; the definition returns unspecified.
+  Calling the procedure traces its arguments and return values. Definition values are unspecified.
   |#
   (define-syntax trace-define-who
     (lambda (x)
@@ -549,6 +517,12 @@
               (lambda (x) (not (proc x))))))
 
 
+  ;; (lambda (x) ...)
+  ;; (lambda (x y) ...)
+  ;; (lambda (x y . z) ...)
+  ;; (lambda x* ...)
+  ;; (case-lambda <lam> ...)
+
   #|proc:procedure-arity
   The `procedure-arity` procedure returns the arity accepted by `proc`. A fixed
   single arity is returned as a number. Multiple fixed arities are returned as
@@ -557,17 +531,12 @@
   A procedure accepting every arity returns `(*)`; one accepting no arities returns `()`.
   The `proc` parameter is any procedure; it is inspected without calling it.
   |#
-  ;; (lambda (x) ...)
-  ;; (lambda (x y) ...)
-  ;; (lambda (x y . z) ...)
-  ;; (lambda x* ...)
-  ;; (case-lambda <lam> ...)
   (define procedure-arity
     (lambda (proc)
       (pcheck ([procedure? proc])
               (let ([m (procedure-arity-mask proc)])
                 (if (>= m 0)
-                    (let ([lb (make-list-builder)])
+                    (let ([lb ($make-list-builder)])
                       (let loop ([m m] [i 0])
                         (if (= m 0)
                             (if (= 1 (length (lb)))
@@ -576,7 +545,7 @@
                             (begin (when (logbit? 0 m)
                                      (lb i))
                                    (loop (ash m -1) (add1 i))))))
-                    (let ([lb (make-list-builder)])
+                    (let ([lb ($make-list-builder)])
                       (let find-min ([i 0])
                         (if (= (ash m (- i)) -1)
                             (begin
@@ -722,7 +691,7 @@
        (pcheck ([procedure? generator] [$length-bound? lower-bound upper-bound])
                (when (fx>= lower-bound upper-bound)
                  ($range-error who lower-bound upper-bound))
-               (let ([builder (make-list-builder)] [length ($rand lower-bound upper-bound)])
+               (let ([builder ($make-list-builder)] [length ($rand lower-bound upper-bound)])
                  (do ([index 0 (fx+ index 1)]) ((fx= index length) (builder))
                    (builder (generator)))))]))
 
@@ -785,7 +754,7 @@
   `or`. The macro combines its named flag arguments into one fixnum mask.
   The generated decoder takes a fixnum and returns overlapping flag symbols in definition order.
   Any shared bit includes a flag, including composite masks and aliases; zero masks never appear.
-  The definition itself returns unspecified values.
+  The definition's return value is unspecified.
   |#
   (define-syntax define-flags
     (lambda (exp)
