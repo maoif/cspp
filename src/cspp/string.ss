@@ -33,7 +33,9 @@
               (let ([all-strings (cons str strings)] [len (string-length str)])
                 (let loop ([index 0])
                   (unless (fx= index len)
-                    (apply proc (string-chars-at index all-strings))
+                    (if (null? strings)
+                        (proc (string-ref str index))
+                        (apply proc (string-chars-at index all-strings)))
                     (loop (fx1+ index))))
               (void)))))
 
@@ -48,7 +50,9 @@
               (let ([all-strings (cons str strings)] [len (string-length str)])
                 (let loop ([index 0])
                   (unless (fx= index len)
-                    (apply proc index (string-chars-at index all-strings))
+                    (if (null? strings)
+                        (proc index (string-ref str index))
+                        (apply proc index (string-chars-at index all-strings)))
                     (loop (fx1+ index))))
               (void)))))
 
@@ -62,11 +66,15 @@
                 (let loop ([index 0])
                   (if (fx= index len)
                       result
-                      (let ([char (if indexed?
-                                      (apply proc index
-                                             (string-chars-at index all-strings))
-                                      (apply proc
-                                             (string-chars-at index all-strings)))])
+                      (let ([char (if (null? strings)
+                                      (if indexed?
+                                          (proc index (string-ref str index))
+                                          (proc (string-ref str index)))
+                                      (if indexed?
+                                          (apply proc index
+                                                 (string-chars-at index all-strings))
+                                          (apply proc
+                                                 (string-chars-at index all-strings))))])
                         (pcheck ([char? char])
                                 (string-set! result index char)
                                 (loop (fx1+ index))))))))))

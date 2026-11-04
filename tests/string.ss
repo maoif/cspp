@@ -7,6 +7,31 @@
      (= 2 (edit-distance "flaw" "lawn"))
      (error? (edit-distance 'kitten "sitting")))
 
+(mat string-single-source-mapping-allocation
+     ;; Mapping one string needs result storage, not a temporary list per character.
+     (let* ([source (make-string 8192 #\a)]
+            [before (statistics)]
+            [result (string-map char-upcase source)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (string=? result (make-string 8192 #\A))
+            (< allocated 100000))))
+
+(mat string-single-source-indexed-validation
+     (string=? "" (string-map char-upcase ""))
+
+     (let ([seen (make-list-builder)])
+       (string-for-each/i (lambda (index char) (seen (cons index char))) "ab")
+       (equal? (seen) '((0 . #\a) (1 . #\b))))
+
+     ;; An indexed mapping callback must return a character.
+     (error? (string-map/i (lambda (index char) index) "a"))
+
+     ;; Callback type validation must run even when there are no characters.
+     (error? (string-for-each 'bad ""))
+
+     ;; Callback type validation must run even when the mapped output is empty.
+     (error? (string-map 'bad "")))
+
 (mat string-sequence-procedures
      (let ([seen '()])
        (string-for-each (lambda (ch) (set! seen (cons ch seen))) "ab")
