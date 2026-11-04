@@ -21,6 +21,7 @@
           (cspp string)
           (only (cspp file) read-lines)
           (cspp system private)
+          (cspp system linux os-release)
           (only (cspp system signal values) $signal-input?)
           (cspp system common)
           (cspp system filesystem)
@@ -64,35 +65,6 @@
         (and colon
              (cons (substring line 0 colon)
                    (string-trim (substring line (fx+ colon 1) (string-length line))))))))
-
-  (define $strip-matching-quotes
-    (lambda (str)
-      (let ([len (string-length str)])
-        (if (and (fx>= len 2)
-                 (let ([first (string-ref str 0)]
-                       [last (string-ref str (fx- len 1))])
-                   (or (and (char=? first #\") (char=? last #\"))
-                       (and (char=? first #\') (char=? last #\')))))
-            (substring str 1 (fx- len 1))
-            str))))
-
-  (define $read-os-release
-    (lambda (path)
-      (let loop ([lines (read-lines path)] [out '()])
-        (cond [(null? lines) (reverse out)]
-              [(or (string-empty? (car lines))
-                   (char=? #\# (string-ref (car lines) 0)))
-               (loop (cdr lines) out)]
-              [else
-               (let ([equals (string-search (car lines) #\=)])
-                 (if equals
-                     (let ([key (substring (car lines) 0 equals)]
-                           [value (substring (car lines) (fx+ equals 1) (string-length (car lines)))])
-                       (loop (cdr lines)
-                             (cons (cons (string->symbol key)
-                                         ($strip-matching-quotes value))
-                                   out)))
-                     (loop (cdr lines) out)))]))))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; platform
@@ -219,6 +191,7 @@
   #|proc:linux-os-release
   The `linux-os-release` procedure returns operating-system release fields as an association list.
   Keys are symbols from `/etc/os-release` or `/usr/lib/os-release`, and values are strings.
+  Shell-style quotes and backslash escapes are decoded without expanding variables or commands.
   |#
   (define-who linux-os-release
     (lambda ()

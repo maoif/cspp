@@ -1,6 +1,30 @@
 (import (cspp)
+        (cspp system linux os-release)
         (only (cspp system process expert) make-process-exit-status)
         (only (cspp system user records) make-unix-user make-unix-group))
+
+(mat linux-os-release-quoting
+
+     ;; Error case: shell escapes in quoted release names must not leak into returned values.
+     (let ([path (format "/tmp/cspp-os-release-~a" (getpid))])
+       (dynamic-wind
+         (lambda ()
+           (call-with-output-file path
+             (lambda (port)
+               (put-string port
+                 (string-append
+                   "  # comment\n\nID=example\nEMPTY=\n"
+                   "PRETTY_NAME=\"Example \\\"Edition\\\"\"\n"
+                   "ESCAPED=\"\\$HOME \\`literal\\` \\\\path\"\n"
+                   "SINGLE='\\$HOME \\path'\n"
+                   "UNQUOTED=Example\\ OS\n"
+                   "KEEP=\"a\\q ${USER}\"\n")))))
+         (lambda ()
+           (equal? '((ID . "example") (EMPTY . "") (PRETTY_NAME . "Example \"Edition\"")
+                     (ESCAPED . "$HOME `literal` \\path") (SINGLE . "\\$HOME \\path")
+                     (UNQUOTED . "Example OS") (KEEP . "a\\q ${USER}"))
+                   ($read-os-release path)))
+         (lambda () (delete-file path)))))
 
 (mat system-record-constructor-safety
 
