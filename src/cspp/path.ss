@@ -165,6 +165,13 @@
         (and (fx>= (string-length root) (string-length prefix))
              (string-ci=? prefix (substring root 0 (string-length prefix)))))))
 
+  (define $special-volume-root?
+    (lambda (root)
+      (let ([prefix "\\\\?\\Volume{"] [n (string-length root)])
+        (and (fx> n (string-length prefix))
+             (string-ci=? prefix (substring root 0 (string-length prefix)))
+             (char=? (string-ref root (fx1- n)) #\})))))
+
   (define $windows-special-root
     (lambda (who s)
       (let* ([head (string-append "\\\\" (string (string-ref s 2)) "\\")]
@@ -308,7 +315,8 @@
                  (if (null? components)
                      (if (or (and (fx= (string-length root) 6)
                                   (char=? (string-ref root 5) #\:))
-                             ($prefix-special-unc? root))
+                             ($prefix-special-unc? root)
+                             ($special-volume-root? root))
                          (string-append root (string sep))
                          (string-copy root))
                      (string-append root (string sep) body))]

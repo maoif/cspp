@@ -159,6 +159,8 @@
                  "\\\\?\\C:\\x")
      (same-path? (path-parse 'windows "\\\\.\\COM1") "\\\\.\\COM1")
      (string=? (path-render (path-parse 'windows "c:/foo/bar") #\/) "C:/foo/bar")
+     (same-path? (path-parse 'windows "\\\\?\\Volume{abc}\\")
+                 "\\\\?\\Volume{abc}\\")
      (equal? '(windows drive-relative "C") (path-root-info (path-parse 'windows "c:foo")))
      (equal? '(windows drive-absolute "C") (path-root-info (path-parse 'windows "c:/foo")))
      (equal? '(windows unc "server" "share") (path-root-info (path-parse 'windows "\\\\server\\share\\dir")))
