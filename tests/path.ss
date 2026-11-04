@@ -5,6 +5,46 @@
   (lambda (p s)
     (string=? (path-render p) s)))
 
+(mat path-private-components-do-not-need-recopying
+     ;; A short append should not recopy a large, already-owned component each time.
+     (let* ([base (path 'unix (make-string 4096 #\x))]
+            [before (statistics)]
+            [last (let loop ([i 0] [last base])
+                    (if (fx= i 200) last
+                        (loop (fx1+ i) (path-add-component base "tail"))))]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (string=? "tail" (path-basename last))
+            (< allocated 500000))))
+
+(mat path-edits-snapshot-caller-storage
+     (let* ([component (string-copy "child")]
+            [components (list component)]
+            [base (path-parse 'unix "/parent")]
+            [added (path-add-component base component)]
+            [appended (path-add-components base components)]
+            [replaced (path-replace-basename base component)])
+       (set-car! components "different")
+       (string-set! component 0 #\/)
+       (and (same-path? base "/parent")
+            (same-path? added "/parent/child")
+            (same-path? appended "/parent/child")
+            (same-path? replaced "/child"))))
+
+(mat path-derived-values-keep-private-storage
+     (let* ([original (path-parse 'windows "C:/parent/child")]
+            [derived (path-with-trailing-directory (path-normalize original) #t)]
+            [root (path-root-info derived)]
+            [components (path-components derived)]
+            [basename (path-basename derived)]
+            [stem (path-stem derived)])
+       (string-set! (caddr root) 0 #\D)
+       (string-set! (car components) 0 #\X)
+       (set-car! components "different")
+       (string-set! basename 0 #\X)
+       (string-set! stem 0 #\X)
+       (and (same-path? original "C:\\parent\\child")
+            (same-path? derived "C:\\parent\\child\\"))))
+
 
 (mat path-parse/render
 

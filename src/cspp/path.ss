@@ -25,13 +25,12 @@
             (immutable components $path-components)
             (immutable trailing? $path-trailing?)))
 
+  ;; Adopt private storage: parsers create fresh strings; public constructors and edits
+  ;; copy caller input before reaching here. Derived paths may share these private values
+  ;; because no operation mutates them and public selectors return defensive copies.
   (define $make-path-object
     (lambda (flavor root-kind root components trailing?)
-      (mk-path flavor root-kind
-               (cond [(string? root) (string-copy root)]
-                     [(list? root) ($copy-components root)]
-                     [else root])
-               ($copy-components components)
+      (mk-path flavor root-kind root components
                (and trailing? (not (null? components))))))
 
   (define $err
@@ -371,7 +370,7 @@
     (lambda (flavor . components)
       (pcheck ([path-flavor? flavor] [$component-list? components])
               ($check-components 'path flavor components)
-              ($make-path-object flavor 'relative #f components #f))))
+              ($make-path-object flavor 'relative #f ($copy-components components) #f))))
 
   #|proc:path-rooted
   The `path-rooted` procedure creates an absolute Unix path or a Windows path
@@ -382,7 +381,7 @@
       (pcheck ([path-flavor? flavor] [$component-list? components])
               ($check-components 'path-rooted flavor components)
               ($make-path-object flavor (if (eq? flavor 'unix) 'absolute 'rooted)
-                                 #f components #f))))
+                                 #f ($copy-components components) #f))))
 
   #|proc:path-drive
   Create a Windows drive-relative path using drive letter `drive` and component strings
@@ -394,7 +393,8 @@
                [$component-list? components])
               (let ([drive ($drive->string 'path-drive drive)])
                 ($check-components 'path-drive 'windows components)
-                ($make-path-object 'windows 'drive-relative drive components #f)))))
+                ($make-path-object 'windows 'drive-relative drive
+                                   ($copy-components components) #f)))))
 
   #|proc:path-drive-absolute
   Create a Windows drive-absolute path using drive letter `drive` and component strings
@@ -406,7 +406,8 @@
                [$component-list? components])
               (let ([drive ($drive->string 'path-drive-absolute drive)])
                 ($check-components 'path-drive-absolute 'windows components)
-                ($make-path-object 'windows 'drive-absolute drive components #f)))))
+                ($make-path-object 'windows 'drive-absolute drive
+                                   ($copy-components components) #f)))))
 
   #|proc:path-unc
   Create a Windows UNC path using string names `server` and `share`, and optional
@@ -418,7 +419,9 @@
               ($check-component 'path-unc 'windows server)
               ($check-component 'path-unc 'windows share)
               ($check-components 'path-unc 'windows components)
-              ($make-path-object 'windows 'unc (list server share) components #f))))
+              ($make-path-object 'windows 'unc
+                                 (list (string-copy server) (string-copy share))
+                                 ($copy-components components) #f))))
 
   (define $same-flavor
     (lambda (who a b)
@@ -537,7 +540,7 @@
               ($make-path-object ($path-flavor p)
                      ($path-root-kind p)
                      ($path-root p)
-                     (append ($path-components p) (list component))
+                     (append ($path-components p) (list (string-copy component)))
                      #f))))
 
   #|proc:path-add-components
@@ -548,7 +551,7 @@
     (lambda (p components)
       (pcheck ([path? p] [list? components])
               ($check-components 'path-add-components ($path-flavor p) components)
-              ($path-append-components p components #f))))
+              ($path-append-components p ($copy-components components) #f))))
 
   #|proc:path-replace-basename
   The `path-replace-basename` procedure replaces the final component.
@@ -563,7 +566,8 @@
                     ($make-path-object ($path-flavor p)
                            ($path-root-kind p)
                            ($path-root p)
-                           (append (reverse (cdr (reverse components))) (list basename))
+                           (append (reverse (cdr (reverse components)))
+                                   (list (string-copy basename)))
                            #f))))))
 
   #|proc:path-drop-basename
