@@ -42,6 +42,7 @@ Composing just one procedure returns that procedure unchanged.
 order on each call. A trailing `...` permits extra arguments. A section without slots is a
 zero-argument procedure. `sect+` instead returns one unary procedure per slot; without slots
 or `...`, it calls the callback immediately. Callback arity is checked when it is invoked.
+`((sect list))` and `(sect+ list)` therefore both return the empty list.
 
 `forever` repeats a body until `(break value ...)` exits, returning those values. Optional
 `(index name)` binds a zero-based iteration count. `let/cc` exposes a reusable continuation,
