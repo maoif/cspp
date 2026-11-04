@@ -110,13 +110,13 @@ ptr cspp_statx(const char *path, int follow_link) {
     Svector_set(v, 12, Sinteger(t.tv_nsec));
   }
   if (mask & STATX_INO) {
-    Svector_set(v, 13, Sfixnum(res.stx_ino));
+    Svector_set(v, 13, Sunsigned64(res.stx_ino));
   }
   if (mask & STATX_SIZE) {
-    Svector_set(v, 14, Sfixnum(res.stx_size));
+    Svector_set(v, 14, Sunsigned64(res.stx_size));
   }
   if (mask & STATX_BLOCKS) {
-    Svector_set(v, 15, Sfixnum(res.stx_blocks));
+    Svector_set(v, 15, Sunsigned64(res.stx_blocks));
   }
   Svector_set(v, 16, Sfixnum(res.stx_dev_major));
   Svector_set(v, 17, Sfixnum(res.stx_dev_minor));
@@ -126,17 +126,39 @@ ptr cspp_statx(const char *path, int follow_link) {
 
 ptr cspp_readlink(const char *path) {
   char *p = expand_pathname(path);
-  char link[PATH_MAX];
-  memset(link, 0, sizeof(link));
-  if (readlink(p, link, sizeof(link)) == -1) {
-    free(p);
-    return errno_str_vector();
+  size_t capacity = 128;
+  char *link;
+  for (;;) {
+    link = malloc(capacity);
+    if (link == NULL) {
+      free(p);
+      errno = ENOMEM;
+      return errno_str_vector();
+    }
+
+    ssize_t length = readlink(p, link, capacity);
+    if (length == -1) {
+      int saved_errno = errno;
+      free(link);
+      free(p);
+      errno = saved_errno;
+      return errno_str_vector();
+    }
+    if ((size_t)length < capacity) {
+      ptr result = Sstring_utf8(link, length);
+      free(link);
+      free(p);
+      return result;
+    }
+
+    free(link);
+    if (capacity > SIZE_MAX / 2) {
+      free(p);
+      errno = ENAMETOOLONG;
+      return errno_str_vector();
+    }
+    capacity *= 2;
   }
-
-  free(p);
-
-
-  return Sstring(link);
 }
 
 ptr cspp_link(const char *src, const char *dest) {
@@ -164,15 +186,12 @@ ptr cspp_link(const char *src, const char *dest) {
 }
 
 ptr cspp_symlink(const char *src, const char *dest) {
-  /* Both path arguments must survive any collection during the first lookup. */
-  char *owned_dest = strdup(dest);
-  if (owned_dest == NULL) return errno_str();
-  char *s = expand_pathname(src);
-  char *d = s == NULL ? NULL : expand_pathname(owned_dest);
-  free(owned_dest);
-  if (s == NULL || d == NULL) {
+  /* Preserve literal link text across any collection during pathname expansion. */
+  char *s = strdup(src);
+  if (s == NULL) return errno_str();
+  char *d = expand_pathname(dest);
+  if (d == NULL) {
     free(s);
-    free(d);
     return errno_str();
   }
   if (symlink(s, d) == -1) {
@@ -209,7 +228,9 @@ ptr cspp_touch(const char *path, ptr atime, ptr mtime, int follow_link) {
   char *p = expand_pathname(path);
   if (p == NULL) return errno_str();
   if (utimensat(AT_FDCWD, p, ts, follow_link ? 0 : AT_SYMLINK_NOFOLLOW)) {
+    int saved_errno = errno;
     free(p);
+    errno = saved_errno;
     return errno_str();
   }
 

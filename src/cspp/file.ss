@@ -628,7 +628,7 @@
   (define $get-unsigned
     (lambda (who p count end expected)
       ($valid-endianness who end)
-      (let* ([fixnum? (fx<= count 4)]
+      (let* ([fixnum? (fx<= (fx* count 8) (fixnum-width))]
              [combine-big (if fixnum?
                               (lambda (value byte) (fx+ (fx* value 256) byte))
                               (lambda (value byte) (+ (* value 256) byte)))]
@@ -664,8 +664,12 @@
     (lambda (who p value count end)
       ($valid-endianness who end)
       (let emit ([value value] [remaining count])
-        (let ([byte (if (fx<= count 4) (fxmod value 256) (mod value 256))]
-              [rest (if (fx<= count 4) (fxquotient value 256) (quotient value 256))])
+        (let ([byte (if (fx<= (fx* count 8) (fixnum-width))
+                        (fxmod value 256)
+                        (mod value 256))]
+              [rest (if (fx<= (fx* count 8) (fixnum-width))
+                        (fxquotient value 256)
+                        (quotient value 256))])
           (if (eq? end 'big)
               (begin
                 (unless (fx= remaining 1) (emit rest (fx1- remaining)))
@@ -1374,16 +1378,19 @@
 
   (define $file-size
     (lambda (who path)
-      ;; dir and regular files are both OK
       (pcheck ([file-exists? path])
-              ($with-port (open-file-input-port path)
-                (lambda (p) (file-length p))))))
+              ($statx-size ($statx who path #t)))))
 
+  #|proc:file-size
+  Return the byte size of the filesystem entry at `path`, following symbolic links.
+  `path` is the path string to inspect. The result is a nonnegative exact integer.
+  |#
   (define-who file-size
     (lambda (path) ($file-size who path)))
 
   #|proc:file-size-h
-  Return a human-readable string of the file size.
+  Return a human-readable string for the byte size of the filesystem entry at `path`.
+  `path` is the path string to inspect; symbolic links are followed.
   |#
   (define-who file-size-h
     (lambda (path)
@@ -1551,7 +1558,7 @@
        (cond [($mode-num? mode)
               (chmod path mode)]
              [(list? mode)
-              ($file-chmod who path '() mode '() '())]
+              ($file-chmod who path #f mode #f #f)]
              [else (errorf who "invalid file mode: ~a" mode)])]
       [(who path umode gmode)
        ($file-chmod who path '() umode gmode '())]
@@ -1766,16 +1773,17 @@
 
 
   #|proc:file-find
-  Find file using a predicate.
-  Return the path of the first found file,
-  or #f if no matching file is found.
+  Apply `pred`, a procedure of signature `(path -> boolean)`, to each entry under `path`.
+  Return the first matching path, or `#f` if no entry matches. `follow-link?` controls
+  whether directory symlinks are traversed and defaults to `#f`.
   |#
   (define-who file-find
     (case-lambda
       [(pred path) (file-find pred path #f)]
       [(pred path follow-link?)
-       (let ([res #f])
-         (walk-files (lambda (dir dirs files)
+       (pcheck ([procedure? pred] [string? path] [boolean? follow-link?])
+         (let ([res #f])
+           (walk-files (lambda (dir dirs files)
                        (let lp1 ([ds dirs])
                          (if (null? ds)
                              (let lp2 ([fs files])
@@ -1789,22 +1797,22 @@
                                  (begin (set! res (car ds))
                                         #f)
                                  (lp1 (cdr ds))))))
-                     path follow-link?)
-         res)]))
+                       path follow-link?)
+           res))]))
 
   ;; TODO lazy (iter/stream) file-find-all
   #|proc:file-find-all
-  Like `file-find`, but return a list of all found file.
-
-  `follow-link?` determines whether `file-find*` descends into a symlink
-  if it is a directory.
+  Apply `pred`, a procedure of signature `(path -> boolean)`, to each entry under `path` and
+  return a list of matching paths. `follow-link?` controls whether directory symlinks are
+  traversed and defaults to `#f`.
   |#
   (define-who file-find-all
     (case-lambda
       [(pred path) (file-find-all pred path #f)]
       [(pred path follow-link?)
-       (let ([lb (make-list-builder)])
-         (walk-files (lambda (dir dirs files)
+       (pcheck ([procedure? pred] [string? path] [boolean? follow-link?])
+         (let ([lb (make-list-builder)])
+           (walk-files (lambda (dir dirs files)
                        (let lp1 ([ds dirs])
                          (if (null? ds)
                              (let lp2 ([fs files])
@@ -1815,20 +1823,22 @@
                              (begin (when (pred (car ds))
                                       (lb (car ds)))
                                     (lp1 (cdr ds))))))
-                     path follow-link?)
-         (lb))]))
+                       path follow-link?)
+           (lb)))]))
 
 
   #|proc:file-map
-  Map `proc` over all files found under `path`, recursively,
-  the result of `proc` is collected into a list and returned.
+  Apply `proc`, a procedure of signature `(path -> value)`, to each entry under `path` and
+  return the resulting values as a list. `follow-link?` controls whether directory symlinks
+  are traversed and defaults to `#f`.
   |#
   (define file-map
     (case-lambda
       [(proc path) (file-map proc path #f)]
       [(proc path follow-link?)
-       (let ([lb (make-list-builder)])
-         (walk-files (lambda (dir dirs files)
+       (pcheck ([procedure? proc] [string? path] [boolean? follow-link?])
+         (let ([lb (make-list-builder)])
+           (walk-files (lambda (dir dirs files)
                        (let lp1 ([ds dirs])
                          (if (null? ds)
                              (let lp2 ([fs files])
@@ -1837,19 +1847,20 @@
                                  (lp2 (cdr fs))))
                              (begin (lb (proc (car ds)))
                                     (lp1 (cdr ds))))))
-                     path follow-link?)
-         (lb))]))
+                       path follow-link?)
+           (lb)))]))
 
 
   #|proc:file-for-each
-  Apply `proc` over all files found under `path`, recursively.
-  This procedure is for effect only.
+  Apply `proc`, a procedure of signature `(path -> unspecified)`, to each entry under `path`.
+  `follow-link?` controls whether directory symlinks are traversed and defaults to `#f`.
   |#
   (define file-for-each
     (case-lambda
       [(proc path) (file-for-each proc path #f)]
       [(proc path follow-link?)
-       (walk-files (lambda (dir dirs files)
+       (pcheck ([procedure? proc] [string? path] [boolean? follow-link?])
+         (walk-files (lambda (dir dirs files)
                      (let lp1 ([ds dirs])
                        (if (null? ds)
                            (let lp2 ([fs files])
@@ -1858,7 +1869,7 @@
                                (lp2 (cdr fs))))
                            (begin (proc (car ds))
                                   (lp1 (cdr ds))))))
-                   path follow-link?)]))
+                     path follow-link?))]))
 
   ;; Some procedures only need the presence of the symlink per se, not its target.
   (define file-exists?-no-follow (lambda (path) (file-exists? path #f)))
@@ -2034,6 +2045,11 @@
 
 
   (define $touch (foreign-procedure "cspp_touch" (string ptr ptr boolean) scheme-object))
+  (define $touch!
+    (lambda (who path atime mtime follow-link?)
+      (let ([result ($touch path atime mtime follow-link?)])
+        (when (string? result) ($err-file who path result))
+        result)))
   (define $time->vec (lambda (t) (vector (time-nanosecond t) (time-second t))))
   (define $file-touch
     (lambda (who path atime mtime follow-link? force?)
@@ -2048,7 +2064,7 @@
                      [force-or-not (lambda (dest)
                                      (if force?
                                          (begin ($touch-empty-file dest)
-                                                ($touch dest atime mtime #t))
+                                                ($touch! who dest atime mtime #t))
                                          ($err-file-not-found who dest)))])
                 (if (file-exists? path #f)
                     (if (file-symbolic-link? path)
@@ -2056,10 +2072,10 @@
                             ;; need to make up the correct target path
                             (let ([dest (readlink2 path #t)])
                               (if (file-exists? dest #f)
-                                  ($touch dest atime mtime #f)
+                                  ($touch! who dest atime mtime #f)
                                   (force-or-not dest)))
-                            ($touch path atime mtime #f))
-                        ($touch path atime mtime #f))
+                            ($touch! who path atime mtime #f))
+                        ($touch! who path atime mtime #f))
                     (force-or-not path))))))
 
 

@@ -202,6 +202,17 @@
            (= visits 1))
          (lambda () (when (file-directory? root #f) (file-removetree root))))))
 
+(mat file-find-validates-predicate
+     (let ([root ($random-file)])
+       (dynamic-wind
+         (lambda () (mkdir root))
+         (lambda ()
+           (and (guard (failure [else #t]) (file-find 42 root) #f)
+                (guard (failure [else #t]) (file-find-all 42 root) #f)
+                (guard (failure [else #t]) (file-map 42 root) #f)
+                (guard (failure [else #t]) (file-for-each 42 root) #f)))
+         (lambda () (when (file-directory? root #f) (file-removetree root))))))
+
 
 (mat simple-read/write
 
@@ -754,6 +765,13 @@
 
 (mat file-stat
 
+     ;; Directory size comes from metadata without opening the directory as a file.
+     (let ([directory ($random-file)])
+       (dynamic-wind
+         (lambda () (mkdir directory))
+         (lambda () (integer? (file-size directory)))
+         (lambda () (when (file-directory? directory #f) (file-removetree directory)))))
+
      (error? (file-stat "/dev/xxxx"))
 
      (file-readable? "/proc/meminfo")
@@ -895,6 +913,17 @@
            (fxlogbit? 6 (get-mode p)))
          (lambda () (when (file-exists? p) (delete-file p)))))
 
+     ;; A single symbolic mode change must preserve group and other permissions.
+     (let ([path ($random-file)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (file-touch path)
+           (file-chmod path #o644)
+           (file-chmod path '(+ x))
+           (= #o744 (file-mode path)))
+         (lambda () (when (file-exists? path) (delete-file path)))))
+
      (let ([p ($random-file)])
        (dynamic-wind
          void
@@ -1027,6 +1056,9 @@
      (error? (file-touch 'bla))
      ;; path not exist
      (error? (file-touch "a/b/c/d"))
+
+     ;; Error case: native timestamp update failures must be raised to the caller.
+     (guard (failure [else #t]) (file-touch-mtime "/sys/kernel") #f)
 
      (let ([at1 (file-access-time (atdir "d1/f1"))]
            [mt1 (file-modification-time (atdir "d1/f1"))])
@@ -1242,6 +1274,13 @@
             #t)
 
      (begin (create-fstree dir) #t)
+
+     ;; Symlink content is literal, even when it starts with a tilde or contains UTF-8.
+     (let ([tilde (atdir "tilde-link")] [unicode (atdir "unicode-link")])
+       (file-symlink "~/literal-target" tilde)
+       (file-symlink "目标.txt" unicode)
+       (and (string=? "~/literal-target" (readlink tilde))
+            (string=? "目标.txt" (readlink unicode))))
 
 
      ;; src==dest
