@@ -679,7 +679,28 @@
      ;; error case: get-s64 requires an open binary input port.
      (error? (get-s64 (open-string-input-port "abcdefgh")))
 
-     ;; TODO test multi-thread
+     ;; An output callback may reenter integer IO; nested writes must not replace outer bytes.
+     (let-values ([(other extract-other) (open-bytevector-output-port)])
+       (let* ([written (make-list-builder)]
+              [port (make-custom-binary-output-port
+                     "reentrant-integer-write"
+                     (lambda (bytes start count)
+                       (put-u16 other #x3344)
+                       (do ([index start (fx1+ index)])
+                           ((fx= index (fx+ start count)))
+                         (written (bytevector-u8-ref bytes index)))
+                       count)
+                     #f #f void)])
+         (dynamic-wind
+           void
+           (lambda ()
+             (set-port-output-size! port 0)
+             (put-u16 port #x1122)
+             (flush-output-port port)
+             (equal? '(#x22 #x11) (written)))
+           (lambda ()
+             (close-port port)
+             (close-port other)))))
 
      )
 

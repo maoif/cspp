@@ -608,14 +608,75 @@
   (define s64? (signed-value-pred 64))
 
 
-  ;; per-thread bytevectors for IO to avoid
-  ;; excessive creations of temporary bytevectors
-  (define bv16 (make-thread-parameter (make-bytevector 2 0)))
-  (define bv32 (make-thread-parameter (make-bytevector 4 0)))
-  (define bv64 (make-thread-parameter (make-bytevector 8 0)))
-
   ;; All subsequent procedures raise an exception when there are no enough
   ;; bytes to make up the number.
+
+  (define $valid-endianness
+    (lambda (who end)
+      (unless (memq end '(big little)) ($bad-endianness who end))))
+
+  (define $get-unsigned
+    (lambda (who p count end expected)
+      ($valid-endianness who end)
+      (let* ([fixnum? (fx<= count 4)]
+             [combine-big (if fixnum?
+                              (lambda (value byte) (fx+ (fx* value 256) byte))
+                              (lambda (value byte) (+ (* value 256) byte)))]
+             [combine-little (if fixnum?
+                                 (lambda (value byte factor)
+                                   (fx+ value (fx* byte factor)))
+                                 (lambda (value byte factor) (+ value (* byte factor))))]
+             [multiply-256 (if fixnum? (lambda (value) (fx* value 256))
+                               (lambda (value) (* value 256)))])
+        (if (eq? end 'big)
+            (let loop ([remaining count] [value 0])
+              (if (fxzero? remaining)
+                  value
+                  (let ([byte (get-u8 p)])
+                    (when (eof-object? byte) ($no-enough-data who expected))
+                    (loop (fx1- remaining) (combine-big value byte)))))
+            (let loop ([remaining count] [value 0] [factor 1])
+              (if (fxzero? remaining)
+                  value
+                  (let ([byte (get-u8 p)])
+                    (when (eof-object? byte) ($no-enough-data who expected))
+                    (loop (fx1- remaining) (combine-little value byte factor)
+                          (multiply-256 factor)))))))))
+
+  (define $get-signed
+    (lambda (who p count end expected)
+      (let* ([unsigned ($get-unsigned who p count end expected)]
+             [bits (fx* count 8)]
+             [sign (expt 2 (fx- bits 1))])
+        (if (>= unsigned sign) (- unsigned (expt 2 bits)) unsigned))))
+
+  (define $put-unsigned
+    (lambda (who p value count end)
+      ($valid-endianness who end)
+      (let emit ([value value] [remaining count])
+        (let ([byte (if (fx<= count 4) (fxmod value 256) (mod value 256))]
+              [rest (if (fx<= count 4) (fxquotient value 256) (quotient value 256))])
+          (if (eq? end 'big)
+              (begin
+                (unless (fx= remaining 1) (emit rest (fx1- remaining)))
+                (put-u8 p byte))
+              (begin
+                (put-u8 p byte)
+                (unless (fx= remaining 1) (emit rest (fx1- remaining)))))))))
+
+  (define $put-value
+    (lambda (who p value count end expected signed?)
+      (let ([valid? (case count
+                      [(2) (if signed? s16? u16?)]
+                      [(4) (if signed? s32? u32?)]
+                      [else (if signed? s64? u64?)])])
+        (if (valid? value)
+            ($put-unsigned who p
+                           (if (and signed? (< value 0))
+                               (+ value (expt 2 (fx* count 8)))
+                               value)
+                           count end)
+            ($invalid-value who value expected)))))
 
   #|proc:get-u16
   The `get-u16` procedure reads an unsigned 16-bit integer from binary input port `p`.
@@ -626,17 +687,7 @@
     (case-lambda
       [(p) (get-u16 p 'little)]
       [(p end)
-       (pcheck-input-binary-port
-        (p)
-        (let* ([count 2] [bv (bv16)]
-               [go (lambda (get) (let ([c (get-bytevector-n! p bv 0 count)])
-                                   (if (fx< c count)
-                                       ($no-enough-data who 'u16)
-                                       (get))))])
-          (case end
-            [big    (go (lambda () (bytevector-u16-ref bv 0 (endianness big))))]
-            [little (go (lambda () (bytevector-u16-ref bv 0 (endianness little))))]
-            [else ($bad-endianness who end)])))]))
+       (pcheck-input-binary-port (p) ($get-unsigned who p 2 end 'u16))]))
   #|proc:get-u32
   The `get-u32` procedure reads an unsigned 32-bit integer from binary input port `p`.
   The `p` parameter is the binary input port to read.
@@ -646,17 +697,7 @@
     (case-lambda
       [(p) (get-u32 p 'little)]
       [(p end)
-       (pcheck-input-binary-port
-        (p)
-        (let* ([count 4] [bv (bv32)]
-               [go (lambda (get) (let ([c (get-bytevector-n! p bv 0 count)])
-                                   (if (fx< c count)
-                                       ($no-enough-data who 'u32)
-                                       (get))))])
-          (case end
-            [big    (go (lambda () (bytevector-u32-ref bv 0 (endianness big))))]
-            [little (go (lambda () (bytevector-u32-ref bv 0 (endianness little))))]
-            [else ($bad-endianness who end)])))]))
+       (pcheck-input-binary-port (p) ($get-unsigned who p 4 end 'u32))]))
   #|proc:get-u64
   The `get-u64` procedure reads an unsigned 64-bit integer from binary input port `p`.
   The `p` parameter is the binary input port to read.
@@ -666,17 +707,7 @@
     (case-lambda
       [(p) (get-u64 p 'little)]
       [(p end)
-       (pcheck-input-binary-port
-        (p)
-        (let* ([count 8] [bv (bv64)]
-               [go (lambda (get) (let ([c (get-bytevector-n! p bv 0 count)])
-                                   (if (fx< c count)
-                                       ($no-enough-data who 'u64)
-                                       (get))))])
-          (case end
-            [big    (go (lambda () (bytevector-u64-ref bv 0 (endianness big))))]
-            [little (go (lambda () (bytevector-u64-ref bv 0 (endianness little))))]
-            [else ($bad-endianness who end)])))]))
+       (pcheck-input-binary-port (p) ($get-unsigned who p 8 end 'u64))]))
 
   #|proc:get-s16
   The `get-s16` procedure reads a signed 16-bit integer from binary input port `p`.
@@ -687,17 +718,7 @@
     (case-lambda
       [(p) (get-s16 p 'little)]
       [(p end)
-       (pcheck-input-binary-port
-        (p)
-        (let* ([count 2] [bv (bv16)]
-               [go (lambda (get) (let ([c (get-bytevector-n! p bv 0 count)])
-                                   (if (fx< c count)
-                                       ($no-enough-data who 's16)
-                                       (get))))])
-          (case end
-            [big    (go (lambda () (bytevector-s16-ref bv 0 (endianness big))))]
-            [little (go (lambda () (bytevector-s16-ref bv 0 (endianness little))))]
-            [else ($bad-endianness who end)])))]))
+       (pcheck-input-binary-port (p) ($get-signed who p 2 end 's16))]))
   #|proc:get-s32
   The `get-s32` procedure reads a signed 32-bit integer from binary input port `p`.
   The `p` parameter is the binary input port to read.
@@ -707,17 +728,7 @@
     (case-lambda
       [(p) (get-s32 p 'little)]
       [(p end)
-       (pcheck-input-binary-port
-        (p)
-        (let* ([count 4] [bv (bv32)]
-               [go (lambda (get) (let ([c (get-bytevector-n! p bv 0 count)])
-                                   (if (fx< c count)
-                                       ($no-enough-data who 's32)
-                                       (get))))])
-          (case end
-            [big    (go (lambda () (bytevector-s32-ref bv 0 (endianness big))))]
-            [little (go (lambda () (bytevector-s32-ref bv 0 (endianness little))))]
-            [else ($bad-endianness who end)])))]))
+       (pcheck-input-binary-port (p) ($get-signed who p 4 end 's32))]))
   #|proc:get-s64
   The `get-s64` procedure reads a signed 64-bit integer from binary input port `p`.
   The `p` parameter is the binary input port to read.
@@ -727,17 +738,7 @@
     (case-lambda
       [(p) (get-s64 p 'little)]
       [(p end)
-       (pcheck-input-binary-port
-        (p)
-        (let* ([count 8] [bv (bv64)]
-               [go (lambda (get) (let ([c (get-bytevector-n! p bv 0 count)])
-                                   (if (fx< c count)
-                                       ($no-enough-data who 's64)
-                                       (get))))])
-          (case end
-            [big    (go (lambda () (bytevector-s64-ref bv 0 (endianness big))))]
-            [little (go (lambda () (bytevector-s64-ref bv 0 (endianness little))))]
-            [else ($bad-endianness who end)])))]))
+       (pcheck-input-binary-port (p) ($get-signed who p 8 end 's64))]))
 
   #|proc:put-u16
   The `put-u16` procedure writes unsigned 16-bit integer `n` to binary output port `p`.
@@ -751,15 +752,7 @@
       [(p n end)
        (pcheck-output-binary-port
         (p)
-        (if (u16? n)
-            (let ([bv (bv16)])
-              (case end
-                [big    (bytevector-u16-set! bv 0 n (endianness big))
-                        (put-bytevector p bv)]
-                [little (bytevector-u16-set! bv 0 n (endianness little))
-                        (put-bytevector p bv)]
-                [else ($bad-endianness who end)]))
-            ($invalid-value who n 'u16)))]))
+        ($put-value who p n 2 end 'u16 #f))]))
   #|proc:put-u32
   The `put-u32` procedure writes unsigned 32-bit integer `n` to binary output port `p`.
   The `p` parameter is the binary output port to write.
@@ -772,15 +765,7 @@
       [(p n end)
        (pcheck-output-binary-port
         (p)
-        (if (u32? n)
-            (let ([bv (bv32)])
-              (case end
-                [big    (bytevector-u32-set! bv 0 n (endianness big))
-                        (put-bytevector p bv)]
-                [little (bytevector-u32-set! bv 0 n (endianness little))
-                        (put-bytevector p bv)]
-                [else ($bad-endianness who end)]))
-            ($invalid-value who n 'u32)))]))
+        ($put-value who p n 4 end 'u32 #f))]))
   #|proc:put-u64
   The `put-u64` procedure writes unsigned 64-bit integer `n` to binary output port `p`.
   The `p` parameter is the binary output port to write.
@@ -793,15 +778,7 @@
       [(p n end)
        (pcheck-output-binary-port
         (p)
-        (if (u64? n)
-            (let ([bv (bv64)])
-              (case end
-                [big    (bytevector-u64-set! bv 0 n (endianness big))
-                        (put-bytevector p bv)]
-                [little (bytevector-u64-set! bv 0 n (endianness little))
-                        (put-bytevector p bv)]
-                [else ($bad-endianness who end)]))
-            ($invalid-value who n 'u64)))]))
+        ($put-value who p n 8 end 'u64 #f))]))
 
   #|proc:put-s16
   The `put-s16` procedure writes signed 16-bit integer `n` to binary output port `p`.
@@ -815,15 +792,7 @@
       [(p n end)
        (pcheck-output-binary-port
         (p)
-        (if (s16? n)
-            (let ([bv (bv16)])
-              (case end
-                [big    (bytevector-s16-set! bv 0 n (endianness big))
-                        (put-bytevector p bv)]
-                [little (bytevector-s16-set! bv 0 n (endianness little))
-                        (put-bytevector p bv)]
-                [else ($bad-endianness who end)]))
-            ($invalid-value who n 's16)))]))
+        ($put-value who p n 2 end 's16 #t))]))
   #|proc:put-s32
   The `put-s32` procedure writes signed 32-bit integer `n` to binary output port `p`.
   The `p` parameter is the binary output port to write.
@@ -836,15 +805,7 @@
       [(p n end)
        (pcheck-output-binary-port
         (p)
-        (if (s32? n)
-            (let ([bv (bv32)])
-              (case end
-                [big    (bytevector-s32-set! bv 0 n (endianness big))
-                        (put-bytevector p bv)]
-                [little (bytevector-s32-set! bv 0 n (endianness little))
-                        (put-bytevector p bv)]
-                [else ($bad-endianness who end)]))
-            ($invalid-value who n 's32)))]))
+        ($put-value who p n 4 end 's32 #t))]))
   #|proc:put-s64
   The `put-s64` procedure writes signed 64-bit integer `n` to binary output port `p`.
   The `p` parameter is the binary output port to write.
@@ -857,15 +818,7 @@
       [(p n end)
        (pcheck-output-binary-port
         (p)
-        (if (s64? n)
-            (let ([bv (bv64)])
-              (case end
-                [big    (bytevector-s64-set! bv 0 n (endianness big))
-                        (put-bytevector p bv)]
-                [little (bytevector-s64-set! bv 0 n (endianness little))
-                        (put-bytevector p bv)]
-                [else ($bad-endianness who end)]))
-            ($invalid-value who n 's64)))]))
+        ($put-value who p n 8 end 's64 #t))]))
 
 
   ;; big-endian aliases
