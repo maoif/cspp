@@ -1054,6 +1054,18 @@
             #t)
 
      (error? (file-touch 'bla))
+     ;; Error case: file-touch rejects a non-time argument at its public boundary.
+     (guard (failure [(error? failure) (eq? (condition-who failure) 'pcheck)] [else #f])
+       (file-touch (atdir "d1/f1") 42)
+       #f)
+     ;; Error case: file-touch-atime rejects a non-time argument at its public boundary.
+     (guard (failure [(error? failure) (eq? (condition-who failure) 'pcheck)] [else #f])
+       (file-touch-atime (atdir "d1/f1") 42)
+       #f)
+     ;; Error case: file-touch-mtime rejects a non-time argument at its public boundary.
+     (guard (failure [(error? failure) (eq? (condition-who failure) 'pcheck)] [else #f])
+       (file-touch-mtime (atdir "d1/f1") 42)
+       #f)
      ;; path not exist
      (error? (file-touch "a/b/c/d"))
 

@@ -2053,7 +2053,9 @@
   (define $time->vec (lambda (t) (vector (time-nanosecond t) (time-second t))))
   (define $file-touch
     (lambda (who path atime mtime follow-link? force?)
-      (pcheck ([boolean? follow-link? force?])
+      (pcheck ([string? path]
+               [(lambda (x) (or (not x) (time? x))) atime mtime]
+               [boolean? follow-link? force?])
               (define (check-time t)
                 (when t
                   (unless (eq? 'time-utc (time-type t))
