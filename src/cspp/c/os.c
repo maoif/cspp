@@ -22,14 +22,14 @@ extern char **environ;
 
 
 ptr cspp_getpwnam(const char *name);
-ptr cspp_getpwuid(int uid);
+ptr cspp_getpwuid(unsigned int uid);
 ptr cspp_getgrnam(const char *name);
-ptr cspp_getgrgid(int gid);
+ptr cspp_getgrgid(unsigned int gid);
 
-int cspp_getuid();
-int cspp_getgid();
-int cspp_geteuid();
-int cspp_getegid();
+unsigned int cspp_getuid();
+unsigned int cspp_getgid();
+unsigned int cspp_geteuid();
+unsigned int cspp_getegid();
 
 ptr cspp_fork();
 ptr cspp_vfork();
@@ -46,112 +46,6 @@ int cspp_cpu_count();
 // credentials
 //
 //=======================================================================
-
-static ptr _getpw(const char *operation, ptr context, struct passwd *p) {
-  if (p == NULL) {
-    if (errno == 0) {
-      return cspp_not_found_result(operation, context);
-    }
-    return errno_str();
-  }
-
-  ptr v = Smake_vector(7, Sfalse);
-  Svector_set(v, 0, Sstring(p->pw_name));
-  Svector_set(v, 1, Sstring(p->pw_passwd));
-  Svector_set(v, 2, Sfixnum(p->pw_uid));
-  Svector_set(v, 3, Sfixnum(p->pw_gid));
-  Svector_set(v, 4, Sstring(p->pw_gecos));
-  Svector_set(v, 5, Sstring(p->pw_dir));
-  Svector_set(v, 6, Sstring(p->pw_shell));
-
-  return v;
-}
-
-ptr cspp_getpwnam(const char *name) {
-  errno = 0;
-  struct passwd *p = getpwnam(name);
-  ptr context = Scons(Scons(Sstring("name"), Sstring(name)), Snil);
-  if (p == NULL) {
-    return cspp_not_found_result("getpwnam", context);
-  }
-  return _getpw("getpwnam", context, p);
-}
-
-ptr cspp_getpwuid(int uid) {
-  errno = 0;
-  struct passwd *p = getpwuid(uid);
-  ptr context = Scons(Scons(Sstring("uid"), Sfixnum(uid)), Snil);
-  return _getpw("getpwuid", context, p);
-}
-
-static ptr _getgr(const char *operation, ptr context, struct group *p) {
-  if (p == NULL) {
-    if (errno == 0) {
-      return cspp_not_found_result(operation, context);
-    }
-    return errno_str();
-  }
-
-  ptr v = Smake_vector(4, Sfalse);
-  Svector_set(v, 0, Sstring(p->gr_name));
-  Svector_set(v, 1, Sstring(p->gr_passwd));
-  Svector_set(v, 2, Sfixnum(p->gr_gid));
-
-  char **gmems = p->gr_mem;
-  int len = 0;
-  while (gmems != NULL && *gmems != NULL) {
-    len++;
-    gmems++;
-  }
-
-  if (len == 0) {
-    Svector_set(v, 3, Sfalse);
-
-    return v;
-  }
-
-  ptr vmem = Smake_vector(len, Sfalse);
-
-  len = 0;
-  gmems = p->gr_mem;
-  while (gmems != NULL && *gmems != NULL) {
-    Svector_set(vmem, len, Sstring(*gmems));
-    len++;
-    gmems++;
-  }
-
-  Svector_set(v, 3, vmem);
-
-  return v;
-}
-
-ptr cspp_getgrnam(const char *name) {
-  errno = 0;
-  struct group *p = getgrnam(name);
-  ptr context = Scons(Scons(Sstring("name"), Sstring(name)), Snil);
-  if (p == NULL) {
-    return cspp_not_found_result("getgrnam", context);
-  }
-  return _getgr("getgrnam", context, p);
-}
-
-ptr cspp_getgrgid(int gid) {
-  errno = 0;
-  struct group *p = getgrgid(gid);
-  ptr context = Scons(Scons(Sstring("gid"), Sfixnum(gid)), Snil);
-  return _getgr("getgrgid", context, p);
-}
-
-int cspp_getuid() { return getuid(); }
-
-int cspp_getgid() { return getgid(); }
-
-int cspp_geteuid() { return geteuid(); }
-
-int cspp_getegid() { return getegid(); }
-
-
-
 
 //=======================================================================
 //

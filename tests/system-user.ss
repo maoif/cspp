@@ -68,3 +68,18 @@
      (not (user-exists? "__cspp_user_that_should_not_exist__"))
 
      (not (group-exists? "__cspp_group_that_should_not_exist__")))
+
+(mat system-user-concurrent-lookups
+  ;; Error case: simultaneous NSS lookups must not mix names and numeric identities.
+  (= 0 (system (if (file-exists? "system-user-thread.ss")
+                   "timeout 15 ../cspp --script=system-user-thread.ss"
+                   "timeout 15 ./cspp --script=tests/system-user-thread.ss"))))
+
+(mat system-user-id-validation
+  ;; Error case: inexact or out-of-range IDs must not reach a narrowing foreign call.
+  (error? (user-ref 1.0))
+
+  (error? (group-ref #x100000000))
+
+  ;; Error case: embedded NUL must not truncate an account name.
+  (error? (user-ref "root\x0;ignored")))

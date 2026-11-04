@@ -5,22 +5,22 @@
   #|proc:getuid
   The `getuid` procedure returns the real user ID of the calling process.
   |#
-  (define getuid (foreign-procedure "cspp_getuid" () int))
+  (define getuid (foreign-procedure "cspp_getuid" () unsigned-32))
 
   #|proc:getgid
   The `getgid` procedure returns the real group ID of the calling process.
   |#
-  (define getgid (foreign-procedure "cspp_getgid" () int))
+  (define getgid (foreign-procedure "cspp_getgid" () unsigned-32))
 
   #|proc:geteuid
   The `geteuid` procedure returns the effective user ID of the calling process.
   |#
-  (define geteuid (foreign-procedure "cspp_geteuid" () int))
+  (define geteuid (foreign-procedure "cspp_geteuid" () unsigned-32))
 
   #|proc:getegid
   The `getegid` procedure returns the effective group ID of the calling process.
   |#
-  (define getegid (foreign-procedure "cspp_getegid" () int))
+  (define getegid (foreign-procedure "cspp_getegid" () unsigned-32))
 
   #|proc:current-uid
   The `current-uid` procedure returns the real user ID of the calling process.
