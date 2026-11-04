@@ -104,6 +104,8 @@
    ;; Error case: native capture must permit another Scheme thread to collect.
    (run-threads
      (list (lambda () (capture-process "/bin/sleep" "0.2"))
+           ;; Error case: waiting with no native streams must also permit GC in another thread.
+           (lambda () (run-process "/bin/sleep" "0.2" :stdout null :stderr null))
            (lambda ()
              (milisleep 50)
              (do ([index 0 (+ index 1)]) ((= index 100))

@@ -452,9 +452,17 @@ static ptr capture_child(pid_t pid, int input_fd, const unsigned char *input,
 
   while (!error) {
     if (!reaped) {
-      pid_t result = waitpid(pid, &status, WNOHANG);
+      /* With no remaining I/O or deadline, block in waitpid instead of polling
+       * an empty descriptor set. The Scheme thread is already inactive. */
+      int wait_options = timeout_ms < 0 && input_fd < 0 &&
+                         output_fds[0] < 0 && output_fds[1] < 0 ? 0 : WNOHANG;
+      pid_t result = waitpid(pid, &status, wait_options);
       if (result == pid) { reaped = 1; close_fd(&input_fd); }
-      else if (result < 0 && errno != EINTR) { error = errno; break; }
+      else if (result < 0) {
+        if (errno == EINTR) continue;
+        error = errno;
+        break;
+      }
     }
     if (reaped && output_fds[0] < 0 && output_fds[1] < 0) break;
     int64_t remaining = timeout_ms < 0 ? 20 : timeout_ms - (monotonic_ms() - start);
@@ -1039,5 +1047,4 @@ ptr cspp_spawn_pipeline_capture(ptr specs, int timeout_ms) {
   return cspp_unsupported_result("spawn-pipeline");
 #endif
 }
-
 

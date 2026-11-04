@@ -229,6 +229,11 @@
 ;; Error case: process timeout should raise and clean up the child.
 (mat process-timeout
 
+     ;; Error case: waiting with no I/O must still honor an explicit deadline.
+     (guard (condition [(system-timeout-error? condition) #t] [else #f])
+       (run-process "/bin/sleep" "1" :timeout 25 :stdout null :stderr null)
+       #f)
+
      (guard (c [(system-timeout-error? c) #t] [else #f])
        (capture-process/check "sh" "-c" "sleep 2" :timeout 50 :stdout capture :stderr capture)
        #f))
