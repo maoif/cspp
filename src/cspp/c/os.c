@@ -159,7 +159,7 @@ ptr cspp_filesystem_info(const char *path) {
   }
 
   ptr v = Smake_vector(10, Sfalse);
-  Svector_set(v, 0, Sstring(path));
+  Svector_set(v, 0, Sstring_utf8(path, -1));
   Svector_set(v, 1, Sunsigned64((Suint64_t)st.st_dev));
   Svector_set(v, 2, Sfalse);
   Svector_set(v, 3, Sunsigned64((Suint64_t)vfs.f_frsize));

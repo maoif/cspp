@@ -108,16 +108,16 @@
 
   (define $system-code?
     (lambda (x)
-      (or (integer? x) (eq? x #f))))
+      (or (and (integer? x) (exact? x)) (eq? x #f))))
 
   (define $system-context?
     (lambda (x)
-      (list? x)))
+      (and (list? x) (andmap pair? x))))
 
   #|proc:make-system-error
   The `make-system-error` procedure constructs a system error condition.
   The `operation` parameter is a symbol naming the operation that failed, or `#f` when unknown.
-  The `code` parameter is an integer error code, or `#f` when no code is available.
+  The `code` parameter is an exact integer error code, or `#f` when no code is available.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
   |#
@@ -163,7 +163,7 @@
   The `make-system-permission-error` procedure constructs a system error condition for a
   permission failure.
   The `operation` parameter is a symbol naming the operation that failed, or `#f` when unknown.
-  The `code` parameter is an integer error code, or `#f` when no code is available.
+  The `code` parameter is an exact integer error code, or `#f` when no code is available.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
   |#
@@ -207,7 +207,7 @@
   #|proc:raise-system-error
   The `raise-system-error` procedure raises a system error condition.
   The `operation` parameter is a symbol naming the operation that failed, or `#f` when unknown.
-  The `code` parameter is an integer error code, or `#f` when no code is available.
+  The `code` parameter is an exact integer error code, or `#f` when no code is available.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
   |#

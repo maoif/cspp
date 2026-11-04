@@ -1,8 +1,9 @@
 (library (cspp system signal values)
   (export signal? signal signal-name signal-number signal->string string->signal signal-list
           hup int quit kill usr1 usr2 alrm term chld pipe
-          $positive-integer? $signal-input? $signal-ref)
-  (import (cspp chez) (cspp utils) (cspp system common))
+          $signal-input? $signal-ref)
+  (import (cspp chez) (cspp utils) (cspp system common)
+          (cspp system private) (only (cspp string) string-startswith?))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; signal values
@@ -51,26 +52,12 @@
 
   (define $signal-input?
     (lambda (x)
-      (or (signal? x) (symbol? x) (string? x) ($positive-integer? x))))
-
-  (define $positive-integer?
-    (lambda (x)
-      (and (integer? x) (exact? x) (<= 1 x #x7fffffff))))
-
-  (define $string-prefix?
-    (lambda (prefix str)
-      (let ([prefix-len (string-length prefix)]
-            [str-len (string-length str)])
-        (and (fx<= prefix-len str-len)
-             (let loop ([i 0])
-               (or (fx= i prefix-len)
-                   (and (char=? (string-ref prefix i) (string-ref str i))
-                        (loop (fx+ i 1)))))))))
+      (or (signal? x) (symbol? x) (string? x) ($positive-pid? x))))
 
   (define $normalize-signal-string
     (lambda (str)
       (let* ([up (string-upcase str)]
-             [name (if ($string-prefix? "SIG" up)
+             [name (if (string-startswith? up "SIG")
                        (substring up 3 (string-length up))
                        up)])
         (string->symbol (string-downcase name)))))
@@ -99,7 +86,7 @@
       (cond [(signal? spec) spec]
             [(symbol? spec) ($symbol->signal who spec)]
             [(string? spec) ($symbol->signal who ($normalize-signal-string spec))]
-            [($positive-integer? spec) ($number->signal who spec)]
+            [($positive-pid? spec) ($number->signal who spec)]
             [else (errorf who "invalid signal: ~a" spec)])))
 
   #|proc:%signal

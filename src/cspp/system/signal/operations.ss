@@ -1,7 +1,7 @@
 (library (cspp system signal operations)
   (export send-signal send-process-signal send-process-group-signal signal-mask
           signal-mask-set! signal-block! signal-unblock! wait-signal)
-  (import (cspp chez) (cspp utils) (cspp system common)
+  (import (cspp chez) (cspp utils) (cspp system common) (cspp system private)
           (cspp system signal values) (cspp system process expert))
 
 ;;;;===----------------------------------------------------------------------===
@@ -22,7 +22,7 @@
   |#
   (define-who send-signal
     (lambda (pid sig)
-      (pcheck ([$positive-integer? pid] [$signal-input? sig])
+      (pcheck ([$positive-pid? pid] [$signal-input? sig])
               (ffi-result-ref ($send-signal-ffi pid (signal-number ($signal-ref who sig))))
               (void))))
 
@@ -49,7 +49,7 @@
   |#
   (define-who send-process-group-signal
     (lambda (process-group-id sig)
-      (pcheck ([$positive-integer? process-group-id] [$signal-input? sig])
+      (pcheck ([$positive-pid? process-group-id] [$signal-input? sig])
               (ffi-result-ref
                ($send-signal-ffi (- process-group-id) (signal-number ($signal-ref who sig))))
               (void))))

@@ -41,10 +41,11 @@
           gettid
           getppid
 
-          $validate-process-options)
+          $validate-process-options $wait-status->exit-status)
   (import (cspp chez)
           (cspp system common)
           (cspp system info)
+          (cspp system private)
           (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
@@ -177,27 +178,6 @@ The `object` parameter is any Scheme object.
       (pcheck ([process? process])
         (with-mutex (process-mutex process) ($process-status process)))))
 
-  (define $os-string?
-    (lambda (text)
-      (and (string? text)
-           (let loop ([index 0])
-             (or (fx= index (string-length text))
-                 (and (not (char=? (string-ref text index) #\nul))
-                      (loop (fx+ index 1))))))))
-
-  (define $string-list?
-    (lambda (object)
-      (and (list? object) (andmap $os-string? object))))
-
-  (define $option-alist?
-    (lambda (object)
-      (list? object)))
-
-  (define $option-ref
-    (lambda (options key default)
-      (let ([entry (assq key options)])
-        (if entry (cdr entry) default))))
-
   (define $env-option
     (lambda (options)
       (let ([env ($option-ref options 'env #f)])
@@ -207,10 +187,6 @@ The `object` parameter is any Scheme object.
     (lambda (options)
       (let ([cwd ($option-ref options 'cwd #f)])
         (if cwd cwd ""))))
-
-  (define $null-mode?
-    (lambda (options key)
-      (eq? 'null ($option-ref options key 'inherit))))
 
   (define $spawn-process-ffi
     (foreign-procedure "cspp_spawn_process" (ptr ptr utf-8 int int int) ptr))
@@ -241,38 +217,39 @@ The `object` parameter is any Scheme object.
 
   (define $validate-process-options
     (lambda (options live?)
-      (let ([seen '()])
-      (for-each
-        (lambda (entry)
-          (unless (and (pair? entry) (symbol? (car entry)))
-            (errorf 'process "invalid option entry: ~s" entry))
-          (let ([key (car entry)] [value (cdr entry)])
-            (when (memq key seen) (errorf 'process "duplicate option: ~s" key))
-            (set! seen (cons key seen))
-            (unless
-              (case key
-                [(cwd) (or (not value) ($os-string? value))]
-                [(env) (or (not value)
-                           (and (list? value)
-                                (andmap (lambda (pair) (and (pair? pair) ($os-string? (car pair))
-                                                           ($os-string? (cdr pair)))) value)))]
-                [(env-mode) (eq? value 'replace)]
-                [(stdin) (if live? (memq value '(inherit null pipe))
-                              (or (not value) (memq value '(inherit null))
-                             (string? value) (bytevector? value)))]
-                [(stdout) (memq value (if live? '(inherit null pipe) '(inherit null capture)))]
-                [(stderr) (memq value (if live? '(inherit null pipe stdout)
-                                                '(inherit null capture stdout)))]
-                [(encoding) (and (not live?) (memq value '(utf-8 binary)))]
-                [(timeout) (and (not live?) (or (not value) (and (integer? value) (exact? value)
-                                              (<= 0 value #x7fffffff))))]
-                [(success) (and (not live?) (or (not value) (procedure? value)
+      (pcheck ([list? options] [boolean? live?])
+        (let ([seen '()])
+          (for-each
+            (lambda (entry)
+              (unless (and (pair? entry) (symbol? (car entry)))
+                (errorf 'process "invalid option entry: ~s" entry))
+              (let ([key (car entry)] [value (cdr entry)])
+                (when (memq key seen) (errorf 'process "duplicate option: ~s" key))
+                (set! seen (cons key seen))
+                (unless
+                  (case key
+                    [(cwd) (or (not value) ($os-string? value))]
+                    [(env) (or (not value)
                                (and (list? value)
-                                    (andmap (lambda (code) (and (fixnum? code)
-                                                               (<= 0 code 255))) value))))]
-                [else #f])
-              (errorf 'process "invalid ~s option: ~s" key value))))
-        options))))
+                                    (andmap (lambda (pair) (and (pair? pair) ($environment-name? (car pair))
+                                                               ($os-string? (cdr pair)))) value)))]
+                    [(env-mode) (eq? value 'replace)]
+                    [(stdin) (if live? (memq value '(inherit null pipe))
+                                  (or (not value) (memq value '(inherit null))
+                                 (string? value) (bytevector? value)))]
+                    [(stdout) (memq value (if live? '(inherit null pipe) '(inherit null capture)))]
+                    [(stderr) (memq value (if live? '(inherit null pipe stdout)
+                                                    '(inherit null capture stdout)))]
+                    [(encoding) (and (not live?) (memq value '(utf-8 binary)))]
+                    [(timeout) (and (not live?) (or (not value) (and (integer? value) (exact? value)
+                                                  (<= 0 value #x7fffffff))))]
+                    [(success) (and (not live?) (or (not value) (procedure? value)
+                                   (and (list? value)
+                                        (andmap (lambda (code) (and (fixnum? code)
+                                                                   (<= 0 code 255))) value))))]
+                    [else #f])
+                  (errorf 'process "invalid ~s option: ~s" key value))))
+            options)))))
 
   (define $stream-mode
     (lambda (options key)
@@ -283,6 +260,8 @@ The `object` parameter is any Scheme object.
   The `spawn-process` procedure starts executable string `program` with string-list `arguments`.
   It returns a process object. `options` is an alist; `cwd` is a directory string or `#f`,
   and `env` is a string-pair alist or `#f` to inherit. An empty `env` clears the environment.
+  Program, argument, directory, and environment strings must contain no NUL characters.
+  Environment names must be nonempty and must not contain `=`.
   `stdin`, `stdout`, and `stderr` accept `inherit` (default), `null`, or `pipe`.
   `stderr` also accepts `stdout` to merge it into the child's stdout.
   A piped stdin is exposed as a binary output port; piped outputs as binary input ports.
@@ -291,7 +270,7 @@ The `object` parameter is any Scheme object.
   |#
   (define-who spawn-process
     (lambda (program arguments options)
-      (pcheck ([$os-string? program] [$string-list? arguments] [$option-alist? options])
+      (pcheck ([$os-string? program] [$os-string-list? arguments] [list? options])
         ($validate-process-options options #t)
         (let* ([argv (cons program arguments)]
                [result (ffi-result-ref
@@ -330,7 +309,7 @@ The `options` parameter is an option alist accepted by `spawn-process`.
 |#
   (define-who spawn-shell-command
     (lambda (command options)
-      (pcheck ([string? command] [$option-alist? options])
+      (pcheck ([$os-string? command] [list? options])
               (spawn-process "sh" (list "-c" command) options))))
 
   (define $wait-vector->status
@@ -457,14 +436,15 @@ The `make-pipe` procedure returns input and output ports backed by an OS pipe.
 
   #|proc:pipe-processes
 The `pipe-processes` procedure starts process specs as a live pipeline.
-The `process-specs` parameter is a list of nonempty string lists.
+The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
+Command strings must contain no NUL characters.
 The `options` parameter is reserved and should currently be the empty list.
 The procedure returns process objects immediately and does not wait for them.
 Callers should wait for or terminate the returned processes.
 |#
   (define pipe-processes
     (lambda (process-specs options)
-      (pcheck ([list? process-specs] [list? options])
+      (pcheck ([$process-specs? process-specs] [null? options])
               (let ([pids (ffi-result-ref ($spawn-pipeline-ffi process-specs))])
                 (let loop ([i 0] [specs process-specs] [out '()])
                   (if (fx= i (vector-length pids))
@@ -479,13 +459,14 @@ Callers should wait for or terminate the returned processes.
 
   #|proc:run-pipeline
 The `run-pipeline` procedure runs process specs as a pipeline and waits.
-The `process-specs` parameter is a list of nonempty string lists.
+The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
+Command strings must contain no NUL characters.
 Unlike `pipe-processes`, this procedure does not return live process objects.
 It returns a list containing the final process exit status.
 |#
   (define run-pipeline
     (lambda (process-specs)
-      (pcheck ([list? process-specs])
+      (pcheck ([$process-specs? process-specs])
               (let ([result (ffi-result-ref ($spawn-pipeline-capture-ffi process-specs -1))])
                 (list ($wait-status->exit-status (vector-ref result 1)))))))
 

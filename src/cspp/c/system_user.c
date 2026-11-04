@@ -30,7 +30,7 @@ static ptr user_lookup(const char *name, unsigned int id, int group) {
   }
   Sactivate_thread();
   ptr context = Scons(Scons(Sstring(owned_name ? "name" : "id"),
-                           owned_name ? Sstring(owned_name) : Sunsigned(id)), Snil);
+                           owned_name ? Sstring_utf8(owned_name, -1) : Sunsigned(id)), Snil);
   ptr result;
   if (error) {
     errno = error;
@@ -39,25 +39,25 @@ static ptr user_lookup(const char *name, unsigned int id, int group) {
     result = cspp_not_found_result(operation, context);
   } else if (group) {
     result = Smake_vector(4, Sfalse);
-    Svector_set(result, 0, Sstring(gr.gr_name));
-    Svector_set(result, 1, Sstring(gr.gr_passwd ? gr.gr_passwd : ""));
+    Svector_set(result, 0, Sstring_utf8(gr.gr_name, -1));
+    Svector_set(result, 1, Sstring_utf8(gr.gr_passwd ? gr.gr_passwd : "", -1));
     Svector_set(result, 2, Sunsigned(gr.gr_gid));
     size_t count = 0;
     while (gr.gr_mem && gr.gr_mem[count]) count++;
     if (count) {
       ptr members = Smake_vector((iptr)count, Sfalse);
-      for (size_t i = 0; i < count; i++) Svector_set(members, (iptr)i, Sstring(gr.gr_mem[i]));
+      for (size_t i = 0; i < count; i++) Svector_set(members, (iptr)i, Sstring_utf8(gr.gr_mem[i], -1));
       Svector_set(result, 3, members);
     }
   } else {
     result = Smake_vector(7, Sfalse);
-    Svector_set(result, 0, Sstring(pw.pw_name));
-    Svector_set(result, 1, Sstring(pw.pw_passwd ? pw.pw_passwd : ""));
+    Svector_set(result, 0, Sstring_utf8(pw.pw_name, -1));
+    Svector_set(result, 1, Sstring_utf8(pw.pw_passwd ? pw.pw_passwd : "", -1));
     Svector_set(result, 2, Sunsigned(pw.pw_uid));
     Svector_set(result, 3, Sunsigned(pw.pw_gid));
-    Svector_set(result, 4, Sstring(pw.pw_gecos ? pw.pw_gecos : ""));
-    Svector_set(result, 5, Sstring(pw.pw_dir));
-    Svector_set(result, 6, Sstring(pw.pw_shell));
+    Svector_set(result, 4, Sstring_utf8(pw.pw_gecos ? pw.pw_gecos : "", -1));
+    Svector_set(result, 5, Sstring_utf8(pw.pw_dir, -1));
+    Svector_set(result, 6, Sstring_utf8(pw.pw_shell, -1));
   }
   free(buffer);
   free(owned_name);

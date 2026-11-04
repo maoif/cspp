@@ -1,5 +1,16 @@
 (import (cspp))
 
+(mat system-user-unicode-context
+
+     ;; Error case: a missing Unicode account name must survive native error-context conversion.
+     (let ([name (format "cspp-no-user-~a-中文" (getpid))])
+       (guard (condition
+                [(system-not-found-error? condition)
+                 (let ([entry (assoc "name" (system-error-context condition))])
+                   (and entry (string=? name (cdr entry))))])
+         (user-ref name)
+         #f)))
+
 (mat system-user-current
 
      (let ([u (user-ref (getuid))])

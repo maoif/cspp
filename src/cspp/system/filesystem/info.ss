@@ -12,7 +12,7 @@
           filesystem-info-files-free
           filesystem-info-read-only?
           filesystem-total-bytes filesystem-free-bytes filesystem-available-bytes)
-  (import (cspp chez) (cspp string) (cspp system common) (cspp utils))
+  (import (cspp chez) (cspp system private) (cspp system common) (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; filesystem information
@@ -140,11 +140,11 @@
 
   #|proc:filesystem-info
   The `filesystem-info` procedure returns filesystem capacity and identity information for `path`.
-  The `path` parameter is a string naming a path on the filesystem to query.
+  The `path` parameter is a string without NUL characters naming the path to query.
   |#
   (define filesystem-info
     (lambda (path)
-      (pcheck ([string? path])
+      (pcheck ([$os-string? path])
               ($vector->filesystem-info (ffi-result-ref ($filesystem-info-ffi path))))))
 
   (define $filesystem-bytes
@@ -154,30 +154,30 @@
 
   #|proc:filesystem-total-bytes
   The `filesystem-total-bytes` procedure returns the total filesystem size in bytes for `path`.
-  The `path` parameter is a string naming a path on the filesystem to query.
+  The `path` parameter is a string without NUL characters naming the path to query.
   |#
   (define filesystem-total-bytes
     (lambda (path)
-      (pcheck ([string? path])
+      (pcheck ([$os-string? path])
               ($filesystem-bytes path filesystem-info-blocks))))
 
   #|proc:filesystem-free-bytes
   The `filesystem-free-bytes` procedure returns the free filesystem size in bytes for `path`.
-  The `path` parameter is a string naming a path on the filesystem to query.
+  The `path` parameter is a string without NUL characters naming the path to query.
   |#
   (define filesystem-free-bytes
     (lambda (path)
-      (pcheck ([string? path])
+      (pcheck ([$os-string? path])
               ($filesystem-bytes path filesystem-info-blocks-free))))
 
   #|proc:filesystem-available-bytes
   The `filesystem-available-bytes` procedure returns the filesystem size in bytes available to
   unprivileged users for `path`.
-  The `path` parameter is a string naming a path on the filesystem to query.
+  The `path` parameter is a string without NUL characters naming the path to query.
   |#
   (define filesystem-available-bytes
     (lambda (path)
-      (pcheck ([string? path])
+      (pcheck ([$os-string? path])
               ($filesystem-bytes path filesystem-info-blocks-available))))
 
 )

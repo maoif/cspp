@@ -30,6 +30,12 @@
       (unless (null? failures) (raise (car failures))))))
 
 (case (string->symbol (cadr (command-line)))
+  [(pipeline-contracts)
+   ;; Error case: circular nested argv lists must be rejected before native traversal.
+   (let ([spec (list "/bin/true")])
+     (set-cdr! spec spec)
+     (check (rejects? (lambda () (capture-pipeline (list spec))))) )]
+
   [(user-race)
    (let* ([first (current-user)] [second (user-ref/default "daemon" first)])
      ;; Error case: lookups in other threads must not overwrite any record fields.

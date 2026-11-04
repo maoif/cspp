@@ -1,5 +1,17 @@
 (import (cspp))
 
+(mat filesystem-path-contract
+
+     ;; Error case: a NUL suffix must not query the filesystem of a different path.
+     (guard (condition [else #t]) (filesystem-info "/\x0;ignored") #f)
+
+     ;; Error case: native path conversion must preserve Unicode rather than truncate characters.
+     (let ([path (format "/tmp/cspp-filesystem-~a-中文" (getpid))])
+       (dynamic-wind
+         (lambda () (mkdir path))
+         (lambda () (string=? path (filesystem-info-path (filesystem-info path))))
+         (lambda () (delete-directory path)))))
+
 (mat filesystem-info-basic
 
      (let ([info (filesystem-info ".")])

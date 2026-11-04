@@ -50,6 +50,10 @@
 
 (mat system-errors
 
+     ;; Error case: system context must be an alist and native error codes must be exact.
+     (and (guard (condition [else #t]) (make-system-error 'test #f "failure" '(invalid)) #f)
+          (guard (condition [else #t]) (make-system-error 'test 1.0 "failure" '()) #f))
+
      (os-error? (make-system-error 'compatibility #f "failure" '()))
 
      (system-error? (guard (c [else c])

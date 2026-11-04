@@ -1,7 +1,8 @@
 (library (cspp system process backend)
   (export process-result? process-result-status process-result-stdout process-result-stderr process-result-pid process-result-command
           %run-process %capture-process %run-shell-command %capture-shell-command capture-pipeline)
-  (import (cspp chez) (cspp system common) (cspp system process expert) (cspp utils))
+  (import (cspp chez) (cspp system common) (cspp system private)
+          (cspp system process expert) (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; process result records
@@ -67,19 +68,6 @@
 ;;;; process backend
 ;;;;===----------------------------------------------------------------------===
 
-  (define $string-list?
-    (lambda (x)
-      (and (list? x) (andmap string? x))))
-
-  (define $option-alist?
-    (lambda (x)
-      (list? x)))
-
-  (define $option-ref
-    (lambda (options key default)
-      (let ([a (assq key options)])
-        (if a (cdr a) default))))
-
   (define $raise-exit-error
     (lambda (who command status)
       (raise (make-system-exit-error who
@@ -87,11 +75,6 @@
                                      `((command . ,command)
                                        (status-kind . ,(process-exit-status-kind status))
                                        (status-code . ,(process-exit-status-code status)))))))
-
-  (define $check-status
-    (lambda (who command status)
-      (unless (process-exit-success? status)
-        ($raise-exit-error who command status))))
 
   (define $status-accepted?
     (lambda (status success)
@@ -107,15 +90,6 @@
       (let ([success ($option-ref options 'success (if check? '(0) #f))])
         (unless ($status-accepted? status success)
           ($raise-exit-error who command status)))))
-
-  (define $wait-status->exit-status
-    (lambda (raw)
-      (cond [(fx= (fxand raw #x7f) 0)
-             (make-process-exit-status 'exit (fxsrl raw 8))]
-            [(fx= (fxand raw #x7f) #x7f)
-             (make-process-exit-status 'stopped (fxsrl raw 8))]
-            [else
-             (make-process-exit-status 'signal (fxand raw #x7f))])))
 
   (define $stdin-payload
     (lambda (options)
@@ -210,7 +184,8 @@
 
   (define %run-process
     (lambda (who program arguments options check?)
-      (pcheck ([string? program] [$string-list? arguments] [$option-alist? options] [boolean? check?])
+      (pcheck ([symbol? who] [$os-string? program] [$os-string-list? arguments]
+               [list? options] [boolean? check?])
               ($run-vector->status program
                                   ($spawn-capture (cons program arguments) options 'inherit)
                                   options
@@ -219,7 +194,8 @@
 
   (define %capture-process
     (lambda (who program arguments options check?)
-      (pcheck ([string? program] [$string-list? arguments] [$option-alist? options] [boolean? check?])
+      (pcheck ([symbol? who] [$os-string? program] [$os-string-list? arguments]
+               [list? options] [boolean? check?])
               ($capture-vector->result program
                                       ($spawn-capture (cons program arguments) options 'capture)
                                       options
@@ -228,7 +204,7 @@
 
   (define %run-shell-command
     (lambda (who command options check?)
-      (pcheck ([string? command] [$option-alist? options] [boolean? check?])
+      (pcheck ([symbol? who] [$os-string? command] [list? options] [boolean? check?])
               ($run-vector->status command
                                   ($spawn-capture (list "sh" "-c" command) options 'inherit)
                                   options
@@ -237,7 +213,7 @@
 
   (define %capture-shell-command
     (lambda (who command options check?)
-      (pcheck ([string? command] [$option-alist? options] [boolean? check?])
+      (pcheck ([symbol? who] [$os-string? command] [list? options] [boolean? check?])
               ($capture-vector->result command
                                       ($spawn-capture (list "sh" "-c" command) options 'capture)
                                       options
@@ -246,11 +222,12 @@
 
   #|proc:capture-pipeline
   The `capture-pipeline` procedure runs string-list process specs as a pipeline.
-  The `process-specs` parameter is a list of nonempty string lists.
+  The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
+  Command strings must contain no NUL characters. Returns a process result with captured stdout.
   |#
   (define capture-pipeline
     (lambda (process-specs)
-      (pcheck ([list? process-specs])
+      (pcheck ([$process-specs? process-specs])
               (let ([result (ffi-result-ref ($spawn-pipeline-capture-ffi process-specs -1))])
                 ($capture-vector->result 'pipeline result '((stdout . capture)) #f
                                         'capture-pipeline)))))

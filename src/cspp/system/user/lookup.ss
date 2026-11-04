@@ -3,7 +3,7 @@
           user-exists? group-exists? uid->user user->uid gid->group group->gid
           uid->user-name user-name->uid gid->group-name group-name->gid
           get-user-dir get-user-shell get-user-group current-user current-group)
-  (import (cspp chez) (cspp utils) (cspp system common)
+  (import (cspp chez) (cspp utils) (cspp system common) (cspp system private)
           (cspp system user records) (cspp system user credentials))
 
 ;;;;===----------------------------------------------------------------------===
@@ -32,17 +32,8 @@
                (ffi-result-ref x)]
               [else x]))))
 
-  (define $user-id?
-    (lambda (id) (and (integer? id) (exact? id) (<= 0 id #xffffffff))))
-
   (define $user-key?
-    (lambda (id) (or ($user-id? id) ($user-name? id))))
-
-  (define $user-name?
-    (lambda (name)
-      (and (string? name)
-           (not (exists (lambda (character) (char=? character #\nul))
-                        (string->list name))))))
+    (lambda (id) (or ($unsigned-32? id) ($os-string? id))))
 
   (define $getpwnam
     (let ([ffi (foreign-procedure "cspp_getpwnam" (string) scheme-object)])
@@ -103,9 +94,9 @@
   (define-who user-ref
     (lambda (id)
       (pcheck ([$user-key? id])
-        (cond [($user-id? id)
+        (cond [($unsigned-32? id)
              (mk-unix-user ($getpwuid who id))]
-            [($user-name? id)
+            [($os-string? id)
              (mk-unix-user ($getpwnam who id))]
             [else (errorf who "invalid user id: ~a" id)]))))
 
@@ -122,9 +113,9 @@
   (define-who group-ref
     (lambda (id)
       (pcheck ([$user-key? id])
-        (cond [($user-id? id)
+        (cond [($unsigned-32? id)
              (mk-unix-group ($getgrgid who id))]
-            [($user-name? id)
+            [($os-string? id)
              (mk-unix-group ($getgrnam who id))]
             [else (errorf who "invalid group id: ~a" id)]))))
 
@@ -162,7 +153,7 @@
   |#
   (define-who uid->user
     (lambda (id)
-      (pcheck ([$user-id? id])
+      (pcheck ([$unsigned-32? id])
                       ($getpw-name ($getpwuid who id)))))
 
   #|proc:uid->user-name
@@ -177,7 +168,7 @@
   |#
   (define-who user->uid
     (lambda (name)
-      (pcheck ([$user-name? name])
+      (pcheck ([$os-string? name])
                      ($getpw-uid ($getpwnam who name)))))
 
   #|proc:user-name->uid
@@ -192,7 +183,7 @@
   |#
   (define-who gid->group
     (lambda (id)
-      (pcheck ([$user-id? id])
+      (pcheck ([$unsigned-32? id])
                       ($getgr-name ($getgrgid who id)))))
 
   #|proc:gid->group-name
@@ -207,7 +198,7 @@
   |#
   (define-who group->gid
     (lambda (name)
-      (pcheck ([$user-name? name])
+      (pcheck ([$os-string? name])
                      ($getgr-gid ($getgrnam who name)))))
 
   #|proc:group-name->gid
@@ -223,8 +214,8 @@
   (define-who get-user-dir
     (lambda (id)
       (pcheck ([$user-key? id])
-        (cond [($user-name? id)  ($getpw-dir ($getpwnam who id))]
-            [($user-id? id) ($getpw-dir ($getpwuid who id))]
+        (cond [($os-string? id)  ($getpw-dir ($getpwnam who id))]
+            [($unsigned-32? id) ($getpw-dir ($getpwuid who id))]
             [else (errorf who "invalid user id: ~a" id)]))))
 
   #|proc:get-user-shell
@@ -234,8 +225,8 @@
   (define-who get-user-shell
     (lambda (id)
       (pcheck ([$user-key? id])
-        (cond [($user-name? id)  ($getpw-shell ($getpwnam who id))]
-            [($user-id? id) ($getpw-shell ($getpwuid who id))]
+        (cond [($os-string? id)  ($getpw-shell ($getpwnam who id))]
+            [($unsigned-32? id) ($getpw-shell ($getpwuid who id))]
             [else (errorf who "invalid user id: ~a" id)]))))
 
   #|proc:get-user-group
@@ -245,8 +236,8 @@
   (define-who get-user-group
     (lambda (id)
       (pcheck ([$user-key? id])
-        (cond [($user-name? id)  ($getpw-gid ($getpwnam who id))]
-            [($user-id? id) ($getpw-gid ($getpwuid who id))]
+        (cond [($os-string? id)  ($getpw-gid ($getpwnam who id))]
+            [($unsigned-32? id) ($getpw-gid ($getpwuid who id))]
             [else (errorf who "invalid user id: ~a" id)]))))
 
   #|proc:user-exists?

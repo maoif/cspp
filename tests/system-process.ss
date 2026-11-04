@@ -1,5 +1,27 @@
 (import (cspp))
 
+(mat process-argument-domains
+
+     ;; Error case: every pipeline specification must contain a command and string arguments.
+     (andmap
+       (lambda (specs)
+         (and (guard (condition [else #t]) (capture-pipeline specs) #f)
+              (guard (condition [else #t]) (run-pipeline specs) #f)
+              (guard (condition [else #t]) (pipe-processes specs '()) #f)))
+       '(() (()) (("true" . "extra")) (("true" 1)) (("true\x0;ignored"))))
+
+     ;; Error case: reserved pipeline options must be rejected before starting a child.
+     (guard (condition [else #t])
+       (let ([children (pipe-processes '(("/bin/true")) '((cwd . "/missing")))])
+         (for-each process-wait children)
+         #f))
+
+     ;; Error case: an environment key cannot contain the separator or be empty.
+     (and (guard (condition [else #t])
+            (capture-process "/bin/true" :env '(("A=B" . "C"))) #f)
+          (guard (condition [else #t])
+            (process-wait (spawn-process "/bin/true" '() '((env . (("" . "C")))))) #f)))
+
 (mat process-macro-syntax
 
      (let ([r (capture-process "printf" "hello"

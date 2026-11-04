@@ -114,6 +114,7 @@
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
   The `:cwd` option accepts a string working directory or `#f`.
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
+  Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
   The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
   The `:stdout` option accepts `inherit`, `null`, or `capture`; captured output is ignored.
@@ -133,6 +134,7 @@
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
   The `:cwd` option accepts a string working directory or `#f`.
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
+  Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
   The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
   The `:stdout` option accepts `inherit`, `null`, or `capture`; captured output is ignored.
@@ -152,6 +154,7 @@
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
   The `:cwd` option accepts a string working directory or `#f`.
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
+  Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
   The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
   The `:stdout` option accepts `capture`, `inherit`, or `null`.
@@ -171,6 +174,7 @@
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
   The `:cwd` option accepts a string working directory or `#f`.
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
+  Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
   The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
   The `:stdout` option accepts `capture`, `inherit`, or `null`.
@@ -190,6 +194,7 @@
   Use `(begin command)` for a variable, followed by optional keyword clauses.
   The `:cwd` option accepts a string working directory or `#f`.
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
+  Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
   The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
   The `:stdout` option accepts `inherit`, `null`, or `capture`; captured output is ignored.
@@ -209,6 +214,7 @@
   Use `(begin command)` for a variable, followed by optional keyword clauses.
   The `:cwd` option accepts a string working directory or `#f`.
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
+  Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
   The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
   The `:stdout` option accepts `capture`, `inherit`, or `null`.
