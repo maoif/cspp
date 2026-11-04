@@ -13,6 +13,11 @@
   The `signal?` procedure returns `#t` when its argument is a signal record, otherwise `#f`.
   The `object` parameter is the object to test.
   |#
+  #|record:$signal
+  Signal records hold a canonical lowercase name symbol and a platform signal number.
+  The exported `signal?` predicate accepts any object and returns a boolean.
+  Records are obtained through `signal`, `string->signal`, or `signal-list`.
+  |#
   (define-record-type ($signal make-signal signal?)
     (nongenerative)
     (fields (immutable name $signal-name)
@@ -50,9 +55,14 @@
   (define chld 'chld)
   (define pipe 'pipe)
 
+  #|proc:$signal-input?
+  The internal `$signal-input?` predicate returns whether arbitrary `object` has a signal-spec type.
+  It accepts records, symbols, strings, and exact positive signed 32-bit integers.
+  A true result does not establish that the specification names an available signal.
+  |#
   (define $signal-input?
-    (lambda (x)
-      (or (signal? x) (symbol? x) (string? x) ($positive-pid? x))))
+    (lambda (object)
+      (or (signal? object) (symbol? object) (string? object) ($positive-pid? object))))
 
   (define $normalize-signal-string
     (lambda (str)
@@ -79,6 +89,11 @@
       (let ([sig ($find-signal (lambda (sig) (= number (signal-number sig))))])
         (or sig (errorf who "unknown signal number: ~a" number)))))
 
+  #|proc:$signal-ref
+  The internal `$signal-ref` procedure resolves signal specification `spec` to a signal record.
+  `who` is a caller-name symbol used for errors; `spec` accepts the forms documented by `signal`.
+  Unknown names/numbers raise argument errors. An unavailable signal table raises unsupported.
+  |#
   (define $signal-ref
     (lambda (who spec)
       (when (null? $signal-table)
@@ -104,6 +119,8 @@
   The `spec` form may be a bare identifier such as `term`, a quoted symbol such as `'term`, a
   string such as `"TERM"` or `"SIGTERM"`, an exact positive signed 32-bit signal number,
   or an existing signal record. Common names and available realtime names come from the platform.
+  Symbol names are lowercase; strings are case-insensitive and accept the optional `SIG` prefix.
+  Bare common names work because their exported values are symbols; other variables are evaluated.
   |#
   (define-syntax signal
     (lambda (stx)

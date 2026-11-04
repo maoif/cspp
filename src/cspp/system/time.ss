@@ -40,18 +40,21 @@
   #|proc:sleep-seconds
   The `sleep-seconds` procedure pauses the current thread for `seconds` seconds.
   The `seconds` parameter is a natural number of seconds.
+  It is an alias of `sleep`; the return value is unspecified.
   |#
   (define sleep-seconds sleep)
 
   #|proc:sleep-milliseconds
   The `sleep-milliseconds` procedure pauses the current thread for `milliseconds` milliseconds.
   The `milliseconds` parameter is a natural number of milliseconds.
+  It is an alias of `milisleep`; the return value is unspecified.
   |#
   (define sleep-milliseconds milisleep)
 
   #|proc:sleep-nanoseconds
   The `sleep-nanoseconds` procedure pauses the current thread for `nanoseconds` nanoseconds.
   The `nanoseconds` parameter is a natural number of nanoseconds.
+  It is an alias of `nanosleep`; the return value is unspecified.
   |#
   (define sleep-nanoseconds nanosleep)
 

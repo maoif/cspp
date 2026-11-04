@@ -2,6 +2,8 @@
   (export $option-ref $cwd-option $validate-process-options)
   (import (cspp chez) (cspp utils) (cspp system private))
 
+  ;; Shared by live and captured execution. This module owns validation and option defaults,
+  ;; but neither starts processes nor stores per-call state beyond validation's local `seen`.
   ;; Options have already been validated before native argument construction.
   (define $option-ref
     (lambda (options key default)

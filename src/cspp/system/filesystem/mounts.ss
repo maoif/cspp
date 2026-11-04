@@ -16,6 +16,11 @@
   record, otherwise `#f`.
   The `object` parameter is the object to test.
   |#
+  #|record:$mounted-filesystem
+  Mounted-filesystem records hold source, target, type, and option strings from Linux mountinfo.
+  The exported `mounted-filesystem?` predicate accepts any object and returns a boolean.
+  Strings describe a snapshot of the calling process's mount namespace.
+  |#
   (define-record-type ($mounted-filesystem make-mounted-filesystem mounted-filesystem?)
     (nongenerative)
     (fields (immutable source $mounted-filesystem-source)
@@ -51,8 +56,8 @@
       (pcheck ([mounted-filesystem? mount]) ($mounted-filesystem-type mount))))
 
   #|proc:mounted-filesystem-options
-  The `mounted-filesystem-options` procedure returns the raw mount options string of a mounted
-  filesystem record.
+  The `mounted-filesystem-options` procedure returns mount and superblock options separated by
+  a space, as reported by Linux mountinfo.
   The `mount` parameter is a mounted filesystem record returned by `mounted-filesystems`.
   |#
   (define mounted-filesystem-options
@@ -125,6 +130,7 @@
   #|proc:mounted-filesystems
   The `mounted-filesystems` procedure returns a list of mounted filesystem records for the current
   process mount namespace.
+  It reads Linux `/proc/self/mountinfo`; an absent file yields an empty list.
   |#
   (define mounted-filesystems
     (lambda ()

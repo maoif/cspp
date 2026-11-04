@@ -55,9 +55,14 @@
 ;;;;===----------------------------------------------------------------------===
 
   #|proc:process?
-The `process?` procedure returns whether `object` is a CSPP process object.
-The `object` parameter is any Scheme object.
-|#
+  The `process?` procedure returns whether `object` is a CSPP process object.
+  The `object` parameter is any Scheme object.
+  |#
+  #|record:$process
+  The process record holds a child pid, command metadata, and optional binary stream ports.
+  The exported `process?` predicate accepts any object and returns whether it is a process.
+  Exit status publication and reaping use a per-process mutex; port I/O is caller-coordinated.
+  |#
   (define-record-type ($process %make-process process?)
     (nongenerative)
     (fields (immutable pid $process-pid)
@@ -80,6 +85,7 @@ The `object` parameter is any Scheme object.
   #|proc:process-command
   The `process-command` procedure returns the program or command for `process`.
   The `process` parameter is a process object.
+  For `spawn-shell-command` this is `"sh"`; shell text is stored among `process-arguments`.
   |#
   (define process-command
     (lambda (process)
@@ -88,6 +94,7 @@ The `object` parameter is any Scheme object.
   #|proc:process-arguments
   The `process-arguments` procedure returns the argument list stored in `process`.
   The `process` parameter is a process object.
+  The list was copied at spawn time, but strings and accessor results remain shared and mutable.
   |#
   (define process-arguments
     (lambda (process)
@@ -200,10 +207,11 @@ The `object` parameter is any Scheme object.
                 (make-process pid program (list-copy arguments) stdin stdout stderr #f))))))))
 
   #|proc:spawn-shell-command
-The `spawn-shell-command` procedure starts `command` through the host shell.
-The `command` parameter is interpreted by the host shell.
-The `options` parameter is an option alist accepted by `spawn-process`.
-|#
+  The `spawn-shell-command` procedure starts `command` through the host shell.
+  The `command` parameter is a NUL-free string interpreted by `sh -c`.
+  The `options` parameter is an option alist accepted by `spawn-process`.
+  Returns a live process object; callers own its pipe ports and must eventually reap the child.
+  |#
   (define-who spawn-shell-command
     (lambda (command options)
       (pcheck ([$os-string? command] [list? options])
@@ -232,6 +240,7 @@ The `options` parameter is an option alist accepted by `spawn-process`.
   #|proc:process-wait
   The `process-wait` procedure waits for `process` and returns its cached exit status.
   The `process` argument is a process object. Waiting leaves its streams open for draining.
+  Drain live output concurrently with a running child; waiting first can deadlock on full pipes.
   |#
   (define process-wait
     (lambda (process)
@@ -264,20 +273,21 @@ The `options` parameter is an option alist accepted by `spawn-process`.
                   (loop))))))))
 
   #|proc:process-running?
-The `process-running?` procedure returns whether `process` is still running.
-The `process` parameter is a process object.
-|#
+  The `process-running?` procedure returns whether `process` is still running.
+  The `process` parameter is a process object.
+  |#
   (define process-running?
     (lambda (process)
       (pcheck ([process? process])
               (not (process-wait/no-hang process)))))
 
   #|proc:process-kill
-The `process-kill` procedure sends signal number `signal-number` to `process`.
-The `process` parameter is a process object.
-The `signal-number` parameter is an exact positive signal number.
+  The `process-kill` procedure sends signal number `signal-number` to `process`.
+  The `process` parameter is a process object.
+  The `signal-number` parameter is an exact positive signed 32-bit signal number.
   A process with a cached or newly observed exit status is left alone.
-|#
+  The return value is unspecified. Native signaling failures raise system conditions.
+  |#
   (define-who process-kill
     (lambda (process signal-number)
       (pcheck ([process? process]
@@ -292,26 +302,29 @@ The `signal-number` parameter is an exact positive signal number.
                   (ffi-result-ref ($send-signal-ffi (process-pid process) signal-number)))))))))
 
   #|proc:process-terminate
-The `process-terminate` procedure sends `SIGTERM` to `process`.
-The `process` parameter is a process object.
-|#
+  The `process-terminate` procedure sends `SIGTERM` to `process`.
+  The `process` parameter is a process object.
+  The return value is unspecified. This does not wait for the process to exit.
+  |#
   (define process-terminate
     (lambda (process)
       (process-kill process 15)))
 
   #|proc:process-interrupt
-The `process-interrupt` procedure sends `SIGINT` to `process`.
-The `process` parameter is a process object.
-|#
+  The `process-interrupt` procedure sends `SIGINT` to `process`.
+  The `process` parameter is a process object.
+  The return value is unspecified. This does not wait for the process to exit.
+  |#
   (define process-interrupt
     (lambda (process)
       (process-kill process 2)))
 
   #|proc:process-close-ports!
-The `process-close-ports!` procedure closes any open ports owned by `process`.
+  The `process-close-ports!` procedure closes any open ports owned by `process`.
   Repeated calls are harmless. This does not terminate or wait for the child.
-The `process` parameter is a process object.
-|#
+  The `process` parameter is a process object.
+  The return value is unspecified; callers must coordinate I/O and closing on shared ports.
+  |#
   (define process-close-ports!
     (lambda (process)
       (pcheck ([process? process])
@@ -323,8 +336,9 @@ The `process` parameter is a process object.
                               (process-stderr process))))))
 
   #|proc:make-pipe
-The `make-pipe` procedure returns input and output ports backed by an OS pipe.
-|#
+  The `make-pipe` procedure returns two binary ports backed by an OS pipe: input, then output.
+  The caller owns both ports and must close them. Closing output delivers EOF after buffered data.
+  |#
   (define make-pipe
     (lambda ()
       (let ([fds (ffi-result-ref ($make-pipe-ffi))])
@@ -332,13 +346,15 @@ The `make-pipe` procedure returns input and output ports backed by an OS pipe.
                 (open-fd-output-port (vector-ref fds 1) 'block #f)))))
 
   #|proc:pipe-processes
-The `pipe-processes` procedure starts process specs as a live pipeline.
-The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
-Command strings must contain no NUL characters.
-The `options` parameter is reserved and should currently be the empty list.
-The procedure returns process objects immediately and does not wait for them.
-Callers should wait for or terminate the returned processes.
-|#
+  The `pipe-processes` procedure starts process specs as a live pipeline.
+  The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
+  Command strings must contain no NUL characters.
+  The `options` parameter is reserved and should currently be the empty list.
+  The procedure returns process objects immediately and does not wait for them.
+  Callers should wait for or terminate the returned processes.
+  Stdin for the first command, stdout for the final command, and all stderrs are inherited.
+  No pipe ports are exposed; the returned list follows specification order.
+  |#
   (define pipe-processes
     (lambda (process-specs options)
       (pcheck ([$process-specs? process-specs] [null? options])
@@ -355,13 +371,13 @@ Callers should wait for or terminate the returned processes.
                                   out))))))))
 
   #|proc:run-pipeline
-The `run-pipeline` procedure runs process specs as a pipeline and waits.
-The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
-Command strings must contain no NUL characters.
-Unlike `pipe-processes`, this procedure does not return live process objects.
-It returns a list containing the final process exit status.
-The final process's stdout is discarded without buffering; stderr is inherited.
-|#
+  The `run-pipeline` procedure runs process specs as a pipeline and waits.
+  The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
+  Command strings must contain no NUL characters.
+  Unlike `pipe-processes`, this procedure does not return live process objects.
+  It returns a list containing the final process exit status.
+  The final process's stdout is discarded without buffering; stderr is inherited.
+  |#
   (define run-pipeline
     (lambda (process-specs)
       (pcheck ([$process-specs? process-specs])
@@ -377,9 +393,10 @@ The final process's stdout is discarded without buffering; stderr is inherited.
       (raise (make-system-error who #f message '()))))
 
   #|proc:fork
-The `fork` procedure performs a raw operating-system fork.
-This expert API is unsafe in a threaded Scheme runtime.
-|#
+  The `fork` procedure performs a raw operating-system fork.
+  This expert API is unsafe in a threaded Scheme runtime.
+  Returns zero in the child and the child pid in the parent; failure raises a system condition.
+  |#
   (define-who fork
     (let ([ffi (foreign-procedure "cspp_fork" () ptr)])
       (lambda ()
@@ -387,9 +404,11 @@ This expert API is unsafe in a threaded Scheme runtime.
           (if (string? result) ($err-process who result) result)))))
 
   #|proc:vfork
-The `vfork` procedure performs a raw operating-system vfork.
-This expert API is unsafe unless the child immediately execs or exits.
-|#
+  The `vfork` procedure performs a raw operating-system vfork.
+  This expert API is unsafe unless the child immediately execs or exits.
+  Returns zero in the child and the child pid in the parent; failure raises a system condition.
+  Do not return to ordinary Scheme evaluation in the child.
+  |#
   (define-who vfork
     (let ([ffi (foreign-procedure "cspp_vfork" () ptr)])
       (lambda ()
@@ -397,18 +416,19 @@ This expert API is unsafe unless the child immediately execs or exits.
           (if (string? result) ($err-process who result) result)))))
 
   #|proc:getpid
-The `getpid` procedure returns the current process id.
-|#
+  The `getpid` procedure returns the current process id.
+  |#
   (define getpid get-process-id)
 
   #|proc:gettid
-The `gettid` procedure returns the current thread id.
-|#
+  The `gettid` procedure returns the calling thread's Chez Scheme thread identifier.
+  It is an alias of `get-thread-id`; this is not the native operating-system thread id.
+  |#
   (define gettid get-thread-id)
 
   #|proc:getppid
-The `getppid` procedure returns the parent process id.
-|#
+  The `getppid` procedure returns the parent process id.
+  |#
   (define getppid (foreign-procedure "cspp_getppid" () int))
 
 )

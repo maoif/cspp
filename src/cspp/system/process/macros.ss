@@ -116,13 +116,19 @@
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
   Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
-  The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
-  The `:stdout` option accepts `inherit`, `null`, or `capture`; captured output is ignored.
-  The `:stderr` option accepts `inherit`, `null`, `capture`, or `stdout`.
-  The `:encoding` option is `utf-8` (default) for strings or `binary` for bytevectors.
-  The `:timeout` option accepts `#f` or an exact millisecond timeout.
-  The `:success` option accepts `#f`, a list of exit codes, or a status predicate.
-  Bare `capture`, `inherit`, `null`, `stdout`, and `replace` are treated as symbols.
+  The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`; default `null`.
+  Payload strings are UTF-8 encoded and may contain NUL, as may binary payloads.
+  The `:stdout` option accepts `inherit` (default), `null`, or `capture`; captures are discarded.
+  The `:stderr` option accepts `inherit` (default), `null`, `capture`, or `stdout` to merge.
+  The `:encoding` option selects captured output: `utf-8` strings (default) or `binary` bytevectors.
+  The `:timeout` option accepts `#f` (default) or an exact integer from 0 to 2147483647 ms.
+  The timeout covers I/O and waiting after spawn. Cleanup terminates and reaps the immediate child.
+  Descendants are not terminated as a group; see `docs/system.md` for timeout boundaries.
+  The `:success` option accepts `#f`, a list of exit codes from 0 to 255, or a callback.
+  Its callback has signature `exit-status -> object`; a nonfalse result accepts the exit.
+  It runs once after completion; callback errors propagate. Rejection raises a system exit error.
+  Without `:success`, any status is accepted. A code list accepts only normal exits.
+  Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
   |#
   (define-syntax run-process
     (syntax-rules ()
@@ -136,13 +142,19 @@
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
   Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
-  The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
-  The `:stdout` option accepts `inherit`, `null`, or `capture`; captured output is ignored.
-  The `:stderr` option accepts `inherit`, `null`, `capture`, or `stdout`.
-  The `:encoding` option is `utf-8` (default) for strings or `binary` for bytevectors.
-  The `:timeout` option accepts `#f` or an exact millisecond timeout.
-  The `:success` option accepts `#f`, a list of exit codes, or a status predicate.
-  Bare `capture`, `inherit`, `null`, `stdout`, and `replace` are treated as symbols.
+  The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`; default `null`.
+  Payload strings are UTF-8 encoded and may contain NUL, as may binary payloads.
+  The `:stdout` option accepts `inherit` (default), `null`, or `capture`; captures are discarded.
+  The `:stderr` option accepts `inherit` (default), `null`, `capture`, or `stdout` to merge.
+  The `:encoding` option selects captured output: `utf-8` strings (default) or `binary` bytevectors.
+  The `:timeout` option accepts `#f` (default) or an exact integer from 0 to 2147483647 ms.
+  The timeout covers I/O and waiting after spawn. Cleanup terminates and reaps the immediate child.
+  Descendants are not terminated as a group; see `docs/system.md` for timeout boundaries.
+  The `:success` option accepts `#f`, a list of exit codes from 0 to 255, or a callback.
+  Its callback has signature `exit-status -> object`; a nonfalse result accepts the exit.
+  It runs once after completion; callback errors propagate. Rejection raises a system exit error.
+  Without `:success`, only exit code zero is accepted. `#f` accepts any status.
+  Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
   |#
   (define-syntax run-process/check
     (syntax-rules ()
@@ -156,13 +168,19 @@
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
   Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
-  The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
-  The `:stdout` option accepts `capture`, `inherit`, or `null`.
-  The `:stderr` option accepts `capture`, `inherit`, `null`, or `stdout`.
-  The `:encoding` option is `utf-8` (default) for strings or `binary` for bytevectors.
-  The `:timeout` option accepts `#f` or an exact millisecond timeout.
-  The `:success` option accepts `#f`, a list of exit codes, or a status predicate.
-  Bare `capture`, `inherit`, `null`, `stdout`, and `replace` are treated as symbols.
+  The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`; default `null`.
+  Payload strings are UTF-8 encoded and may contain NUL, as may binary payloads.
+  The `:stdout` option accepts `capture` (default), `inherit`, or `null`.
+  The `:stderr` option accepts `capture` (default), `inherit`, `null`, or `stdout` to merge.
+  The `:encoding` option selects captured output: `utf-8` strings (default) or `binary` bytevectors.
+  The `:timeout` option accepts `#f` (default) or an exact integer from 0 to 2147483647 ms.
+  The timeout covers I/O and waiting after spawn. Cleanup terminates and reaps the immediate child.
+  Descendants are not terminated as a group; see `docs/system.md` for timeout boundaries.
+  The `:success` option accepts `#f`, a list of exit codes from 0 to 255, or a callback.
+  Its callback has signature `exit-status -> object`; a nonfalse result accepts the exit.
+  It runs once after completion; callback errors propagate. Rejection raises a system exit error.
+  Without `:success`, any status is accepted. A code list accepts only normal exits.
+  Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
   |#
   (define-syntax capture-process
     (syntax-rules ()
@@ -176,13 +194,19 @@
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
   Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
-  The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
-  The `:stdout` option accepts `capture`, `inherit`, or `null`.
-  The `:stderr` option accepts `capture`, `inherit`, `null`, or `stdout`.
-  The `:encoding` option is `utf-8` (default) for strings or `binary` for bytevectors.
-  The `:timeout` option accepts `#f` or an exact millisecond timeout.
-  The `:success` option accepts `#f`, a list of exit codes, or a status predicate.
-  Bare `capture`, `inherit`, `null`, `stdout`, and `replace` are treated as symbols.
+  The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`; default `null`.
+  Payload strings are UTF-8 encoded and may contain NUL, as may binary payloads.
+  The `:stdout` option accepts `capture` (default), `inherit`, or `null`.
+  The `:stderr` option accepts `capture` (default), `inherit`, `null`, or `stdout` to merge.
+  The `:encoding` option selects captured output: `utf-8` strings (default) or `binary` bytevectors.
+  The `:timeout` option accepts `#f` (default) or an exact integer from 0 to 2147483647 ms.
+  The timeout covers I/O and waiting after spawn. Cleanup terminates and reaps the immediate child.
+  Descendants are not terminated as a group; see `docs/system.md` for timeout boundaries.
+  The `:success` option accepts `#f`, a list of exit codes from 0 to 255, or a callback.
+  Its callback has signature `exit-status -> object`; a nonfalse result accepts the exit.
+  It runs once after completion; callback errors propagate. Rejection raises a system exit error.
+  Without `:success`, only exit code zero is accepted. `#f` accepts any status.
+  Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
   |#
   (define-syntax capture-process/check
     (syntax-rules ()
@@ -196,13 +220,19 @@
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
   Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
-  The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
-  The `:stdout` option accepts `inherit`, `null`, or `capture`; captured output is ignored.
-  The `:stderr` option accepts `inherit`, `null`, `capture`, or `stdout`.
-  The `:encoding` option is `utf-8` (default) for strings or `binary` for bytevectors.
-  The `:timeout` option accepts `#f` or an exact millisecond timeout.
-  The `:success` option accepts `#f`, a list of exit codes, or a status predicate.
-  Bare `capture`, `inherit`, `null`, `stdout`, and `replace` are treated as symbols.
+  The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`; default `null`.
+  Payload strings are UTF-8 encoded and may contain NUL, as may binary payloads.
+  The `:stdout` option accepts `inherit` (default), `null`, or `capture`; captures are discarded.
+  The `:stderr` option accepts `inherit` (default), `null`, `capture`, or `stdout` to merge.
+  The `:encoding` option selects captured output: `utf-8` strings (default) or `binary` bytevectors.
+  The `:timeout` option accepts `#f` (default) or an exact integer from 0 to 2147483647 ms.
+  The timeout covers I/O and waiting after spawn. Cleanup terminates and reaps the immediate child.
+  Descendants are not terminated as a group; see `docs/system.md` for timeout boundaries.
+  The `:success` option accepts `#f`, a list of exit codes from 0 to 255, or a callback.
+  Its callback has signature `exit-status -> object`; a nonfalse result accepts the exit.
+  It runs once after completion; callback errors propagate. Rejection raises a system exit error.
+  Without `:success`, any status is accepted. A code list accepts only normal exits.
+  Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
   |#
   (define-syntax shell-command
     (syntax-rules ()
@@ -216,13 +246,19 @@
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
   Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
-  The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`.
-  The `:stdout` option accepts `capture`, `inherit`, or `null`.
-  The `:stderr` option accepts `capture`, `inherit`, `null`, or `stdout`.
-  The `:encoding` option is `utf-8` (default) for strings or `binary` for bytevectors.
-  The `:timeout` option accepts `#f` or an exact millisecond timeout.
-  The `:success` option accepts `#f`, a list of exit codes, or a status predicate.
-  Bare `capture`, `inherit`, `null`, `stdout`, and `replace` are treated as symbols.
+  The `:stdin` option accepts a string, bytevector, `null`, `inherit`, or `#f`; default `null`.
+  Payload strings are UTF-8 encoded and may contain NUL, as may binary payloads.
+  The `:stdout` option accepts `capture` (default), `inherit`, or `null`.
+  The `:stderr` option accepts `capture` (default), `inherit`, `null`, or `stdout` to merge.
+  The `:encoding` option selects captured output: `utf-8` strings (default) or `binary` bytevectors.
+  The `:timeout` option accepts `#f` (default) or an exact integer from 0 to 2147483647 ms.
+  The timeout covers I/O and waiting after spawn. Cleanup terminates and reaps the immediate child.
+  Descendants are not terminated as a group; see `docs/system.md` for timeout boundaries.
+  The `:success` option accepts `#f`, a list of exit codes from 0 to 255, or a callback.
+  Its callback has signature `exit-status -> object`; a nonfalse result accepts the exit.
+  It runs once after completion; callback errors propagate. Rejection raises a system exit error.
+  Without `:success`, any status is accepted. A code list accepts only normal exits.
+  Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
   |#
   (define-syntax capture-shell-command
     (syntax-rules ()

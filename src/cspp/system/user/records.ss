@@ -1,10 +1,21 @@
 (library (cspp system user records)
-  (export make-unix-user make-unix-group unix-user? unix-user-name unix-user-passwd unix-user-uid unix-user-gid unix-user-gecos unix-user-dir unix-user-shell unix-group? unix-group-name unix-group-passwd unix-group-gid unix-group-mems)
+  (export
+          ;; account records
+          make-unix-user unix-user? unix-user-name unix-user-passwd unix-user-uid unix-user-gid
+          unix-user-gecos unix-user-dir unix-user-shell
+
+          ;; group records
+          make-unix-group unix-group? unix-group-name unix-group-passwd unix-group-gid unix-group-mems)
   (import (cspp chez) (cspp utils) (cspp system private))
 
   #|proc:unix-user?
   The `unix-user?` procedure returns `#t` when its argument is a Unix user record, otherwise `#f`.
   The `object` parameter is the object to test.
+  |#
+  #|record:unix-user
+  Unix user records hold name, password field, uid, gid, GECOS, home directory, and shell.
+  The exported `unix-user?` predicate accepts any object and returns a boolean.
+  String fields remain mutable and are shared with callers of the constructor and accessors.
   |#
   (define-record-type (unix-user %make-unix-user unix-user?)
     (nongenerative)
@@ -87,6 +98,11 @@
   The `unix-group?` procedure returns `#t` when its argument is a Unix group record, otherwise
   `#f`.
   The `object` parameter is the object to test.
+  |#
+  #|record:unix-group
+  Unix group records hold name, password field, gid, and a member-name vector or `#f`.
+  The exported `unix-group?` predicate accepts any object and returns a boolean.
+  Strings and the member vector remain mutable and are shared with constructor/accessor callers.
   |#
   (define-record-type (unix-group %make-unix-group unix-group?)
     (nongenerative)

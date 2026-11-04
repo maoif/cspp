@@ -23,6 +23,11 @@
   record, otherwise `#f`.
   The `object` parameter is the object to test.
   |#
+  #|record:$filesystem-info
+  Filesystem information records hold the queried path, identity, and capacity snapshot.
+  The exported `filesystem-info?` predicate accepts any object and returns a boolean.
+  Block counts use the reported fragment size; device/type fields may be `#f`.
+  |#
   (define-record-type ($filesystem-info make-filesystem-info filesystem-info?)
     (nongenerative)
     (fields (immutable path $filesystem-info-path)
@@ -64,7 +69,8 @@
       (pcheck ([filesystem-info? info]) ($filesystem-info-type info))))
 
   #|proc:filesystem-info-block-size
-  The `filesystem-info-block-size` procedure returns the filesystem block size in bytes.
+  The `filesystem-info-block-size` procedure returns the fragment size used for capacity counts.
+  This is the `statvfs` `f_frsize` value in bytes.
   The `info` parameter is a filesystem information record returned by `filesystem-info`.
   |#
   (define filesystem-info-block-size

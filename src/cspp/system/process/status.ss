@@ -3,14 +3,20 @@
           process-exit-success? make-process-exit-status $wait-status->exit-status)
   (import (cspp chez) (cspp utils))
 
+  ;; Shared value representation: no dependency on command execution or live process ownership.
 ;;;;===----------------------------------------------------------------------===
 ;;;; process status records
 ;;;;===----------------------------------------------------------------------===
 
   #|proc:process-exit-status?
-The `process-exit-status?` procedure returns whether `object` is a status.
-The `object` parameter is any Scheme object.
-|#
+  The `process-exit-status?` procedure returns whether `object` is a status.
+  The `object` parameter is any Scheme object.
+  |#
+  #|record:$process-exit-status
+  Exit-status records hold an `exit`, `signal`, or `stopped` kind and an exact nonnegative code.
+  The exported `process-exit-status?` predicate accepts any object and returns a boolean.
+  These records represent status values; constructing one does not query or control a process.
+  |#
   (define-record-type ($process-exit-status %make-process-exit-status
                                              process-exit-status?)
     (nongenerative)
@@ -44,15 +50,20 @@ The `object` parameter is any Scheme object.
         (%make-process-exit-status kind code))))
 
   #|proc:process-exit-success?
-The `process-exit-success?` procedure returns whether `status` is exit code 0.
-The `status` parameter is a process exit-status record.
-|#
+  The `process-exit-success?` procedure returns whether `status` is exit code 0.
+  The `status` parameter is a process exit-status record.
+  |#
   (define process-exit-success?
     (lambda (status)
       (pcheck ([process-exit-status? status])
               (and (eq? 'exit (process-exit-status-kind status))
                    (= 0 (process-exit-status-code status))))))
 
+  #|proc:$wait-status->exit-status
+  The internal `$wait-status->exit-status` procedure decodes POSIX `raw` wait status bits.
+  `raw` is a nonnegative fixnum returned by a native wait helper. Returns an exit-status record.
+  Public process operations share this decoder so live and captured statuses have one type.
+  |#
   (define $wait-status->exit-status
     (lambda (raw)
       (cond [(fx= (fxand raw #x7f) 0)

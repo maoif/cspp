@@ -8,6 +8,7 @@
           (cspp internal)
           (cspp list))
 
+  ;; User examples and multiple-value contracts: docs/control-utils.md.
   #|macro:forever
   The `forever` macro repeats its body until the implicitly bound `(break value ...)` escapes,
   returning those values. The optional `(index identifier)` binds a zero-based iteration count.

@@ -1,6 +1,12 @@
 (library (cspp system process backend)
-  (export process-result? process-result-status process-result-stdout process-result-stderr process-result-pid process-result-command
-          %run-process %capture-process %run-shell-command %capture-shell-command capture-pipeline)
+  (export
+          ;; completed command results
+          process-result? process-result-status process-result-stdout process-result-stderr
+          process-result-pid process-result-command
+          capture-pipeline
+
+          ;; implementation entry points for command macros
+          %run-process %capture-process %run-shell-command %capture-shell-command)
   (import (cspp chez) (cspp system common) (cspp system private)
           (cspp system process status) (cspp system process private) (cspp utils))
 
@@ -12,6 +18,11 @@
   The `process-result?` procedure returns `#t` when its argument is a process result record,
   otherwise `#f`.
   The `object` parameter is the object to test.
+  |#
+  #|record:$process-result
+  A process-result record stores completed status, stdout/stderr captures, pid, and command.
+  The exported `process-result?` predicate accepts any object and returns a boolean.
+  Captures are UTF-8 strings or binary bytevectors; uncaptured streams are `#f`.
   |#
   (define-record-type ($process-result make-process-result process-result?)
     (nongenerative)
@@ -173,6 +184,13 @@
                            (if ($stderr-to-stdout? options) 1 0)
                            ($timeout-option options)))))
 
+  #|proc:%run-process
+  The internal `%run-process` procedure implements direct command forms and returns an exit status.
+  `who` is the error-origin symbol; `program` is a NUL-free executable string; `arguments` is a
+  proper list of NUL-free strings. `options` is the command option alist documented in
+  `run-process`.
+  Boolean `check?` chooses whether exit code zero is required when no `success` option is supplied.
+  |#
   (define %run-process
     (lambda (who program arguments options check?)
       (pcheck ([symbol? who] [$os-string? program] [$os-string-list? arguments]
@@ -183,6 +201,12 @@
                                   check?
                                   who))))
 
+  #|proc:%capture-process
+  The internal `%capture-process` procedure runs a direct command and returns a process result.
+  `who` is the error-origin symbol; `program` is a NUL-free executable string; `arguments` is a
+  proper list of NUL-free strings. `options` follows `capture-process`, including stream encoding.
+  Boolean `check?` chooses whether exit code zero is required when `success` is omitted.
+  |#
   (define %capture-process
     (lambda (who program arguments options check?)
       (pcheck ([symbol? who] [$os-string? program] [$os-string-list? arguments]
@@ -193,6 +217,12 @@
                                       check?
                                       who))))
 
+  #|proc:%run-shell-command
+  The internal `%run-shell-command` procedure runs `sh -c` and returns an exit status.
+  `who` is the error-origin symbol; `command` is a NUL-free shell-command string.
+  `options` follows `shell-command`; boolean `check?` selects the default zero-exit requirement.
+  A supplied `success` option overrides that requirement.
+  |#
   (define %run-shell-command
     (lambda (who command options check?)
       (pcheck ([symbol? who] [$os-string? command] [list? options] [boolean? check?])
@@ -202,6 +232,12 @@
                                   check?
                                   who))))
 
+  #|proc:%capture-shell-command
+  The internal `%capture-shell-command` procedure runs `sh -c` and returns a process result.
+  `who` is the error-origin symbol; `command` is a NUL-free shell-command string.
+  `options` follows `capture-shell-command`; boolean `check?` selects a default zero-exit check.
+  A supplied `success` option overrides that requirement.
+  |#
   (define %capture-shell-command
     (lambda (who command options check?)
       (pcheck ([symbol? who] [$os-string? command] [list? options] [boolean? check?])

@@ -1,4 +1,6 @@
 (library (cspp system process)
+  ;; Public facade: command macros and completed results are independent of live process state.
+  ;; See docs/system.md for usage, defaults, and stream ownership.
   (export
           ;; exit status records
           process-exit-status?
