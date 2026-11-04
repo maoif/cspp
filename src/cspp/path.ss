@@ -97,6 +97,10 @@
     (lambda (who flavor components)
       (for-each (lambda (component) ($check-component who flavor component)) components)))
 
+  (define $component-list?
+    (lambda (components)
+      (and (list? components) (andmap string? components))))
+
   (define $letter?
     (lambda (c)
       (or (and (char>=? c #\a) (char<=? c #\z))
@@ -232,8 +236,8 @@
                       ($trailing-sep? 'windows s))]))))
 
   #|proc:path-parse
-  The `path-parse` procedure parses `str` as a lexical path of `flavor`.
-  It does not require the path to exist.
+  Parse string `str` as a lexical path using `flavor`, either `'unix` or `'windows`.
+  Return a path object without checking whether the path exists.
   |#
   (define path-parse
     (lambda (flavor str)
@@ -250,12 +254,16 @@
       (if (null? components)
           ""
           (let ([op (open-output-string)])
-            (let loop ([components components] [first? #t])
-              (unless (null? components)
-                (unless first? (write-char sep op))
-                (put-string op (car components))
-                (loop (cdr components) #f)))
-            (get-output-string op)))))
+            (dynamic-wind
+              void
+              (lambda ()
+                (let loop ([components components] [first? #t])
+                  (unless (null? components)
+                    (unless first? (write-char sep op))
+                    (put-string op (car components))
+                    (loop (cdr components) #f)))
+                (get-output-string op))
+              (lambda () (close-output-port op)))))))
 
   (define $render-unix
     (lambda (p sep)
@@ -330,7 +338,7 @@
               ($path-flavor p))))
 
   #|proc:path-components
-  The `path-components` procedure returns a fresh list of component strings.
+  Return a fresh list of fresh strings containing path `p`'s components.
   |#
   (define path-components
     (lambda (p)
@@ -338,8 +346,8 @@
               ($copy-components ($path-components p)))))
 
   #|proc:path-root-info
-  The `path-root-info` procedure returns a symbolic root description useful for
-  diagnostics and tests.
+  Return a fresh list describing path `p`'s root. It starts with the flavor and root kind,
+  then includes a drive, special root, or UNC server and share when present.
   |#
   (define path-root-info
     (lambda (p)
@@ -356,13 +364,14 @@
                   [else ($err 'path-root-info "invalid root kind: ~s" root-kind)])))))
 
   #|proc:path
-  The `path` procedure creates a relative path of `flavor` from components.
+  Create a relative path using flavor `flavor` (`'unix` or `'windows`) and component
+  strings `components`. Return the new path object.
   |#
   (define path
     (lambda (flavor . components)
-      ($check-flavor 'path flavor)
-      ($check-components 'path flavor components)
-      ($make-path-object flavor 'relative #f components #f)))
+      (pcheck ([path-flavor? flavor] [$component-list? components])
+              ($check-components 'path flavor components)
+              ($make-path-object flavor 'relative #f components #f))))
 
   #|proc:path-rooted
   The `path-rooted` procedure creates an absolute Unix path or a Windows path
@@ -370,35 +379,42 @@
   |#
   (define path-rooted
     (lambda (flavor . components)
-      ($check-flavor 'path-rooted flavor)
-      ($check-components 'path-rooted flavor components)
-      ($make-path-object flavor (if (eq? flavor 'unix) 'absolute 'rooted) #f components #f)))
+      (pcheck ([path-flavor? flavor] [$component-list? components])
+              ($check-components 'path-rooted flavor components)
+              ($make-path-object flavor (if (eq? flavor 'unix) 'absolute 'rooted)
+                                 #f components #f))))
 
   #|proc:path-drive
-  The `path-drive` procedure creates a Windows drive-relative path.
+  Create a Windows drive-relative path using drive letter `drive` and component strings
+  `components`. Return the new path object.
   |#
   (define path-drive
     (lambda (drive . components)
-      (let ([drive ($drive->string 'path-drive drive)])
-        ($check-components 'path-drive 'windows components)
-        ($make-path-object 'windows 'drive-relative drive components #f))))
+      (pcheck ([(lambda (value) (or (char? value) (string? value))) drive]
+               [$component-list? components])
+              (let ([drive ($drive->string 'path-drive drive)])
+                ($check-components 'path-drive 'windows components)
+                ($make-path-object 'windows 'drive-relative drive components #f)))))
 
   #|proc:path-drive-absolute
-  The `path-drive-absolute` procedure creates a Windows drive-absolute path.
+  Create a Windows drive-absolute path using drive letter `drive` and component strings
+  `components`. Return the new path object.
   |#
   (define path-drive-absolute
     (lambda (drive . components)
-      (let ([drive ($drive->string 'path-drive-absolute drive)])
-        ($check-components 'path-drive-absolute 'windows components)
-        ($make-path-object 'windows 'drive-absolute drive components #f))))
+      (pcheck ([(lambda (value) (or (char? value) (string? value))) drive]
+               [$component-list? components])
+              (let ([drive ($drive->string 'path-drive-absolute drive)])
+                ($check-components 'path-drive-absolute 'windows components)
+                ($make-path-object 'windows 'drive-absolute drive components #f)))))
 
   #|proc:path-unc
-  The `path-unc` procedure creates a Windows UNC path from server, share, and
-  optional components.
+  Create a Windows UNC path using string names `server` and `share`, and optional
+  component strings `components`. Return the new path object.
   |#
   (define path-unc
     (lambda (server share . components)
-      (pcheck ([string? server share])
+      (pcheck ([string? server share] [$component-list? components])
               ($check-component 'path-unc 'windows server)
               ($check-component 'path-unc 'windows share)
               ($check-components 'path-unc 'windows components)
@@ -463,7 +479,8 @@
 
   #|proc:path-join
   The `path-join` procedure appends path parts. Absolute path parts of the same
-  flavor replace the accumulated base.
+  flavor replace the accumulated base. A Windows root-relative part uses the current
+  drive from a drive-absolute base; unresolved or different drive-relative parts error.
   |#
   (define path-join
     (lambda (base . parts)
@@ -609,8 +626,8 @@
                      trailing?))))
 
   #|proc:path-basename
-  The `path-basename` procedure returns the final component string, or `#f` for
-  roots and empty paths.
+  Return a fresh string containing the final component of path `p`, or `#f` for roots
+  and empty paths.
   |#
   (define path-basename
     (lambda (p)
@@ -749,8 +766,8 @@
       (map (lambda (x) "..") components)))
 
   #|proc:path-relative-to
-  The `path-relative-to` procedure returns a lexical relative path from `base`
-  to `p`. Incompatible roots signal an error.
+  Return a lexical relative path from `base` to `p`. Windows components compare
+  case-insensitively. Incompatible roots and unresolved divergent parent paths error.
   |#
   (define path-relative-to
     (lambda (base p)
