@@ -1,5 +1,42 @@
 (import (cspp chez) (cspp utils))
 
+(mat port-check-argument-safety
+
+     ;; Error case: nonports must fail the predicate check before inspecting port state.
+     (let ([invalid 17])
+       (andmap
+         (lambda (thunk)
+           (guard (condition [else (and (who-condition? condition)
+                                       (eq? 'pcheck (condition-who condition)))])
+             (thunk) #f))
+         (list (lambda () (pcheck-input-binary-port (invalid) #t))
+               (lambda () (pcheck-input-textual-port (invalid) #t))
+               (lambda () (pcheck-output-binary-port (invalid) #t))
+               (lambda () (pcheck-output-textual-port (invalid) #t))))))
+
+(mat flag-check-argument-safety
+
+     ;; Error case: generated decoders must check fixnum arguments even at optimize level 3.
+     (parameterize ([optimize-level 3])
+       (eval '(let ()
+                (define-flags checked-flags (first 1))
+                (guard (condition [else #t]) (checked-flags->symbols 'invalid) #f))
+             (environment '(cspp chez) '(cspp utils))))
+
+     ;; Error case: flag operations reject nonfixnum masks and values in release code.
+     (parameterize ([optimize-level 3])
+       (eval '(let ([invalid 'invalid])
+                (and (guard (condition [else #t]) (flag-any-set? invalid 1) #f)
+                     (guard (condition [else #t]) (flag-all-set? 1 invalid) #f)
+                     (guard (condition [else #t]) (flag-set invalid 1) #f)
+                     (guard (condition [else #t]) (flag-reset 1 invalid) #f)))
+             (environment '(cspp chez) '(cspp utils))))
+
+     (let ([calls 0])
+       (and (= 3 (flag-set (begin (set! calls (+ calls 1)) 1)
+                          (begin (set! calls (+ calls 1)) 2)))
+            (= 2 calls))))
+
 (mat natural-contract
 
      (and (natural? 0) (natural? (+ 1 (most-positive-fixnum)))

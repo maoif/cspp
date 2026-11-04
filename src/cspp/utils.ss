@@ -115,10 +115,14 @@
   (define open-binary-port?  (lambda (p) (and (binary-port? p) (not (port-closed? p)))))
 
   ;; just by default test for openness
-  (define input-binary-port?   (lambda (p) (and (not (port-closed? p)) (input-port? p) (binary-port? p))))
-  (define input-textual-port?  (lambda (p) (and (not (port-closed? p)) (input-port? p) (textual-port? p))))
-  (define output-binary-port?  (lambda (p) (and (not (port-closed? p)) (output-port? p) (binary-port? p))))
-  (define output-textual-port? (lambda (p) (and (not (port-closed? p)) (output-port? p) (textual-port? p))))
+  (define input-binary-port?
+    (lambda (port) (and (input-port? port) (binary-port? port) (not (port-closed? port)))))
+  (define input-textual-port?
+    (lambda (port) (and (input-port? port) (textual-port? port) (not (port-closed? port)))))
+  (define output-binary-port?
+    (lambda (port) (and (output-port? port) (binary-port? port) (not (port-closed? port)))))
+  (define output-textual-port?
+    (lambda (port) (and (output-port? port) (textual-port? port) (not (port-closed? port)))))
 
   #|proc:natural?
   The `natural?` procedure returns whether `object` is an exact nonnegative integer.
@@ -802,12 +806,13 @@
                                      (flag->mask `(or ,@(datum (flags (... ...)))) 'env))))))
                (define ->symbols
                  (lambda (flags)
-                   (let loop ([e 'env] [res '()])
-                     (if (null? e)
-                         res
-                         (if (flag-any-set? (cdar e) flags)
-                             (loop (cdr e) (cons (caar e) res))
-                             (loop (cdr e) res))))))))])))
+                   (pcheck ([fixnum? flags])
+                     (let loop ([e 'env] [res '()])
+                       (if (null? e)
+                           res
+                           (if (not (fx= (fxlogand (cdar e) flags) 0))
+                               (loop (cdr e) (cons (caar e) res))
+                               (loop (cdr e) res)))))))))])))
 
   #|macro:flag-any-set?
   The `flag-any-set?` macro returns whether any bits in fixnum `mask` occur in fixnum `x`.
@@ -815,7 +820,9 @@
   (define-syntax flag-any-set?
     (syntax-rules ()
       ((_ mask x)
-       (not (fx= (fxlogand mask x) 0)))))
+       (let ([bits mask] [value x])
+         (pcheck ([fixnum? bits value])
+           (not (fx= (fxlogand bits value) 0)))))))
 
   #|macro:flag-all-set?
   The `flag-all-set?` macro returns whether every bit in fixnum `mask` occurs in fixnum `x`.
@@ -824,7 +831,9 @@
   (define-syntax flag-all-set?
     (syntax-rules ()
       ((_ mask x)
-       (let ((m mask)) (fx= (fxlogand m x) m)))))
+       (let ([bits mask] [value x])
+         (pcheck ([fixnum? bits value])
+           (fx= (fxlogand bits value) bits))))))
 
   #|macro:flag-set
   The `flag-set` macro returns fixnum `x` with every bit of fixnum `mask` set, without mutation.
@@ -832,7 +841,8 @@
   (define-syntax flag-set
     (syntax-rules ()
       ((_ mask x)
-       (fxlogor mask x))))
+       (let ([bits mask] [value x])
+         (pcheck ([fixnum? bits value]) (fxlogor bits value))))))
 
   #|macro:flag-reset
   The `flag-reset` macro returns fixnum `x` with every bit of fixnum `mask` cleared.
@@ -841,6 +851,7 @@
   (define-syntax flag-reset
     (syntax-rules ()
       ((_ mask x)
-       (fxlogand (fxlognot mask) x))))
+       (let ([bits mask] [value x])
+         (pcheck ([fixnum? bits value]) (fxlogand (fxlognot bits) value))))))
 
   )

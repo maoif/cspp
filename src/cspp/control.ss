@@ -160,20 +160,22 @@
                                     [(dots) (reverse rres)])))])
                (if (datum ?curried)
                    #`(let ([p proc] [varg* e*] ...)
-                       #,(let gen-lambs ([x* #'(x* ...)])
-                           (if (null? x*)
-                               (if dots?
-                                   #`(lambda xdot
-                                       (apply p args ... xdot))
-                                   #'(p args ...))
-                               #`(lambda (#,(car x*))
-                                   #,(gen-lambs (cdr x*))))))
+                       (pcheck ([procedure? p])
+                         #,(let gen-lambs ([x* #'(x* ...)])
+                             (if (null? x*)
+                                 (if dots?
+                                     #`(lambda xdot
+                                         (apply p args ... xdot))
+                                     #'(p args ...))
+                                 #`(lambda (#,(car x*))
+                                     #,(gen-lambs (cdr x*)))))))
                    #`(let ([p proc] [varg* e*] ...)
-                       #,(if dots?
-                             #'(lambda (x* ... . xdot)
-                                 (apply p args ... xdot))
-                             #'(lambda (x* ...)
-                                 (p args ...))))))))])))
+                       (pcheck ([procedure? p])
+                         #,(if dots?
+                               #'(lambda (x* ... . xdot)
+                                   (apply p args ... xdot))
+                               #'(lambda (x* ...)
+                                   (p args ...)))))))))])))
 
   #|macro:sect
   The `sect` macro returns a procedure with one parameter per `_` placeholder in its arguments.
@@ -181,6 +183,7 @@
   their values. Calling the result fills placeholders left to right and calls `proc` with the
   completed arguments, returning its values. A final `...` accepts additional trailing arguments.
   The callback must accept the completed argument list. Captured mutable objects remain shared.
+  A nonprocedure `proc` is rejected when constructing the section.
   |#
   (define-syntax sect
     (syntax-rules ()
@@ -191,6 +194,7 @@
   `proc` with the completed argument list and returns its values. A final `...` produces a
   variadic procedure after all unary slots. With no slots and no `...`, `proc` runs immediately.
   The callback must accept the completed arguments. Captured mutable objects remain shared.
+  A nonprocedure `proc` is rejected before the curried section is returned.
   |#
   (define-syntax sect+
     (syntax-rules ()

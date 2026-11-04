@@ -1,5 +1,13 @@
 (import (cspp chez) (cspp control) (cspp utils) (cspp list) (cspp string) (cspp vector))
 
+(mat section-procedure-contract
+
+     ;; Error case: reject a nonprocedure while constructing a section, before it is called.
+     (guard (condition [else #t]) (sect #f _) #f)
+
+     ;; Error case: curried sections must check the captured callback before accepting slots.
+     (guard (condition [else #t]) (sect+ #f _ _) #f))
+
 
 (mat compose
 
