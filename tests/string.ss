@@ -40,6 +40,7 @@
           (for-all
            (lambda (entry)
              (let* ([proc (car entry)] [indexed? (cadr entry)] [mapping? (caddr entry)]
+                    [reverse? (cadddr entry)]
                     [seen (make-list-builder)]
                     [callback (if indexed?
                                   (lambda (index . chars)
@@ -49,10 +50,17 @@
                                     (seen chars)
                                     (char-upcase (car chars))))]
                     [result (apply proc callback strings)])
-               (and (equal? (seen) (if indexed? indexed chars))
-                    (if mapping? (string=? result "AB") (eq? result (void))))))
-           (list (list string-map #f #t) (list string-map/i #t #t)
-                 (list string-for-each #f #f) (list string-for-each/i #t #f)))))
+               (and (equal? (seen)
+                            (let ([expected (if indexed? indexed chars)])
+                              (if reverse? (reverse expected) expected)))
+                    (if mapping?
+                        (string=? result (if reverse? "BA" "AB"))
+                        (eq? result (void))))))
+           (list (list string-map #f #t #f) (list string-map/i #t #t #f)
+                 (list string-for-each #f #f #f) (list string-for-each/i #t #f #f)
+                 (list string-map-rev #f #t #t) (list string-map/i-rev #t #t #t)
+                 (list string-for-each-rev #f #f #t)
+                 (list string-for-each/i-rev #t #f #t)))))
       '((("ab") ((#\a) (#\b)) ((0 #\a) (1 #\b)))
         (("ab" "cd") ((#\a #\c) (#\b #\d)) ((0 #\a #\c) (1 #\b #\d)))
         (("ab" "cd" "ef") ((#\a #\c #\e) (#\b #\d #\f))
@@ -69,7 +77,8 @@
              (apply proc (lambda args (set! called? #t) #\a) strings)
              (not called?)))
          '(("") ("" "") ("" "" "") ("" "" "" ""))))
-      (list string-map string-map/i string-for-each string-for-each/i))
+      (list string-map string-map/i string-for-each string-for-each/i
+            string-map-rev string-map/i-rev string-for-each-rev string-for-each/i-rev))
 
      ;; Each dispatch clause must reject invalid callbacks, including empty inputs.
      (for-all
@@ -79,7 +88,8 @@
                      (apply proc 'bad strings)
                      #f))
                  '(("") ("" "") ("" "" "") ("" "" "" ""))))
-      (list string-map string-map/i string-for-each string-for-each/i))
+      (list string-map string-map/i string-for-each string-for-each/i
+            string-map-rev string-map/i-rev string-for-each-rev string-for-each/i-rev))
 
      ;; Validate every string argument before reading lengths or calling the callback.
      (for-all
@@ -90,7 +100,8 @@
                      #f))
                  '((bad) (bad "") ("" bad) (bad "" "") ("" bad "") ("" "" bad)
                    ("" "" "" bad))))
-      (list string-map string-map/i string-for-each string-for-each/i))
+      (list string-map string-map/i string-for-each string-for-each/i
+            string-map-rev string-map/i-rev string-for-each-rev string-for-each/i-rev))
 
      ;; Mismatched lengths must fail before the callback has any side effects.
      (for-all
@@ -104,7 +115,8 @@
                   (not called?))))
          '(("a" "") ("" "a") ("a" "a" "") ("a" "" "a")
            ("" "a" "a") ("a" "a" "a" ""))))
-      (list string-map string-map/i string-for-each string-for-each/i))
+      (list string-map string-map/i string-for-each string-for-each/i
+            string-map-rev string-map/i-rev string-for-each-rev string-for-each/i-rev))
 
      ;; Mapping must reject non-character callback results at every supported arity.
      (for-all
@@ -114,7 +126,7 @@
                      (apply proc (lambda args #f) strings)
                      #f))
                  '(("a") ("a" "b") ("a" "b" "c") ("a" "b" "c" "d"))))
-      (list string-map string-map/i)))
+      (list string-map string-map/i string-map-rev string-map/i-rev)))
 
 (mat string-small-arity-traversal-allocation
      ;; Common arities must not allocate temporary character lists per iteration.
@@ -134,7 +146,35 @@
                (and (or (eq? result (void)) (string=? result source))
                     (< allocated 100000))))
            (list (list source) (list source source) (list source source source))))
-        (list string-map string-map/i string-for-each string-for-each/i))))
+        (list string-map string-map/i string-for-each string-for-each/i
+              string-map-rev string-map/i-rev string-for-each-rev string-for-each/i-rev))))
+
+(mat string-reverse-mapping
+     ;; Indexed reverse mapping passes source indexes and writes in traversal order.
+     (string=? "CaA"
+               (string-map/i-rev
+                (lambda (index char) (if (even? index) (char-upcase char) char))
+                "aac"))
+
+     ;; A single character must be visited exactly once, with its original index.
+     (let ([seen (make-list-builder)])
+       (string-for-each/i-rev (lambda (index char) (seen (cons index char))) "λ")
+       (equal? (seen) '((0 . #\λ))))
+
+     ;; Reverse mapping returns independent mutable storage and preserves the input.
+     (let* ([source (string-copy "aλ🚀")]
+            [result (string-map-rev values source)])
+       (string-set! result 0 #\x)
+       (and (string=? source "aλ🚀") (string=? result "xλa")))
+
+     ;; Read each source character at callback time, without making reversed input copies.
+     (let ([source (string-copy "abc")])
+       (string=? "cbz"
+                 (string-map-rev
+                  (lambda (char)
+                    (when (char=? char #\c) (string-set! source 0 #\z))
+                    char)
+                  source))))
 
 (mat string-sequence-procedures
      (let ([seen '()])

@@ -38,16 +38,22 @@
 
 ;; Fixed-arity callbacks keep their own argument handling out of traversal allocation.
 ;; Include four inputs to track the generic fallback alongside the specialized cases.
-(let ([plain (case-lambda
-               [(a) a]
-               [(a b) (if (char=? a b) a b)]
-               [(a b c) (if (char=? a b) a c)]
-               [(a b c d) (if (char=? a b) c d)])]
-      [indexed (case-lambda
-                 [(index a) a]
-                 [(index a b) (if (char=? a b) a b)]
-                 [(index a b c) (if (char=? a b) a c)]
-                 [(index a b c d) (if (char=? a b) c d)])])
+(let* ([plain (case-lambda
+                [(a) a]
+                [(a b) (if (char=? a b) a b)]
+                [(a b c) (if (char=? a b) a c)]
+                [(a b c d) (if (char=? a b) c d)])]
+       [indexed (case-lambda
+                  [(index a) a]
+                  [(index a b) (if (char=? a b) a b)]
+                  [(index a b c) (if (char=? a b) a c)]
+                  [(index a b c d) (if (char=? a b) c d)])]
+       [last-index (fx1- (string-length text))]
+       [reindexed (case-lambda
+                    [(index a) (indexed (fx- last-index index) a)]
+                    [(index a b) (indexed (fx- last-index index) a b)]
+                    [(index a b c) (indexed (fx- last-index index) a b c)]
+                    [(index a b c d) (indexed (fx- last-index index) a b c d)])])
   (for-each
    (lambda (name proc callback)
      (for-each
@@ -58,7 +64,30 @@
       '(1 2 3 4)))
    '(string-map string-map/i string-for-each string-for-each/i)
    (list string-map string-map/i string-for-each string-for-each/i)
-   (list plain indexed plain indexed)))
+   (list plain indexed plain indexed))
+
+  ;; Before a direct reverse API, pure callbacks can use reversed copies plus a forward
+  ;; traversal. Indexed composition translates indexes back to the original inputs.
+  ;; Include copying costs; setup strings and the fixed-arity adapters are preallocated.
+  (for-each
+   (lambda (name forward backward callback backward-callback)
+     (for-each
+      (lambda (count)
+        (let ([strings (make-list count text)])
+          (measure (format "~a/composed/~a" name count) 300
+                   (lambda ()
+                     (apply forward backward-callback
+                            (map (lambda (str)
+                                   (string-slice str -1 (fx- -1 (string-length str)) -1))
+                                 strings))))
+          (measure (format "~a/~a" name count) 300
+                   (lambda () (apply backward callback strings)))))
+      '(1 2 3 4)))
+   '(string-map-rev string-map/i-rev string-for-each-rev string-for-each/i-rev)
+   (list string-map string-map/i string-for-each string-for-each/i)
+   (list string-map-rev string-map/i-rev string-for-each-rev string-for-each/i-rev)
+   (list plain indexed plain indexed)
+   (list plain reindexed plain reindexed)))
 
 (measure 'make-glob-unix 300
          (lambda () (make-glob 'unix "src/one/two/three/**/*.ss")))
