@@ -1,5 +1,43 @@
 (import (cspp))
 
+(mat process-path-search
+
+     ;; Error case: a searchable directory must not hide an executable later in PATH.
+     (let* ([root (format "/tmp/cspp-path-search-~a" (getpid))]
+            [first (string-append root "/first")]
+            [second (string-append root "/second")]
+            [directory (string-append first "/tool")]
+            [program (string-append second "/tool")]
+            [path (string-append first ":" second)]
+            [environment (list (cons "PATH" path))]
+            [chmod (foreign-procedure "chmod" (string unsigned-32) int)]
+            [rmdir (foreign-procedure "rmdir" (string) int)])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (mkdir first)
+           (mkdir second)
+           (mkdir directory)
+           (call-with-output-file program
+             (lambda (port) (put-string port "#!/bin/sh\nexit 0\n")))
+           (chmod program #o700))
+         (lambda ()
+           (and (process-exit-success?
+                  (process-result-status (process-capture tool :env (begin environment))))
+                (process-exit-success?
+                  (process-wait (process-spawn "tool" '() (list (cons 'env environment)))))
+                ;; Relative PATH entries are resolved in the requested child directory.
+                (process-exit-success?
+                  (process-result-status
+                    (process-capture tool :cwd (begin root)
+                      :env '(("PATH" . "first:second")))))))
+         (lambda ()
+           (delete-file program)
+           (rmdir directory)
+           (rmdir first)
+           (rmdir second)
+           (rmdir root)))))
+
 (mat process-api-export-names
 
      (andmap

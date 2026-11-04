@@ -2,6 +2,7 @@
 #include "common.h"
 #include <signal.h>
 #include <pthread.h>
+#include <sys/stat.h>
 
 typedef struct {
   char *data;
@@ -162,10 +163,17 @@ static const char *environment_value(char **env, const char *name) {
 
 // Check the executable before spawning.  Some emulators report an exec failure
 // as a child exit status instead of returning the POSIX spawn error to the parent.
+static int executable_file_access(const char *path) {
+  if (access(path, X_OK) != 0) return errno;
+  struct stat info;
+  if (stat(path, &info) != 0) return errno;
+  // Directories can satisfy X_OK but must not end a PATH search.
+  return S_ISREG(info.st_mode) ? 0 : EACCES;
+}
+
 static int executable_access(const char *path, const char *cwd) {
   if (cwd == NULL || cwd[0] == '\0' || path[0] == '/') {
-    if (access(path, X_OK) == 0) return 0;
-    return errno;
+    return executable_file_access(path);
   }
   size_t cwd_len = strlen(cwd);
   size_t path_len = strlen(path);
@@ -174,7 +182,7 @@ static int executable_access(const char *path, const char *cwd) {
   memcpy(candidate, cwd, cwd_len);
   candidate[cwd_len] = '/';
   memcpy(candidate + cwd_len + 1, path, path_len + 1);
-  int result = access(candidate, X_OK) == 0 ? 0 : errno;
+  int result = executable_file_access(candidate);
   free(candidate);
   return result;
 }
