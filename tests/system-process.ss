@@ -240,6 +240,12 @@
 
 (mat process-pipeline
 
+     ;; Error case: inherited pipeline stderr must not be reported as an empty capture.
+     (let ([result (capture-pipeline '(("printf" "pipeline")))])
+       (and (string=? "pipeline" (process-result-stdout result))
+            (not (process-result-stderr result))
+            (eq? 'pipeline (process-result-command result))))
+
      (let ([r (capture-pipeline
                (list (list "printf" "abc")
                      (list "tr" "a-z" "A-Z")))])

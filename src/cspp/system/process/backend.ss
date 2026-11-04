@@ -57,7 +57,8 @@
       (pcheck ([process-result? result]) ($process-result-pid result))))
 
   #|proc:process-result-command
-  The `process-result-command` procedure returns the shell command string stored in `result`.
+  The `process-result-command` procedure returns the program or shell-command string in `result`.
+  Pipeline results instead store the symbol `pipeline`.
   The `result` parameter is a process result record.
   |#
   (define process-result-command
@@ -224,12 +225,14 @@
   The `capture-pipeline` procedure runs string-list process specs as a pipeline.
   The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
   Command strings must contain no NUL characters. Returns a process result with captured stdout.
+  Stdin and stderr are inherited. The result's stderr field is `#f`, and its command is `pipeline`.
+  The status and pid belong to the final command; all children are waited for before returning.
   |#
   (define capture-pipeline
     (lambda (process-specs)
       (pcheck ([$process-specs? process-specs])
               (let ([result (ffi-result-ref ($spawn-pipeline-capture-ffi process-specs -1))])
-                ($capture-vector->result 'pipeline result '((stdout . capture)) #f
+                ($capture-vector->result 'pipeline result '((stdout . capture) (stderr . inherit)) #f
                                         'capture-pipeline)))))
 
 )
