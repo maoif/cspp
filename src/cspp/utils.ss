@@ -35,14 +35,14 @@
   The `pcase` macro tests the object bound to `id` against clause predicates in order.
   Each predicate has signature `object -> object`; any nonfalse result selects the clause.
   A clause may list alternative predicates. The selected body's values are returned.
-  An `else` clause supplies the fallback; without it, failure raises an error.
+  An `else` clause supplies the fallback and may stand alone; without it, failure raises an error.
   |#
   (define-syntax pcase
     (lambda (stx)
       (syntax-case stx (else)
-        [(_ id cl cl* ... [else el el* ...])
+        [(_ id cl* ... [else el el* ...])
          (identifier? #'id)
-         (let loop ([cl* #'(cl cl* ...)])
+         (let loop ([cl* #'(cl* ...)])
            (if (null? cl*)
                #'(begin el el* ...)
                (syntax-case (car cl*) ()
@@ -681,6 +681,7 @@
   using nonnegative fixnum bounds in increasing order. The defaults are 0 and 10;
   a single bound supplies the upper bound. The optional `generator` has signature
   `() -> object`, defaults to `random-datum`, and is called once per element in list order.
+  The result is undefined if a continuation captured in `generator` is replayed.
   |#
   (define-who random-list
     (case-lambda

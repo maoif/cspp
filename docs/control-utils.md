@@ -109,6 +109,7 @@ For variable-length generators, no bounds selects the defaults, one bound is an 
 and two bounds are lower/upper. A callback, when supported, precedes both bounds.
 Invalid callback results raise without retrying. These are test-data helpers backed by Chez's
 `random`, not cryptographic randomness; use `(cspp crypto)` for security-sensitive random bytes.
+The result of `random-list` is undefined under replay of a continuation captured in its generator.
 
 ## Flags
 

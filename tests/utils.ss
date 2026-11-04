@@ -1,5 +1,21 @@
 (import (cspp chez) (cspp utils))
 
+(mat pcase-fallback
+
+     (let ([value 1]) (eq? 'fallback (pcase value [else 'fallback])))
+
+     (equal? '(one two)
+       (call-with-values
+         (lambda () (let ([value #f]) (pcase value [else (values 'one 'two)]))) list))
+
+     (let ([value "text"])
+       (eq? 'string (pcase value [number? 'number] [string? 'string] [else 'fallback])))
+
+     ;; Error case: a dispatch without a match or fallback still raises.
+     (guard (condition [else #t])
+       (let ([value #f]) (pcase value [number? 'number]))
+       #f))
+
 (mat mutation-macro-argument-safety
 
      ;; Error case: release arithmetic must reject nonfixnum operands before changing the target.
