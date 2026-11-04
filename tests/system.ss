@@ -37,6 +37,21 @@
                    ($read-os-release path)))
          (lambda () (delete-file path)))))
 
+(mat linux-os-release-repeated-keys
+
+     ;; Error case: repeated assignments must return one entry per key with the latest value.
+     (let ([path (format "/tmp/cspp-os-release-repeat-~a" (getpid))])
+       (dynamic-wind
+         (lambda ()
+           (call-with-output-file path
+             (lambda (port)
+               (put-string port
+                 "NAME=Old\nID=example\nNAME=New\nVERSION=first\nVERSION=\n"))))
+         (lambda ()
+           (equal? '((NAME . "New") (ID . "example") (VERSION . ""))
+                   ($read-os-release path)))
+         (lambda () (delete-file path)))))
+
 (mat system-record-constructor-safety
 
      ;; Error case: exit statuses require a known kind and an exact nonnegative code.

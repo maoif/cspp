@@ -23,6 +23,7 @@ an empty list when that file is absent.
 `linux-os-release` returns symbol/string associations from `/etc/os-release`, falling back to
 `/usr/lib/os-release`. It decodes shell quoting and backslash escapes while preserving variable
 references and command substitutions as literal text.
+Repeated keys return only their final value, in order of each key's first appearance.
 
 ## Running commands
 

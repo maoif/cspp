@@ -32,7 +32,8 @@
 
   #|proc:$read-os-release
   The internal `$read-os-release` procedure reads release fields from NUL-free file path `path`.
-  It returns an association list of symbol keys and decoded string values in file order.
+  It returns an association list of symbol keys and decoded string values in first-key order.
+  Repeated keys keep only their final assignment, including an empty string value.
   Blank and comment lines are ignored. Single quotes preserve literal contents; double quotes
   decode escapes for quotes, backslashes, dollar signs, and backticks. Unquoted escapes quote the
   following character. No variable expansion or command substitution is performed.
@@ -42,7 +43,7 @@
       (pcheck ([$os-string? path])
         (call-with-input-file path
           (lambda (port)
-            (let ([builder (make-list-builder)])
+            (let ([builder (make-list-builder)] [entries (make-eq-hashtable)])
               (let loop ()
                 (let ([line (get-line port)])
                   (if (eof-object? line)
@@ -51,10 +52,15 @@
                         (unless (or (string-empty? line) (char=? #\# (string-ref line 0)))
                           (let ([equals (string-search line #\=)])
                             (when equals
-                              (builder
-                                (cons (string->symbol (substring line 0 equals))
-                                      ($decode-value
-                                        (substring line (fx+ equals 1) (string-length line))))))))
+                              (let* ([key (string->symbol (substring line 0 equals))]
+                                     [value ($decode-value
+                                              (substring line (fx+ equals 1) (string-length line)))]
+                                     [entry (hashtable-ref entries key #f)])
+                                (if entry
+                                    (set-cdr! entry value)
+                                    (let ([entry (cons key value)])
+                                      (hashtable-set! entries key entry)
+                                      (builder entry)))))))
                         (loop)))))))))))
 
 )

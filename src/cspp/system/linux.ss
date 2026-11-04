@@ -192,6 +192,7 @@
   The `linux-os-release` procedure returns operating-system release fields as an association list.
   Keys are symbols from `/etc/os-release` or `/usr/lib/os-release`, and values are strings.
   Shell-style quotes and backslash escapes are decoded without expanding variables or commands.
+  Repeated keys keep their final value; unique keys retain their first-appearance order.
   |#
   (define-who linux-os-release
     (lambda ()
