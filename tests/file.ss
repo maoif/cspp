@@ -202,6 +202,30 @@
            (= visits 1))
          (lambda () (when (file-directory? root #f) (file-removetree root))))))
 
+(mat walk-files-alias-paths
+     (let ([root ($random-file)])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (mkdir (path-build root "source"))
+           (file-symlink "source" (path-build root "alias"))
+           (file-symlink "source" (path-build root "alias2"))
+           (file-symlink "." (path-build root "cycle")))
+         (lambda ()
+           (for-all
+            (lambda (top-down?)
+              (let ([visited '()])
+                (walk-files (lambda (directory directories files)
+                              (set! visited (cons directory visited))
+                              #t)
+                            root #t top-down?)
+                (and (= (length visited) 4)
+                     (member (path-build root "source") visited)
+                     (member (path-build root "alias") visited)
+                     (not (not (member (path-build root "alias2") visited))))))
+            '(#t #f)))
+         (lambda () (when (file-directory? root #f) (file-removetree root))))))
+
 (mat file-find-validates-predicate
      (let ([root ($random-file)])
        (dynamic-wind
@@ -1569,6 +1593,41 @@
 
 
 (mat file-copytree
+
+     ;; A destination that leaves the source through a parent component is allowed.
+     (let ([root ($random-file)])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (mkdir (path-build root "source"))
+           (write-string (path-build root "source/leaf") "leaf"))
+         (lambda ()
+           (file-copytree (path-build root "source")
+                          (path-build root "source/../outside"))
+           (string=? "leaf" (read-string (path-build root "outside/leaf"))))
+         (lambda () (when (file-directory? root #f) (file-removetree root)))))
+
+     ;; Error case: a symlinked destination alias must not copy into the source.
+     (let ([root ($random-file)] [calls 0])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (mkdir (path-build root "source"))
+           (write-string (path-build root "source/leaf") "leaf")
+           (file-symlink "source" (path-build root "alias")))
+         (lambda ()
+           (let ([nested (path-build root "alias/nested")])
+             (and (guard (failure [else #t])
+                    (file-copytree (path-build root "source") nested
+                                   (lambda (from to)
+                                     (set! calls (fx1+ calls))
+                                     (when (fx> calls 5)
+                                       (error 'file-copytree "recursive copy"))
+                                     (file-copy from to)))
+                    #f)
+                  (fxzero? calls)
+                  (not (file-exists? nested #f)))))
+         (lambda () (when (file-directory? root #f) (file-removetree root)))))
 
      ;; A trailing separator on the source path must not prevent relative path calculation.
      (let ([root ($random-file)])

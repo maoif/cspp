@@ -1690,6 +1690,7 @@
 
   If `follow-link?` is #f (the default), symlinks to directories are not followed
   and are therefore regarded as files.
+  When following links, distinct aliases are visited separately while ancestor cycles are skipped.
 
   If `top-down?` is #t (the default), the tree is travaled in a top-down manner,
   descending into each directory as deep as possible.
@@ -1711,50 +1712,55 @@
        (pcheck ([procedure? proc] [string? path] [boolean? follow-link? top-down?])
                (unless (file-directory? path)
                  ($err-file-not-directory who path))
-               (let ([visited (make-hashtable equal-hash equal?)])
+               (let ()
                  (define dir? (lambda (candidate) (file-directory? candidate follow-link?)))
-                 (define visit-directory?
-                   (lambda (directory)
+                 (define directory-ancestors
+                   (lambda (directory ancestors)
                      (if (not follow-link?)
-                         #t
+                         ancestors
                          (let* ([stat (file-stat directory)]
                                 [identity (list (file-stat-dev-major stat)
                                                 (file-stat-dev-minor stat)
                                                 (file-stat-inode stat))])
-                           (if (hashtable-contains? visited identity)
-                               #f
-                               (begin (hashtable-set! visited identity #t) #t))))))
+                           (and (not (member identity ancestors))
+                                (cons identity ancestors))))))
                  (define list-entries
                    (lambda (directory)
                      (map! (lambda (name) (path-build directory name))
                            (directory-list directory))))
                  (define walk-top-down
-                   (lambda (directory)
+                   (lambda (directory ancestors)
                      (let-values ([(dirs files) (partition dir? (list-entries directory))])
                        (if (proc directory dirs files)
                            (let visit ([remaining dirs])
                              (cond
                               [(null? remaining) #t]
                               [(not (car remaining)) (visit (cdr remaining))]
-                              [(not (visit-directory? (car remaining)))
-                               (visit (cdr remaining))]
-                              [(walk-top-down (car remaining)) (visit (cdr remaining))]
-                              [else #f]))
+                              [else
+                               (let ([child-ancestors
+                                      (directory-ancestors (car remaining) ancestors)])
+                                 (cond [(not child-ancestors) (visit (cdr remaining))]
+                                       [(walk-top-down (car remaining) child-ancestors)
+                                        (visit (cdr remaining))]
+                                       [else #f]))]))
                            #f))))
                  (define walk-bottom-up
-                   (lambda (directory)
+                   (lambda (directory ancestors)
                      (let-values ([(dirs files) (partition dir? (list-entries directory))])
                        (let visit ([remaining dirs])
                          (cond
                           [(null? remaining) (proc directory dirs files)]
-                          [(not (visit-directory? (car remaining)))
-                           (visit (cdr remaining))]
-                          [(walk-bottom-up (car remaining)) (visit (cdr remaining))]
-                          [else #f])))))
-                 (visit-directory? path)
-                 (if top-down?
-                     (walk-top-down path)
-                     (walk-bottom-up path))))]))
+                          [else
+                           (let ([child-ancestors
+                                  (directory-ancestors (car remaining) ancestors)])
+                             (cond [(not child-ancestors) (visit (cdr remaining))]
+                                   [(walk-bottom-up (car remaining) child-ancestors)
+                                    (visit (cdr remaining))]
+                                   [else #f]))])))))
+                 (let ([ancestors (directory-ancestors path '())])
+                   (if top-down?
+                       (walk-top-down path ancestors)
+                       (walk-bottom-up path ancestors)))))]))
 
   #|proc:print-file-tree
   Print the file tree rooted at `path`.
@@ -2268,11 +2274,24 @@
 
 
 
+  (define $copytree-destination-inside-source?
+    (lambda (src dest)
+      (let* ([parsed (path-normalize (path-parse 'unix dest))]
+             [absolute (if (path-absolute-path? parsed)
+                           parsed
+                           (path-append (path-parse 'unix (current-directory)) parsed))])
+        (let loop ([ancestor absolute])
+          (let ([name (path-render ancestor)])
+            (or (and (file-exists? name) (same-file? src name))
+                (and (path-basename ancestor)
+                     (loop (path-drop-basename ancestor)))))))))
+
   #|proc:file-copytree
   Copy the contents of directory path string `src` into directory path string `dest`.
   An existing `dest` receives the contents directly; otherwise its parent must exist and
   `dest` itself is created. A destination within `src` is rejected. A source root symlink is
   followed, but nested directory symlinks are not traversed.
+  The containment check also follows symlink aliases of the destination.
   Optional `copy` has signature `(lambda (source-path destination-path) ...)` and copies
   each file or symlink; its return values are ignored. By default `file-copy` preserves
   symlinks. Directory metadata is not copied. Return unspecified values.
@@ -2303,8 +2322,9 @@
                                                                  (copy f newd)))
                                                              files))
                                                  src #f #t))])
-                 (unless (and (pair? destination-relative)
-                              (string=? (car destination-relative) ".."))
+                 (when (or (not (and (pair? destination-relative)
+                                     (string=? (car destination-relative) "..")))
+                           ($copytree-destination-inside-source? src dest))
                    (errorf who "destination cannot be inside the source directory"))
                  (if (file-directory? dest #t)
                      (do-copytree dest)
