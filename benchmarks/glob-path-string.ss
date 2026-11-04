@@ -35,6 +35,31 @@
          (lambda () (path-add-component base-path "tail")))
 (measure 'string-map 300 (lambda () (string-map char-upcase text)))
 (measure 'string-for-each 300 (lambda () (string-for-each char-alphabetic? text)))
+
+;; Fixed-arity callbacks keep their own argument handling out of traversal allocation.
+;; Include four inputs to track the generic fallback alongside the specialized cases.
+(let ([plain (case-lambda
+               [(a) a]
+               [(a b) (if (char=? a b) a b)]
+               [(a b c) (if (char=? a b) a c)]
+               [(a b c d) (if (char=? a b) c d)])]
+      [indexed (case-lambda
+                 [(index a) a]
+                 [(index a b) (if (char=? a b) a b)]
+                 [(index a b c) (if (char=? a b) a c)]
+                 [(index a b c d) (if (char=? a b) c d)])])
+  (for-each
+   (lambda (name proc callback)
+     (for-each
+      (lambda (count)
+        (let ([strings (make-list count text)])
+          (measure (format "~a/~a" name count) 300
+                   (lambda () (apply proc callback strings)))))
+      '(1 2 3 4)))
+   '(string-map string-map/i string-for-each string-for-each/i)
+   (list string-map string-map/i string-for-each string-for-each/i)
+   (list plain indexed plain indexed)))
+
 (measure 'make-glob-unix 300
          (lambda () (make-glob 'unix "src/one/two/three/**/*.ss")))
 (measure 'make-glob-windows 300

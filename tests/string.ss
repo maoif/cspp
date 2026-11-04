@@ -32,6 +32,110 @@
      ;; Callback type validation must run even when the mapped output is empty.
      (error? (string-map 'bad "")))
 
+(mat string-traversal-arities
+     ;; Check character order, index placement, results, and the four-string fallback.
+     (for-all
+      (lambda (fixture)
+        (let ([strings (car fixture)] [chars (cadr fixture)] [indexed (caddr fixture)])
+          (for-all
+           (lambda (entry)
+             (let* ([proc (car entry)] [indexed? (cadr entry)] [mapping? (caddr entry)]
+                    [seen (make-list-builder)]
+                    [callback (if indexed?
+                                  (lambda (index . chars)
+                                    (seen (cons index chars))
+                                    (char-upcase (car chars)))
+                                  (lambda chars
+                                    (seen chars)
+                                    (char-upcase (car chars))))]
+                    [result (apply proc callback strings)])
+               (and (equal? (seen) (if indexed? indexed chars))
+                    (if mapping? (string=? result "AB") (eq? result (void))))))
+           (list (list string-map #f #t) (list string-map/i #t #t)
+                 (list string-for-each #f #f) (list string-for-each/i #t #f)))))
+      '((("ab") ((#\a) (#\b)) ((0 #\a) (1 #\b)))
+        (("ab" "cd") ((#\a #\c) (#\b #\d)) ((0 #\a #\c) (1 #\b #\d)))
+        (("ab" "cd" "ef") ((#\a #\c #\e) (#\b #\d #\f))
+         ((0 #\a #\c #\e) (1 #\b #\d #\f)))
+        (("ab" "cd" "ef" "gh") ((#\a #\c #\e #\g) (#\b #\d #\f #\h))
+         ((0 #\a #\c #\e #\g) (1 #\b #\d #\f #\h))))))
+
+(mat string-traversal-empty-and-validation
+     (for-all
+      (lambda (proc)
+        (for-all
+         (lambda (strings)
+           (let ([called? #f])
+             (apply proc (lambda args (set! called? #t) #\a) strings)
+             (not called?)))
+         '(("") ("" "") ("" "" "") ("" "" "" ""))))
+      (list string-map string-map/i string-for-each string-for-each/i))
+
+     ;; Each dispatch clause must reject invalid callbacks, including empty inputs.
+     (for-all
+      (lambda (proc)
+        (for-all (lambda (strings)
+                   (guard (condition [(or (error? condition) (violation? condition)) #t])
+                     (apply proc 'bad strings)
+                     #f))
+                 '(("") ("" "") ("" "" "") ("" "" "" ""))))
+      (list string-map string-map/i string-for-each string-for-each/i))
+
+     ;; Validate every string argument before reading lengths or calling the callback.
+     (for-all
+      (lambda (proc)
+        (for-all (lambda (strings)
+                   (guard (condition [(or (error? condition) (violation? condition)) #t])
+                     (apply proc values strings)
+                     #f))
+                 '((bad) (bad "") ("" bad) (bad "" "") ("" bad "") ("" "" bad)
+                   ("" "" "" bad))))
+      (list string-map string-map/i string-for-each string-for-each/i))
+
+     ;; Mismatched lengths must fail before the callback has any side effects.
+     (for-all
+      (lambda (proc)
+        (for-all
+         (lambda (strings)
+           (let ([called? #f])
+             (and (guard (condition [(or (error? condition) (violation? condition)) #t])
+                    (apply proc (lambda args (set! called? #t) #\a) strings)
+                    #f)
+                  (not called?))))
+         '(("a" "") ("" "a") ("a" "a" "") ("a" "" "a")
+           ("" "a" "a") ("a" "a" "a" ""))))
+      (list string-map string-map/i string-for-each string-for-each/i))
+
+     ;; Mapping must reject non-character callback results at every supported arity.
+     (for-all
+      (lambda (proc)
+        (for-all (lambda (strings)
+                   (guard (condition [(or (error? condition) (violation? condition)) #t])
+                     (apply proc (lambda args #f) strings)
+                     #f))
+                 '(("a") ("a" "b") ("a" "b" "c") ("a" "b" "c" "d"))))
+      (list string-map string-map/i)))
+
+(mat string-small-arity-traversal-allocation
+     ;; Common arities must not allocate temporary character lists per iteration.
+     (let ([source (make-string 8192 #\a)]
+           [callback (case-lambda
+                       [(a) #\a]
+                       [(a b) #\a]
+                       [(a b c) #\a]
+                       [(a b c d) #\a])])
+       (for-all
+        (lambda (proc)
+          (for-all
+           (lambda (strings)
+             (let* ([before (statistics)]
+                    [result (apply proc callback strings)]
+                    [allocated (sstats-bytes (sstats-difference (statistics) before))])
+               (and (or (eq? result (void)) (string=? result source))
+                    (< allocated 100000))))
+           (list (list source) (list source source) (list source source source))))
+        (list string-map string-map/i string-for-each string-for-each/i))))
+
 (mat string-sequence-procedures
      (let ([seen '()])
        (string-for-each (lambda (ch) (set! seen (cons ch seen))) "ab")
