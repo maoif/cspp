@@ -31,7 +31,7 @@
   |#
   (define-record-type ($branch %branch branch?)
     (fields (immutable path branch-path) (immutable components branch-components)
-            (immutable separator branch-separator)))
+            (immutable separator branch-separator) (immutable directory? branch-directory?)))
 
   ;; Path syntax follows the host OS when callers omit an explicit flavor.
   (define $default-flavor
@@ -44,37 +44,60 @@
   (define $brace-open
     (lambda (s)
       (let ([n (string-length s)])
-        (let loop ([i 0])
+        (let loop ([i 0] [class-start #f])
           (cond [(fx= i n) #f]
                 [(char=? (string-ref s i) #\\)
-                 (if (fx< (fx1+ i) n) (loop (fx+ i 2)) ($error "trailing escape"))]
+                 (if (fx< (fx1+ i) n) (loop (fx+ i 2) class-start)
+                     ($error "trailing escape"))]
+                [(and class-start (char=? (string-ref s i) #\])
+                      (fx> i (fx1+ class-start)))
+                 (loop (fx1+ i) #f)]
+                [(and (not class-start) (char=? (string-ref s i) #\[))
+                 (loop (fx1+ i) i)]
+                [class-start (loop (fx1+ i) class-start)]
                 [(char=? (string-ref s i) #\}) ($error "unmatched closing brace")]
                 [(char=? (string-ref s i) #\{) i]
-                [else (loop (fx1+ i))])))))
+                [else (loop (fx1+ i) #f)])))))
   (define $brace-close
     (lambda (s open)
       (let ([n (string-length s)])
-        (let loop ([i (fx1+ open)] [depth 1])
+        (let loop ([i (fx1+ open)] [depth 1] [class-start #f])
           (cond [(fx= i n) ($error "unmatched opening brace")]
                 [(char=? (string-ref s i) #\\)
-                 (if (fx< (fx1+ i) n) (loop (fx+ i 2) depth) ($error "trailing escape"))]
-                [(char=? (string-ref s i) #\{) (loop (fx1+ i) (fx1+ depth))]
+                 (if (fx< (fx1+ i) n) (loop (fx+ i 2) depth class-start)
+                     ($error "trailing escape"))]
+                [(and class-start (char=? (string-ref s i) #\])
+                      (fx> i (fx1+ class-start)))
+                 (loop (fx1+ i) depth #f)]
+                [(and (not class-start) (char=? (string-ref s i) #\[))
+                 (loop (fx1+ i) depth i)]
+                [class-start (loop (fx1+ i) depth class-start)]
+                [(char=? (string-ref s i) #\{)
+                 (loop (fx1+ i) (fx1+ depth) #f)]
                 [(char=? (string-ref s i) #\})
-                 (if (fx= depth 1) i (loop (fx1+ i) (fx1- depth)))]
-                [else (loop (fx1+ i) depth)])))))
+                 (if (fx= depth 1) i (loop (fx1+ i) (fx1- depth) #f))]
+                [else (loop (fx1+ i) depth #f)])))))
   (define $split
     (lambda (s)
       (let ([n (string-length s)])
-        (let loop ([i 0] [start 0] [depth 0] [out '()])
+        (let loop ([i 0] [start 0] [depth 0] [out '()] [class-start #f])
           (cond [(fx= i n) (reverse (cons (substring s start n) out))]
                 [(char=? (string-ref s i) #\\)
-                 (if (fx< (fx1+ i) n) (loop (fx+ i 2) start depth out)
+                 (if (fx< (fx1+ i) n) (loop (fx+ i 2) start depth out class-start)
                      ($error "trailing escape in brace"))]
-                [(char=? (string-ref s i) #\{) (loop (fx1+ i) start (fx1+ depth) out)]
-                [(char=? (string-ref s i) #\}) (loop (fx1+ i) start (fx1- depth) out)]
+                [(and class-start (char=? (string-ref s i) #\])
+                      (fx> i (fx1+ class-start)))
+                 (loop (fx1+ i) start depth out #f)]
+                [(and (not class-start) (char=? (string-ref s i) #\[))
+                 (loop (fx1+ i) start depth out i)]
+                [class-start (loop (fx1+ i) start depth out class-start)]
+                [(char=? (string-ref s i) #\{)
+                 (loop (fx1+ i) start (fx1+ depth) out #f)]
+                [(char=? (string-ref s i) #\})
+                 (loop (fx1+ i) start (fx1- depth) out #f)]
                 [(and (char=? (string-ref s i) #\,) (fx= depth 0))
-                 (loop (fx1+ i) (fx1+ i) depth (cons (substring s start i) out))]
-                [else (loop (fx1+ i) start depth out)])))))
+                 (loop (fx1+ i) (fx1+ i) depth (cons (substring s start i) out) #f)]
+                [else (loop (fx1+ i) start depth out #f)])))))
   (define $integer?
     (lambda (s)
       (let ([n (string-length s)])
@@ -206,10 +229,24 @@
 
   (define $compile
     (lambda (flavor s separator)
-      (let ([parsed (path-parse flavor s)])
+      (let* ([source
+              (if (eq? flavor 'windows) s
+                  (let ([n (string-length s)])
+                    (let loop ([i 0] [chars '()])
+                      (cond [(fx= i n) (list->string (reverse chars))]
+                            [(and (char=? (string-ref s i) #\\)
+                                  (fx< (fx1+ i) n)
+                                  (char=? (string-ref s (fx1+ i)) #\/))
+                             (loop (fx+ i 2) (cons #\/ chars))]
+                            [else (loop (fx1+ i) (cons (string-ref s i) chars))]))))]
+             [parsed (path-parse flavor source)])
         (%branch parsed (map (lambda (c) ($component-compile flavor c))
                              (path-components parsed))
-                 separator))))
+                 separator
+                 (and (> (string-length source) 0)
+                      (let ([last (string-ref source (fx1- (string-length source)))])
+                        (if (eq? flavor 'unix) (char=? last #\/)
+                            (or (char=? last #\/) (char=? last #\\)))))))))
 
   (define $match?
     (lambda (components names)
@@ -234,15 +271,20 @@
 
   (define $expand-tilde
     (lambda (flavor s)
-      (cond [(or (string=? s "~")
-                 (and (> (string-length s) 1) (char=? (string-ref s 0) #\~)
-                      (or (char=? (string-ref s 1) #\/)
-                          (and (eq? flavor 'windows) (char=? (string-ref s 1) #\\)))))
-             (path-render (path-expand-user (path-parse flavor s))
-                          (if (eq? flavor 'unix) #\/ #\\))]
-            [(and (> (string-length s) 0) (char=? (string-ref s 0) #\~))
-             ($error "named-user tilde is unsupported")]
-            [else s])))
+      (let ([n (string-length s)])
+        (cond [(or (string=? s "~")
+                   (and (> n 1) (char=? (string-ref s 0) #\~)
+                        (or (char=? (string-ref s 1) #\/)
+                            (and (eq? flavor 'windows) (char=? (string-ref s 1) #\\)))))
+               (let* ([separator (if (eq? flavor 'unix) #\/ #\\)]
+                      [home (path-render (path-expand-user (path-parse flavor "~"))
+                                         separator)])
+                 (if (fx= n 1) home
+                     (string-append home (string separator)
+                                    (substring s 2 n))))]
+              [(and (> n 0) (char=? (string-ref s 0) #\~))
+               ($error "named-user tilde is unsupported")]
+              [else s]))))
 
   (define $root=?
     (lambda (flavor a b)
@@ -255,9 +297,11 @@
   #|proc:make-glob
   Compile string `pattern` and return an immutable, opaque glob object.
   Optional `flavor` follows the host OS: `'windows` on Windows, `'unix`
-  elsewhere. Brace alternatives
-  form an ordered union; numeric ranges and a leading current-user tilde expand
-  before component compilation. Malformed syntax raises an error.
+  elsewhere. Brace alternatives form an ordered union; numeric ranges and a leading
+  current-user tilde expand before component compilation. Backslash escapes characters
+  in Unix patterns; escaped `/` remains a separator. Windows treats both slash forms as
+  separators, so bracket classes quote wildcard characters such as `[*]`. Malformed
+  syntax raises an error.
   |#
   (define make-glob
     (case-lambda
@@ -278,7 +322,7 @@
   #|proc:glob?
   Return `#t` when arbitrary `object` is a compiled glob object, otherwise `#f`.
   |#
-  (define glob? (lambda (object) (pcheck ([(lambda (x) #t) object]) (%glob? object))))
+  (define glob? (lambda (object) (%glob? object)))
 
   (define $physical
     (lambda (p)
@@ -305,7 +349,7 @@
   |#
   (define $expansion-iterator
     (lambda (compiled follow-link? include-directories?)
-      (let ([branches (glob-patterns compiled)] [stack '()]
+      (let ([branches (glob-patterns compiled)] [stack '()] [active-branch #f]
             [seen (make-hashtable string-hash string=?)] [finished? #f])
         (define close-all
           (lambda ()
@@ -329,6 +373,7 @@
         (define scan-separator (lambda (task) (vector-ref task 6)))
         (define begin-branch
           (lambda (branch)
+            (set! active-branch branch)
             (let* ([parsed (branch-path branch)]
                    [root (let loop ([p parsed] [cs (path-components parsed)])
                            (if (null? cs) (path-with-trailing-directory p #f)
@@ -344,21 +389,22 @@
                 (string=? wanted actual))))
         (define find-literal-entry
           (lambda (flavor parent wanted)
-            (let ([directory (fs-open-directory ($physical parent))]
-                  [found #f])
-              (dynamic-wind
-                void
-                (lambda ()
-                  (let loop ()
-                    (unless found
-                      (let ([entry (fs-read-directory directory)])
-                        (when entry
-                          (unless (member (car entry) '("." ".."))
-                            (when ($entry-match? flavor wanted (car entry))
-                              (set! found entry)))
-                          (unless found (loop)))))))
-                (lambda () (fs-close-directory directory)))
-              found)))
+            (if (not (file-directory? ($physical parent) follow-link?)) #f
+                (let ([directory (fs-open-directory ($physical parent))]
+                      [found #f])
+                  (dynamic-wind
+                    void
+                    (lambda ()
+                      (let loop ()
+                        (unless found
+                          (let ([entry (fs-read-directory directory)])
+                            (when entry
+                              (unless (member (car entry) '("." ".."))
+                                (when ($entry-match? flavor wanted (car entry))
+                                  (set! found entry)))
+                              (unless found (loop)))))))
+                    (lambda () (fs-close-directory directory)))
+                  found))))
         (define identity
           (lambda (name)
             (list (file-dev-major name) (file-dev-minor name) (file-inode name))))
@@ -402,14 +448,30 @@
                            (set! stack (cdr stack))
                            (let ([separator (task-separator task)] [name ($physical physical)])
                              (cond [(null? cs)
-                                    (let* ([rendered (path-render p separator)]
+                                    (let* ([result-path
+                                            (if (and (branch-directory? active-branch)
+                                                     (pair? (path-components p)))
+                                                (path-with-trailing-directory p #t) p)]
+                                           [rendered (path-render result-path separator)]
                                            [result (if (string=? rendered "") "." rendered)])
                                       (if (and (eligible? name)
+                                               (or (not (branch-directory? active-branch))
+                                                   (file-directory? name follow-link?))
                                                (not (hashtable-contains? seen result)))
                                           (begin (hashtable-set! seen result #t) result) (loop)))]
                                    [(not (car cs))
                                     (open-scan p physical cs ancestors separator #f)
                                     (set! stack (cons (vector 'node p physical (cdr cs) ancestors separator) stack))
+                                    (loop)]
+                                   [(member (component-literal (car cs)) '("." ".."))
+                                    (let* ([component (component-literal (car cs))]
+                                           [logical-child (path-add-component p component)]
+                                           [physical-child (path-add-component physical component)]
+                                           [next (cdr cs)])
+                                      (when (or (null? next)
+                                                (file-directory? ($physical physical-child) follow-link?))
+                                        (set! stack (cons (vector 'node logical-child physical-child
+                                                                   next ancestors separator) stack))))
                                     (loop)]
                                    [(component-literal (car cs))
                                     (let ([entry (find-literal-entry (glob-flavor compiled)
@@ -479,10 +541,10 @@
 
   #|proc:glob
   Expand string `pattern` against the filesystem and return duplicate-free path
-  strings sorted by component order. Optional `flavor` is `'unix` (the default)
-  or `'windows`. Traversal starts at the longest literal prefix and preserves
-  the root spelling. Symlinked directories are not descended into; matching
-  directories are excluded. An unmatched pattern returns the empty list.
+  strings sorted by component order. Optional `flavor` follows the host OS:
+  `'windows` on Windows, `'unix` elsewhere. Traversal starts at the longest literal
+  prefix and preserves the root spelling. Symlinked directories are not descended into;
+  matching directories are excluded. An unmatched pattern returns the empty list.
   |#
   (define glob
     (case-lambda

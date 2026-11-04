@@ -19,6 +19,7 @@
      (not (glob-match? (make-glob "file[0-9].txt") "filex.txt"))
      (glob-match? (make-glob "file[!0-9].txt") "filex.txt")
      (glob-match? (make-glob "literal\\*.txt") "literal*.txt")
+     (glob-match? (make-glob "src\\/cspp") "src/cspp")
      ;; Regex metacharacters in literal glob text must remain literal.
      (glob-match? (make-glob "a.+(b).txt") "a.+(b).txt"))
 
@@ -43,6 +44,7 @@
 
 (mat glob-windows-flavor
      (glob-match? (make-glob 'windows "src\\*.ss") "src\\file.ss")
+     (glob-match? (make-glob 'windows "src/[*].ss") "src/*.ss")
      (glob-match? (make-glob 'windows "C:\\src\\*.ss") "C:\\src\\file.ss")
      (not (glob-match? (make-glob 'windows "src\\*.ss") "src\\nested\\file.ss")))
 
@@ -62,6 +64,11 @@
      (equal? '("__cspp_missing_glob_file__")
              (glob* "__cspp_missing_glob_file__" #f #f 'literal)))
 
+(mat glob-tilde-preserves-dot-components
+     (let* ([home (path-render (path-expand-user (path-parse 'unix "~")))])
+       (and (glob-match? 'unix "~/a/../x" (string-append home "/a/../x"))
+            (not (glob-match? 'unix "~/a/../x" (string-append home "/x"))))))
+
 (mat glob-filesystem-iterator
      (let ([iter (glob->iter "*.ss")])
        (and (string? (iter-next! iter))
@@ -72,6 +79,9 @@
      (glob-match? (make-glob "?") "\n")
      (glob-match? (make-glob "*") "a\nb")
      (glob-match? (make-glob "[]a]") "]")
+     (glob-match? (make-glob "[{]") "{")
+     (glob-match? (make-glob "[}]") "}")
+     (glob-match? (make-glob "[{a,b}]") ",")
      (glob-match? (make-glob "[^a]") "b")
      (glob-match? (make-glob "a{b,{c,d}}") "ad")
      ;; These paths are lexical fixtures, independent of the repository layout.
@@ -101,6 +111,23 @@
                     '("z.txt" "a.txt" ".hidden" "a/one.txt" "a/deep/two.txt" "literal*.txt")))
         (lambda () (proc root))
         (lambda () (file-removetree root))))))
+
+(mat glob-dot-components-and-file-pruning
+     ($with-glob-tree
+       (lambda (root)
+         (and (equal? (glob (string-append root "/./a/one.txt"))
+                      (list (string-append root "/./a/one.txt")))
+              (equal? (glob (string-append root "/a/../a/one.txt"))
+                      (list (string-append root "/a/../a/one.txt")))
+              (equal? (glob (string-append root "/*/one.txt"))
+                      (list (string-append root "/a/one.txt")))))))
+
+(mat glob-trailing-directory-marker
+     ($with-glob-tree
+       (lambda (root)
+         (and (equal? (glob* (string-append root "/a/") #f #t 'empty)
+                      (list (string-append root "/a/")))
+              (null? (glob* (string-append root "/z.txt/") #f #t 'empty))))))
 
 (mat glob-rooted-and-pruned-expansion
      ($with-glob-tree
