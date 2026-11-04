@@ -769,6 +769,14 @@
     (lambda (components)
       (map (lambda (x) "..") components)))
 
+  (define $relative-components
+    (lambda (p)
+      ;; Drive-relative normalization preserves spelling, but relativization needs
+      ;; cancellable internal parents removed before counting directory levels.
+      ($normalize-components (if (eq? ($path-root-kind p) 'drive-relative)
+                                 'relative ($path-root-kind p))
+                             ($path-components p))))
+
   #|proc:path-relative-to
   Return a lexical relative path from `base` to `p`. Windows components compare
   case-insensitively. Incompatible roots and unresolved divergent parent paths error.
@@ -779,18 +787,16 @@
               ($same-flavor 'path-relative-to base p)
               (unless (path-same-root? base p)
                 ($err 'path-relative-to "incompatible path roots"))
-              (let ([base (path-normalize base)]
-                    [p (path-normalize p)])
-                (call-with-values
+              (call-with-values
                   (lambda () ($drop-common-prefix ($path-flavor p)
-                                                   ($path-components base)
-                                                   ($path-components p)))
+                                                   ($relative-components base)
+                                                   ($relative-components p)))
                   (lambda (base-rest p-rest)
                     (when (and (pair? base-rest) (string=? (car base-rest) ".."))
                       ($err 'path-relative-to "cannot relativize from an unresolved parent path"))
                     ($make-relative-like ($path-flavor p)
                                          (append ($make-ups base-rest) p-rest)
-                                         ($path-trailing? p))))))))
+                                         ($path-trailing? p)))))))
 
   #|proc:path-starts-with-user-home?
   The `path-starts-with-user-home?` procedure returns whether the first
@@ -823,7 +829,8 @@
 
   #|proc:path-expand-user
   The `path-expand-user` procedure expands a leading `~` component using either
-  the host current user's home directory or an explicit home path.
+  the host current user's home directory or explicit string/path object `home`.
+  Return a path object; an input without a leading `~` is returned unchanged.
   |#
   (define path-expand-user
     (case-lambda
@@ -834,7 +841,7 @@
                      (path-expand-user p home)
                      ($err 'path-expand-user "no usable home directory in environment"))))]
       [(p home)
-       (pcheck ([path? p])
+       (pcheck ([path? p] [(lambda (value) (or (string? value) (path? value))) home])
                (if (not (path-starts-with-user-home? p))
                    p
                    (let ([home ($coerce-home 'path-expand-user ($path-flavor p) home)])

@@ -5,6 +5,27 @@
   (lambda (p s)
     (string=? (path-render p) s)))
 
+(mat path-drive-relative-relativization
+     ;; Internal parents are cancellable even though path-normalize preserves their spelling.
+     (same-path? (path-relative-to (path-parse 'windows "C:a/../b")
+                                   (path-parse 'windows "C:b")) "")
+
+     (same-path? (path-relative-to (path-parse 'windows "C:a/../b")
+                                   (path-parse 'windows "C:b/c/../d")) "d")
+
+     (same-path? (path-relative-to (path-parse 'windows "C:../a/../b")
+                                   (path-parse 'windows "C:../c")) "..\\c")
+
+     ;; An unmatched leading parent in the base cannot be inverted without an absolute base.
+     (error? (path-relative-to (path-parse 'windows "C:a/../../b")
+                               (path-parse 'windows "C:b"))))
+
+(mat path-user-home-validation
+     ;; Validate explicit home types even when the input needs no expansion.
+     (error? (path-expand-user (path 'unix "file") 123))
+
+     (same-path? (path-expand-user (path 'unix "file") "/home/me") "file"))
+
 (mat path-private-components-do-not-need-recopying
      ;; A short append should not recopy a large, already-owned component each time.
      (let* ([base (path 'unix (make-string 4096 #\x))]
