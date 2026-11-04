@@ -281,7 +281,14 @@
        (lambda (root)
          (and (equal? (glob* (string-append root "/a/") #f #t 'empty)
                       (list (string-append root "/a/")))
-              (null? (glob* (string-append root "/z.txt/") #f #t 'empty))))))
+              (null? (glob* (string-append root "/z.txt/") #f #t 'empty))
+              (glob-match? 'unix "a/" "a/")
+              (not (glob-match? 'unix "a/" "a"))
+              (not (glob-match? 'unix "a" "a/"))))))
+
+(mat glob-windows-root-case-matches-components
+     (not (glob-match? 'windows "\\\\straße\\share\\x"
+                       "\\\\STRASSE\\share\\x")))
 
 (mat glob-rooted-and-pruned-expansion
      ($with-glob-tree

@@ -312,6 +312,35 @@
                   (hashtable-set! memo key answer)
                   answer)))))))
 
+  (define $glob-root=?
+    (lambda (pattern-path candidate-path)
+      (and (eq? (path-flavor pattern-path) (path-flavor candidate-path))
+           (let ([pattern-root (path-root-info pattern-path)]
+                 [candidate-root (path-root-info candidate-path)])
+             (and (eq? (cadr pattern-root) (cadr candidate-root))
+                  (let loop ([pattern-parts (if (caddr pattern-root)
+                                                (cddr pattern-root) '())]
+                             [candidate-parts (if (caddr candidate-root)
+                                                  (cddr candidate-root) '())])
+                    (cond [(null? pattern-parts) (null? candidate-parts)]
+                          [(null? candidate-parts) #f]
+                          [(if (eq? (path-flavor pattern-path) 'windows)
+                               (regex-matches?
+                                (sre->regex (list 'seq (car pattern-parts)) '(i))
+                                (car candidate-parts))
+                               (string=? (car pattern-parts) (car candidate-parts)))
+                           (loop (cdr pattern-parts) (cdr candidate-parts))]
+                          [else #f])))))))
+
+  (define $trailing-separator?
+    (lambda (flavor path)
+      (let ([n (string-length path)])
+        (and (> n 0)
+             (let ([last (string-ref path (- n 1))])
+               (if (eq? flavor 'unix)
+                   (char=? last #\/)
+                   (memv last '(#\/ #\\))))))))
+
   (define $tilde-home
     (lambda (flavor s)
       (let ([n (string-length s)])
@@ -639,7 +668,8 @@
   compiled `glob`, using that object's flavor. The three-argument form compiles
   string `pattern` for explicit `flavor` (`'unix` or `'windows`) before matching
   `path`. Matching is lexical, case-insensitive for Windows, and performs no
-  filesystem access or dot-component normalization.
+  filesystem access or dot-component normalization. A trailing separator on either
+  pattern or candidate requires a trailing separator on both.
   |#
   (define glob-match?
     (case-lambda
@@ -647,7 +677,9 @@
        (pcheck ([glob? glob] [string? path])
                (let* ([p (path-parse (glob-flavor glob) path)]
                       [values (path-components p)])
-                 (exists (lambda (x) (and (path-same-root? p (branch-path x))
+                 (exists (lambda (x) (and ($glob-root=? (branch-path x) p)
+                                         (eq? (branch-directory? x)
+                                              ($trailing-separator? (glob-flavor glob) path))
                                          ($match? (branch-components x) values)))
                          (glob-patterns glob))))]
       [(flavor pattern path)
