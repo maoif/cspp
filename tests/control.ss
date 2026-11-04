@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp chez) (cspp control) (cspp utils) (cspp list) (cspp string) (cspp vector))
 
 
 (mat compose
@@ -51,8 +51,8 @@
                (lambda (x y) (values (add1 x) (add1 y))))
               1 2))
 
-     (eq? cons (compose cons))
-     (eq? list (compose list))
+     (eq? cons (compose1 cons))
+     (eq? list (compose1 list))
 
      (equal? ((compose1 vreverse list->vector string->list) "123456")
              '#(#\6 #\5 #\4 #\3 #\2 #\1))
@@ -143,3 +143,27 @@
       "... must appear last")
 
      )
+
+(mat forever-and-continuations
+
+     (= 4 (forever (index count) (when (= count 4) (break count))))
+
+     (let ([count 0])
+       (= 3 (forever (set! count (+ count 1)) (when (= count 3) (break count)))))
+
+     (equal? '(one two)
+             (call-with-values
+               (lambda () (let/1cc escape (escape 'one 'two))) list))
+
+     ;; call/cc intentionally captures an escape continuation for this control form.
+     (= 7 (let/cc escape (+ 1 (escape 7)))))
+
+(mat section-capture-and-zero-slots
+
+     (let* ([value 2] [add (sect + value _)])
+       (set! value 20)
+       (= 5 (add 3)))
+
+     (let ([calls 0])
+       (let ([result (sect+ (lambda (value) (set! calls (+ calls 1)) value) 8)])
+         (and (= result 8) (= calls 1)))))

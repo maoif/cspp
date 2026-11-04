@@ -8,7 +8,11 @@
           (cspp internal)
           (cspp list))
 
-
+  #|macro:forever
+  The `forever` macro repeats its body until the implicitly bound `(break value ...)` escapes,
+  returning those values. The optional `(index identifier)` binds a zero-based iteration count.
+  Body expressions execute in order and may share mutable state with their enclosing scope.
+  |#
   (define-syntax forever
     (lambda (stx)
       (syntax-case stx ()
@@ -29,12 +33,13 @@
                   (loop)))))])))
 
 
-  #|doc
-  Return the composed procedure P of given procedures p1, p2, p3, ..., such that
-  (P x) = (p1 (p2 (p3 (... x))))
-
-  Procedures are required to produce as many values as the preceding procedures consume.
-  The number of return values is determined by the first procedure (i.e., the last procedure applied).
+  #|proc:compose
+  The `compose` procedure returns the composition of `proc` and the remaining `proc*` procedures.
+  The returned procedure accepts the rightmost procedure's arguments and applies procedures
+  right to left. Each procedure consumes all values returned by its right neighbor; the leftmost
+  procedure determines the final return values. A single procedure is returned unchanged.
+  Callback signatures must match these input and output arities. Captured state is shared;
+  callers must synchronize any mutable state when invoking the composition from multiple threads.
   |#
   (define-who compose
     (lambda (proc . proc*)
@@ -53,12 +58,12 @@
                            (errorf who "arguments contain non-procedure(s)"))))))
 
 
-  #|doc
-  Similar to `compose`, but only one value is passed among the procedures.
-  The output arity of the first procedure and the input arity of
-  the last procedure are unrestricted, though.
-
-  This is generally faster than `compose`.
+  #|proc:compose1
+  The `compose1` procedure returns the right-to-left composition of `proc` and remaining `proc*`.
+  The rightmost callback accepts the returned procedure's arguments. Every callback except the
+  leftmost returns one value; every callback except the rightmost accepts one value. The leftmost
+  callback may return multiple values. A single callback is returned unchanged.
+  Callers synchronize shared mutable callback state when using the composition across threads.
   |#
   (define-who compose1
     (lambda (proc . proc*)
@@ -77,12 +82,10 @@
                            (errorf who "arguments contain non-procedure(s)"))))))
 
 
-  #|doc
-  Pipe the value `v` through the procedures, and return the value
-  returned by the last procedure.
-
-  The first procedure should be able to take one argument;
-  Each procedure should consume as many values as its proceeding procedure returns.
+  #|proc:>>>
+  The `>>>` procedure passes `v` through `proc` and remaining `proc*` callbacks left to right.
+  The first callback accepts one argument. Each later callback accepts all values returned by
+  its predecessor. The final callback determines the returned values.
   |#
   (define-who >>>
     (lambda (v proc . proc*)
@@ -98,11 +101,10 @@
                            (errorf who "arguments contain non-procedure(s)"))))))
 
 
-  #|doc
-  Similar to `>>>`, with the difference that all but the last procedure should return
-  one value only.
-
-  This is generally faster than `>>>`.
+  #|proc:>>>1
+  The `>>>1` procedure passes `v` through `proc` and remaining `proc*` callbacks left to right.
+  Each callback accepts one argument; every callback except the last returns one value.
+  The last callback determines the returned values.
   |#
   (define-who >>>1
     (lambda (v proc . proc*)
@@ -173,23 +175,47 @@
                              #'(lambda (x* ...)
                                  (p args ...))))))))])))
 
+  #|macro:sect
+  The `sect` macro returns a procedure with one parameter per `_` placeholder in its arguments.
+  It evaluates `proc` and fixed argument expressions once when creating the procedure and captures
+  their values. Calling the result fills placeholders left to right and calls `proc` with the
+  completed arguments, returning its values. A final `...` accepts additional trailing arguments.
+  The callback must accept the completed argument list. Captured mutable objects remain shared.
+  |#
   (define-syntax sect
     (syntax-rules ()
       [(_ proc e e* ...) ($sect #f proc e e* ...)]))
-  ;; curried section
+  #|macro:sect+
+  The `sect+` macro creates a curried section of `proc`, with one unary procedure per `_` slot.
+  Fixed argument expressions and `proc` are evaluated and captured once. Supplying all slots calls
+  `proc` with the completed argument list and returns its values. A final `...` produces a
+  variadic procedure after all unary slots. With no slots and no `...`, `proc` runs immediately.
+  The callback must accept the completed arguments. Captured mutable objects remain shared.
+  |#
   (define-syntax sect+
     (syntax-rules ()
       [(_ proc e e* ...) ($sect #t proc e e* ...)]))
 
 
+  #|macro:let/cc
+  The `let/cc` macro evaluates its body with `k` bound to its current continuation.
+  Calling `(k value ...)` returns those values from the form; normal completion returns the
+  body's values. The continuation can be invoked repeatedly and has capture/resumption overhead.
+  |#
   (define-syntax let/cc
     (lambda (stx)
       (syntax-case stx ()
         [(_ k e e* ...)
          (identifier? #'k)
+         ;; call/cc intentionally provides a reusable continuation to the macro's body.
          #'(call/cc (lambda (k) e e* ...))])))
 
 
+  #|macro:let/1cc
+  The `let/1cc` macro evaluates its body with `k` bound to a one-shot current continuation.
+  Calling `(k value ...)` returns those values from the form; normal completion returns the
+  body's values. The continuation may be invoked at most once.
+  |#
   (define-syntax let/1cc
     (lambda (stx)
       (syntax-case stx ()
