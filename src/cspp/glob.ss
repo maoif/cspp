@@ -326,8 +326,9 @@
   current-user tilde expand before component compilation. Home-directory names stay literal.
   Backslash escapes characters
   in Unix patterns; escaped `/` remains a separator. Windows treats both slash forms as
-  separators, so bracket classes quote wildcard characters such as `[*]`. Malformed
-  syntax raises an error.
+  separators, so bracket classes quote wildcard characters such as `[*]`. Windows component
+  matching uses the regex engine's character case rules for literals and wildcards alike.
+  Malformed syntax raises an error.
   |#
   (define make-glob
     (case-lambda
@@ -408,7 +409,7 @@
                                         (branch-components branch) '()
                                         (branch-separator branch)))))))
         (define resolve-literal-name
-          (lambda (flavor parent wanted)
+          (lambda (flavor parent component)
             ;; Unix literal components need no directory enumeration. The caller
             ;; checks the child with file-directory? or the final eligibility check.
             ;; Windows flavor resolves the on-disk spelling case-insensitively.
@@ -418,7 +419,7 @@
                    ;; requiring directory read permission. get-mode propagates
                    ;; access errors that file-exists? would turn into no match.
                    (get-mode (string-append ($physical parent) "/."))
-                  wanted]
+                   (component-literal component)]
                   [else
                    (let ([directory (fs-open-directory ($physical parent))]
                          [found #f])
@@ -430,7 +431,7 @@
                              (let ([entry (fs-read-directory directory)])
                                (when entry
                                  (unless (member (car entry) '("." ".."))
-                                   (when (string-ci=? wanted (car entry))
+                                   (when (regex-matches? (component-regex component) (car entry))
                                      (set! found (car entry))))
                                  (unless found (loop)))))))
                        (lambda () (fs-close-directory directory)))
@@ -502,15 +503,18 @@
                                            [logical-child (path-add-component p component)]
                                            [physical-child (path-add-component physical component)]
                                            [next (cdr cs)])
-                                      (when (or (null? next)
-                                                (file-directory? ($physical physical-child) follow-link?))
+                                      ;; Dot traversal still descends through the parent.
+                                      (when (and (file-directory? name follow-link?)
+                                                 (or (null? next)
+                                                     (file-directory? ($physical physical-child)
+                                                                      follow-link?)))
                                         (set! stack (cons (vector 'node logical-child physical-child
                                                                    next ancestors separator) stack))))
                                     (loop)]
                                    [(component-literal (car cs))
                                     (let ([actual (resolve-literal-name (glob-flavor compiled)
                                                                       physical
-                                                                      (component-literal (car cs)))])
+                                                                      (car cs))])
                                       (when actual
                                         (let* ([logical-child (path-add-component p (component-literal (car cs)))]
                                                [physical-child (path-add-component physical actual)]

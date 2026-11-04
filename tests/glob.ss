@@ -1,5 +1,42 @@
 (import (cspp) (cspp glob))
 
+(mat glob-dot-components-respect-symlink-policy
+     (let ([root (format "glob-dot-policy-~a" (get-process-id))])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (mkdir (string-append root "/dir"))
+           (file-touch (string-append root "/dir/x"))
+           (file-symlink "dir" (string-append root "/link")))
+         (lambda ()
+           (and
+            (for-all
+             (lambda (suffix)
+               (not (exists (lambda (result) (string-search result "/link/"))
+                            (glob (string-append root suffix)))))
+             '("/*/./x" "/*/../dir/x" "/**/./x" "/*/." "/*/.."))
+            ;; Explicit following still permits dot traversal through a directory link.
+            (and (member (string-append root "/link/./x")
+                         (glob* (string-append root "/*/./x") #t #f 'empty)) #t)))
+         (lambda () (file-removetree root)))))
+
+(mat glob-windows-consistent-case-rules
+     (let ([root (format "glob-case-policy-~a" (get-process-id))])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (file-touch (string-append root "/STRASSE.TXT"))
+           (file-touch (string-append root "/Σ.txt")))
+         (lambda ()
+           (and (null? (glob 'windows (string-append root "/straße.txt")))
+                (not (glob-match? 'windows "straße.txt" "STRASSE.TXT"))
+                (equal? (list (string-append root "/strasse.txt"))
+                        (glob 'windows (string-append root "/strasse.txt")))
+                (glob-match? 'windows "σ.txt" "Σ.txt")
+                (equal? (list (string-append root "/σ.txt"))
+                        (glob 'windows (string-append root "/σ.txt")))))
+         (lambda () (file-removetree root)))))
+
 (mat glob-iterator-owns-deduplication-keys
      (let ([root (format "glob-mutable-result-~a" (get-process-id))])
        (dynamic-wind
