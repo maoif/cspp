@@ -26,16 +26,9 @@
             (immutable number signal-number)))
 
   (define $signal-table
-    (list (make-signal 'hup 1)
-          (make-signal 'int 2)
-          (make-signal 'quit 3)
-          (make-signal 'kill 9)
-          (make-signal 'usr1 10)
-          (make-signal 'usr2 12)
-          (make-signal 'alrm 14)
-          (make-signal 'term 15)
-          (make-signal 'chld 17)
-          (make-signal 'pipe 13)))
+    (guard (condition [(system-unsupported-error? condition) '()])
+      (map (lambda (entry) (make-signal (car entry) (cdr entry)))
+           (ffi-result-ref ((foreign-procedure "cspp_signal_table" () ptr))))))
 
   (define hup 'hup)
   (define int 'int)
@@ -50,11 +43,11 @@
 
   (define $signal-input?
     (lambda (x)
-      (or (signal? x) (symbol? x) (string? x) (integer? x))))
+      (or (signal? x) (symbol? x) (string? x) ($positive-integer? x))))
 
   (define $positive-integer?
     (lambda (x)
-      (and (integer? x) (> x 0))))
+      (and (integer? x) (exact? x) (<= 1 x #x7fffffff))))
 
   (define $string-prefix?
     (lambda (prefix str)
@@ -93,16 +86,18 @@
 
   (define $signal-ref
     (lambda (who spec)
+      (when (null? $signal-table)
+        (raise-system-unsupported who "signal operations are unsupported on this platform"))
       (cond [(signal? spec) spec]
             [(symbol? spec) ($symbol->signal who spec)]
             [(string? spec) ($symbol->signal who ($normalize-signal-string spec))]
-            [(integer? spec) ($number->signal who spec)]
+            [($positive-integer? spec) ($number->signal who spec)]
             [else (errorf who "invalid signal: ~a" spec)])))
 
   #|proc:%signal
   The `%signal` procedure returns the signal record named or numbered by `spec`.
   The `spec` parameter is a signal record, symbol, string such as `"TERM"` or `"SIGTERM"`, or
-  integer signal number.
+  exact positive signed 32-bit integer signal number.
   |#
   (define-who %signal
     (lambda (spec)
@@ -112,7 +107,8 @@
   #|macro:signal
   The `signal` macro returns the signal record named or numbered by `spec`.
   The `spec` form may be a bare identifier such as `term`, a quoted symbol such as `'term`, a
-  string such as `"TERM"` or `"SIGTERM"`, an integer signal number, or an existing signal record.
+  string such as `"TERM"` or `"SIGTERM"`, an exact positive signed 32-bit signal number,
+  or an existing signal record. Common names and available realtime names come from the platform.
   |#
   (define-syntax signal
     (lambda (stx)
@@ -140,7 +136,9 @@
               (string-append "SIG" (string-upcase (symbol->string (signal-name sig)))))))
 
   #|proc:signal-list
-  The `signal-list` procedure returns the list of known signal records.
+  The `signal-list` procedure returns the list of known platform signal records.
+  On Linux it includes ordinary signals and available realtime signals named `rtmin`,
+  `rtmin+1`, and so on through `rtmax`. Unavailable platforms return an empty list.
   |#
   (define signal-list
     (lambda ()
