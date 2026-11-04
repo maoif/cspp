@@ -27,7 +27,12 @@
 
   (define $make-path-object
     (lambda (flavor root-kind root components trailing?)
-      (mk-path flavor root-kind root components (and trailing? (not (null? components))))))
+      (mk-path flavor root-kind
+               (cond [(string? root) (string-copy root)]
+                     [(list? root) ($copy-components root)]
+                     [else root])
+               ($copy-components components)
+               (and trailing? (not (null? components))))))
 
   (define $err
     (lambda (who msg . args)
@@ -151,6 +156,12 @@
              (and (or (char=? c #\?) (char=? c #\.))
                   ($sep? 'windows (string-ref s 3)))))))
 
+  (define $prefix-special-unc?
+    (lambda (root)
+      (let ([prefix "\\\\?\\UNC\\"])
+        (and (fx>= (string-length root) (string-length prefix))
+             (string-ci=? prefix (substring root 0 (string-length prefix)))))))
+
   (define $windows-special-root
     (lambda (who s)
       (let* ([head (string-append "\\\\" (string (string-ref s 2)) "\\")]
@@ -165,7 +176,7 @@
                  ($make-path-object 'windows
                         'special
                         (let ([root (string-append head "UNC\\" (cadr parts) "\\" (caddr parts))])
-                          (if (and trailing? (null? components)) (string-append root "\\") root))
+                          root)
                         components
                         trailing?))]
               [else
@@ -173,7 +184,7 @@
                  ($make-path-object 'windows
                         'special
                         (let ([root (string-append head (car parts))])
-                          (if (and trailing? (null? components)) (string-append root "\\") root))
+                          root)
                         components
                         trailing?))]))))
 
@@ -283,7 +294,11 @@
                        (string-append prefix (string sep) body)))]
                 [(special)
                  (if (null? components)
-                     root
+                     (if (or (and (fx= (string-length root) 6)
+                                  (char=? (string-ref root 5) #\:))
+                             ($prefix-special-unc? root))
+                         (string-append root (string sep))
+                         root)
                      (string-append root (string sep) body))]
                 [else ($err 'path-render "invalid root kind: ~s" root-kind)])])
         (if (and ($path-trailing? p) (not (null? components)))
@@ -334,8 +349,10 @@
                     [root ($path-root p)])
                 (case root-kind
                   [(relative absolute rooted) (list flavor root-kind #f)]
-                  [(drive-relative drive-absolute special) (list flavor root-kind root)]
-                  [(unc) (list flavor root-kind (car root) (cadr root))]
+                  [(drive-relative drive-absolute special)
+                   (list flavor root-kind (string-copy root))]
+                  [(unc) (list flavor root-kind (string-copy (car root))
+                               (string-copy (cadr root)))]
                   [else ($err 'path-root-info "invalid root kind: ~s" root-kind)])))))
 
   #|proc:path
@@ -428,9 +445,21 @@
 
   (define $path-rebase
     (lambda (base part)
-      (if (path-absolute-path? part)
-          part
-          ($path-append-components base ($path-components part) ($path-trailing? part)))))
+      (let ([flavor ($path-flavor base)]
+            [kind ($path-root-kind part)])
+        (cond [(path-absolute-path? part) part]
+              [(and (eq? flavor 'windows) (eq? kind 'rooted))
+               (if (eq? ($path-root-kind base) 'drive-absolute)
+                   ($make-path-object flavor 'drive-absolute ($path-root base)
+                                     ($path-components part) ($path-trailing? part))
+                   ($err 'path-join "rooted Windows path requires a drive-absolute base"))]
+              [(and (eq? flavor 'windows) (eq? kind 'drive-relative))
+               (if (and (eq? ($path-root-kind base) 'drive-absolute)
+                        (string-ci=? ($path-root base) ($path-root part)))
+                   ($path-append-components base ($path-components part) ($path-trailing? part))
+                   ($err 'path-join "drive-relative path requires the matching drive-absolute base"))]
+              [else ($path-append-components base ($path-components part)
+                                             ($path-trailing? part))]))))
 
   #|proc:path-join
   The `path-join` procedure appends path parts. Absolute path parts of the same
@@ -450,9 +479,12 @@
                              (let ([parsed (path-parse ($path-flavor acc) part)])
                                (if (path-absolute-path? parsed)
                                    (loop parsed (cdr parts))
-                                   (begin
+                                   (if (and (eq? ($path-flavor acc) 'windows)
+                                            (path-rooted-path? parsed))
+                                       (loop ($path-rebase acc parsed) (cdr parts))
+                                       (begin
                                      ($check-component 'path-join ($path-flavor acc) part)
-                                     (loop (path-add-component acc part) (cdr parts)))))]
+                                     (loop (path-add-component acc part) (cdr parts))))))]
                             [else ($err 'path-join "invalid path part: ~s" part)])))))))
 
   #|proc:path-append
@@ -585,7 +617,7 @@
       (pcheck ([path? p])
               (let ([components ($path-components p)])
                 (and (pair? components)
-                     (car (reverse components)))))))
+                     (string-copy (car (reverse components))))))))
 
   #|proc:path-dirname
   The `path-dirname` procedure returns the lexical parent path.
@@ -706,9 +738,10 @@
                     [else ($err 'path-absolute "cannot make path absolute: ~a" (path-render p))]))))
 
   (define $drop-common-prefix
-    (lambda (a b)
-      (if (and (pair? a) (pair? b) (string=? (car a) (car b)))
-          ($drop-common-prefix (cdr a) (cdr b))
+    (lambda (flavor a b)
+      (if (and (pair? a) (pair? b)
+               ((if (eq? flavor 'windows) string-ci=? string=?) (car a) (car b)))
+          ($drop-common-prefix flavor (cdr a) (cdr b))
           (values a b))))
 
   (define $make-ups
@@ -728,8 +761,12 @@
               (let ([base (path-normalize base)]
                     [p (path-normalize p)])
                 (call-with-values
-                  (lambda () ($drop-common-prefix ($path-components base) ($path-components p)))
+                  (lambda () ($drop-common-prefix ($path-flavor p)
+                                                   ($path-components base)
+                                                   ($path-components p)))
                   (lambda (base-rest p-rest)
+                    (when (and (pair? base-rest) (string=? (car base-rest) ".."))
+                      ($err 'path-relative-to "cannot relativize from an unresolved parent path"))
                     ($make-relative-like ($path-flavor p)
                                          (append ($make-ups base-rest) p-rest)
                                          ($path-trailing? p))))))))

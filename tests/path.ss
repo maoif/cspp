@@ -22,6 +22,27 @@
      (not (eq? (path-components (path-parse 'unix "/usr/local"))
                (path-components (path-parse 'unix "/usr/local"))))
 
+     (let* ([component (string-copy "usr")]
+            [p (path 'unix component)])
+       (string-set! component 0 #\/)
+       (string=? "usr" (path-render p)))
+     (let* ([p (path-parse 'unix "usr/local")]
+            [basename (path-basename p)])
+       (string-set! basename 0 #\/)
+       (string=? "usr/local" (path-render p)))
+     (let* ([p (path-parse 'windows "C:/usr")]
+            [info (path-root-info p)])
+       (string-set! (caddr info) 0 #\D)
+       (string=? "C:\\usr" (path-render p)))
+     (same-path? (path-join (path-parse 'windows "C:/base")
+                            (path-parse 'windows "/foo"))
+                 "C:\\foo")
+     (same-path? (path-join (path-parse 'windows "C:/base") "/foo")
+                 "C:\\foo")
+     ;; A drive-relative path on another drive depends on ambient per-drive CWD.
+     (error? (path-join (path-parse 'windows "C:/base")
+                        (path-parse 'windows "D:foo")))
+
      (same-path? (path-parse 'windows "foo/bar\\baz") "foo\\bar\\baz")
      (same-path? (path-parse 'windows "\\foo\\bar") "\\foo\\bar")
      (same-path? (path-parse 'windows "c:foo\\bar") "C:foo\\bar")
@@ -122,6 +143,9 @@
 
      (same-path? (path-relative-to (path-parse 'unix "/home/me") (path-parse 'unix "/home/me/src/cspp/lib")) "src/cspp/lib")
      (same-path? (path-relative-to (path-parse 'unix "/home/me/src") (path-parse 'unix "/home/me/doc")) "../doc")
+     (same-path? (path-relative-to (path-parse 'windows "C:/Users/Me")
+                                   (path-parse 'windows "c:/users/me/src"))
+                 "src")
      (same-path? (path-relative-to (path-parse 'windows "C:\\Users\\me") (path-parse 'windows "C:\\Users\\me\\src")) "src")
      (same-path? (path-relative-to (path-parse 'windows "\\\\srv\\share\\a") (path-parse 'windows "\\\\srv\\share\\a\\b")) "b")
 
@@ -134,6 +158,8 @@
      (error? (path-absolute (path-parse 'unix "home/me") (path-parse 'unix "src")))
      ;; relative conversion rejects incompatible roots
      (error? (path-relative-to (path-parse 'windows "C:\\a") (path-parse 'windows "D:\\a")))
+     ;; relative conversion cannot reconstruct a target from divergent unresolved parents
+     (error? (path-relative-to (path-parse 'unix "../a") (path-parse 'unix "b")))
      ;; user expansion requires an absolute explicit home
      (error? (path-expand-user (path-parse 'unix "~/src") (path-parse 'unix "home/me")))
      )
