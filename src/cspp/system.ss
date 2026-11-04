@@ -41,16 +41,10 @@
 ;;;;===----------------------------------------------------------------------===
 
   #|proc:os-error?
-The `os-error?` procedure returns `#t` when its argument is an operating system error condition, otherwise `#f`.
-The `condition` parameter is the object to test.
-|#
-  (define-condition-type &os &error make-os-error os-error?)
-
-  (define $err-os
-    (lambda (who msg)
-      (raise (condition (make-os-error)
-                        (make-who-condition who)
-                        (make-message-condition msg)))))
+  The `os-error?` procedure tests `condition` for a CSPP system error condition.
+  It is a compatibility alias of `system-error?` and returns a boolean.
+  |#
+  (define os-error? system-error?)
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; processes

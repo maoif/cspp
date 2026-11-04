@@ -2,6 +2,8 @@
 
 (mat system-errors
 
+     (os-error? (make-system-error 'compatibility #f "failure" '()))
+
      (system-error? (guard (c [else c])
                       (raise-system-unsupported 'test-op "unsupported")))
 

@@ -8,12 +8,12 @@
 ;;;;===----------------------------------------------------------------------===
 
   #|proc:linux?
-  The `linux?` procedure returns `#t` when the current platform is treated as Unix by CSPP,
+  The `linux?` procedure returns `#t` when the current operating system is Linux,
   otherwise `#f`.
   |#
   (define linux?
-    (lambda ()
-      (unix?)))
+    (let ([native (foreign-procedure "cspp_linux_p" () int)])
+      (lambda () (= 1 (native)))))
 
   #|proc:hostname
   The `hostname` procedure returns the hostname of the current operating system.

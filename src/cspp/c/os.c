@@ -180,3 +180,11 @@ ptr cspp_filesystem_info(const char *path) {
   return cspp_unsupported_result("filesystem-info");
 #endif
 }
+
+int cspp_linux_p(void) {
+#if defined(__linux__)
+  return 1;
+#else
+  return 0;
+#endif
+}
