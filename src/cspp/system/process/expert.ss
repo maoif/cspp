@@ -203,8 +203,8 @@ The `object` parameter is any Scheme object.
   (define $spawn-pipeline-ffi
     (foreign-procedure "cspp_spawn_pipeline" (ptr) ptr))
 
-  (define $spawn-pipeline-capture-ffi
-    (foreign-procedure "cspp_spawn_pipeline_capture" (ptr int) ptr))
+  (define $run-pipeline-ffi
+    (foreign-procedure "cspp_run_pipeline" (ptr) ptr))
 
   (define $wait-status->exit-status
     (lambda (raw)
@@ -463,11 +463,12 @@ The `process-specs` parameter is a nonempty proper list of nonempty proper strin
 Command strings must contain no NUL characters.
 Unlike `pipe-processes`, this procedure does not return live process objects.
 It returns a list containing the final process exit status.
+The final process's stdout is discarded without buffering; stderr is inherited.
 |#
   (define run-pipeline
     (lambda (process-specs)
       (pcheck ([$process-specs? process-specs])
-              (let ([result (ffi-result-ref ($spawn-pipeline-capture-ffi process-specs -1))])
+              (let ([result (ffi-result-ref ($run-pipeline-ffi process-specs))])
                 (list ($wait-status->exit-status (vector-ref result 1)))))))
 
 ;;;;===----------------------------------------------------------------------===

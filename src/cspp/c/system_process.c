@@ -875,9 +875,9 @@ ptr cspp_spawn_pipeline(ptr specs) {
 #endif
 }
 
-// Runs a pipeline to completion while capturing the final process stdout. The
+// Runs a pipeline to completion, optionally capturing the final process stdout. The
 // returned status is for the last process, matching the high-level Scheme API.
-ptr cspp_spawn_pipeline_capture(ptr specs, int timeout_ms) {
+static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
 #if defined(__unix__) || defined(__APPLE__)
   int count = list_length(specs);
   if (count <= 0) {
@@ -946,7 +946,7 @@ ptr cspp_spawn_pipeline_capture(ptr specs, int timeout_ms) {
   }
 
   int capture_pipe[2] = {-1, -1};
-  if (make_pipe(capture_pipe) != 0) {
+  if (capture_stdout && make_pipe(capture_pipe) != 0) {
     for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
     if (pipes != NULL) {
       for (int j = 0; j < count - 1; j += 1) {
@@ -992,7 +992,7 @@ ptr cspp_spawn_pipeline_capture(ptr specs, int timeout_ms) {
     if (rc == 0) {
       rc = spawn_checked(&pids[i], argvs[i], cenv, resolved_program, "",
                          i > 0 ? pipes[i - 1][0] : -1,
-                         i < count - 1 ? pipes[i][1] : capture_pipe[1],
+                         i < count - 1 ? pipes[i][1] : (capture_stdout ? capture_pipe[1] : -2),
                          -1, 0, child_fds, (size_t)child_fd_count);
     }
     free(resolved_program);
@@ -1043,8 +1043,15 @@ ptr cspp_spawn_pipeline_capture(ptr specs, int timeout_ms) {
   free_string_array(cenv);
   return result;
 #else
-  (void)specs; (void)timeout_ms;
+  (void)specs; (void)timeout_ms; (void)capture_stdout;
   return cspp_unsupported_result("spawn-pipeline");
 #endif
 }
 
+ptr cspp_spawn_pipeline_capture(ptr specs, int timeout_ms) {
+  return run_pipeline(specs, timeout_ms, 1);
+}
+
+ptr cspp_run_pipeline(ptr specs) {
+  return run_pipeline(specs, -1, 0);
+}

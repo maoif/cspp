@@ -272,6 +272,12 @@
 
 (mat process-expert-pipes
 
+     ;; Error case: run-pipeline must discard large stdout without allocating a captured copy.
+     (let* ([allocated (+ (bytes-allocated) (bytes-deallocated))]
+            [statuses (run-pipeline '(("head" "-c" "4194304" "/dev/zero") ("cat")))]
+            [used (- (+ (bytes-allocated) (bytes-deallocated)) allocated)])
+       (and (process-exit-success? (car statuses)) (< used 1048576)))
+
      (call-with-values make-pipe
        (lambda (in out)
          (put-bytevector out (string->utf8 "pipe"))

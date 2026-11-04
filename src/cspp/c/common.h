@@ -41,6 +41,7 @@ ptr cspp_waitpid(int pid, int nohang);
 ptr cspp_make_pipe();
 ptr cspp_spawn_pipeline(ptr specs);
 ptr cspp_spawn_pipeline_capture(ptr specs, int timeout_ms);
+ptr cspp_run_pipeline(ptr specs);
 
 char *expand_pathname(const char *inpath);
 
