@@ -848,17 +848,22 @@
             [(acc x) (flatten-rec reducer acc x)])
           #f)))))
 
+  ;; These counting transducers deliberately accept integer-valued inexact counts;
+  ;; their generic subtraction does not require the exact/index contract of natural?.
+  (define nonnegative-count?
+    (lambda (count) (and (integer? count) (>= count 0))))
+
   #|proc:ttake
   The `ttake` procedure returns a stateful transducer that emits at most the first `n`
-  input values, where `n` is a nonnegative integer. When `n` is zero, drivers request no
-  source input, including when earlier stages buffer or suppress outputs.
+  input values. `n` is an exact or integer-valued inexact nonnegative number. When `n` is
+  zero, drivers request no source input, including when earlier stages buffer or suppress outputs.
   Initialization/completion still run; explicit seeds bypass initialization as usual.
   Kind: reusable stateful transducer constructor; each application stores
   a remaining output allowance. Resetting a sequence creates fresh state.
   |#
   (define ttake
     (lambda (n)
-      (pcheck ([natural? n])
+      (pcheck ([nonnegative-count? n])
               (make-non-acquiring-transducer
                'ttake
                (lambda (reducer)
@@ -881,13 +886,14 @@
 
   #|proc:tdrop
   The `tdrop` procedure returns a stateful transducer that skips the first `n`
-  input values and emits the rest. The count `n` must be a nonnegative integer.
+  input values and emits the rest. The count `n` is an exact or integer-valued inexact
+  nonnegative number.
   Kind: reusable stateful transducer constructor; each application stores
   a remaining skip count. Resetting a sequence creates fresh state.
   |#
   (define tdrop
     (lambda (n)
-      (pcheck ([natural? n])
+      (pcheck ([nonnegative-count? n])
               (make-non-acquiring-transducer
                'tdrop
                (lambda (reducer)
