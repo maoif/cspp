@@ -1324,6 +1324,26 @@
 
 (mat file-copy
 
+     ;; Binary and textual port copies must preserve all input data.
+     (let* ([bytes (make-bytevector 131071)]
+            [text (make-string 131071 #\x)]
+            [text-input (open-input-string text)]
+            [text-output (open-output-string)])
+       (let loop ([index 0])
+         (unless (fx= index (bytevector-length bytes))
+           (bytevector-u8-set! bytes index (fxmod index 256))
+           (loop (fx1+ index))))
+       (let-values ([(output get-output) (open-bytevector-output-port)])
+         (let ([input (open-bytevector-input-port bytes)])
+           (copy-port input output)
+           (close-port input)
+           (close-port output)
+           (and (bytevector=? bytes (get-output))
+                (begin (copy-port text-input text-output)
+                       (close-port text-input)
+                       (close-port text-output)
+                       (string=? text (get-output-string text-output)))))))
+
      ;; Error case: overwriting a file with itself must preserve its contents.
      (let ([path ($random-file)])
        (dynamic-wind

@@ -2183,18 +2183,22 @@
               (pcheck-open-port (pin pout)
                                 (cond
                                  [(and (binary-port? pin) (binary-port? pout))
-                                  (let loop ()
-                                    (let ([x (get-u8 pin)])
-                                      (unless (eof-object? x)
-                                        (put-u8 pout x)
-                                        (loop))))
+                                  (let ([buffer (make-bytevector 16384)])
+                                    (let loop ()
+                                      (let ([count (get-bytevector-n! pin buffer 0
+                                                                      (bytevector-length buffer))])
+                                        (unless (eof-object? count)
+                                          (put-bytevector pout buffer 0 count)
+                                          (loop)))))
                                   (flush-output-port pout)]
                                  [(and (textual-port? pin) (textual-port? pout))
-                                  (let loop ()
-                                    (let ([x (get-char pin)])
-                                      (unless (eof-object? x)
-                                        (put-char pout x)
-                                        (loop))))
+                                  (let ([buffer (make-string 8192)])
+                                    (let loop ()
+                                      (let ([count (get-string-n! pin buffer 0
+                                                                  (string-length buffer))])
+                                        (unless (eof-object? count)
+                                          (put-string pout buffer 0 count)
+                                          (loop)))))
                                   (flush-output-port pout)]
                                  [else (errorf who "ports do not have the same type")])))))
 
