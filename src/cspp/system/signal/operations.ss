@@ -42,14 +42,16 @@
 
   #|proc:send-process-group-signal
   The `send-process-group-signal` procedure sends `sig` to process group `process-group-id`.
-  The `process-group-id` parameter is an exact positive signed 32-bit integer process group ID.
+  The `process-group-id` parameter is an exact signed 32-bit integer greater than 1.
+  Group ID 1 is rejected because negating it selects the native broadcast operation.
   The `sig` parameter is a signal record, symbol, string, or integer signal number accepted by
   `signal`.
   Returns unspecified values on success.
   |#
   (define-who send-process-group-signal
     (lambda (process-group-id sig)
-      (pcheck ([$positive-pid? process-group-id] [$signal-input? sig])
+      (pcheck ([(lambda (value) (and ($positive-pid? value) (> value 1))) process-group-id]
+               [$signal-input? sig])
               (ffi-result-ref
                ($send-signal-ffi (- process-group-id) (signal-number ($signal-ref who sig))))
               (void))))

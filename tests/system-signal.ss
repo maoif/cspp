@@ -42,6 +42,13 @@
 ;; Error case: send-signal should reject process-group/all-process pid values.
 (mat signal-send-validation
 
+     ;; Error case: group 1 would become kill(-1), broadcasting to unrelated processes.
+     ;; An unknown signal prevents any native delivery if the group check regresses.
+     (guard (condition [else (and (who-condition? condition)
+                                 (eq? 'pcheck (condition-who condition)))])
+       (send-process-group-signal 1 'definitely-not-a-signal)
+       #f)
+
      (guard (c [(error? c) #t] [else #f])
        (send-signal 0 term)
        #f)

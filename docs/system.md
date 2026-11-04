@@ -197,7 +197,8 @@ Other names, including realtime names such as `'rtmin+1`, are available through 
   (lambda () (signal-mask-set! previous-mask)))
 ```
 
-`send-signal` takes a positive process ID; `send-process-group-signal` takes a positive group ID.
+`send-signal` takes a positive process ID; `send-process-group-signal` takes a group ID greater
+than 1. Group ID 1 is rejected because its native encoding would broadcast to unrelated processes.
 Both accept the signal specifications above. `signal-mask` returns records blocked in the
 calling native thread. `signal-mask-set!`, `signal-block!`, and `signal-unblock!` take proper
 lists of specifications and return an unspecified value. SIGKILL/SIGSTOP cannot be masked;
