@@ -43,3 +43,7 @@ ptr cspp_spawn_pipeline(ptr specs);
 ptr cspp_spawn_pipeline_capture(ptr specs, int timeout_ms);
 
 char *expand_pathname(const char *inpath);
+
+char **cspp_copy_environment(void);
+char *cspp_environment_copy(const char *name);
+char *cspp_user_home(const char *name);

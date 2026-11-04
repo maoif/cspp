@@ -110,15 +110,16 @@ static ptr make_error_status_message(const char *msg) {
 static ptr make_errno_status(void) { return make_status("error", errno_str()); }
 
 static int configure_default_ssh_paths(ssh_session session) {
-  const char *home = getenv("HOME");
+  char *home = cspp_environment_copy("HOME");
   char ssh_dir[PATH_MAX];
   char known_hosts[PATH_MAX];
   int n;
 
-  if (home == NULL || *home == 0) return 1;
+  if (home == NULL || *home == 0) { free(home); return 1; }
 
   n = snprintf(ssh_dir, sizeof(ssh_dir), "%s/.ssh", home);
-  if (n <= 0 || (size_t)n >= sizeof(ssh_dir)) return 1;
+  if (n <= 0 || (size_t)n >= sizeof(ssh_dir)) { free(home); return 1; }
+  free(home);
   n = snprintf(known_hosts, sizeof(known_hosts), "%s/known_hosts", ssh_dir);
   if (n <= 0 || (size_t)n >= sizeof(known_hosts)) return 1;
 
@@ -128,19 +129,20 @@ static int configure_default_ssh_paths(ssh_session session) {
 
 static int add_default_identities(ssh_session session) {
   static const char *names[] = {"id_ed25519", "id_ecdsa", "id_rsa", "id_dsa", NULL};
-  const char *home = getenv("HOME");
+  char *home = cspp_environment_copy("HOME");
   char path[PATH_MAX];
   int i;
 
-  if (home == NULL || *home == 0) return 1;
+  if (home == NULL || *home == 0) { free(home); return 1; }
 
   for (i = 0; names[i] != NULL; ++i) {
     int n = snprintf(path, sizeof(path), "%s/.ssh/%s", home, names[i]);
     if (n <= 0 || (size_t)n >= sizeof(path)) continue;
     if (access(path, R_OK) != 0) continue;
-    if (ssh_options_set(session, SSH_OPTIONS_ADD_IDENTITY, path) != SSH_OK) return 0;
+    if (ssh_options_set(session, SSH_OPTIONS_ADD_IDENTITY, path) != SSH_OK) { free(home); return 0; }
   }
 
+  free(home);
   return 1;
 }
 

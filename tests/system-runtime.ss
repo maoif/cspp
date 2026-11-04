@@ -43,6 +43,26 @@
                                 (= (unix-user-gid expected) (unix-user-gid actual))))))))
             (list first second))))]
 
+  [(environment-race)
+   ;; An empty lookup key cannot identify an environment variable.
+   (check (not (getenv "")))
+   (putenv "CSPP_ENV_环境" "é中文")
+   (check (string=? "é中文" (getenv "CSPP_ENV_环境")))
+   ;; Error case: a spawn must not free libc-owned environment storage after putenv grows it.
+   (run-threads
+     (list (lambda ()
+             (do ([index 0 (+ index 1)]) ((= index 300))
+               (let ([child (spawn-process "/bin/true" '() '())])
+                 (check (process-exit-success? (process-wait child))))))
+           (lambda ()
+             (do ([index 0 (+ index 1)]) ((= index 3000))
+               (putenv (format "CSPP_RUNTIME_ENV_~a" index) "environment-growth")))
+           (lambda ()
+             (let ([stat (foreign-procedure "cspp_statx" (utf-8 boolean) ptr)])
+               (do ([index 0 (+ index 1)]) ((= index 3000))
+                 ;; Error case: native tilde expansion must share environment read ownership.
+                 (check (vector? (stat "~" #t))))))))]
+
   [(boundaries)
    (check (string=? "é中文" (process-result-stdout
                              (capture-process "/usr/bin/printf" "%s" "é中文"))))
@@ -130,7 +150,9 @@
        (lambda ()
          (check (exists (lambda (item) (= (signal-number item) (signal-number sig)))
                         (signal-mask)))
-         (send-signal (getpid) sig)
+         ;; Thread-directed delivery avoids other runtime threads eligible for SIGUSR1.
+         (check (= 0 ((foreign-procedure "pthread_kill" (uptr int) int)
+                       ((foreign-procedure "pthread_self" () uptr)) (signal-number sig))))
          (check (= (signal-number sig) (signal-number (wait-signal (list sig)))))
          (signal-unblock! (list sig))
          (check (not (exists (lambda (item) (= (signal-number item) (signal-number sig)))

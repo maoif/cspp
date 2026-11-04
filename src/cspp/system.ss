@@ -51,8 +51,9 @@
 ;;;;===----------------------------------------------------------------------===
 
   #|proc:shared-object-list
-The `shared-object-list` procedure returns a list of shared objects currently loaded by the process, in load order.
-|#
+  The `shared-object-list` procedure returns shared objects currently loaded by the process,
+  in load order, as a list of strings.
+  |#
   (define-who shared-object-list
     (let ([ffi (foreign-procedure "cspp_shared_object_list" () ptr)])
       (lambda ()

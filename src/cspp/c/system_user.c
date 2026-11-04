@@ -72,3 +72,23 @@ unsigned int cspp_getuid(void) { return getuid(); }
 unsigned int cspp_getgid(void) { return getgid(); }
 unsigned int cspp_geteuid(void) { return geteuid(); }
 unsigned int cspp_getegid(void) { return getegid(); }
+
+/* Tilde expansion needs a native-owned directory without shared NSS storage. */
+char *cspp_user_home(const char *name) {
+  size_t capacity = 1024;
+  char *buffer = NULL, *home = NULL;
+  struct passwd record, *result = NULL;
+  int code;
+  for (;;) {
+    char *next = realloc(buffer, capacity);
+    if (!next) break;
+    buffer = next;
+    code = name ? getpwnam_r(name, &record, buffer, capacity, &result)
+                : getpwuid_r(getuid(), &record, buffer, capacity, &result);
+    if (code == ERANGE && capacity <= SIZE_MAX / 2) { capacity *= 2; continue; }
+    if (!code && result) home = strdup(result->pw_dir);
+    break;
+  }
+  free(buffer);
+  return home;
+}

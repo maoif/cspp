@@ -17,13 +17,13 @@
   The `result` parameter is a process result record.
   |#
   #|proc:process-result-stdout
-  The `process-result-stdout` procedure returns the captured standard output string stored in
-  `result`, or `#f` when output was not requested.
+  The `process-result-stdout` procedure returns captured standard output as a string or bytevector,
+  or `#f` when output was not requested.
   The `result` parameter is a process result record.
   |#
   #|proc:process-result-stderr
-  The `process-result-stderr` procedure returns the captured standard error string stored in
-  `result`, or `#f` when error output was not requested.
+  The `process-result-stderr` procedure returns captured standard error as a string or bytevector,
+  or `#f` when error output was not requested.
   The `result` parameter is a process result record.
   |#
   #|proc:process-result-pid

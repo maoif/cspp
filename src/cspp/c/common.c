@@ -68,13 +68,11 @@ char *expand_pathname(const char *inpath) {
   const char *ip;
 
   if (*inpath == '~') {
-    const char *dir;
+    char *dir;
     size_t n1, n2;
-    struct passwd *pwent;
     if (*(ip = inpath + 1) == 0 || DIRMARKERP(*ip)) {
-      if ((dir = getenv("HOME")) == NULL)
-        if ((pwent = getpwuid(getuid())) != NULL)
-          dir = pwent->pw_dir;
+      dir = cspp_environment_copy("HOME");
+      if (dir == NULL) dir = cspp_user_home(NULL);
     } else {
       char *userbuf;
       const char *user_start = ip;
@@ -85,16 +83,16 @@ char *expand_pathname(const char *inpath) {
         return NULL;
       memcpy(userbuf, user_start, ip - user_start);
       userbuf[ip - user_start] = 0;
-      dir = (pwent = getpwnam(userbuf)) != NULL ? pwent->pw_dir : NULL;
+      dir = cspp_user_home(userbuf);
       free(userbuf);
     }
     if (dir != NULL) {
       n1 = strlen(dir);
       n2 = strlen(ip) + 1;
-      if ((outpath = malloc(n1 + n2)) == NULL)
-        return NULL;
+      if ((outpath = malloc(n1 + n2)) == NULL) { free(dir); return NULL; }
       memcpy(outpath, dir, n1);
       memcpy(outpath + n1, ip, n2);
+      free(dir);
       return outpath;
     }
   }
