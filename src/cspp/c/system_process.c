@@ -633,44 +633,48 @@ ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
 // Spawns argv directly and returns the child pid without waiting. The process
 // object in Scheme owns waiting; this helper only configures null stdio modes.
 ptr cspp_spawn_process(ptr argv, ptr env, const char *cwd,
-                         int stdin_null, int stdout_null, int stderr_null) {
+                         int stdin_mode, int stdout_mode, int stderr_mode) {
 #if defined(__unix__) || defined(__APPLE__)
+  const char *operation = "spawn-process";
   char **cargv = argv_from_list(argv);
   char **cenv = env_from_alist(env);
-  if (cargv == NULL || cenv == NULL) {
-    free_string_array(cargv);
-    if (cenv != environ) free_string_array(cenv);
-    errno = EINVAL;
-    return cspp_errno_result("spawn-process", Snil);
+  char *program = NULL;
+  int pipes[3][2] = {{-1, -1}, {-1, -1}, {-1, -1}};
+  int modes[3] = {stdin_mode, stdout_mode, stderr_mode};
+  int sources[3], error = 0;
+  pid_t pid = -1;
+  if (!cargv || !cenv) { error = EINVAL; goto done; }
+  error = resolve_executable(cargv[0], cenv, cwd, &program);
+  if (error) goto done;
+  for (int i = 0; i < 3; i++) {
+    if (modes[i] < 0 || modes[i] > (i == 2 ? 3 : 2)) { error = EINVAL; goto done; }
+    if (modes[i] == 2) {
+      if (make_pipe(pipes[i]) < 0) { error = errno; goto done; }
+      sources[i] = pipes[i][i == 0 ? 0 : 1];
+    } else sources[i] = modes[i] == 1 ? -2 : -1;
   }
-  char *resolved_program = NULL;
-  int resolve_error = resolve_executable(cargv[0], cenv, cwd, &resolved_program);
-  if (resolve_error != 0) {
-    free_string_array(cargv);
-    if (cenv != environ) free_string_array(cenv);
-    errno = resolve_error;
-    return cspp_errno_result("spawn-process", Snil);
-  }
-
-  pid_t pid;
-  int rc = spawn_checked(&pid, cargv, cenv, resolved_program, cwd,
-                         stdin_null ? -2 : -1,
-                         stdout_null ? -2 : -1,
-                         stderr_null ? -2 : -1,
-                         0, NULL, 0);
-  free(resolved_program);
+  error = spawn_checked(&pid, cargv, cenv, program, cwd,
+                         sources[0], sources[1], sources[2], stderr_mode == 3,
+                         &pipes[0][0], 6);
+ done:
+  free(program);
   free_string_array(cargv);
   if (cenv != environ) free_string_array(cenv);
-  if (rc != 0) {
-    errno = rc;
-    return cspp_errno_result("spawn-process", Snil);
+  if (error) {
+    for (int i = 0; i < 3; i++) { close_fd(&pipes[i][0]); close_fd(&pipes[i][1]); }
+    errno = error;
+    return cspp_errno_result(operation, Snil);
   }
-
-  ptr v = Smake_vector(1, Sfalse);
-  Svector_set(v, 0, Sinteger((iptr)pid));
-  return cspp_ok(v);
+  ptr value = Smake_vector(4, Sfalse);
+  Svector_set(value, 0, Sinteger((iptr)pid));
+  for (int i = 0; i < 3; i++) {
+    int child_end = i == 0 ? 0 : 1;
+    close_fd(&pipes[i][child_end]);
+    Svector_set(value, i + 1, Sinteger(pipes[i][1 - child_end]));
+  }
+  return cspp_ok(value);
 #else
-  (void)argv; (void)env; (void)cwd; (void)stdin_null; (void)stdout_null; (void)stderr_null;
+  (void)argv; (void)env; (void)cwd; (void)stdin_mode; (void)stdout_mode; (void)stderr_mode;
   return cspp_unsupported_result("spawn-process");
 #endif
 }

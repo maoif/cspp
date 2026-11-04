@@ -143,7 +143,7 @@
 
   (define $spawn-capture-ffi
     (foreign-procedure "cspp_spawn_capture"
-                       (ptr ptr string ptr int int int int int int)
+                       (ptr ptr utf-8 ptr int int int int int int)
                        ptr))
 
   (define $spawn-pipeline-capture-ffi
@@ -153,36 +153,6 @@
     (lambda (bytes options)
       (let ([encoding ($option-ref options 'encoding 'utf-8)])
         (if (eq? encoding 'binary) bytes (utf8->string bytes)))))
-
-  (define $validate-options
-    (lambda (options)
-      (for-each
-        (lambda (entry)
-          (unless (and (pair? entry) (symbol? (car entry)))
-            (errorf 'process "invalid option entry: ~s" entry))
-          (let ([key (car entry)] [value (cdr entry)])
-            (unless
-              (case key
-                [(cwd) (or (not value) (string? value))]
-                [(env) (or (not value)
-                           (and (list? value)
-                                (andmap (lambda (pair) (and (pair? pair) (string? (car pair))
-                                                           (string? (cdr pair)))) value)))]
-                [(env-mode) (eq? value 'replace)]
-                [(stdin) (or (not value) (memq value '(inherit null))
-                             (string? value) (bytevector? value))]
-                [(stdout) (memq value '(inherit null capture))]
-                [(stderr) (memq value '(inherit null capture stdout))]
-                [(encoding) (memq value '(utf-8 binary))]
-                [(timeout) (or (not value) (and (integer? value) (exact? value)
-                                              (<= 0 value #x7fffffff)))]
-                [(success) (or (not value) (procedure? value)
-                               (and (list? value)
-                                    (andmap (lambda (code) (and (fixnum? code)
-                                                               (<= 0 code 255))) value)))]
-                [else #f])
-              (errorf 'process "invalid ~s option: ~s" key value))))
-        options)))
 
   (define $capture-vector->result
     (lambda (command result options check? who)
@@ -205,7 +175,7 @@
 
   (define $spawn-capture
     (lambda (argv options capture-default)
-      ($validate-options options)
+      ($validate-process-options options #f)
       (ffi-result-ref
        ($spawn-capture-ffi argv
                            ($env-option options)

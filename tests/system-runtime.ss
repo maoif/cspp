@@ -100,6 +100,16 @@
      (check (process-exit-success? (process-wait child)))
      (process-close-ports! child)
      (process-close-ports! child))
+   (let ([child (spawn-process "/bin/sh" '("-c" "printf out; printf err >&2")
+                              '((stdout . pipe) (stderr . stdout)))])
+     (check (not (process-stderr child)))
+     (check (string=? "outerr" (utf8->string (get-bytevector-all (process-stdout child)))))
+     (check (process-exit-success? (process-wait child)))
+     (process-close-ports! child))
+   ;; Error case: live stream modes and duplicate keys must not be silently ignored.
+   (check (rejects? (lambda () (spawn-process "/bin/true" '() '((stdout . capture))))))
+   (check (rejects? (lambda () (spawn-process "/bin/true" '()
+                                           '((stdin . null) (stdin . pipe))))))
    ;; Error case: an unrelated child must not inherit a pipe writer and suppress EOF.
    (call-with-values make-pipe
      (lambda (input output)

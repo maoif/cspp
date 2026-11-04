@@ -39,7 +39,9 @@
           vfork
           getpid
           gettid
-          getppid)
+          getppid
+
+          $validate-process-options)
   (import (cspp chez)
           (cspp system common)
           (cspp system info)
@@ -109,11 +111,7 @@ The `process` parameter is a process object.
 The `process-stderr` procedure returns the stderr port for `process`, or `#f`.
 The `process` parameter is a process object.
 |#
-  #|proc:process-status
-The `process-status` procedure returns the cached exit status for `process`.
-The `process` parameter is a process object.
-|#
-  (define-record-type ($process make-process process?)
+  (define-record-type ($process %make-process process?)
     (nongenerative)
     (fields (immutable pid process-pid)
             (immutable command process-command)
@@ -121,11 +119,33 @@ The `process` parameter is a process object.
             (immutable stdin process-stdin)
             (immutable stdout process-stdout)
             (immutable stderr process-stderr)
-            (mutable status process-status set-process-status!)))
+            (mutable status $process-status set-process-status!)
+            (immutable mutex process-mutex)))
+
+  (define make-process
+    (lambda (pid command arguments stdin stdout stderr status)
+      (%make-process pid command arguments stdin stdout stderr status (make-mutex))))
+
+  #|proc:process-status
+  The `process-status` procedure returns the cached exit status of `process`, or `#f`.
+  The `process` argument is a process object. This does not poll the operating system.
+  |#
+  (define process-status
+    (lambda (process)
+      (pcheck ([process? process])
+        (with-mutex (process-mutex process) ($process-status process)))))
+
+  (define $os-string?
+    (lambda (text)
+      (and (string? text)
+           (let loop ([index 0])
+             (or (fx= index (string-length text))
+                 (and (not (char=? (string-ref text index) #\nul))
+                      (loop (fx+ index 1))))))))
 
   (define $string-list?
     (lambda (object)
-      (and (list? object) (andmap string? object))))
+      (and (list? object) (andmap $os-string? object))))
 
   (define $option-alist?
     (lambda (object)
@@ -151,7 +171,7 @@ The `process` parameter is a process object.
       (eq? 'null ($option-ref options key 'inherit))))
 
   (define $spawn-process-ffi
-    (foreign-procedure "cspp_spawn_process" (ptr ptr string int int int) ptr))
+    (foreign-procedure "cspp_spawn_process" (ptr ptr utf-8 int int int) ptr))
 
   (define $waitpid-ffi
     (foreign-procedure "cspp_waitpid" (int int) ptr))
@@ -177,26 +197,89 @@ The `process` parameter is a process object.
             [else
              (make-process-exit-status 'signal (fxand raw #x7f))])))
 
+  (define $validate-process-options
+    (lambda (options live?)
+      (let ([seen '()])
+      (for-each
+        (lambda (entry)
+          (unless (and (pair? entry) (symbol? (car entry)))
+            (errorf 'process "invalid option entry: ~s" entry))
+          (let ([key (car entry)] [value (cdr entry)])
+            (when (memq key seen) (errorf 'process "duplicate option: ~s" key))
+            (set! seen (cons key seen))
+            (unless
+              (case key
+                [(cwd) (or (not value) ($os-string? value))]
+                [(env) (or (not value)
+                           (and (list? value)
+                                (andmap (lambda (pair) (and (pair? pair) ($os-string? (car pair))
+                                                           ($os-string? (cdr pair)))) value)))]
+                [(env-mode) (eq? value 'replace)]
+                [(stdin) (if live? (memq value '(inherit null pipe))
+                              (or (not value) (memq value '(inherit null))
+                             (string? value) (bytevector? value)))]
+                [(stdout) (memq value (if live? '(inherit null pipe) '(inherit null capture)))]
+                [(stderr) (memq value (if live? '(inherit null pipe stdout)
+                                                '(inherit null capture stdout)))]
+                [(encoding) (and (not live?) (memq value '(utf-8 binary)))]
+                [(timeout) (and (not live?) (or (not value) (and (integer? value) (exact? value)
+                                              (<= 0 value #x7fffffff))))]
+                [(success) (and (not live?) (or (not value) (procedure? value)
+                               (and (list? value)
+                                    (andmap (lambda (code) (and (fixnum? code)
+                                                               (<= 0 code 255))) value))))]
+                [else #f])
+              (errorf 'process "invalid ~s option: ~s" key value))))
+        options))))
+
+  (define $stream-mode
+    (lambda (options key)
+      (case ($option-ref options key 'inherit)
+        [(inherit) 0] [(null) 1] [(pipe) 2] [(stdout) 3])))
+
   #|proc:spawn-process
-The `spawn-process` procedure starts `program` with `arguments`.
-The `program` parameter is the executable name or path.
-The `arguments` parameter is a list of argument strings.
-The `options` parameter is an option alist; v1 supports `cwd`, `env`, and null
-standard-stream modes.
-|#
+  The `spawn-process` procedure starts executable string `program` with string-list `arguments`.
+  It returns a process object. `options` is an alist; `cwd` is a directory string or `#f`,
+  and `env` is a string-pair alist or `#f` to inherit. An empty `env` clears the environment.
+  `stdin`, `stdout`, and `stderr` accept `inherit` (default), `null`, or `pipe`.
+  `stderr` also accepts `stdout` to merge it into the child's stdout.
+  A piped stdin is exposed as a binary output port; piped outputs as binary input ports.
+  Callers own these ports and must close them, including stdin to deliver EOF to the child.
+  Waiting does not close ports. Concurrent waiters share one cached exit status.
+  |#
   (define-who spawn-process
     (lambda (program arguments options)
-      (pcheck ([string? program] [$string-list? arguments] [$option-alist? options])
-              (let* ([argv (cons program arguments)]
-                     [result (ffi-result-ref
-                              ($spawn-process-ffi argv
-                                                  ($env-option options)
-                                                  ($cwd-option options)
-                                                  (if ($null-mode? options 'stdin) 1 0)
-                                                  (if ($null-mode? options 'stdout) 1 0)
-                                                  (if ($null-mode? options 'stderr) 1 0)))]
-                     [pid (vector-ref result 0)])
-                (make-process pid program (list-copy arguments) #f #f #f #f)))))
+      (pcheck ([$os-string? program] [$string-list? arguments] [$option-alist? options])
+        ($validate-process-options options #t)
+        (let* ([argv (cons program arguments)]
+               [result (ffi-result-ref
+                         ($spawn-process-ffi argv ($env-option options) ($cwd-option options)
+                           ($stream-mode options 'stdin) ($stream-mode options 'stdout)
+                           ($stream-mode options 'stderr)))]
+               [pid (vector-ref result 0)] [ports '()])
+          (guard (condition
+                   [else
+                    (for-each close-port ports)
+                    (let ([close-fd (foreign-procedure "close" (int) int)])
+                      (do ([index 1 (fx+ index 1)]) ((fx= index 4))
+                        (let ([fd (vector-ref result index)])
+                          (when (fx>= fd 0) (close-fd fd)))))
+                    ($send-signal-ffi pid 9)
+                    ($waitpid-ffi pid 0)
+                    (raise condition)])
+            (let ([open-stream
+                    (lambda (index output?)
+                      (let ([fd (vector-ref result index)])
+                        (if (fx< fd 0) #f
+                            (let ([port (if output?
+                                            (open-fd-output-port fd 'block #f)
+                                            (open-fd-input-port fd 'block #f))])
+                              (vector-set! result index -1)
+                              (set! ports (cons port ports))
+                              port))))])
+              (let* ([stdin (open-stream 1 #t)] [stdout (open-stream 2 #f)]
+                     [stderr (open-stream 3 #f)])
+                (make-process pid program (list-copy arguments) stdin stdout stderr #f))))))))
 
   #|proc:spawn-shell-command
 The `spawn-shell-command` procedure starts `command` through the host shell.
@@ -208,64 +291,59 @@ The `options` parameter is an option alist accepted by `spawn-process`.
       (pcheck ([string? command] [$option-alist? options])
               (spawn-process "sh" (list "-c" command) options))))
 
-  #|proc:process-wait/no-hang
-The `process-wait/no-hang` procedure checks whether `process` has exited.
-The `process` parameter is a process object.
-|#
   (define $wait-vector->status
     (lambda (result)
       (if result
           ($wait-status->exit-status (vector-ref result 1))
           #f)))
 
+  #|proc:process-wait/no-hang
+  The `process-wait/no-hang` procedure returns `process`'s exit status, or `#f` if still running.
+  The `process` argument is a process object. Reaping and status publication are synchronized.
+  |#
   (define process-wait/no-hang
     (lambda (process)
       (pcheck ([process? process])
-              (let ([cached (process-status process)])
-                (if cached
-                    cached
-                    (let ([status ($wait-vector->status
-                                   (ffi-result-ref
-                                    ($waitpid-ffi (process-pid process) 1)))])
-                      (when status
-                        (set-process-status! process status))
-                      status))))))
+        (with-mutex (process-mutex process)
+          (or ($process-status process)
+              (let ([status ($wait-vector->status
+                              (ffi-result-ref ($waitpid-ffi (process-pid process) 1)))])
+                (when status (set-process-status! process status))
+                status))))))
 
   #|proc:process-wait
-The `process-wait` procedure waits for `process` and returns its exit status.
-The `process` parameter is a process object.
-|#
+  The `process-wait` procedure waits for `process` and returns its cached exit status.
+  The `process` argument is a process object. Waiting leaves its streams open for draining.
+  |#
   (define process-wait
     (lambda (process)
       (pcheck ([process? process])
-              (let ([cached (process-status process)])
-                (if cached
-                    cached
-                    (let ([status ($wait-vector->status
-                                   (ffi-result-ref
-                                    ($waitpid-ffi (process-pid process) 0)))])
-                      (set-process-status! process status)
-                      status))))))
+        (let loop ()
+          (or (process-wait/no-hang process)
+              (begin (milisleep 5) (loop)))))))
+
+  (define $monotonic-milliseconds
+    (lambda ()
+      (let ([now (current-time 'time-monotonic)])
+        (+ (* (time-second now) 1000) (quotient (time-nanosecond now) 1000000)))))
 
   #|proc:process-wait/timeout
-The `process-wait/timeout` procedure waits up to `milliseconds` for `process`.
-The `process` parameter is a process object.
-The `milliseconds` parameter is an exact nonnegative timeout in milliseconds.
-|#
+  The `process-wait/timeout` procedure waits for `process` for at most `milliseconds`.
+  `process` is a process object; `milliseconds` is an exact nonnegative integer.
+  It returns the cached exit status or raises a timeout condition, leaving the child running.
+  |#
   (define-who process-wait/timeout
     (lambda (process milliseconds)
       (pcheck ([process? process] [natural? milliseconds])
-              (let loop ([elapsed 0])
-                (let ([status (process-wait/no-hang process)])
-                  (cond [status status]
-                        [(fx>= elapsed milliseconds)
-                         (raise (make-system-timeout-error
-                                 who "process wait timed out"
-                                 `((pid . ,(process-pid process))
-                                   (timeout . ,milliseconds))))]
-                        [else
-                         (milisleep 10)
-                         (loop (fx+ elapsed 10))]))))))
+        (let ([deadline (+ ($monotonic-milliseconds) milliseconds)])
+          (let loop ()
+            (or (process-wait/no-hang process)
+                (let ([remaining (- deadline ($monotonic-milliseconds))])
+                  (when (<= remaining 0)
+                    (raise (make-system-timeout-error who "process wait timed out"
+                             `((pid . ,(process-pid process)) (timeout . ,milliseconds)))))
+                  (milisleep (min 5 remaining))
+                  (loop))))))))
 
   #|proc:process-running?
 The `process-running?` procedure returns whether `process` is still running.
@@ -280,11 +358,20 @@ The `process` parameter is a process object.
 The `process-kill` procedure sends signal number `signal-number` to `process`.
 The `process` parameter is a process object.
 The `signal-number` parameter is an exact positive signal number.
+  A process with a cached or newly observed exit status is left alone.
 |#
   (define-who process-kill
     (lambda (process signal-number)
-      (pcheck ([process? process] [integer? signal-number])
-              (ffi-result-ref ($send-signal-ffi (process-pid process) signal-number)))))
+      (pcheck ([process? process]
+               [(lambda (value) (and (fixnum? value) (<= 1 value #x7fffffff))) signal-number])
+        (with-mutex (process-mutex process)
+          ;; A reaped PID may be reused. Never signal it through a completed process object.
+          (unless ($process-status process)
+            (let ([status ($wait-vector->status
+                            (ffi-result-ref ($waitpid-ffi (process-pid process) 1)))])
+              (if status
+                  (set-process-status! process status)
+                  (ffi-result-ref ($send-signal-ffi (process-pid process) signal-number)))))))))
 
   #|proc:process-terminate
 The `process-terminate` procedure sends `SIGTERM` to `process`.
@@ -303,14 +390,15 @@ The `process` parameter is a process object.
       (process-kill process 2)))
 
   #|proc:process-close-ports!
-The `process-close-ports!` procedure closes ports owned by `process`.
+The `process-close-ports!` procedure closes any open ports owned by `process`.
+  Repeated calls are harmless. This does not terminate or wait for the child.
 The `process` parameter is a process object.
 |#
   (define process-close-ports!
     (lambda (process)
       (pcheck ([process? process])
               (for-each (lambda (port)
-                          (when (port? port)
+                          (when (and (port? port) (not (port-closed? port)))
                             (close-port port)))
                         (list (process-stdin process)
                               (process-stdout process)

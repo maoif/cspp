@@ -36,7 +36,7 @@ ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
                          int stdout_null, int stderr_null, int stderr_to_stdout,
                          int timeout_ms);
 ptr cspp_spawn_process(ptr argv, ptr env, const char *cwd,
-                         int stdin_null, int stdout_null, int stderr_null);
+                         int stdin_mode, int stdout_mode, int stderr_mode);
 ptr cspp_waitpid(int pid, int nohang);
 ptr cspp_make_pipe();
 ptr cspp_spawn_pipeline(ptr specs);
