@@ -42,63 +42,64 @@
     (lambda (prefix s)
       (let ([n (string-length prefix)])
         (and (fx<= n (string-length s)) (string=? prefix (substring s 0 n))))))
+
+  ;; The first member may be a literal closing bracket, after optional negation.
+  ;; All brace scans share these class boundaries with the component grammar.
+  (define $class-end
+    (lambda (s open)
+      (let* ([n (string-length s)] [start (fx1+ open)]
+             [start (if (and (fx< start n) (memv (string-ref s start) '(#\! #\^)))
+                        (fx1+ start) start)])
+        (let loop ([i start])
+          (cond [(fx= i n) ($error "unterminated bracket class")]
+                [(char=? (string-ref s i) #\\)
+                 (if (fx< (fx1+ i) n) (loop (fx+ i 2))
+                     ($error "trailing escape in class"))]
+                [(and (char=? (string-ref s i) #\]) (fx> i start)) (fx1+ i)]
+                [else (loop (fx1+ i))])))))
+
   (define $brace-open
     (lambda (s)
       (let ([n (string-length s)])
-        (let loop ([i 0] [class-start #f])
+        (let loop ([i 0])
           (cond [(fx= i n) #f]
                 [(char=? (string-ref s i) #\\)
-                 (if (fx< (fx1+ i) n) (loop (fx+ i 2) class-start)
+                 (if (fx< (fx1+ i) n) (loop (fx+ i 2))
                      ($error "trailing escape"))]
-                [(and class-start (char=? (string-ref s i) #\])
-                      (fx> i (fx1+ class-start)))
-                 (loop (fx1+ i) #f)]
-                [(and (not class-start) (char=? (string-ref s i) #\[))
-                 (loop (fx1+ i) i)]
-                [class-start (loop (fx1+ i) class-start)]
+                [(char=? (string-ref s i) #\[) (loop ($class-end s i))]
                 [(char=? (string-ref s i) #\}) ($error "unmatched closing brace")]
                 [(char=? (string-ref s i) #\{) i]
-                [else (loop (fx1+ i) #f)])))))
+                [else (loop (fx1+ i))])))))
   (define $brace-close
     (lambda (s open)
       (let ([n (string-length s)])
-        (let loop ([i (fx1+ open)] [depth 1] [class-start #f])
+        (let loop ([i (fx1+ open)] [depth 1])
           (cond [(fx= i n) ($error "unmatched opening brace")]
                 [(char=? (string-ref s i) #\\)
-                 (if (fx< (fx1+ i) n) (loop (fx+ i 2) depth class-start)
+                 (if (fx< (fx1+ i) n) (loop (fx+ i 2) depth)
                      ($error "trailing escape"))]
-                [(and class-start (char=? (string-ref s i) #\])
-                      (fx> i (fx1+ class-start)))
-                 (loop (fx1+ i) depth #f)]
-                [(and (not class-start) (char=? (string-ref s i) #\[))
-                 (loop (fx1+ i) depth i)]
-                [class-start (loop (fx1+ i) depth class-start)]
+                [(char=? (string-ref s i) #\[) (loop ($class-end s i) depth)]
                 [(char=? (string-ref s i) #\{)
-                 (loop (fx1+ i) (fx1+ depth) #f)]
+                 (loop (fx1+ i) (fx1+ depth))]
                 [(char=? (string-ref s i) #\})
-                 (if (fx= depth 1) i (loop (fx1+ i) (fx1- depth) #f))]
-                [else (loop (fx1+ i) depth #f)])))))
+                 (if (fx= depth 1) i (loop (fx1+ i) (fx1- depth)))]
+                [else (loop (fx1+ i) depth)])))))
   (define $split
     (lambda (s)
       (let ([n (string-length s)])
-        (let loop ([i 0] [start 0] [depth 0] [out '()] [class-start #f])
+        (let loop ([i 0] [start 0] [depth 0] [out '()])
           (cond [(fx= i n) (reverse (cons (substring s start n) out))]
                 [(char=? (string-ref s i) #\\)
-                 (if (fx< (fx1+ i) n) (loop (fx+ i 2) start depth out class-start)
+                 (if (fx< (fx1+ i) n) (loop (fx+ i 2) start depth out)
                      ($error "trailing escape in brace"))]
-                [(and class-start (char=? (string-ref s i) #\])
-                      (fx> i (fx1+ class-start)))
-                 (loop (fx1+ i) start depth out #f)]
-                [(and (not class-start) (char=? (string-ref s i) #\[))
-                 (loop (fx1+ i) start depth out i)]
-                [class-start (loop (fx1+ i) start depth out class-start)]
+                [(char=? (string-ref s i) #\[) (loop ($class-end s i) start depth out)]
                 [(char=? (string-ref s i) #\{)
-                 (loop (fx1+ i) start (fx1+ depth) out #f)]
+                 (loop (fx1+ i) start (fx1+ depth) out)]
                 [(char=? (string-ref s i) #\})
-                 (loop (fx1+ i) start (fx1- depth) out #f)]
+                 (loop (fx1+ i) start (fx1- depth) out)]
                 [(and (char=? (string-ref s i) #\,) (fx= depth 0))
-                 (loop (fx1+ i) (fx1+ i) depth (cons (substring s start i) out) #f)]
-                [else (loop (fx1+ i) start depth out #f)])))))
+                 (loop (fx1+ i) (fx1+ i) depth (cons (substring s start i) out))]
+                [else (loop (fx1+ i) start depth out)])))))
   (define $integer?
     (lambda (s)
       (let ([n (string-length s)])
@@ -239,6 +240,12 @@
                           (char=? (string-ref s (fx1+ i)) #\/))
                      (string-set! out j #\/)
                      (loop (fx+ i 2) (fx1+ j))]
+                    [(and (char=? (string-ref s i) #\\) (fx< (fx1+ i) n))
+                     ;; Preserve an entire escape pair so its second backslash
+                     ;; cannot be mistaken for a slash escape on the next pass.
+                     (string-set! out j (string-ref s i))
+                     (string-set! out (fx1+ j) (string-ref s (fx1+ i)))
+                     (loop (fx+ i 2) (fx+ j 2))]
                     [else
                      (string-set! out j (string-ref s i))
                      (loop (fx1+ i) (fx1+ j))]))))))
@@ -256,12 +263,26 @@
   (define $compile
     (lambda (flavor s separator)
       (let* ([source (if (eq? flavor 'windows) s ($normalize-unix-slashes s))]
-             [parsed (path-parse flavor source)])
-        (%branch parsed (map (lambda (c) ($component-compile flavor c))
-                             (path-components parsed))
+             [home ($tilde-home flavor source)]
+             [expanded (if home
+                           (string-append (path-render home #\/)
+                                          (substring source 1 (string-length source)))
+                           source)]
+             [parsed (path-parse flavor expanded)]
+             [home-count (if home (length (path-components home)) 0)])
+        (%branch parsed
+                 (let loop ([components (path-components parsed)] [literal-count home-count])
+                   (if (null? components) '()
+                       (cons (if (fx> literal-count 0)
+                                 (%component
+                                  (sre->regex (list 'seq (car components))
+                                              (if (eq? flavor 'windows) '(i) '()))
+                                  (car components))
+                                 ($component-compile flavor (car components)))
+                             (loop (cdr components) (fx1- literal-count)))))
                  separator
-                 (and (> (string-length source) 0)
-                      (let ([last (string-ref source (fx1- (string-length source)))])
+                 (and (> (string-length expanded) 0)
+                      (let ([last (string-ref expanded (fx1- (string-length expanded)))])
                         (if (eq? flavor 'unix) (char=? last #\/)
                             (or (char=? last #\/) (char=? last #\\)))))))))
 
@@ -286,28 +307,24 @@
                   (hashtable-set! memo key answer)
                   answer)))))))
 
-  (define $expand-tilde
+  (define $tilde-home
     (lambda (flavor s)
       (let ([n (string-length s)])
         (cond [(or (string=? s "~")
                    (and (> n 1) (char=? (string-ref s 0) #\~)
                         (or (char=? (string-ref s 1) #\/)
                             (and (eq? flavor 'windows) (char=? (string-ref s 1) #\\)))))
-               (let* ([separator (if (eq? flavor 'unix) #\/ #\\)]
-                      [home (path-render (path-expand-user (path-parse flavor "~"))
-                                         separator)])
-                 (if (fx= n 1) home
-                     (string-append home (string separator)
-                                    (substring s 2 n))))]
+               (path-expand-user (path-parse flavor "~"))]
               [(and (> n 0) (char=? (string-ref s 0) #\~))
                ($error "named-user tilde is unsupported")]
-              [else s]))))
+              [else #f]))))
 
   #|proc:make-glob
   Compile string `pattern` and return an immutable, opaque glob object.
   Optional `flavor` follows the host OS: `'windows` on Windows, `'unix`
   elsewhere. Brace alternatives form an ordered union; numeric ranges and a leading
-  current-user tilde expand before component compilation. Backslash escapes characters
+  current-user tilde expand before component compilation. Home-directory names stay literal.
+  Backslash escapes characters
   in Unix patterns; escaped `/` remains a separator. Windows treats both slash forms as
   separators, so bracket classes quote wildcard characters such as `[*]`. Malformed
   syntax raises an error.
@@ -323,7 +340,7 @@
                      [source (if (eq? flavor 'windows)
                                  ($normalize-windows-slashes pattern) pattern)])
                  (%make-glob flavor
-                             (map (lambda (s) ($compile flavor ($expand-tilde flavor s) separator))
+                             (map (lambda (s) ($compile flavor s separator))
                                   ($expand-braces source)))))]))
 
   #|proc:glob?
@@ -390,39 +407,43 @@
               (set! stack (list (vector 'node root root
                                         (branch-components branch) '()
                                         (branch-separator branch)))))))
-        (define $entry-match?
-          (lambda (flavor wanted actual)
-            (if (eq? flavor 'windows) (string-ci=? wanted actual)
-                (string=? wanted actual))))
-        (define find-literal-entry
+        (define resolve-literal-name
           (lambda (flavor parent wanted)
-            (if (not (file-directory? ($physical parent) follow-link?)) #f
-                (let ([directory (fs-open-directory ($physical parent))]
-                      [found #f])
-                  (dynamic-wind
-                    void
-                    (lambda ()
-                      (let loop ()
-                        (unless found
-                          (let ([entry (fs-read-directory directory)])
-                            (when entry
-                              (unless (member (car entry) '("." ".."))
-                                (when ($entry-match? flavor wanted (car entry))
-                                  (set! found entry)))
-                              (unless found (loop)))))))
-                    (lambda () (fs-close-directory directory)))
-                  found))))
+            ;; Unix literal components need no directory enumeration. The caller
+            ;; checks the child with file-directory? or the final eligibility check.
+            ;; Windows flavor resolves the on-disk spelling case-insensitively.
+            (cond [(not (file-directory? ($physical parent) follow-link?)) #f]
+                  [(eq? flavor 'unix)
+                   ;; Stat through the parent to check search permission without
+                   ;; requiring directory read permission. get-mode propagates
+                   ;; access errors that file-exists? would turn into no match.
+                   (get-mode (string-append ($physical parent) "/."))
+                  wanted]
+                  [else
+                   (let ([directory (fs-open-directory ($physical parent))]
+                         [found #f])
+                     (dynamic-wind
+                       void
+                       (lambda ()
+                         (let loop ()
+                           (unless found
+                             (let ([entry (fs-read-directory directory)])
+                               (when entry
+                                 (unless (member (car entry) '("." ".."))
+                                   (when (string-ci=? wanted (car entry))
+                                     (set! found (car entry))))
+                                 (unless found (loop)))))))
+                       (lambda () (fs-close-directory directory)))
+                     found)])))
         (define identity
           (lambda (name)
             (let ([stat (file-stat name)])
               (list (file-stat-dev-major stat) (file-stat-dev-minor stat)
                     (file-stat-inode stat)))))
         (define open-scan
-          (lambda (logical physical cs ancestors separator known-type)
+          (lambda (logical physical cs ancestors separator)
             (let ([name ($physical physical)])
-              (when (or (eq? known-type 'FT_dir)
-                        (and (eq? known-type 'FT_symlink) follow-link?)
-                        (and (not known-type) (file-directory? name follow-link?)))
+              (when (file-directory? name follow-link?)
                 (let ([id (and follow-link? (identity name))])
                   (unless (and id (member id ancestors))
                     (let ([directory (fs-open-directory name)])
@@ -469,7 +490,7 @@
                                                (not (hashtable-contains? seen result)))
                                           (begin (hashtable-set! seen result #t) result) (loop)))]
                                    [(not (car cs))
-                                    (open-scan p physical cs ancestors separator #f)
+                                    (open-scan p physical cs ancestors separator)
                                     (set! stack (cons (vector 'node p physical (cdr cs) ancestors separator) stack))
                                     (loop)]
                                    [(member (component-literal (car cs)) '("." ".."))
@@ -483,25 +504,20 @@
                                                                    next ancestors separator) stack))))
                                     (loop)]
                                    [(component-literal (car cs))
-                                    (let ([entry (find-literal-entry (glob-flavor compiled)
+                                    (let ([actual (resolve-literal-name (glob-flavor compiled)
                                                                       physical
                                                                       (component-literal (car cs)))])
-                                      (when entry
-                                        (let* ([actual (car entry)]
-                                               [logical-child (path-add-component p (component-literal (car cs)))]
+                                      (when actual
+                                        (let* ([logical-child (path-add-component p (component-literal (car cs)))]
                                                [physical-child (path-add-component physical actual)]
                                                [next (cdr cs)]
                                                [child-name ($physical physical-child)])
                                           (when (or (null? next)
-                                                    (or (eq? (cdr entry) 'FT_dir)
-                                                        (and (eq? (cdr entry) 'FT_symlink) follow-link?)))
-                                            (when (pair? next)
-                                              (let ([probe (fs-open-directory child-name)])
-                                                (fs-close-directory probe)))
+                                                    (file-directory? child-name follow-link?))
                                             (set! stack (cons (vector 'node logical-child physical-child
                                                                        next ancestors separator) stack))))))
                                     (loop)]
-                                   [else (open-scan p physical cs ancestors separator #f) (loop)]))]
+                                   [else (open-scan p physical cs ancestors separator) (loop)]))]
                           [(scan)
                            (let* ([physical (task-physical task)]
                                   [cs (task-components task)]

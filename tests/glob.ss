@@ -1,5 +1,79 @@
 (import (cspp) (cspp glob))
 
+(mat glob-unix-backslash-parity
+     ;; Pairs of backslashes encode literal backslashes before the path separator.
+     (for-all
+      (lambda (count)
+        (let ([slashes (make-string count #\\)])
+          (glob-match? 'unix (string-append "a" (make-string (fx* 2 count) #\\) "/b")
+                       (string-append "a" slashes "/b"))))
+      '(1 2 3 4))
+
+     ;; An unpaired backslash may escape the separator after literal backslash pairs.
+     (glob-match? 'unix "a\\\\\\/b" "a\\/b"))
+
+(mat glob-negated-class-leading-bracket
+     (glob-match? 'unix "[!]{]" "a")
+
+     (not (glob-match? 'unix "[!]{]" "{"))
+
+     (not (glob-match? 'unix "[^]{]" "]"))
+
+     ;; Class scanning must agree inside braces and while separating alternatives.
+     (glob-match? 'unix "{[!],{],b}" "a")
+
+     (glob-match? 'unix "{b,[^],{]}" "a"))
+
+(mat glob-home-is-literal
+     ;; Expanded home components are literal, even when they contain glob syntax.
+     (let ([old-home (getenv "HOME")] [old-profile (getenv "USERPROFILE")])
+       (dynamic-wind
+         (lambda ()
+           (putenv "HOME" "/tmp/home[abc]*?{x}\\suffix")
+           (putenv "USERPROFILE" "C:/home[abc]*?{x}"))
+         (lambda ()
+           (and (glob-match? 'unix "~/file" "/tmp/home[abc]*?{x}\\suffix/file")
+                (not (glob-match? 'unix "~/file" "/tmp/homeax{x}suffix/file"))
+                (glob-match? 'unix "~/{a,b}" "/tmp/home[abc]*?{x}\\suffix/a")
+                (glob-match? 'windows "~\\file" "C:/home[abc]*?{x}/file")))
+         (lambda ()
+           (if old-home (putenv "HOME" old-home)
+               ((foreign-procedure "unsetenv" (string) int) "HOME"))
+           (if old-profile (putenv "USERPROFILE" old-profile)
+               ((foreign-procedure "unsetenv" (string) int) "USERPROFILE"))))))
+
+(mat glob-literal-descent
+     (let ([root (format "glob-literal-descent-~a" (get-process-id))])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (write-string (string-append root "/file") "x")
+           (mkdir (string-append root "/dir"))
+           (write-string (string-append root "/dir/child") "x")
+           (file-symlink "file" (string-append root "/file-link"))
+           (file-symlink "absent" (string-append root "/broken-link"))
+           (file-symlink "dir" (string-append root "/dir-link")))
+         (lambda ()
+           (and (equal? '() (glob* (string-append root "/file-link/*") #t #f 'empty))
+                (equal? '() (glob* (string-append root "/broken-link/*") #t #f 'empty))
+                (equal? '() (glob* (string-append root "/file/*") #t #f 'empty))
+                (equal? (list (string-append root "/dir-link/child"))
+                        (glob* (string-append root "/dir-link/*") #t #f 'empty))
+                (equal? '() (glob (string-append root "/dir-link/*")))))
+         (lambda () (file-removetree root)))))
+
+(mat glob-searchable-literal-directory
+     (let ([root (format "glob-searchable-~a" (get-process-id))])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (write-string (string-append root "/known.txt") "x")
+           (file-chmod root #o111))
+         (lambda ()
+           (equal? (list (string-append root "/known.txt"))
+                   (glob (string-append root "/known.txt"))))
+         (lambda () (file-chmod root #o700) (file-removetree root)))))
+
 (mat glob-default-flavor
      ;; The one-argument API follows the host OS path syntax.
      (if (eq? (system-platform) 'windows)
