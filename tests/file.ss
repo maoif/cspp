@@ -1914,6 +1914,62 @@
 
 (mat file-move
 
+     ;; Moving to a missing destination on the same filesystem preserves directory identity.
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([source (path-build root "sub")]
+               [dest (path-build root "renamed")]
+               [inode (file-inode source)])
+          (file-chmod source #o700)
+          (file-chmod (path-build source "nested.txt") #o600)
+          (file-move source dest)
+          (and (= inode (file-inode dest))
+               (= #o700 (file-mode dest))
+               (= #o600 (file-mode (path-build dest "nested.txt")))
+               (not (file-exists? source #f))))))
+
+     ;; Merging into an existing directory exercises the metadata-preserving copy fallback.
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([source (path-build root "sub")]
+              [dest (path-build root "merged")]
+              [stamp (make-time 'time-utc 123000000 1000000000)])
+          (mkdir dest)
+          (write-string (path-build dest "keep") "keep")
+          (mkdir (path-build source "private"))
+          (file-chmod (path-build source "private") #o700)
+          (file-chmod source #o750)
+          (file-chmod (path-build source "nested.txt") #o600)
+          (file-touch (path-build source "nested.txt") stamp)
+          (file-symlink "missing" (path-build source "dangling"))
+          (file-touch (path-build source "dangling") stamp #f #f)
+          (file-touch (path-build source "private") stamp)
+          (file-touch source stamp)
+          (file-move source dest)
+          (and (= #o750 (file-mode dest))
+               (= #o700 (file-mode (path-build dest "private")))
+               (= #o600 (file-mode (path-build dest "nested.txt")))
+               (time=? stamp (file-modification-time dest))
+               (time=? stamp (file-modification-time (path-build dest "private")))
+               (time=? stamp (file-modification-time (path-build dest "nested.txt")))
+               (time=? stamp (file-access-time (path-build dest "nested.txt")))
+               (time=? stamp (file-modification-time (path-build dest "dangling") #f))
+               (file-symbolic-link? (path-build dest "dangling"))
+               (string=? "keep" (read-string (path-build dest "keep")))
+               (not (file-exists? source #f))))))
+
+     ;; A custom fallback copier controls the content and metadata of individual files.
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([source (path-build root "sub")] [dest (path-build root "custom")])
+          (mkdir dest)
+          (file-move source dest
+                     (lambda (from to)
+                       (write-string to "custom")
+                       (file-chmod to #o640)))
+          (and (string=? "custom" (read-string (path-build dest "nested.txt")))
+               (= #o640 (file-mode (path-build dest "nested.txt")))))))
+
      ;; A dangling symlink is a movable filesystem entry even though its target is absent.
      (let ([src ($random-file)] [dest ($random-file)])
        (dynamic-wind

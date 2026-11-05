@@ -2320,6 +2320,66 @@
              [relative (path-components (path-relative-to source destination))])
         (not (and (pair? relative) (string=? (car relative) ".."))))))
 
+  (define $apply-copy-metadata
+    (lambda (who dest stat)
+      (unless (eq? (file-type->symbol (file-stat-type stat)) 'FT_symlink)
+        (chmod dest (file-stat-mode stat)))
+      ($file-touch who dest (file-stat-access-time stat) (file-stat-modification-time stat)
+                   #f #f)))
+
+  (define $copy-for-move
+    (lambda (src dest)
+      ;; Snapshot before reading the file can update its access time.
+      (let ([stat (file-stat src #f)]
+            [target (if (file-directory? dest)
+                        (path-build dest (path-last src)) dest)])
+        (file-copy src dest #f)
+        ($apply-copy-metadata 'file-move target stat))))
+
+  (define $file-copytree
+    (lambda (who src dest copy preserve-metadata?)
+       (pcheck ([string? src dest] [file-directory? src] [procedure? copy])
+               (let* ([source-path ($absolute-file-path src)]
+                      [metadata '()]
+                      [remember-directory
+                       (lambda (source target)
+                         (when preserve-metadata?
+                           (set! metadata (cons (cons target (file-stat source)) metadata))))]
+                      [make-directory
+                       (lambda (source target)
+                         (remember-directory source target)
+                         ;; A new move destination stays private until copying finishes.
+                         (mkdir target (if preserve-metadata? #o700 #o777)))]
+                      [relativize (lambda (path)
+                                    (path-render
+                                     (path-relative-to source-path
+                                                       ($absolute-file-path path))))]
+                      [do-copytree (lambda (dest)
+                                     (walk-files (lambda (dir dirs files)
+                                                   ;; paths are relative to `src`
+                                                   (for-each (lambda (d)
+                                                               (let ([newd (path-build dest (relativize d))])
+                                                                 (make-directory d newd)))
+                                                             dirs)
+                                                   (for-each (lambda (f)
+                                                               (let ([newd (path-build dest (relativize f))])
+                                                                 (copy f newd)))
+                                                             files))
+                                                 src #f #t))])
+                 (when ($copytree-destination-inside-source? who src dest)
+                   (errorf who "destination cannot be inside the source directory"))
+                 (if (file-directory? dest #t)
+                     (remember-directory src dest)
+                     (let ([parent ($parent-directory-name (path-parse 'unix dest))])
+                       (if (file-directory? parent #t)
+                           (make-directory src dest)
+                           (errorf who "destination's parent directory doesn't exist: ~a"
+                                   parent))))
+                 (do-copytree dest)
+                 ;; Reverse discovery order restores descendants before their parents.
+                 (for-each (lambda (entry) ($apply-copy-metadata who (car entry) (cdr entry)))
+                           metadata)))))
+
   #|proc:file-copytree
   Copy the contents of directory path string `src` into directory path string `dest`.
   An existing `dest` receives the contents directly; otherwise its parent must exist and
@@ -2333,68 +2393,42 @@
   (define-who file-copytree
     (case-lambda
       [(src dest)
-       (file-copytree src dest (lambda (src dest) (file-copy src dest #f)))]
-      [(src dest copy)
-       (pcheck ([string? src dest] [file-directory? src] [procedure? copy])
-               (let* ([source-path ($absolute-file-path src)]
-                      [relativize (lambda (path)
-                                    (path-render
-                                     (path-relative-to source-path
-                                                       ($absolute-file-path path))))]
-                      [do-copytree (lambda (dest)
-                                     (walk-files (lambda (dir dirs files)
-                                                   ;; paths are relative to `src`
-                                                   (for-each (lambda (d)
-                                                               (let ([newd (path-build dest (relativize d))])
-                                                                 (mkdir newd)))
-                                                             dirs)
-                                                   (for-each (lambda (f)
-                                                               (let ([newd (path-build dest (relativize f))])
-                                                                 (copy f newd)))
-                                                             files))
-                                                 src #f #t))])
-                 (when ($copytree-destination-inside-source? who src dest)
-                   (errorf who "destination cannot be inside the source directory"))
-                 (if (file-directory? dest #t)
-                     (do-copytree dest)
-                     (let ([parent ($parent-directory-name (path-parse 'unix dest))])
-                       (if (file-directory? parent #t)
-                           (begin (mkdir dest) (do-copytree dest))
-                           (errorf who "destination's parent directory doesn't exist: ~a"
-                                   parent))))))]))
+       ($file-copytree who src dest (lambda (src dest) (file-copy src dest #f)) #f)]
+      [(src dest copy) ($file-copytree who src dest copy #f)]))
 
-
-  #|proc:file-move
-  Move a single file or directory from `src` to `dest`.
-
-  `copy` is the procedure used to copy individual files.
-  It is `file-copy` with `follow-link?` set to #f by default.
-  |#
   (define $try-rename-file
     (lambda (src dest)
       (guard (e [(error? e) #f])
         (rename-file src dest)
         #t)))
 
-  (define-who file-move
-    (case-lambda
-      [(src dest)
-       (file-move src dest (lambda (src dest) (file-copy src dest #f)))]
-      [(src dest copy)
+  (define $file-move
+    (lambda (who src dest copy)
        (pcheck ([string? src dest] [(lambda (path) (file-exists? path #f)) src]
                 [procedure? copy])
-               (if (and (file-directory? src #f)
-                        (not (file-symbolic-link? src)))
-                   (begin (file-copytree src dest copy)
-                          (file-removetree src))
-                   (if (file-directory? dest #t)
-                       (begin (copy src dest)
-                              (delete-file src))
-                       (if (and (not (file-exists? dest #f))
-                                ($try-rename-file src dest))
-                           #t
-                           (begin (copy src dest)
-                                  (delete-file src))))))]))
+               (cond [(and (not (file-exists? dest #f)) ($try-rename-file src dest)) #t]
+                     [(and (file-directory? src #f) (not (file-symbolic-link? src)))
+                      ($file-copytree who src dest copy #t)
+                      (file-removetree src #t)]
+                     [else
+                      (begin (copy src dest)
+                             (delete-file src))]))))
+
+  #|proc:file-move
+  Move filesystem path string `src` to `dest`, renaming when `dest` is absent and the
+  filesystem permits it. An existing directory receives a file under its source basename,
+  or the contents of a source directory. Nested directory symlinks are copied as links.
+  When copying is necessary, the default preserves permission bits and access/modification
+  times, but not ownership, hard-link relationships, or extended attributes.
+  Optional `copy` has signature `(lambda (source-path destination-path) ...)` and controls
+  copying individual files and symlinks, including their metadata; return values are ignored.
+  A successful rename bypasses `copy`. Source entries are removed only after copying succeeds.
+  Return `#t` for a renamed file or moved directory, unspecified values for a copied file.
+  |#
+  (define-who file-move
+    (case-lambda
+      [(src dest) ($file-move who src dest $copy-for-move)]
+      [(src dest copy) ($file-move who src dest copy)]))
 
 
   #|proc:file-removetree
