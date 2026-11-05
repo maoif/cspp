@@ -2,6 +2,19 @@
 
 ;; This driver runs under strace syscall injection, separately from the test runner.
 (case (string->symbol (cadr (command-line)))
+  [(host-query)
+   ;; Error case: uname failures must raise conditions instead of returning legacy error vectors.
+   (for-each
+     (lambda (entry)
+       (unless
+         (guard (condition
+                  [(system-permission-error? condition)
+                   (and (= 1 (system-error-code condition))
+                        (eq? (car entry) (system-error-operation condition)))])
+           ((cdr entry)) #f)
+         (error 'system-native-faults "host query did not raise the native failure" (car entry))))
+     (list (cons 'hostname hostname) (cons 'hostname system-hostname) (cons 'cpu-arch cpu-arch)))]
+
   [(pipeline-run pipeline-capture pipeline-spawn)
    ;; Error case: EINTR while reaping earlier children must not replace launch-time ENOENT.
    (unless

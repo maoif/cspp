@@ -1,7 +1,7 @@
 (library (cspp system platform)
   (export unix? windows? darwin? linux? system-platform hostname system-hostname
           cpu-arch cpu-count system-machine)
-  (import (cspp chez) (cspp private os) (cspp utils))
+  (import (cspp chez) (cspp private os) (cspp system common) (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; platform info
@@ -16,21 +16,26 @@
       (lambda () (= 1 (native)))))
 
   #|proc:hostname
-  The `hostname` procedure returns the hostname of the current operating system.
+  The `hostname` procedure returns the hostname of the current operating system as a string.
+  Native query failures raise a system condition.
   |#
   (define hostname
-    (foreign-procedure "cspp_hostname" () ptr))
+    (let ([ffi (foreign-procedure "cspp_hostname" () ptr)])
+      (lambda () (ffi-result-ref (ffi)))))
 
   #|proc:system-hostname
   The `system-hostname` procedure returns the hostname of the current operating system.
+  It is an alias of `hostname`; native query failures raise a system condition.
   |#
   (define system-hostname hostname)
 
   #|proc:cpu-arch
   The `cpu-arch` procedure returns the instruction set architecture name of the current processor.
+  The result is a string; native query failures raise a system condition.
   |#
   (define cpu-arch
-    (foreign-procedure "cspp_cpu_arch" () ptr))
+    (let ([ffi (foreign-procedure "cspp_cpu_arch" () ptr)])
+      (lambda () (ffi-result-ref (ffi)))))
 
   #|proc:cpu-count
   The `cpu-count` procedure returns the number of available logical processors.

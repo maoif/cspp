@@ -20,6 +20,9 @@ currently support Linux. Darwin/Windows information helpers are documented stubs
 `system-unsupported-error?`. `mounted-filesystems` reads Linux `/proc/self/mountinfo` and returns
 an empty list when that file is absent.
 
+`hostname` (also `system-hostname`) and `cpu-arch` return strings. Native query failures raise
+system conditions with the operation and error code.
+
 `linux-os-release` returns symbol/string associations from `/etc/os-release`, falling back to
 `/usr/lib/os-release`. It decodes shell quoting and backslash escapes while preserving variable
 references and command substitutions as literal text.

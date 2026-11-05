@@ -1,5 +1,17 @@
 (import (cspp))
 
+(mat system-native-host-query-errors
+
+  ;; Error case: unavailable host information must raise rather than return an error as data.
+  (if (= 0 (system "strace -qq -o /dev/null true >/dev/null 2>&1"))
+      (let* ([root (if (file-exists? "system-native-faults.ss") ".." ".")]
+             [launcher (string-append root "/cspp")]
+             [script (string-append "--script=" root "/tests/system-native-faults.ss")])
+        (process-exit-success?
+          (process-run strace "-f" "-qq" "-e" "trace=uname" "-e" "inject=uname:error=EPERM"
+            "-o" "/dev/null" (begin launcher) (begin script) "host-query" :timeout 5000)))
+      #t))
+
 (mat system-native-cleanup-errors
 
   ;; Error case: retrying an interrupted wait must preserve the original pipeline launch failure.

@@ -109,18 +109,18 @@ ptr cspp_send_signal(int pid, int sig) {
 ptr cspp_hostname() {
   struct utsname sysinfo;
   if (uname(&sysinfo) == 0) {
-    return Sstring(sysinfo.nodename);
+    return cspp_ok(Sstring_utf8(sysinfo.nodename, -1));
   }
-  return errno_str_vector();
+  return cspp_errno_result("hostname", Snil);
 }
 
 
 ptr cspp_cpu_arch() {
   struct utsname sysinfo;
   if (uname(&sysinfo) == 0) {
-    return Sstring(sysinfo.machine);
+    return cspp_ok(Sstring_utf8(sysinfo.machine, -1));
   }
-  return errno_str_vector();
+  return cspp_errno_result("cpu-arch", Snil);
 }
 
 
