@@ -61,6 +61,9 @@ unexecutable files, and scripts with missing interpreters permit trying later en
 paths bypass this search. The kernel handles shebangs; direct execution has no automatic shell
 fallback for executable text without a shebang.
 
+All process creation APIs close unrelated descriptors in the child before running the executable.
+Only standard input, output, and error follow the stream options; parent descriptors stay open.
+
 The `/check` variants require exit code zero by default. Ordinary variants accept any status.
 The `:success` option overrides either default: `#f` accepts any status, a list accepts only normal
 exits with one of those codes, and a callback `(status -> object)` accepts a nonfalse result.

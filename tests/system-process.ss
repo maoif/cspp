@@ -1,5 +1,42 @@
 (import (cspp))
 
+(mat process-unrelated-descriptors
+
+     ;; Error case: every launcher must keep an unrelated parent file out of the child.
+     (call-with-input-file "/etc/hostname"
+       (lambda (port)
+         (let* ([fd (port-file-descriptor port)]
+                [command (format "test ! /proc/self/fd/~a -ef /etc/hostname" fd)]
+                [specs (list (list "/bin/sh" "-c" command))])
+           (and
+             (for-all
+               (lambda (run) (process-exit-success? (run)))
+               (list
+                 (lambda ()
+                   (process-result-status (process-capture "/bin/sh" "-c" (begin command))))
+                 (lambda () (process-run "/bin/sh" "-c" (begin command)))
+                 (lambda ()
+                   (process-wait (process-spawn "/bin/sh" (list "-c" command) '())))
+                 (lambda ()
+                   (process-result-status (process-capture-pipeline specs)))
+                 (lambda () (car (process-run-pipeline specs)))
+                 (lambda () (process-wait (car (process-spawn-pipeline specs '()))))))
+             ;; Closing descriptors in the child must leave the parent's file usable.
+             (not (eof-object? (get-char port)))))))
+
+     ;; Error case: descriptors above the launcher's own pipes must also be closed.
+     (call-with-input-file "/etc/hostname"
+       (lambda (port)
+         (let ([fd ((foreign-procedure "fcntl" (int int int) int)
+                     (port-file-descriptor port) 0 128)])
+           (and (>= fd 128)
+                (dynamic-wind
+                  void
+                  (lambda ()
+                    (let ([command (format "test ! /proc/self/fd/~a -ef /etc/hostname" fd)])
+                      (process-exit-success? (process-run "/bin/sh" "-c" (begin command)))))
+                  (lambda () ((foreign-procedure "close" (int) int) fd))))))))
+
 (mat process-empty-working-directory
 
      ;; Error case: an explicitly empty cwd must not run in the parent's working directory.

@@ -2,6 +2,11 @@
 #include "common.h"
 #include <signal.h>
 #include <pthread.h>
+#if defined(__linux__)
+#include <dirent.h>
+#include <stddef.h>
+#include <sys/syscall.h>
+#endif
 
 typedef struct {
   char *data;
@@ -242,11 +247,64 @@ static void wait_child_after_exec_error(pid_t pid) {
   }
 }
 
+/* Keep only standard streams and the exec-error pipe. No allocation or locks
+ * are permitted after fork; Linux's procfs fallback uses a native stack buffer. */
+static int child_close_descriptors(int preserve, long descriptor_limit) {
+#if defined(__linux__)
+  (void)descriptor_limit;
+#ifdef SYS_close_range
+  if ((preserve == 3 || syscall(SYS_close_range, 3U, (unsigned int)preserve - 1, 0) == 0)
+      && syscall(SYS_close_range, (unsigned int)preserve + 1, ~0U, 0) == 0)
+    return 0;
+#endif
+
+  int directory = open("/proc/self/fd", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (directory < 0) return errno;
+  int error = 0;
+  for (;;) {
+    char entries[4096];
+    ssize_t size = syscall(SYS_getdents64, directory, entries, sizeof(entries));
+    if (size < 0) {
+      if (errno == EINTR) continue;
+      error = errno;
+      break;
+    }
+    if (size == 0) break;
+    int closed = 0;
+    for (size_t offset = 0; offset < (size_t)size;) {
+      unsigned short length;
+      memcpy(&length, entries + offset + offsetof(struct dirent64, d_reclen), sizeof(length));
+      const char *name = entries + offset + offsetof(struct dirent64, d_name);
+      offset += length;
+      if (*name < '0' || *name > '9') continue;
+      int fd = 0;
+      for (; *name >= '0' && *name <= '9'; name++) fd = fd * 10 + (*name - '0');
+      if (fd < 3 || fd == preserve || fd == directory) continue;
+      close(fd);
+      closed = 1;
+    }
+    /* Closing entries changes this directory; restart to avoid skipping any. */
+    if (closed && lseek(directory, 0, SEEK_SET) < 0) { error = errno; break; }
+  }
+  close(directory);
+  return error;
+#else
+  for (long fd = 3; fd < descriptor_limit; fd++) {
+    if (fd != preserve) close((int)fd);
+  }
+  return 0;
+#endif
+}
+
 static int spawn_native(pid_t *pid, char *const argv[], char *const env[],
                          char *const candidates[], const char *cwd,
                          int stdin_source, int stdout_source,
-                         int stderr_source, int stderr_to_stdout,
-                         const int *child_fds, size_t child_fd_count) {
+                         int stderr_source, int stderr_to_stdout) {
+  long descriptor_limit = 0;
+#if !defined(__linux__)
+  descriptor_limit = sysconf(_SC_OPEN_MAX);
+  if (descriptor_limit < 0) return errno ? errno : EINVAL;
+#endif
   int error_pipe[2];
   if (make_pipe(error_pipe) != 0) return errno;
   int flags = fcntl(error_pipe[1], F_GETFD, 0);
@@ -280,9 +338,8 @@ static int spawn_native(pid_t *pid, char *const argv[], char *const env[],
     } else if (child_redirect(stderr_source, STDERR_FILENO) != 0) {
       child_report_errno(error_pipe[1], errno);
     }
-    for (size_t i = 0; i < child_fd_count; i += 1) {
-      if (child_fds[i] >= 0) close(child_fds[i]);
-    }
+    int close_error = child_close_descriptors(error_pipe[1], descriptor_limit);
+    if (close_error) child_report_errno(error_pipe[1], close_error);
     int error = ENOENT, permission_denied = 0;
     for (size_t i = 0; candidates[i] != NULL; i++) {
       execve(candidates[i], argv, env);
@@ -326,13 +383,12 @@ static int spawn_native(pid_t *pid, char *const argv[], char *const env[],
 static int spawn_checked(pid_t *pid, char *const argv[], char *const env[],
                          char *const candidates[], const char *cwd,
                          int stdin_source, int stdout_source, int stderr_source,
-                         int stderr_to_stdout, const int *child_fds, size_t child_fd_count) {
+                         int stderr_to_stdout) {
   char *directory = strdup(cwd ? cwd : "");
   if (!directory) return ENOMEM;
   Sdeactivate_thread();
   int error = spawn_native(pid, argv, env, candidates, directory, stdin_source,
-                            stdout_source, stderr_source, stderr_to_stdout,
-                            child_fds, child_fd_count);
+                            stdout_source, stderr_source, stderr_to_stdout);
   Sactivate_thread();
   free(directory);
   return error;
@@ -576,14 +632,12 @@ ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
   }
 
   pid_t pid;
-  int child_fds[] = {stdin_pipe[0], stdin_pipe[1], stdout_pipe[0], stdout_pipe[1],
-                     stderr_pipe[0], stderr_pipe[1]};
   Slock_object(stdin_payload);
   rc = spawn_checked(&pid, cargv, cenv, candidates, cwd,
                      Sbytevectorp(stdin_payload) ? stdin_pipe[0] : (Ssymbolp(stdin_payload) ? -1 : -2),
                      capture_stdout ? stdout_pipe[1] : (stdout_null ? -2 : -1),
                      capture_stderr ? stderr_pipe[1] : (stderr_null ? -2 : -1),
-                     stderr_to_stdout, child_fds, sizeof(child_fds) / sizeof(child_fds[0]));
+                     stderr_to_stdout);
   free_string_array(candidates);
   close_fd(&stdin_pipe[0]);
   close_fd(&stdout_pipe[1]);
@@ -659,8 +713,7 @@ ptr cspp_spawn_process(ptr argv, ptr env, const char *cwd,
     } else sources[i] = modes[i] == 1 ? -2 : -1;
   }
   error = spawn_checked(&pid, cargv, cenv, candidates, cwd,
-                         sources[0], sources[1], sources[2], stderr_mode == 3,
-                         &pipes[0][0], 6);
+                         sources[0], sources[1], sources[2], stderr_mode == 3);
  done:
   free_string_array(candidates);
   free_string_array(cargv);
@@ -792,26 +845,6 @@ ptr cspp_spawn_pipeline(ptr specs) {
     ls = Scdr(ls);
   }
 
-  int child_fd_count = count > 1 ? 2 * (count - 1) : 0;
-  int *child_fds = child_fd_count == 0 ? NULL : (int *)malloc((size_t)child_fd_count * sizeof(int));
-  if (child_fd_count != 0 && child_fds == NULL) {
-    for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
-    for (int j = 0; j < count - 1; j += 1) {
-      close_fd(&pipes[j][0]);
-      close_fd(&pipes[j][1]);
-    }
-    free(argvs);
-    free(pids);
-    free(pipes);
-    errno = ENOMEM;
-    free_string_array(cenv);
-    return cspp_errno_result("spawn-pipeline", Snil);
-  }
-  for (int j = 0; j < count - 1; j += 1) {
-    child_fds[2 * j] = pipes[j][0];
-    child_fds[2 * j + 1] = pipes[j][1];
-  }
-
   int spawned = 0;
   for (int i = 0; i < count; i += 1) {
     char **candidates = NULL;
@@ -820,7 +853,7 @@ ptr cspp_spawn_pipeline(ptr specs) {
       rc = spawn_checked(&pids[i], argvs[i], cenv, candidates, "",
                          i > 0 ? pipes[i - 1][0] : -1,
                          i < count - 1 ? pipes[i][1] : -1,
-                         -1, 0, child_fds, (size_t)child_fd_count);
+                         -1, 0);
     }
     free_string_array(candidates);
     if (rc != 0) {
@@ -837,7 +870,6 @@ ptr cspp_spawn_pipeline(ptr specs) {
           close_fd(&pipes[j][1]);
         }
       }
-      free(child_fds);
       free(argvs);
       free(pids);
       free(pipes);
@@ -859,7 +891,6 @@ ptr cspp_spawn_pipeline(ptr specs) {
     Svector_set(v, i, Sinteger((iptr)pids[i]));
   }
   for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
-  free(child_fds);
   free(argvs);
   free(pids);
   free(pipes);
@@ -957,30 +988,6 @@ static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
     return cspp_errno_result("spawn-pipeline", Snil);
   }
 
-  int child_fd_count = 2 * (count - 1) + 2;
-  int *child_fds = (int *)malloc((size_t)child_fd_count * sizeof(int));
-  if (child_fds == NULL) {
-    for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
-    for (int j = 0; j < count - 1; j += 1) {
-      close_fd(&pipes[j][0]);
-      close_fd(&pipes[j][1]);
-    }
-    close_fd(&capture_pipe[0]);
-    close_fd(&capture_pipe[1]);
-    free(argvs);
-    free(pids);
-    free(pipes);
-    errno = ENOMEM;
-    free_string_array(cenv);
-    return cspp_errno_result("spawn-pipeline", Snil);
-  }
-  for (int j = 0; j < count - 1; j += 1) {
-    child_fds[2 * j] = pipes[j][0];
-    child_fds[2 * j + 1] = pipes[j][1];
-  }
-  child_fds[2 * (count - 1)] = capture_pipe[0];
-  child_fds[2 * (count - 1) + 1] = capture_pipe[1];
-
   int spawned = 0;
   for (int i = 0; i < count; i += 1) {
     char **candidates = NULL;
@@ -989,7 +996,7 @@ static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
       rc = spawn_checked(&pids[i], argvs[i], cenv, candidates, "",
                          i > 0 ? pipes[i - 1][0] : -1,
                          i < count - 1 ? pipes[i][1] : (capture_stdout ? capture_pipe[1] : -2),
-                         -1, 0, child_fds, (size_t)child_fd_count);
+                         -1, 0);
     }
     free_string_array(candidates);
     if (rc != 0) {
@@ -1006,7 +1013,6 @@ static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
       }
       close_fd(&capture_pipe[0]);
       close_fd(&capture_pipe[1]);
-      free(child_fds);
       free(argvs);
       free(pids);
       free(pipes);
@@ -1031,7 +1037,6 @@ static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
     (void)wait_pid_block(pids[i], &status);
   }
   for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
-  free(child_fds);
   free(argvs);
   free(pids);
   free(pipes);

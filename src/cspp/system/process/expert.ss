@@ -168,6 +168,7 @@
   Environment names must be nonempty and must not contain `=`.
   `stdin`, `stdout`, and `stderr` accept `inherit` (default), `null`, or `pipe`.
   `stderr` also accepts `stdout` to merge it into the child's stdout.
+  Descriptors other than standard input, output, and error are closed in the child before exec.
   A piped stdin is exposed as a binary output port; piped outputs as binary input ports.
   Callers own these ports and must close them, including stdin to deliver EOF to the child.
   Waiting does not close ports. Concurrent waiters share one cached exit status.
