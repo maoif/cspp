@@ -1256,7 +1256,7 @@
   (define $statx
     (let ([ffi-statx (foreign-procedure "cspp_statx" (string boolean) scheme-object)])
       (lambda (who path follow-link?)
-        (pcheck ([(lambda (x) (file-exists? x follow-link?)) path] [boolean? follow-link?])
+        (pcheck ([string? path] [boolean? follow-link?])
                 (let ([x (ffi-statx path follow-link?)])
                   (if (vector? x)
                       x
@@ -1388,8 +1388,7 @@
 
   (define $file-size
     (lambda (who path)
-      (pcheck ([file-exists? path])
-              ($statx-size ($statx who path #t)))))
+      ($statx-size ($statx who path #t))))
 
   #|proc:file-size
   Return the byte size of the filesystem entry at `path`, following symbolic links.

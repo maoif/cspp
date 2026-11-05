@@ -40,6 +40,26 @@
   (lambda (datum port write)
     ($escape-file-write 'escaped)))
 
+(mat file-metadata-tilde-thread-safety
+     (let* ([users (filter (lambda (fields) (file-directory? (list-ref fields 5)))
+                           (map (lambda (line) (string-split line #\:))
+                                (read-lines "/etc/passwd")))]
+            [users (list-head users (min 4 (length users)))]
+            [workers
+             (map (lambda (fields)
+                    (let* ([name (car fields)] [directory (list-ref fields 5)]
+                           [inode (file-inode directory)]
+                           [path (string-append "~" name)])
+                      (lambda ()
+                        (let loop ([remaining 2000])
+                          (or (fxzero? remaining)
+                              (and (= inode (file-inode path))
+                                   (string=? directory (unix-user-dir (user-ref name)))
+                                   (loop (fx1- remaining))))))))
+                  users)])
+       (for-all (lambda (value) (eq? value #t))
+                (vector->list (apply run-threads 0 (append workers workers))))))
+
 (mat file-writer-argument-checks
      ;; Error case: every writer rejects a non-string path before filesystem access.
      (for-all
