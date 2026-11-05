@@ -409,7 +409,7 @@
   (define $expansion-iterator
     (lambda (compiled follow-link? include-directories?)
       (let ([branches (glob-patterns compiled)] [stack '()] [active-branch #f]
-            [seen (make-hashtable string-hash string=?)] [finished? #f])
+            [seen (make-hashtable string-hash string=?)] [states #f] [finished? #f])
         (define close-all
           (lambda ()
             (let ([tasks stack] [failure #f])
@@ -433,6 +433,10 @@
         (define begin-branch
           (lambda (branch)
             (set! active-branch branch)
+            ;; Multiple recursive components can reach the same matcher suffix at
+            ;; the same spelling many times. A single globstar cannot do so.
+            (set! states (and (fx> (length (filter not (branch-components branch))) 1)
+                               (make-eq-hashtable)))
             (let* ([parsed (branch-path branch)]
                    [root (let loop ([p parsed] [cs (path-components parsed)])
                            (if (null? cs) (path-with-trailing-directory p #f)
@@ -442,6 +446,20 @@
               (set! stack (list (vector 'node root root
                                         (branch-components branch) '()
                                         (branch-separator branch)))))))
+        (define repeated-state?
+          (lambda (path cs ancestors separator)
+            (and states
+                 (let* ([paths (or (hashtable-ref states cs #f)
+                                   (let ([paths (make-hashtable string-hash string=?)])
+                                     (hashtable-set! states cs paths)
+                                     paths))]
+                        [name (path-render path separator)]
+                        [previous (hashtable-ref paths name '())]
+                        [context (and follow-link? ancestors)])
+                   ;; Preserve distinct spellings and cycle contexts; caching by
+                   ;; inode would lose directory aliases and explicit dot paths.
+                   (if (member context previous) #t
+                       (begin (hashtable-set! paths name (cons context previous)) #f))))))
         (define resolve-literal-name
           (lambda (flavor parent component)
             ;; Unix literal components need no directory enumeration. The caller
@@ -512,7 +530,8 @@
                           [(node)
                            (set! stack (cdr stack))
                            (let ([separator (task-separator task)] [name ($physical physical)])
-                             (cond [(null? cs)
+                             (cond [(repeated-state? p cs ancestors separator) (loop)]
+                                   [(null? cs)
                                     (let* ([result-path
                                             (if (and (branch-directory? active-branch)
                                                      (pair? (path-components p)))
@@ -585,7 +604,8 @@
                                    [else (loop)]))]))]))))
          (lambda ()
            (close-all) (set! branches (glob-patterns compiled))
-           (set! seen (make-hashtable string-hash string=?)) (set! finished? #f))
+           (set! seen (make-hashtable string-hash string=?)) (set! states #f)
+           (set! finished? #f))
          (lambda () (close-all) (set! finished? #t))))))
 
   (define $components<?

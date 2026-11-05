@@ -43,6 +43,44 @@
                   (glob-match? 'unix "**/**/**/x" "a/b/x"))))
          (lambda () (file-removetree root)))))
 
+(mat glob-separated-globstars
+     (let* ([root (format "glob-separated-stars-~a" (get-process-id))]
+            [leaf root]
+            [allocated
+             (lambda (pattern)
+               (collect)
+               (let* ([before (statistics)] [result (glob pattern)]
+                      [bytes (sstats-bytes (sstats-difference (statistics) before))])
+                 (cons result bytes)))])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (do ([i 0 (fx1+ i)]) ((fx= i 16))
+             (set! leaf (string-append leaf "/a"))
+             (mkdir leaf))
+           (file-touch (string-append leaf "/leaf.txt")))
+         (lambda ()
+           (let* ([single (allocated (string-append root "/**/leaf.txt"))]
+                  [pattern (string-append root "/**/a/**/a/**/a/**/leaf.txt")]
+                  [separated (allocated pattern)] [iterator (glob->iter pattern)]
+                  [collect-pass
+                   (lambda (iterator)
+                     (let ([values (make-list-builder)])
+                       (let loop ([value (iter-next! iterator)])
+                         (if (eq? value iter-end) (values)
+                             (begin (values value) (loop (iter-next! iterator)))))))])
+             (dynamic-wind
+               void
+               (lambda ()
+                 (and (equal? (list (string-append leaf "/leaf.txt")) (car separated))
+                      ;; Repeated pattern states must not multiply directory traversal.
+                      (< (cdr separated) (* 20 (cdr single)))
+                      (equal? (car single) (collect-pass iterator))
+                      (begin (iter-reset! iterator)
+                             (equal? (car single) (collect-pass iterator)))))
+               (lambda () (iter-finalize! iterator)))))
+         (lambda () (file-removetree root)))))
+
 (mat glob-dot-components-respect-symlink-policy
      (let ([root (format "glob-dot-policy-~a" (get-process-id))])
        (dynamic-wind
