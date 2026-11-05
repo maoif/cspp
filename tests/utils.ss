@@ -69,6 +69,22 @@
 
 (mat port-check-argument-safety
 
+     ;; Error case: release port checks reject nonports before inspecting their native layout.
+     (for-all
+       (lambda (name)
+         (let ([check (parameterize ([optimize-level 3])
+                        (eval `(lambda (value) (,name (value) #t))
+                          (environment '(cspp chez) '(cspp utils))))])
+           (for-all
+             (lambda (value)
+               (guard (condition
+                        [else (and (who-condition? condition)
+                                   (eq? 'pcheck (condition-who condition)))])
+                 (check value) #f))
+             (list 'invalid '#() "not a port" #f 17))))
+       '(pcheck-binary-port pcheck-textual-port
+         pcheck-open-binary-port pcheck-open-textual-port))
+
      ;; Error case: nonports must fail the predicate check before inspecting port state.
      (let ([invalid 17])
        (andmap

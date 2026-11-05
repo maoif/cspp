@@ -111,8 +111,12 @@
                               e e* (... ...))]))))])))
 
   (define open-port? (lambda (p) (and (port? p) (not (port-closed? p)))))
-  (define open-textual-port? (lambda (p) (and (textual-port? p) (not (port-closed? p)))))
-  (define open-binary-port?  (lambda (p) (and (binary-port? p) (not (port-closed? p)))))
+  (define textual-port-object? (lambda (p) (and (port? p) (textual-port? p))))
+  (define binary-port-object? (lambda (p) (and (port? p) (binary-port? p))))
+  (define open-textual-port?
+    (lambda (p) (and (textual-port-object? p) (not (port-closed? p)))))
+  (define open-binary-port?
+    (lambda (p) (and (binary-port-object? p) (not (port-closed? p)))))
 
   ;; just by default test for openness
   (define input-binary-port?
@@ -205,12 +209,12 @@
   The `pcheck-binary-port` macro validates bound identifiers `(id ...)` as binary ports.
   It returns the body's values on success and raises an argument error otherwise.
   |#
-  (gen-pcheck binary-port binary-port?)
+  (gen-pcheck binary-port binary-port-object?)
   #|macro:pcheck-textual-port
   The `pcheck-textual-port` macro validates bound identifiers `(id ...)` as textual ports.
   It returns the body's values on success and raises an argument error otherwise.
   |#
-  (gen-pcheck textual-port textual-port?)
+  (gen-pcheck textual-port textual-port-object?)
   #|macro:pcheck-open-port
   The `pcheck-open-port` macro validates bound identifiers `(id ...)` as ports that are open.
   It returns the body's values on success and raises an argument error otherwise.
