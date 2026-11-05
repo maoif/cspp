@@ -538,30 +538,21 @@
   (define procedure-arity
     (lambda (proc)
       (pcheck ([procedure? proc])
-              (let ([m (procedure-arity-mask proc)])
-                (if (>= m 0)
-                    (let ([lb ($make-list-builder)])
-                      (let loop ([m m] [i 0])
-                        (if (= m 0)
-                            (if (= 1 (length (lb)))
-                                (car (lb))
-                                (lb))
-                            (begin (when (logbit? 0 m)
-                                     (lb i))
-                                   (loop (ash m -1) (add1 i))))))
-                    (let ([lb ($make-list-builder)])
-                      (let find-min ([i 0])
-                        (if (= (ash m (- i)) -1)
-                            (begin
-                              (when (positive? i)
-                                (let collect ([j 0])
-                                  (when (<= j i)
-                                    (when (logbit? j m)
-                                      (lb j))
-                                    (collect (add1 j)))))
-                              (lb '*)
-                              (lb))
-                            (find-min (add1 i))))))))))
+              (let ([builder ($make-list-builder)])
+                (let loop ([mask (procedure-arity-mask proc)] [index 0])
+                  (cond
+                    [(= mask 0)
+                     (let ([arities (builder)])
+                       (if (and (pair? arities) (null? (cdr arities)))
+                           (car arities)
+                           arities))]
+                    [(= mask -1)
+                     (unless (fx= index 0) (builder index))
+                     (builder '*)
+                     (builder)]
+                    [else
+                     (when (logbit? 0 mask) (builder index))
+                     (loop (ash mask -1) (fx+ index 1))]))))))
 
 
   #|proc:procedure-variable-arity?

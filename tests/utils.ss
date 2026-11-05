@@ -258,6 +258,12 @@
 
      (equal? '(1 3 *) (procedure-arity (case-lambda [(one) one] [(a b c . rest) rest])))
 
+     (equal? '(0 2 4 *)
+             (procedure-arity
+               (case-lambda [() #t] [(a b) #t] [(a b c d . rest) #t])))
+
+     (equal? '(*) (procedure-arity (lambda arguments arguments)))
+
      (and (procedure-variable-arity? (lambda arguments arguments))
           (not (procedure-variable-arity? (case-lambda)))))
 
