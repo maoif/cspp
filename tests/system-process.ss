@@ -575,6 +575,18 @@
        (process-capture-pipeline (list (list "definitely-not-a-cspp-test-command")))
        #f)
 
+     ;; Error case: a later launch failure must clean up the already-started child.
+     (guard (c [(system-error? c) #t] [else #f])
+       (process-capture-pipeline
+         '(("sleep" "5") ("definitely-not-a-cspp-test-command")))
+       #f)
+
+     ;; Error case: status-only pipelines share the same launch cleanup behavior.
+     (guard (c [(system-error? c) #t] [else #f])
+       (process-run-pipeline
+         '(("sleep" "5") ("definitely-not-a-cspp-test-command")))
+       #f)
+
      ;; Error case: live pipeline startup must clean up when a member cannot exec.
      (guard (c [(system-error? c) #t] [else #f])
        (process-spawn-pipeline (list (list "true")

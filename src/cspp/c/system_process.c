@@ -795,266 +795,148 @@ ptr cspp_make_pipe() {
 #endif
 }
 
+#if defined(__unix__) || defined(__APPLE__)
+typedef struct {
+  int count;
+  int spawned;
+  char **env;
+  char ***argvs;
+  pid_t *pids;
+  int (*pipes)[2];
+  int capture_pipe[2];
+} pipeline_launch;
+
+static void close_pipeline_connections(pipeline_launch *launch) {
+  if (launch->pipes != NULL) {
+    for (int i = 0; i < launch->count - 1; i += 1) {
+      close_fd(&launch->pipes[i][0]);
+      close_fd(&launch->pipes[i][1]);
+    }
+  }
+  close_fd(&launch->capture_pipe[1]);
+}
+
+/* On failure, reap launched children before releasing their native-owned arguments.
+ * A successful caller owns the final capture read end until capture_child closes it. */
+static void dispose_pipeline(pipeline_launch *launch, int terminate) {
+  if (terminate) cleanup_pipeline_children(launch->pids, launch->spawned);
+  close_pipeline_connections(launch);
+  close_fd(&launch->capture_pipe[0]);
+  if (launch->argvs != NULL) {
+    for (int i = 0; i < launch->count; i += 1) free_string_array(launch->argvs[i]);
+  }
+  free(launch->argvs);
+  free(launch->pids);
+  free(launch->pipes);
+  free_string_array(launch->env);
+}
+
+/* Prepare and launch both live and synchronous pipelines. All resources belong
+ * to launch on success; failure disposes them and returns the original error. */
+static int start_pipeline(ptr specs, int capture_stdout, pipeline_launch *launch) {
+  memset(launch, 0, sizeof(*launch));
+  launch->capture_pipe[0] = -1;
+  launch->capture_pipe[1] = -1;
+  int error = 0;
+  launch->count = list_length(specs);
+  if (launch->count <= 0) return EINVAL;
+
+  launch->env = env_from_alist(Sfalse);
+  if (launch->env == NULL) { error = ENOMEM; goto failed; }
+  launch->argvs = calloc((size_t)launch->count, sizeof(*launch->argvs));
+  launch->pids = calloc((size_t)launch->count, sizeof(*launch->pids));
+  if (launch->argvs == NULL || launch->pids == NULL) { error = ENOMEM; goto failed; }
+
+  if (launch->count > 1) {
+    launch->pipes = calloc((size_t)(launch->count - 1), sizeof(*launch->pipes));
+    if (launch->pipes == NULL) { error = ENOMEM; goto failed; }
+    for (int i = 0; i < launch->count - 1; i += 1) {
+      launch->pipes[i][0] = -1;
+      launch->pipes[i][1] = -1;
+    }
+    for (int i = 0; i < launch->count - 1; i += 1) {
+      if (make_pipe(launch->pipes[i]) != 0) { error = errno; goto failed; }
+    }
+  }
+
+  ptr remaining = specs;
+  for (int i = 0; i < launch->count; i += 1) {
+    launch->argvs[i] = argv_from_list(Scar(remaining));
+    if (launch->argvs[i] == NULL) { error = EINVAL; goto failed; }
+    remaining = Scdr(remaining);
+  }
+  if (capture_stdout && make_pipe(launch->capture_pipe) != 0) {
+    error = errno;
+    goto failed;
+  }
+
+  for (int i = 0; i < launch->count; i += 1) {
+    char **candidates = NULL;
+    error = executable_candidates(launch->argvs[i][0], launch->env, &candidates);
+    if (error == 0) {
+      error = spawn_checked(&launch->pids[i], launch->argvs[i], launch->env, candidates, "",
+                            i > 0 ? launch->pipes[i - 1][0] : -1,
+                            i < launch->count - 1 ? launch->pipes[i][1] :
+                            (capture_stdout ? launch->capture_pipe[1] : -2),
+                            -1, 0);
+    }
+    free_string_array(candidates);
+    if (error != 0) goto failed;
+    launch->spawned += 1;
+  }
+  return 0;
+
+ failed:
+  dispose_pipeline(launch, 1);
+  return error;
+}
+#endif
+
 // Starts every process in a pipeline and connects adjacent stdout/stdin pipes.
 // The caller receives process ids and is responsible for waiting on them.
 ptr cspp_spawn_pipeline(ptr specs) {
 #if defined(__unix__) || defined(__APPLE__)
-  int count = list_length(specs);
-  if (count <= 0) {
-    errno = EINVAL;
+  pipeline_launch launch;
+  int error = start_pipeline(specs, 0, &launch);
+  if (error != 0) {
+    errno = error;
     return cspp_errno_result("spawn-pipeline", Snil);
   }
-
-  char **cenv = env_from_alist(Sfalse);
-  if (!cenv) { errno = ENOMEM; return cspp_errno_result("spawn-pipeline", Snil); }
-
-  char ***argvs = (char ***)calloc((size_t)count, sizeof(char **));
-  pid_t *pids = (pid_t *)calloc((size_t)count, sizeof(pid_t));
-  int (*pipes)[2] = NULL;
-  if (argvs == NULL || pids == NULL) {
-    free(argvs);
-    free(pids);
-    errno = ENOMEM;
-    free_string_array(cenv);
-    return cspp_errno_result("spawn-pipeline", Snil);
-  }
-  if (count > 1) {
-    pipes = (int (*)[2])calloc((size_t)(count - 1), sizeof(int[2]));
-    if (pipes == NULL) {
-      free(argvs);
-      free(pids);
-      errno = ENOMEM;
-      free_string_array(cenv);
-      return cspp_errno_result("spawn-pipeline", Snil);
-    }
-    for (int i = 0; i < count - 1; i += 1) {
-      pipes[i][0] = -1;
-      pipes[i][1] = -1;
-      if (make_pipe(pipes[i]) != 0) {
-        for (int j = 0; j <= i; j += 1) {
-          close_fd(&pipes[j][0]);
-          close_fd(&pipes[j][1]);
-        }
-        free(argvs);
-        free(pids);
-        free(pipes);
-        free_string_array(cenv);
-      return cspp_errno_result("spawn-pipeline", Snil);
-      }
-    }
-  }
-
-  ptr ls = specs;
-  for (int i = 0; i < count; i += 1) {
-    argvs[i] = argv_from_list(Scar(ls));
-    if (argvs[i] == NULL) {
-      for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
-      if (pipes != NULL) {
-        for (int j = 0; j < count - 1; j += 1) {
-          close_fd(&pipes[j][0]);
-          close_fd(&pipes[j][1]);
-        }
-      }
-      free(argvs);
-      free(pids);
-      free(pipes);
-      errno = EINVAL;
-      free_string_array(cenv);
-      return cspp_errno_result("spawn-pipeline", Snil);
-    }
-    ls = Scdr(ls);
-  }
-
-  int spawned = 0;
-  for (int i = 0; i < count; i += 1) {
-    char **candidates = NULL;
-    int rc = executable_candidates(argvs[i][0], cenv, &candidates);
-    if (rc == 0) {
-      rc = spawn_checked(&pids[i], argvs[i], cenv, candidates, "",
-                         i > 0 ? pipes[i - 1][0] : -1,
-                         i < count - 1 ? pipes[i][1] : -1,
-                         -1, 0);
-    }
-    free_string_array(candidates);
-    if (rc != 0) {
-      cleanup_pipeline_children(pids, spawned);
-      for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
-      if (pipes != NULL) {
-        for (int j = 0; j < count - 1; j += 1) {
-          close_fd(&pipes[j][0]);
-          close_fd(&pipes[j][1]);
-        }
-      }
-      free(argvs);
-      free(pids);
-      free(pipes);
-      free_string_array(cenv);
-      errno = rc; /* Cleanup may overwrite the launch error, including after a retried wait. */
-      return cspp_errno_result("spawn-pipeline", Snil);
-    }
-    spawned += 1;
-  }
-
-  if (pipes != NULL) {
-    for (int j = 0; j < count - 1; j += 1) {
-      close_fd(&pipes[j][0]);
-      close_fd(&pipes[j][1]);
-    }
-  }
-
-  ptr v = Smake_vector(count, Sfalse);
-  for (int i = 0; i < count; i += 1) {
-    Svector_set(v, i, Sinteger((iptr)pids[i]));
-  }
-  for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
-  free(argvs);
-  free(pids);
-  free(pipes);
-  free_string_array(cenv);
-  return cspp_ok(v);
+  ptr pids = Smake_vector(launch.count, Sfalse);
+  for (int i = 0; i < launch.count; i += 1)
+    Svector_set(pids, i, Sinteger((iptr)launch.pids[i]));
+  dispose_pipeline(&launch, 0);
+  return cspp_ok(pids);
 #else
   (void)specs;
   return cspp_unsupported_result("spawn-pipeline");
 #endif
 }
 
-// Runs a pipeline to completion, optionally capturing the final process stdout. The
-// returned status is for the last process, matching the high-level Scheme API.
+// Runs a pipeline to completion, optionally capturing the final process stdout.
+// The returned status belongs to the final process, matching the Scheme API.
 static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
 #if defined(__unix__) || defined(__APPLE__)
-  int count = list_length(specs);
-  if (count <= 0) {
-    errno = EINVAL;
+  pipeline_launch launch;
+  int error = start_pipeline(specs, capture_stdout, &launch);
+  if (error != 0) {
+    errno = error;
     return cspp_errno_result("spawn-pipeline", Snil);
   }
-
-  char **cenv = env_from_alist(Sfalse);
-  if (!cenv) { errno = ENOMEM; return cspp_errno_result("spawn-pipeline", Snil); }
-
-  char ***argvs = (char ***)calloc((size_t)count, sizeof(char **));
-  pid_t *pids = (pid_t *)calloc((size_t)count, sizeof(pid_t));
-  int (*pipes)[2] = NULL;
-  if (argvs == NULL || pids == NULL) {
-    free(argvs);
-    free(pids);
-    errno = ENOMEM;
-    free_string_array(cenv);
-    return cspp_errno_result("spawn-pipeline", Snil);
-  }
-  if (count > 1) {
-    pipes = (int (*)[2])calloc((size_t)(count - 1), sizeof(int[2]));
-    if (pipes == NULL) {
-      free(argvs);
-      free(pids);
-      errno = ENOMEM;
-      free_string_array(cenv);
-      return cspp_errno_result("spawn-pipeline", Snil);
-    }
-    for (int i = 0; i < count - 1; i += 1) {
-      pipes[i][0] = -1;
-      pipes[i][1] = -1;
-      if (make_pipe(pipes[i]) != 0) {
-        for (int j = 0; j <= i; j += 1) {
-          close_fd(&pipes[j][0]);
-          close_fd(&pipes[j][1]);
-        }
-        free(argvs);
-        free(pids);
-        free(pipes);
-        free_string_array(cenv);
-      return cspp_errno_result("spawn-pipeline", Snil);
-      }
-    }
-  }
-
-  ptr ls = specs;
-  for (int i = 0; i < count; i += 1) {
-    argvs[i] = argv_from_list(Scar(ls));
-    if (argvs[i] == NULL) {
-      for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
-      if (pipes != NULL) {
-        for (int j = 0; j < count - 1; j += 1) {
-          close_fd(&pipes[j][0]);
-          close_fd(&pipes[j][1]);
-        }
-      }
-      free(argvs);
-      free(pids);
-      free(pipes);
-      errno = EINVAL;
-      free_string_array(cenv);
-      return cspp_errno_result("spawn-pipeline", Snil);
-    }
-    ls = Scdr(ls);
-  }
-
-  int capture_pipe[2] = {-1, -1};
-  if (capture_stdout && make_pipe(capture_pipe) != 0) {
-    for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
-    if (pipes != NULL) {
-      for (int j = 0; j < count - 1; j += 1) {
-        close_fd(&pipes[j][0]);
-        close_fd(&pipes[j][1]);
-      }
-    }
-    free(argvs);
-    free(pids);
-    free(pipes);
-    free_string_array(cenv);
-    return cspp_errno_result("spawn-pipeline", Snil);
-  }
-
-  int spawned = 0;
-  for (int i = 0; i < count; i += 1) {
-    char **candidates = NULL;
-    int rc = executable_candidates(argvs[i][0], cenv, &candidates);
-    if (rc == 0) {
-      rc = spawn_checked(&pids[i], argvs[i], cenv, candidates, "",
-                         i > 0 ? pipes[i - 1][0] : -1,
-                         i < count - 1 ? pipes[i][1] : (capture_stdout ? capture_pipe[1] : -2),
-                         -1, 0);
-    }
-    free_string_array(candidates);
-    if (rc != 0) {
-      cleanup_pipeline_children(pids, spawned);
-      for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
-      for (int j = 0; j < count - 1; j += 1) {
-        close_fd(&pipes[j][0]);
-        close_fd(&pipes[j][1]);
-      }
-      close_fd(&capture_pipe[0]);
-      close_fd(&capture_pipe[1]);
-      free(argvs);
-      free(pids);
-      free(pipes);
-      free_string_array(cenv);
-      errno = rc;
-      return cspp_errno_result("spawn-pipeline", Snil);
-    }
-    spawned += 1;
-  }
-
-  for (int j = 0; j < count - 1; j += 1) {
-    close_fd(&pipes[j][0]);
-    close_fd(&pipes[j][1]);
-  }
-  close_fd(&capture_pipe[1]);
-
-  ptr result = capture_child(pids[count - 1], -1, NULL, 0, capture_pipe[0], -1,
+  close_pipeline_connections(&launch);
+  int stdout_fd = launch.capture_pipe[0];
+  launch.capture_pipe[0] = -1; /* capture_child owns and closes the read end. */
+  ptr result = capture_child(launch.pids[launch.count - 1], -1, NULL, 0, stdout_fd, -1,
                              capture_stdout, 0, timeout_ms, "spawn-pipeline");
   Slock_object(result);
   Sdeactivate_thread();
-  for (int i = 0; i < count - 1; i += 1) {
+  for (int i = 0; i < launch.count - 1; i += 1) {
     int status;
-    (void)wait_pid_block(pids[i], &status);
+    (void)wait_pid_block(launch.pids[i], &status);
   }
-  for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
-  free(argvs);
-  free(pids);
-  free(pipes);
   Sactivate_thread();
   Sunlock_object(result);
-  free_string_array(cenv);
+  dispose_pipeline(&launch, 0);
   return result;
 #else
   (void)specs; (void)timeout_ms; (void)capture_stdout;
