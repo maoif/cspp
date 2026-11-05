@@ -479,21 +479,33 @@
              (append ($path-components p) components)
              trailing?)))
 
+  (define $windows-base-drive
+    (lambda (base)
+      (case ($path-root-kind base)
+        [(drive-absolute) (string-ref ($path-root base) 0)]
+        [(special)
+         (let ([root ($path-root base)])
+           (and (fx= (string-length root) 6)
+                (char=? (string-ref root 5) #\:)
+                ($letter? (string-ref root 4))
+                (string-ref root 4)))]
+        [else #f])))
+
   (define $path-rebase
-    (lambda (base part)
+    (lambda (who base part)
       (let ([flavor ($path-flavor base)]
             [kind ($path-root-kind part)])
         (cond [(path-absolute-path? part) part]
               [(and (eq? flavor 'windows) (eq? kind 'rooted))
-               (if (eq? ($path-root-kind base) 'drive-absolute)
-                   ($make-path-object flavor 'drive-absolute ($path-root base)
+               (if ($windows-base-drive base)
+                   ($make-path-object flavor ($path-root-kind base) ($path-root base)
                                      ($path-components part) ($path-trailing? part))
-                   ($err 'path-join "rooted Windows path requires a drive-absolute base"))]
+                   ($err who "rooted Windows path requires a drive-absolute base"))]
               [(and (eq? flavor 'windows) (eq? kind 'drive-relative))
-               (if (and (eq? ($path-root-kind base) 'drive-absolute)
-                        (string-ci=? ($path-root base) ($path-root part)))
-                   ($path-append-components base ($path-components part) ($path-trailing? part))
-                   ($err 'path-join "drive-relative path requires the matching drive-absolute base"))]
+               (let ([drive ($windows-base-drive base)])
+                 (if (and drive (char-ci=? drive (string-ref ($path-root part) 0)))
+                     ($path-append-components base ($path-components part) ($path-trailing? part))
+                     ($err who "drive-relative path requires the matching drive-absolute base")))]
               [else ($path-append-components base ($path-components part)
                                              ($path-trailing? part))]))))
 
@@ -501,6 +513,7 @@
   The `path-join` procedure appends path parts. Absolute path parts of the same
   flavor replace the accumulated base. A Windows root-relative part uses the current
   drive from a drive-absolute base; unresolved or different drive-relative parts error.
+  Extended drive bases retain their device namespace prefix.
   |#
   (define path-join
     (lambda (base . parts)
@@ -511,14 +524,14 @@
                     (let ([part (car parts)])
                       (cond [(path? part)
                              ($same-flavor 'path-join acc part)
-                             (loop ($path-rebase acc part) (cdr parts))]
+                             (loop ($path-rebase 'path-join acc part) (cdr parts))]
                             [(string? part)
                              (let ([parsed (path-parse ($path-flavor acc) part)])
                                (if (path-absolute-path? parsed)
                                    (loop parsed (cdr parts))
                                    (if (and (eq? ($path-flavor acc) 'windows)
                                             (path-rooted-path? parsed))
-                                       (loop ($path-rebase acc parsed) (cdr parts))
+                                       (loop ($path-rebase 'path-join acc parsed) (cdr parts))
                                        (begin
                                      ($check-component 'path-join ($path-flavor acc) part)
                                      (loop (path-add-component acc part) (cdr parts))))))]
@@ -741,6 +754,7 @@
   #|proc:path-absolute
   The `path-absolute` procedure makes `p` absolute by joining it to absolute
   `base`, then normalizing lexically.
+  Windows root-relative and matching drive-relative paths use the drive and namespace of `base`.
   |#
   (define path-absolute
     (lambda (base p)
@@ -748,32 +762,7 @@
               ($same-flavor 'path-absolute base p)
               (unless (path-absolute-path? base)
                 ($err 'path-absolute "base path is not absolute: ~a" (path-render base)))
-              (cond [(path-absolute-path? p) (path-normalize p)]
-                    [(and (eq? ($path-flavor p) 'windows)
-                          (eq? ($path-root-kind p) 'drive-relative))
-                     (if (and (eq? ($path-root-kind base) 'drive-absolute)
-                              (string-ci=? ($path-root base) ($path-root p)))
-                         (path-normalize
-                          ($make-path-object 'windows 'drive-absolute ($path-root base)
-                                 (append ($path-components base) ($path-components p))
-                                 ($path-trailing? p)))
-                         ($err 'path-absolute "drive-relative path requires matching drive-absolute base"))]
-                    [(and (eq? ($path-flavor p) 'windows)
-                          (eq? ($path-root-kind p) 'rooted))
-                     (if (eq? ($path-root-kind base) 'drive-absolute)
-                         (path-normalize
-                          ($make-path-object 'windows 'drive-absolute ($path-root base)
-                                 ($path-components p)
-                                 ($path-trailing? p)))
-                         ($err 'path-absolute "rooted Windows path requires drive-absolute base"))]
-                    [(eq? ($path-root-kind p) 'relative)
-                     (path-normalize
-                      ($make-path-object ($path-flavor base)
-                             ($path-root-kind base)
-                             ($path-root base)
-                             (append ($path-components base) ($path-components p))
-                             ($path-trailing? p)))]
-                    [else ($err 'path-absolute "cannot make path absolute: ~a" (path-render p))]))))
+              (path-normalize ($path-rebase 'path-absolute base p)))))
 
   (define $drop-common-prefix
     (lambda (flavor a b)

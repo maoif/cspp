@@ -176,6 +176,24 @@
 
 (mat path-construct/join
 
+     (for-all
+      (lambda (prefix)
+        (let ([base (path-parse 'windows (string-append prefix "C:\\base"))])
+          (and (same-path? (path-join base "\\child")
+                           (string-append prefix "C:\\child"))
+               (same-path? (path-join base (path-parse 'windows "\\child"))
+                           (string-append prefix "C:\\child"))
+               (same-path? (path-join base "c:child")
+                           (string-append prefix "C:\\base\\child"))
+               (same-path? (path-absolute base (path-parse 'windows "\\child"))
+                           (string-append prefix "C:\\child"))
+               (same-path? (path-absolute base (path-parse 'windows "c:child"))
+                           (string-append prefix "C:\\base\\child")))))
+      '("\\\\?\\" "\\\\.\\"))
+
+     ;; Error case: extended drive bases cannot resolve another drive's relative path.
+     (error? (path-join (path-parse 'windows "\\\\?\\C:\\base") "D:child"))
+
      (same-path? (path 'unix "a" "b") "a/b")
      (same-path? (path-rooted 'unix "a" "b") "/a/b")
      (same-path? (path 'windows "a" "b") "a\\b")
