@@ -1,5 +1,23 @@
 (import (cspp))
 
+(mat process-default-sigpipe
+
+     ;; Error case: external commands must not inherit Chez's ignored SIGPIPE disposition.
+     (let* ([command "kill -PIPE $$; exit 99"] [specs (list (list "/bin/sh" "-c" command))])
+       (for-all
+         (lambda (run)
+           (let ([status (run)])
+             (and (eq? 'signal (process-exit-status-kind status))
+                  (= 13 (process-exit-status-code status)))))
+         (list
+           (lambda ()
+             (process-result-status (process-capture "/bin/sh" "-c" (begin command))))
+           (lambda () (process-run "/bin/sh" "-c" (begin command)))
+           (lambda () (process-wait (process-spawn "/bin/sh" (list "-c" command) '())))
+           (lambda () (process-result-status (process-capture-pipeline specs)))
+           (lambda () (car (process-run-pipeline specs)))
+           (lambda () (process-wait (car (process-spawn-pipeline specs '()))))))))
+
 (mat process-unrelated-descriptors
 
      ;; Error case: every launcher must keep an unrelated parent file out of the child.

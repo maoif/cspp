@@ -71,6 +71,9 @@ fallback for executable text without a shebang.
 
 All process creation APIs close unrelated descriptors in the child before running the executable.
 Only standard input, output, and error follow the stream options; parent descriptors stay open.
+They also restore default `SIGPIPE` handling in the child, so commands terminate normally on broken
+pipes instead of inheriting Chez's ignored disposition. The parent's signal handling is unchanged.
+Children inherit the spawning native thread's signal mask; blocked signals remain blocked.
 
 The `/check` variants require exit code zero by default. Ordinary variants accept any status.
 The `:success` option overrides either default: `#f` accepts any status, a list accepts only normal

@@ -340,6 +340,13 @@ static int spawn_native(pid_t *pid, char *const argv[], char *const env[],
     }
     int close_error = child_close_descriptors(error_pipe[1], descriptor_limit);
     if (close_error) child_report_errno(error_pipe[1], close_error);
+    /* Chez ignores SIGPIPE for Scheme port I/O. External commands need the
+     * default broken-pipe behavior; changing it here leaves the parent alone. */
+    struct sigaction pipe_action = {0};
+    pipe_action.sa_handler = SIG_DFL;
+    sigemptyset(&pipe_action.sa_mask);
+    if (sigaction(SIGPIPE, &pipe_action, NULL) != 0)
+      child_report_errno(error_pipe[1], errno);
     int error = ENOENT, permission_denied = 0;
     for (size_t i = 0; candidates[i] != NULL; i++) {
       execve(candidates[i], argv, env);
