@@ -40,6 +40,95 @@
   (lambda (datum port write)
     ($escape-file-write 'escaped)))
 
+(mat file-rejects-nul-paths
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([source (path-build root "top.txt")]
+               [destination (path-build root "copy.txt")]
+               [bad-source (string-append source (string #\nul) "suffix")]
+               [bad-root (string-append root (string #\nul) "suffix")]
+               [bad-destination (string-append destination (string #\nul) "suffix")]
+               [rejects? (lambda (thunk)
+                           (guard (failure
+                                   [else (and (who-condition? failure)
+                                              (eq? (condition-who failure) 'pcheck))])
+                             (thunk)
+                             #f))])
+          ;; Error cases: invalid names must fail before reading or mutating their prefix.
+          (and (for-all
+                (lambda (thunk) (rejects? thunk))
+                (list (lambda () (file-stat bad-source))
+                      (lambda () (file-size bad-source))
+                      (lambda () (read-string bad-source))
+                      (lambda () (read-u8vec bad-source))
+                      (lambda () (write-string! bad-source "changed"))
+                      (lambda () (write-u8vec bad-destination #vu8(1)))
+                      (lambda () (file-touch bad-source))
+                      (lambda () (file-chmod bad-source #o600))
+                      (lambda () (file-chmod-u bad-source '(r)))
+                      (lambda () (file-hidden? bad-source))
+                      (lambda () (same-file? source bad-source))
+                      (lambda () (file-copymeta source bad-destination))
+                      (lambda () (file-copy! source bad-destination))
+                      (lambda () (file-copy bad-source destination))
+                      (lambda () (file-link source bad-destination))
+                      (lambda () (file-symlink bad-source destination))
+                      (lambda () (file-move source bad-destination))
+                      (lambda () (file-copytree root bad-destination))
+                      (lambda () (make-path root bad-destination))
+                      (lambda () (fs-open-directory bad-root))
+                      (lambda () (fs->iter bad-root))
+                      (lambda () (walk-files (lambda args #t) bad-root))
+                      (lambda () (file-find (lambda (path) #t) bad-root))
+                      (lambda () (file-removetree bad-root #t))
+                      (lambda () (mkdirs bad-root))))
+               (file-exists? source)
+               (not (file-exists? destination))
+               (string=? "" (read-string source)))))))
+
+(mat file-native-path-argument-checks
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([source (path-build root "top.txt")]
+               [link (path-build root "link")]
+               [bad (lambda (path) (string-append path (string #\nul) "suffix"))]
+               [watcher (make-fswatcher #f)])
+          (file-symlink "top.txt" link)
+          (dynamic-wind
+            void
+            (lambda ()
+              ;; Error cases: native link and watcher operations must reject NUL names.
+              (and (for-all
+                    (lambda (thunk)
+                      (guard (failure
+                              [else (and (who-condition? failure)
+                                         (eq? (condition-who failure) 'pcheck))])
+                        (thunk)
+                        #f))
+                    (list (lambda () (readlink (bad link)))
+                          (lambda () (readlink2 (bad link) #t))
+                          (lambda () (file-link! source (bad link)))
+                          (lambda () (file-symlink! "top.txt" (bad link)))
+                          (lambda () (fswatcher-add! watcher (bad root)))
+                          (lambda () (fswatcher-add! watcher (bad root)
+                                                    (fswatcher-mask FSW_create)))
+                          (lambda () (fswatcher-remove! watcher (bad root)))))
+                   (file-symbolic-link? link)
+                   ;; NUL remains valid file content.
+                   (let ([content (string #\a #\nul #\b)])
+                     (write-string! source content)
+                     (string=? content (read-string source)))))
+            (lambda () (close-fswatcher watcher)))))))
+
+(mat file-hidden-argument-checks
+     ($with-fs-fixture
+      (lambda (root)
+        ;; Error case: the follow flag must be boolean even for a regular file.
+        (guard (failure
+                [else (and (who-condition? failure) (eq? (condition-who failure) 'pcheck))])
+          (file-hidden? (path-build root "top.txt") 'invalid)
+          #f))))
+
 (mat file-metadata-tilde-thread-safety
      (let* ([users (filter (lambda (fields) (file-directory? (list-ref fields 5)))
                            (map (lambda (line) (string-split line #\:))

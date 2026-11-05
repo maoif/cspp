@@ -53,9 +53,21 @@
           (cspp path)
           (cspp internal)
           (cspp utils)
+          (only (cspp string) string-search)
           (cspp list)
           (cspp iter)
           (cspp io))
+
+  #|doc
+  Filesystem path arguments must be strings without NUL characters. Invalid names raise
+  an error before filesystem access, rather than selecting a prefix of the supplied name.
+  File contents may contain NUL characters.
+  |#
+  ;; Validate the original Scheme string before any C-string conversion or filesystem probe.
+  ;; Empty names retain each operation's existing behavior; NUL is never a filename character.
+  (define $filename?
+    (lambda (value)
+      (and (string? value) (not (string-search value #\nul)))))
 
 
   (define-condition-type &i/o-file-not-regular &i/o-filename
@@ -122,8 +134,7 @@
   |#
   (define read-lines
     (lambda (path)
-      (pcheck-file
-       (path)
+      (pcheck ([$filename? path] [file-regular? path])
        ($with-port (open-input-file path)
          (lambda (p)
            (let ([lb (make-list-builder)])
@@ -139,8 +150,7 @@
   |#
   (define read-string
     (lambda (path)
-      (pcheck-file
-       (path)
+      (pcheck ([$filename? path] [file-regular? path])
        ($with-port (open-input-file path)
          (lambda (p)
            (let ([x (get-string-all p)])
@@ -151,8 +161,7 @@
   |#
   (define read-chars
     (lambda (path)
-      (pcheck-file
-       (path)
+      (pcheck ([$filename? path] [file-regular? path])
        ($with-port (open-input-file path)
          (lambda (p)
            (let ([lb (make-list-builder)])
@@ -168,8 +177,7 @@
   |#
   (define read-data
     (lambda (path)
-      (pcheck-file
-       (path)
+      (pcheck ([$filename? path] [file-regular? path])
        ($with-port (open-input-file path)
          (lambda (p)
            (let ([lb (make-list-builder)])
@@ -185,8 +193,7 @@
   |#
   (define read-datum
     (lambda (path)
-      (pcheck-file
-       (path)
+      (pcheck ([$filename? path] [file-regular? path])
        ($with-port (open-input-file path)
          (lambda (p) (get-datum p))))))
   #|proc:read-data-fasl
@@ -195,8 +202,7 @@
   |#
   (define read-data-fasl
     (lambda (path)
-      (pcheck-file
-       (path)
+      (pcheck ([$filename? path] [file-regular? path])
        ($with-port (open-file-input-port path)
          (lambda (p)
            (let ([lb (make-list-builder)])
@@ -212,8 +218,7 @@
   |#
   (define read-datum-fasl
     (lambda (path)
-      (pcheck-file
-       (path)
+      (pcheck ([$filename? path] [file-regular? path])
        ($with-port (open-file-input-port path)
          (lambda (p) (fasl-read p))))))
   #|proc:read-u8vec
@@ -223,8 +228,7 @@
   |#
   (define read-u8vec
     (lambda (path)
-      (pcheck-file
-       (path)
+      (pcheck ([$filename? path] [file-regular? path])
        ($with-port (open-file-input-port path)
          (lambda (p)
            (let ([value (get-bytevector-all p)])
@@ -237,7 +241,7 @@
   ;; mode when file exists: 'error, 'truncate, 'append
   (define $write-helper
     (lambda (who path mode bin? writer)
-      (pcheck ([string? path])
+      (pcheck ([$filename? path])
               (let ([go (lambda (mode)
                           (let ([op (if mode
                                         (case mode
@@ -919,7 +923,7 @@
   |#
   (define make-path
     (lambda (p . p*)
-      (pcheck ([string? p] [(lambda (x) (andmap string? x)) p*])
+      (pcheck ([$filename? p] [(lambda (x) (andmap $filename? x)) p*])
               (if (null? p*)
                   p
                   (let loop ([res p] [pp p*])
@@ -1102,7 +1106,7 @@
   |#
   (define fs-open-directory
     (lambda (path)
-      (pcheck ([string? path])
+      (pcheck ([$filename? path])
               ($fs-ensure-linux 'fs-open-directory)
               (let* ([open (foreign-procedure "cspp_fs_open_directory" (string) uptr)]
                      [handle (open path)])
@@ -1180,7 +1184,7 @@
       [(path) (fs->iter path #f #t)]
       [(path follow-link?) (fs->iter path follow-link? #t)]
       [(path follow-link? top-down?)
-       (pcheck ([string? path] [boolean? follow-link? top-down?])
+       (pcheck ([$filename? path] [boolean? follow-link? top-down?])
                ($fs-ensure-linux 'fs->iter)
                ;; Frames hold a private path, lazily opened stream, and ancestor identities.
                (let* ([root-path (string-copy path)]
@@ -1256,7 +1260,7 @@
   (define $statx
     (let ([ffi-statx (foreign-procedure "cspp_statx" (string boolean) scheme-object)])
       (lambda (who path follow-link?)
-        (pcheck ([string? path] [boolean? follow-link?])
+        (pcheck ([$filename? path] [boolean? follow-link?])
                 (let ([x (ffi-statx path follow-link?)])
                   (if (vector? x)
                       x
@@ -1420,26 +1424,32 @@
   (define-who file-readable?
     (case-lambda [(path) (file-readable? path #t)]
                  [(path follow-link?)
-                  (pcheck ([string? path] [boolean? follow-link?]
+                  (pcheck ([$filename? path] [boolean? follow-link?]
                            [(lambda (x) (file-exists? x follow-link?)) path])
                           ($mode-any-set? path follow-link? #o444))]))
   (define-who file-writable?
     (case-lambda [(path) (file-writable? path #t)]
                  [(path follow-link?)
-                  (pcheck ([string? path] [boolean? follow-link?]
+                  (pcheck ([$filename? path] [boolean? follow-link?]
                            [(lambda (x) (file-exists? x follow-link?)) path])
                           ($mode-any-set? path follow-link? #o222))]))
   (define-who file-executable?
     (case-lambda [(path) (file-executable? path #t)]
                  [(path follow-link?)
-                  (pcheck ([string? path] [boolean? follow-link?]
+                  (pcheck ([$filename? path] [boolean? follow-link?]
                            [(lambda (x) (file-exists? x follow-link?)) path])
                           ($mode-any-set? path follow-link? #o111))]))
 
+  #|proc:file-hidden?
+  Return whether filesystem path string `path` has a hidden basename on Unix.
+  Boolean `follow-link?` defaults to `#t`; when true, a symlink uses its resolved target's name.
+  A hidden basename starts with a dot and is neither `.` nor `..`. The selected entry must exist.
+  |#
   (define-who file-hidden?
     (case-lambda [(path) (file-hidden? path #t)]
                  [(path follow-link?)
-                  (pcheck ([(lambda (x) (file-exists? x follow-link?)) path])
+                  (pcheck ([$filename? path] [boolean? follow-link?]
+                           [(lambda (x) (file-exists? x follow-link?)) path])
                           (cond
                            [(unix?)
                             (let ([path (let ([p (if (and follow-link? (file-symbolic-link? path)) (readlink2 path #t) path)])
@@ -1457,7 +1467,8 @@
     (case-lambda
       [(path) (file-special? path #t)]
       [(path follow-link?)
-       (pcheck ([string? path] [(lambda (x) (file-exists? x follow-link?)) path])
+       (pcheck ([$filename? path] [boolean? follow-link?]
+                [(lambda (x) (file-exists? x follow-link?)) path])
                (let ([t (file-type path follow-link?)])
                  (bool (memq t '(FT_socket FT_block FT_chardev FT_fifo)))))]))
 
@@ -1471,7 +1482,8 @@
     (case-lambda
       [(path1 path2) (same-file? path1 path2 #t)]
       [(path1 path2 follow-link?)
-       (pcheck ([string? path1 path2] [(lambda (x) (file-exists? x follow-link?)) path1 path2])
+       (pcheck ([$filename? path1 path2] [boolean? follow-link?]
+                [(lambda (x) (file-exists? x follow-link?)) path1 path2])
                (let* ([st1 (file-stat path1 follow-link?)]
                       [st2 (file-stat path2 follow-link?)]
                       [inode1 (file-stat-inode st1)]
@@ -1490,7 +1502,7 @@
   |#
   (define-who same-file-contents?
     (lambda (path1 path2)
-      (pcheck ([string? path1 path2])
+      (pcheck ([$filename? path1 path2])
               (if (and (file-regular? path1 #t) (file-regular? path2 #t))
                   ($with-port (open-file-input-port path1)
                     (lambda (p1)
@@ -1574,7 +1586,7 @@
       [(who path umode gmode omode)
        ($file-chmod who path '() umode gmode omode)]
       [(who path smode umode gmode omode)
-       (pcheck ([file-exists? path]
+       (pcheck ([$filename? path] [file-exists? path]
                 [(lambda (x) (or (not x) (list? x))) smode umode gmode omode])
                (let* ([m (get-mode path #t)]
                       [sm (file-mode->symbols m)]
@@ -1636,7 +1648,8 @@
   |#
   (define-who file-chmod
     (lambda (path mode . rest)
-      (apply $file-chmod who path mode rest)))
+      (pcheck ([$filename? path])
+              (apply $file-chmod who path mode rest))))
 
   #|proc:file-chmod-s
   Change the special mode only.
@@ -1719,7 +1732,7 @@
       [(proc path follow-link?)
        (walk-files proc path follow-link? #t)]
       [(proc path follow-link? top-down?)
-       (pcheck ([procedure? proc] [string? path] [boolean? follow-link? top-down?])
+       (pcheck ([procedure? proc] [$filename? path] [boolean? follow-link? top-down?])
                (unless (file-directory? path)
                  ($err-file-not-directory who path))
                (let ()
@@ -1778,7 +1791,7 @@
   |#
   (define print-file-tree
     (lambda (path)
-      (pcheck-directory (path)
+      (pcheck ([$filename? path] [file-directory? path])
                         (walk-files (lambda (pdir dirs files)
                                       (printf "~a:~n" pdir)
                                       (printf "  ~a~n" dirs)
@@ -1796,7 +1809,7 @@
     (case-lambda
       [(pred path) (file-find pred path #f)]
       [(pred path follow-link?)
-       (pcheck ([procedure? pred] [string? path] [boolean? follow-link?])
+       (pcheck ([procedure? pred] [$filename? path] [boolean? follow-link?])
          (let ([res #f])
            (walk-files (lambda (dir dirs files)
                        (let lp1 ([ds dirs])
@@ -1825,7 +1838,7 @@
     (case-lambda
       [(pred path) (file-find-all pred path #f)]
       [(pred path follow-link?)
-       (pcheck ([procedure? pred] [string? path] [boolean? follow-link?])
+       (pcheck ([procedure? pred] [$filename? path] [boolean? follow-link?])
          (let ([lb (make-list-builder)])
            (walk-files (lambda (dir dirs files)
                        (let lp1 ([ds dirs])
@@ -1851,7 +1864,7 @@
     (case-lambda
       [(proc path) (file-map proc path #f)]
       [(proc path follow-link?)
-       (pcheck ([procedure? proc] [string? path] [boolean? follow-link?])
+       (pcheck ([procedure? proc] [$filename? path] [boolean? follow-link?])
          (let ([lb (make-list-builder)])
            (walk-files (lambda (dir dirs files)
                        (let lp1 ([ds dirs])
@@ -1874,7 +1887,7 @@
     (case-lambda
       [(proc path) (file-for-each proc path #f)]
       [(proc path follow-link?)
-       (pcheck ([procedure? proc] [string? path] [boolean? follow-link?])
+       (pcheck ([procedure? proc] [$filename? path] [boolean? follow-link?])
          (walk-files (lambda (dir dirs files)
                      (let lp1 ([ds dirs])
                        (if (null? ds)
@@ -1902,7 +1915,7 @@
         [(who path) ($readlink who path #f)]
         [(who path recursive?)
          ;; we don't care about whether the link is dangling or not
-         (pcheck ([string? path] [boolean? recursive?]
+         (pcheck ([$filename? path] [boolean? recursive?]
                   [file-exists?-no-follow path] [file-symbolic-link? path])
                  (let ([seen (make-hashtable equal-hash equal?)])
                    (let loop ([path path])
@@ -1945,7 +1958,7 @@
   (define-who readlink2
     (case-lambda [(path) ($readlink who path #f)]
                  [(path recursive?)
-                  (pcheck ([string? path] [boolean? recursive?])
+                  (pcheck ([$filename? path] [boolean? recursive?])
                           (if recursive?
                               (let-values ([(ln pdir) ($readlink who path #t)])
                                 (path-build pdir ln))
@@ -2018,7 +2031,7 @@
   (define-who file-link
     (case-lambda [(src dest) (file-link src dest #t)]
                  [(src dest follow-link?)
-                  (pcheck ([string? src dest] [boolean? follow-link?]
+                  (pcheck ([$filename? src dest] [boolean? follow-link?]
                            [(lambda (x) (file-exists? x follow-link?)) src])
                           (if (file-symbolic-link? src)
                               (if follow-link?
@@ -2033,7 +2046,7 @@
   (define-who file-link!
     (case-lambda [(src dest) (file-link! src dest #t)]
                  [(src dest follow-link?)
-                  (pcheck ([string? src dest] [boolean? follow-link?]
+                  (pcheck ([$filename? src dest] [boolean? follow-link?]
                            [(lambda (x) (file-exists? x follow-link?)) src])
                           (if (file-symbolic-link? src)
                               (if follow-link?
@@ -2059,7 +2072,7 @@
   |#
   (define-who file-symlink
     (lambda (src dest)
-      (pcheck ([string? src dest])
+      (pcheck ([$filename? src dest])
               ($file-symlink who src dest #f))))
 
 
@@ -2068,7 +2081,7 @@
   |#
   (define-who file-symlink!
     (lambda (src dest)
-      (pcheck ([string? src dest])
+      (pcheck ([$filename? src dest])
               ($file-symlink who src dest #t))))
 
 
@@ -2082,7 +2095,7 @@
   (define $time->vec (lambda (t) (vector (time-nanosecond t) (time-second t))))
   (define $file-touch
     (lambda (who path atime mtime follow-link? force?)
-      (pcheck ([string? path]
+      (pcheck ([$filename? path]
                [(lambda (x) (or (not x) (time? x))) atime mtime]
                [boolean? follow-link? force?])
               (define (check-time t)
@@ -2176,7 +2189,7 @@
   |#
   (define-who file-copymode
     (lambda (src dest)
-      (pcheck ([string? src dest] [file-exists? src dest])
+      (pcheck ([$filename? src dest] [file-exists? src dest])
               (let ([m (get-mode src #t)])
                 (chmod dest m)))))
 
@@ -2192,7 +2205,7 @@
     (case-lambda
       [(src dest) (file-copymeta src dest #t #t)]
       [(src dest follow-link-src? follow-link-dest?)
-       (pcheck ([string? src dest] [boolean? follow-link-src? follow-link-dest?]
+       (pcheck ([$filename? src dest] [boolean? follow-link-src? follow-link-dest?]
                 [(lambda (x) (file-exists? x follow-link-src?)) src]
                 [(lambda (x) (file-exists? x follow-link-dest?)) dest])
                (let* ([m (get-mode src #t)]
@@ -2274,7 +2287,7 @@
     (case-lambda
       [(src dest) (file-copy src dest #t)]
       [(src dest follow-link?)
-       (pcheck ([string? src dest] [boolean? follow-link?]
+       (pcheck ([$filename? src dest] [boolean? follow-link?]
                 [(lambda (x) (file-exists? x follow-link?)) src])
                (if (file-symbolic-link? src)
                    (if follow-link?
@@ -2290,7 +2303,7 @@
     (case-lambda
       [(src dest) (file-copy! src dest #t)]
       [(src dest follow-link?)
-       (pcheck ([string? src dest] [boolean? follow-link?]
+       (pcheck ([$filename? src dest] [boolean? follow-link?]
                 [(lambda (x) (file-exists? x follow-link?)) src])
                (if (file-symbolic-link? src)
                    (if follow-link?
@@ -2338,7 +2351,7 @@
 
   (define $file-copytree
     (lambda (who src dest copy preserve-metadata?)
-       (pcheck ([string? src dest] [file-directory? src] [procedure? copy])
+       (pcheck ([$filename? src dest] [file-directory? src] [procedure? copy])
                (let* ([source-path ($absolute-file-path src)]
                       [metadata '()]
                       [remember-directory
@@ -2404,7 +2417,7 @@
 
   (define $file-move
     (lambda (who src dest copy)
-       (pcheck ([string? src dest] [(lambda (path) (file-exists? path #f)) src]
+       (pcheck ([$filename? src dest] [(lambda (path) (file-exists? path #f)) src]
                 [procedure? copy])
                (cond [(and (not (file-exists? dest #f)) ($try-rename-file src dest)) #t]
                      [(and (file-directory? src #f) (not (file-symbolic-link? src)))
@@ -2454,7 +2467,7 @@
     (case-lambda
       [(path) (file-removetree path #f)]
       [(path err?)
-       (pcheck ([string? path] [boolean? err?])
+       (pcheck ([$filename? path] [boolean? err?])
                ;; A trailing slash makes lstat follow the final symlink on POSIX.
                ;; Remove only the directory marker; preserve explicit dot components.
                (let ([path (path-render
@@ -2483,7 +2496,7 @@
     (case-lambda
       [(path) (mkdirs path #o777)]
       [(path mode)
-       (pcheck ([string? path] [$mode-num? mode])
+       (pcheck ([$filename? path] [$mode-num? mode])
                       (if (file-exists? path)
                           (unless (file-directory? path)
                             ($err-file-exists who path))
@@ -2686,7 +2699,7 @@
            #`(begin
                (define $mk
                  (lambda (who pdir ow?)
-                   (pcheck ([string? pdir] [boolean? ow?])
+                   (pcheck ([$filename? pdir] [boolean? ow?])
                            (if (file-exists? pdir)
                                (if ow?
                                    (unless (file-directory? pdir)
@@ -2835,7 +2848,7 @@
   (define-who fswatcher-add!
     (case-lambda
       [(watcher path)
-       (pcheck ([$fswatcher? watcher] [$fswatcher-open? watcher] [string? path])
+       (pcheck ([$fswatcher? watcher] [$fswatcher-open? watcher] [$filename? path])
                (cond [(file-directory? path)
                       (fswatcher-add! watcher path
                                       (fswatcher-mask FSW_access FSW_open FSW_modify FSW_close
@@ -2847,7 +2860,7 @@
                                                      FSW_delete_self))]
                      [else ($err-file-not-found who path)]))]
       [(watcher path events)
-       (pcheck ([$fswatcher? watcher] [$fswatcher-open? watcher] [string? path] [u32? events])
+       (pcheck ([$fswatcher? watcher] [$fswatcher-open? watcher] [$filename? path] [u32? events])
                ;; Let inotify validate existence using the requested symlink semantics.
                (let* ([fid ($fsw-add! who ($fswatcher-id watcher) path events)]
                       [paths ($fswatcher-paths watcher)])
@@ -2904,7 +2917,7 @@
   |#
   (define-who fswatcher-remove!
     (lambda (watcher path)
-      (pcheck ([$fswatcher? watcher] [$fswatcher-open? watcher] [string? path])
+      (pcheck ([$fswatcher? watcher] [$fswatcher-open? watcher] [$filename? path])
               (let-values ([(ids entries) (hashtable-entries ($fswatcher-paths watcher))])
                 (let ([length (vector-length entries)])
                   (let loop ([index 0])
