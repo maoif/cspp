@@ -184,6 +184,14 @@
                            (if ($stderr-to-stdout? options) 1 0)
                            ($timeout-option options)))))
 
+  (define $run-command
+    (lambda (who command argv options check?)
+      ($run-vector->status command ($spawn-capture argv options 'inherit) options check? who)))
+
+  (define $capture-command
+    (lambda (who command argv options check?)
+      ($capture-vector->result command ($spawn-capture argv options 'capture) options check? who)))
+
   #|proc:%process-run
   The internal `%process-run` procedure implements direct command forms and returns an exit status.
   `who` is the error-origin symbol; `program` is a NUL-free executable string; `arguments` is a
@@ -195,11 +203,7 @@
     (lambda (who program arguments options check?)
       (pcheck ([symbol? who] [$os-string? program] [$os-string-list? arguments]
                [list? options] [boolean? check?])
-              ($run-vector->status program
-                                  ($spawn-capture (cons program arguments) options 'inherit)
-                                  options
-                                  check?
-                                  who))))
+              ($run-command who program (cons program arguments) options check?))))
 
   #|proc:%process-capture
   The internal `%process-capture` procedure runs a direct command and returns a process result.
@@ -211,11 +215,7 @@
     (lambda (who program arguments options check?)
       (pcheck ([symbol? who] [$os-string? program] [$os-string-list? arguments]
                [list? options] [boolean? check?])
-              ($capture-vector->result program
-                                      ($spawn-capture (cons program arguments) options 'capture)
-                                      options
-                                      check?
-                                      who))))
+              ($capture-command who program (cons program arguments) options check?))))
 
   #|proc:%process-run-shell
   The internal `%process-run-shell` procedure runs `sh -c` and returns an exit status.
@@ -226,11 +226,7 @@
   (define %process-run-shell
     (lambda (who command options check?)
       (pcheck ([symbol? who] [$os-string? command] [list? options] [boolean? check?])
-              ($run-vector->status command
-                                  ($spawn-capture (list "sh" "-c" command) options 'inherit)
-                                  options
-                                  check?
-                                  who))))
+              ($run-command who command (list "sh" "-c" command) options check?))))
 
   #|proc:%process-capture-shell
   The internal `%process-capture-shell` procedure runs `sh -c` and returns a process result.
@@ -241,11 +237,7 @@
   (define %process-capture-shell
     (lambda (who command options check?)
       (pcheck ([symbol? who] [$os-string? command] [list? options] [boolean? check?])
-              ($capture-vector->result command
-                                      ($spawn-capture (list "sh" "-c" command) options 'capture)
-                                      options
-                                      check?
-                                      who))))
+              ($capture-command who command (list "sh" "-c" command) options check?))))
 
   #|proc:process-capture-pipeline
   The `process-capture-pipeline` procedure runs string-list process specs as a pipeline.
