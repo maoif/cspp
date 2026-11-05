@@ -1529,6 +1529,12 @@
   (define $valid-smodes?
     (lambda (m) (and (list? m) (andmap $valid-smode-sym? m) (unique? m))))
 
+  (define $mode-adjustment?
+    (lambda (mode valid?)
+      (or (not mode)
+          (valid? (if (and (pair? mode) (memq (car mode) '(+ -)))
+                      (cdr mode) mode)))))
+
   (define file-mode->symbols
     (lambda (mode)
           (pcheck ([$mode-num? mode])
@@ -1586,8 +1592,10 @@
       [(who path umode gmode omode)
        ($file-chmod who path '() umode gmode omode)]
       [(who path smode umode gmode omode)
-       (pcheck ([$filename? path] [file-exists? path]
-                [(lambda (x) (or (not x) (list? x))) smode umode gmode omode])
+       (pcheck ([$filename? path]
+                [(lambda (mode) ($mode-adjustment? mode $valid-smodes?)) smode]
+                [(lambda (mode) ($mode-adjustment? mode $valid-modes?)) umode gmode omode]
+                [file-exists? path])
                (let* ([m (get-mode path #t)]
                       [sm (file-mode->symbols m)]
                       [filter-mode (lambda (mode i)
@@ -1603,9 +1611,7 @@
                       [u (filter-mode umode 1)]
                       [g (filter-mode gmode 2)]
                       [o (filter-mode omode 3)])
-                 (pcheck ([$valid-smodes? s]
-                          [$valid-modes? u g o])
-                         (chmod path (symbols->file-mode s u g o)))))]))
+                 (chmod path (symbols->file-mode s u g o))))]))
 
 
   #|proc:file-chmod

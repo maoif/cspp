@@ -1125,6 +1125,34 @@
      (error? (file-readable? "file_access_does_not_exist")))
 
 
+(mat file-chmod-validates-adjustment-operands
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([path (path-build root "top.txt")]
+               [rejects? (lambda (change)
+                           (guard (condition [else (= #o640 (file-mode path))])
+                             (change)
+                             #f))])
+          (file-chmod path #o640)
+          ;; Error cases: subtraction must reject unknown or wrong-group symbols before chmod.
+          (and (for-all
+                rejects?
+                (list (lambda () (file-chmod-u path '(- invalid)))
+                      (lambda () (file-chmod-u path '(- su)))
+                      (lambda () (file-chmod-s path '(- r)))
+                      (lambda () (file-chmod-g path '(+ t)))
+                      ;; Error cases: set operations must not hide duplicate operands.
+                      (lambda () (file-chmod-u path '(+ r r)))
+                      (lambda () (file-chmod-o path '(- x x)))
+                      (lambda () (file-chmod-s path '(+ su su)))
+                      (lambda () (file-chmod path '(+ x) '(- invalid) '()))))
+               (begin
+                 (file-chmod-u path '(+ x))
+                 (file-chmod-g path '(- r))
+                 (file-chmod-o path '(+))
+                 (file-chmod-s path '(-))
+                 (= #o700 (file-mode path))))))))
+
 (mat file-chmod
 
      (error? (file-mode->symbols ""))
