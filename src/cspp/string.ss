@@ -441,10 +441,10 @@
                          (cond [(fx<= index -1) -1]
                                [(fx>= index len) len]
                                [else index]))])
-                 (if (fx= len 0)
-                     ""
-                     (cond
-                      [(and (fx< normalized-start normalized-end) (fx> step 0))
+                 (if (and (fx> len 0)
+                          (if (fx> step 0)
+                              (fx< normalized-start normalized-end)
+                              (fx> normalized-start normalized-end)))
                        (let ([result
                               (make-string
                                (ceiling (/ (fx- normalized-end normalized-start) step)))])
@@ -453,17 +453,8 @@
                            ;; Do not add an arbitrary fixnum step after the final character.
                            (if (fx= result-index (fx1- (string-length result)))
                                result
-                               (loop (fx+ source-index step) (fx1+ result-index)))))]
-                      [(and (fx> normalized-start normalized-end) (fx< step 0))
-                       (let ([result
-                              (make-string
-                               (ceiling (/ (fx- normalized-end normalized-start) step)))])
-                         (let loop ([source-index normalized-start] [result-index 0])
-                           (string-set! result result-index (string-ref str source-index))
-                           (if (fx= result-index (fx1- (string-length result)))
-                               result
-                               (loop (fx+ source-index step) (fx1+ result-index)))))]
-                      [else ""]))))]))
+                               (loop (fx+ source-index step) (fx1+ result-index)))))
+                     "")))]))
 
   #|proc:string-split
   Split a string into a list of substrings, using `delim` as delimiter.
