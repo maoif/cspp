@@ -42,11 +42,12 @@
       (unless (linux?)
         ($unsupported who "Linux system operation is unsupported on this platform"))))
 
-  (define $ensure-linux-procfs
-    (lambda (who)
+  (define $ensure-linux-procfs-file
+    (lambda (who path)
       ($ensure-linux who)
-      (unless (linux-procfs-mounted?)
-        ($unsupported who "Linux procfs is not mounted"))))
+      ;; Query the requested file each time; mounts can change with the caller's namespace.
+      (unless (file-exists? path)
+        ($unsupported who (format "Linux procfs file is unavailable: ~a" path)))))
 
   (define $read-first-line
     (lambda (path)
@@ -142,10 +143,11 @@
 
   #|proc:linux-system-uptime
   The `linux-system-uptime` procedure returns the system uptime in seconds from `/proc/uptime`.
+  It reads the current procfs file directly; an absent file raises a system unsupported condition.
   |#
   (define-who linux-system-uptime
     (lambda ()
-      ($ensure-linux-procfs who)
+      ($ensure-linux-procfs-file who "/proc/uptime")
       (let* ([fields ($space-fields ($read-first-line "/proc/uptime"))]
              [uptime (and (pair? fields) (string->number (car fields)))])
         (or uptime
@@ -156,10 +158,11 @@
   association list.
   Each association has a symbol key from `/proc/meminfo` and a numeric value, usually measured in
   KiB by Linux.
+  It reads the current procfs file directly; an absent file raises a system unsupported condition.
   |#
   (define-who linux-memory-info
     (lambda ()
-      ($ensure-linux-procfs who)
+      ($ensure-linux-procfs-file who "/proc/meminfo")
       (let loop ([lines (read-lines "/proc/meminfo")] [out '()])
         (cond [(null? lines) (reverse out)]
               [else
@@ -174,10 +177,11 @@
   #|proc:linux-load-average
   The `linux-load-average` procedure returns the one-, five-, and fifteen-minute load averages from
   `/proc/loadavg`.
+  It reads the current procfs file directly; an absent file raises a system unsupported condition.
   |#
   (define-who linux-load-average
     (lambda ()
-      ($ensure-linux-procfs who)
+      ($ensure-linux-procfs-file who "/proc/loadavg")
       (let* ([fields ($space-fields ($read-first-line "/proc/loadavg"))]
              [one (and (pair? fields) (string->number (car fields)))]
              [fields (and (pair? fields) (cdr fields))]

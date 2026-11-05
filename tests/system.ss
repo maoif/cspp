@@ -220,6 +220,25 @@
            #f)
          #t))
 
+(mat system-procfs-query-allocation
+
+     ;; Error case: uptime queries must not allocate mount records unrelated to the result.
+     (if (and (linux?) (file-exists? "/proc/uptime"))
+         (let* ([direct-query
+                  (lambda ()
+                    (call-with-input-file "/proc/uptime"
+                      (lambda (port)
+                        (string->number (car (string-split (get-line port) #\space))))))]
+                [allocated
+                  (lambda (query)
+                    (query)
+                    (collect)
+                    (let ([before (+ (bytes-allocated) (bytes-deallocated))])
+                      (do ([index 0 (+ index 1)]) ((= index 10)) (query))
+                      (- (+ (bytes-allocated) (bytes-deallocated)) before)))])
+           (< (allocated linux-system-uptime) (+ (allocated direct-query) 40960)))
+         #t))
+
 (mat system-linux-apis
 
      (if (linux?)

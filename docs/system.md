@@ -23,6 +23,11 @@ an empty list when that file is absent.
 `hostname` (also `system-hostname`) and `cpu-arch` return strings. Native query failures raise
 system conditions with the operation and error code.
 
+`linux-system-uptime`, `linux-memory-info`, and `linux-load-average` read their requested procfs
+files directly on each call. They do not enumerate mounts or cache mount-namespace state.
+An absent file raises `system-unsupported-error?`. `linux-procfs-mounted?` remains the explicit
+mount-table query for checking whether procfs is mounted at `/proc`.
+
 `linux-os-release` returns symbol/string associations from `/etc/os-release`, falling back to
 `/usr/lib/os-release`. It decodes shell quoting and backslash escapes while preserving variable
 references and command substitutions as literal text.

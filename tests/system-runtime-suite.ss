@@ -1,5 +1,20 @@
 (import (cspp))
 
+(mat system-procfs-without-mountinfo
+
+  ;; Error case: all metric queries must work without opening the mount table.
+  (if (= 0 (system "strace -qq -o /dev/null true >/dev/null 2>&1"))
+      (let* ([root (if (file-exists? "system-native-faults.ss") ".." ".")]
+             [launcher (string-append root "/cspp")]
+             [script (string-append "--script=" root "/tests/system-native-faults.ss")])
+        (process-exit-success?
+          (process-run strace "-f" "--quiet=path-resolution,attach,personality,exit"
+            "-P" "/proc/self/mountinfo"
+            "-e" "trace=openat" "-e" "inject=openat:error=EACCES"
+            "-o" "/dev/null" (begin launcher) (begin script) "procfs-without-mountinfo"
+            :timeout 5000)))
+      #t))
+
 (mat system-native-host-query-errors
 
   ;; Error case: unavailable host information must raise rather than return an error as data.

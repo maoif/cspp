@@ -2,6 +2,12 @@
 
 ;; This driver runs under strace syscall injection, separately from the test runner.
 (case (string->symbol (cadr (command-line)))
+  [(procfs-without-mountinfo)
+   ;; Error case: unavailable mountinfo must not prevent reading any procfs metric file.
+   (unless (and (number? (linux-system-uptime)) (pair? (linux-memory-info))
+                (for-all number? (linux-load-average)))
+     (error 'system-native-faults "procfs query returned an invalid metric"))]
+
   [(host-query)
    ;; Error case: uname failures must raise conditions instead of returning legacy error vectors.
    (for-each
