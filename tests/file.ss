@@ -129,6 +129,29 @@
           (file-hidden? (path-build root "top.txt") 'invalid)
           #f))))
 
+(mat file-copymeta-no-follow-dangling-links
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([source (path-build root "source-link")]
+               [destination (path-build root "destination-link")]
+               [regular (path-build root "top.txt")]
+               [atime (make-time 'time-utc 120000000 1000000000)]
+               [mtime (make-time 'time-utc 340000000 1000000001)])
+          (file-symlink "missing-source" source)
+          (file-symlink "missing-destination" destination)
+          (file-touch-atime source atime #f #f)
+          (file-touch-mtime source mtime #f #f)
+          (file-chmod regular #o600)
+          (file-copymeta source destination #f #f)
+          (file-copymeta source regular #f #f)
+          (and (time=? atime (file-access-time destination #f))
+               (time=? mtime (file-modification-time destination #f))
+               (time=? atime (file-access-time regular))
+               (time=? mtime (file-modification-time regular))
+               (= #o600 (file-mode regular))
+               (file-symbolic-link? destination)
+               (not (file-exists? destination)))))))
+
 (mat file-metadata-tilde-thread-safety
      (let* ([users (filter (lambda (fields) (file-directory? (list-ref fields 5)))
                            (map (lambda (line) (string-split line #\:))

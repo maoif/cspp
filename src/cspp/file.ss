@@ -2198,7 +2198,7 @@
   Copy permission bits and access/modification times from path string `src` to `dest`.
   Optional booleans `follow-link-src?` and `follow-link-dest?` default to `#t` and control
   which entry supplies or receives timestamps. Permission bits always come from the source
-  target and are copied only when `follow-link-dest?` is true. Both selected entries must
+  target and are read and copied only when `follow-link-dest?` is true. Both selected entries must
   exist. Return unspecified values; ownership, creation times, and xattrs are not copied.
   |#
   (define-who file-copymeta
@@ -2208,14 +2208,13 @@
        (pcheck ([$filename? src dest] [boolean? follow-link-src? follow-link-dest?]
                 [(lambda (x) (file-exists? x follow-link-src?)) src]
                 [(lambda (x) (file-exists? x follow-link-dest?)) dest])
-               (let* ([m (get-mode src #t)]
-                      [st (file-stat src follow-link-src?)]
+               (let* ([st (file-stat src follow-link-src?)]
                       [atime (file-stat-access-time st)]
                       [mtime (file-stat-modification-time st)])
                  ;; TODO xattrs
-                 (when (and (file-exists? dest #t) follow-link-dest?)
+                 (when follow-link-dest?
                    ;; if `dest` is a symlink, changing its own mode has no effect
-                   (chmod dest m))
+                   (chmod dest (get-mode src #t)))
                  ($file-touch who dest atime mtime follow-link-dest? #f)))]))
 
 
