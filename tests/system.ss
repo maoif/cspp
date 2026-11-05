@@ -220,6 +220,19 @@
            #f)
          #t))
 
+(mat system-memory-info-field-names
+
+     ;; Error case: punctuation in kernel field names must survive conversion into symbol keys.
+     (if (and (linux?) (file-exists? "/proc/meminfo"))
+         (let* ([info (linux-memory-info)]
+                [names (map (lambda (line) (car (string-split line #\:)))
+                            (read-lines "/proc/meminfo"))])
+           (and (equal? names (map (lambda (entry) (symbol->string (car entry))) info))
+                (for-all (lambda (entry) (natural? (cdr entry))) info)
+                (pair? (assq (string->symbol "Active(anon)") info))
+                (pair? (assq (string->symbol "Inactive(file)") info))))
+         #t))
+
 (mat system-procfs-query-allocation
 
      ;; Error case: uptime queries must not allocate mount records unrelated to the result.

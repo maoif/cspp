@@ -156,8 +156,10 @@
   #|proc:linux-memory-info
   The `linux-memory-info` procedure returns memory information from `/proc/meminfo` as an
   association list.
-  Each association has a symbol key from `/proc/meminfo` and a numeric value, usually measured in
-  KiB by Linux.
+  Each association has a symbol key preserving the procfs field name and an exact integer value.
+  Linux `kB` values are in KiB; unitless fields such as `HugePages_Total` are counts.
+  Values keep their reported units without conversion. `symbol->string` returns the field name;
+  parentheses in keys such as `Active(anon)` may appear as escapes when Scheme prints the symbol.
   It reads the current procfs file directly; an absent file raises a system unsupported condition.
   |#
   (define-who linux-memory-info

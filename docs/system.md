@@ -28,6 +28,13 @@ files directly on each call. They do not enumerate mounts or cache mount-namespa
 An absent file raises `system-unsupported-error?`. `linux-procfs-mounted?` remains the explicit
 mount-table query for checking whether procfs is mounted at `/proc`.
 
+`linux-memory-info` returns an alist of symbol keys and exact integer values. Keys preserve the
+kernel's field names: `(symbol->string (car entry))` gives the original name. Chez may print the
+symbol for `Active(anon)` as `Active\x28;anon\x29;`; these escapes encode the parentheses and are
+not part of its name. `(assq (string->symbol "Active(anon)") (linux-memory-info))` selects that field.
+Values labeled `kB` by Linux are KiB; unitless fields such as `HugePages_Total` are counts.
+The API leaves values in their reported units.
+
 `linux-os-release` returns symbol/string associations from `/etc/os-release`, falling back to
 `/usr/lib/os-release`. It decodes shell quoting and backslash escapes while preserving variable
 references and command substitutions as literal text.
