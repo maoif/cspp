@@ -1897,15 +1897,22 @@
                          ($err-file who path (vector-ref x 0))
                          x))))])
       (case-lambda
-        [(who path) ($readlink path #f)]
+        [(who path) ($readlink who path #f)]
         [(who path recursive?)
          ;; we don't care about whether the link is dangling or not
-         (pcheck ([file-exists?-no-follow path] [file-symbolic-link? path])
-                 (let ([seen (make-hashtable string-hash string=?)])
+         (pcheck ([string? path] [boolean? recursive?]
+                  [file-exists?-no-follow path] [file-symbolic-link? path])
+                 (let ([seen (make-hashtable equal-hash equal?)])
                    (let loop ([path path])
-                     (if (hashtable-contains? seen path)
-                         (errorf who "symlink cycle detected at: ~a" path)
-                         (let* ([_ (hashtable-set! seen path #t)]
+                     ;; A relative link's target depends on its parent directory.
+                     ;; Hard-linked symlinks in different parents need distinct keys.
+                     (let* ([parent (path-parent path)]
+                            [identity (list ($file-identity path #f)
+                                            ($file-identity
+                                             (if (string=? parent "") "." parent) #t))])
+                       (if (hashtable-contains? seen identity)
+                           (errorf who "symlink cycle detected at: ~a" path)
+                           (let* ([_ (hashtable-set! seen identity #t)]
                                 [ln (ffi who path)]
                                 [target (path-build (path-parent path) ln)])
                            (if (file-symbolic-link? target)
@@ -1914,7 +1921,7 @@
                                    ln)
                                (if recursive?
                                    (values ln (path-parent path))
-                                   ln)))))))])))
+                                   ln))))))))])))
 
 
   #|proc:readlink

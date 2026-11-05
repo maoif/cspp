@@ -1180,6 +1180,33 @@
 
 (mat readlink
 
+     ;; Hard-linked relative symlinks in different parents can form a finite chain.
+     (let ([root ($random-file)])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (mkdir (path-build root "next"))
+           (mkdir (path-build root "next/next"))
+           (write-string (path-build root "next/next/link") "target")
+           (file-symlink "next/link" (path-build root "link"))
+           (file-link (path-build root "link") (path-build root "next/link") #f))
+         (lambda ()
+           (string=? "target" (read-string (readlink2 (path-build root "link") #t))))
+         (lambda () (file-removetree root))))
+
+     ;; Error case: repeated link identities must stop expanding lexical cycle spellings.
+     (let ([root ($random-file)])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (mkdir (path-build root "sub"))
+           (file-symlink "sub/../cycle" (path-build root "cycle")))
+         (lambda ()
+           (guard (failure [else #t])
+             (readlink2 (path-build root "cycle") #t)
+             #f))
+         (lambda () (file-removetree root))))
+
      (begin (define dir "./readlink_test")
             (when (file-directory? dir) (file-removetree dir))
 
