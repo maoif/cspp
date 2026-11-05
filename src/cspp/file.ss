@@ -1495,10 +1495,33 @@
                  (and (= inode1 inode2) (= major1 major2) (= minor1 minor2))))]))
 
 
+  (define $same-file-port-contents?
+    (lambda (left right)
+      (let ([length (file-length left)])
+        (and (= length (file-length right))
+             ;; Empty files and an immediate mismatch need no buffers.
+             (let ([first-left (get-u8 left)] [first-right (get-u8 right)])
+               (cond [(eof-object? first-left) (eof-object? first-right)]
+                     [(or (eof-object? first-right) (not (fx= first-left first-right))) #f]
+                     [else
+                      ;; Virtual files may report zero size despite having data.
+                      (let* ([capacity (if (zero? length) 16384 (min length 16384))]
+                             [left-buffer (make-bytevector capacity 0)]
+                             [right-buffer (make-bytevector capacity 0)])
+                        (let loop ()
+                          (let ([left-count (get-bytevector-n! left left-buffer 0 capacity)]
+                                [right-count (get-bytevector-n! right right-buffer 0 capacity)])
+                            (if (eof-object? left-count)
+                                (eof-object? right-count)
+                                (and (eqv? left-count right-count)
+                                     ;; Unwritten suffixes stay equal after each successful comparison.
+                                     (bytevector=? left-buffer right-buffer)
+                                     (loop))))))]))))))
+
   #|proc:same-file-contents?
-  Test whether two files have the same content.
-  `path1` and `path2` must point to regular files. File contents are compared byte by byte.
-  Symlinks are always followed.
+  Return whether regular files named by path strings `path1` and `path2` have equal byte contents.
+  Symlinks are always followed. Return `#f` for a missing or nonregular entry.
+  Compare with bounded reusable buffers; filesystem and read errors propagate.
   |#
   (define-who same-file-contents?
     (lambda (path1 path2)
@@ -1508,12 +1531,7 @@
                     (lambda (p1)
                       ($with-port (open-file-input-port path2)
                         (lambda (p2)
-                          (and (fx= (file-length p1) (file-length p2))
-                               (let loop ()
-                                 (let ([b1 (get-u8 p1)] [b2 (get-u8 p2)])
-                                   (if (eof-object? b1)
-                                       #t
-                                       (if (fx= b1 b2) (loop) #f)))))))))
+                          ($same-file-port-contents? p1 p2)))))
                   #f))))
 
 

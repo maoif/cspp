@@ -40,6 +40,44 @@
   (lambda (datum port write)
     ($escape-file-write 'escaped)))
 
+(mat file-content-comparison-chunk-boundaries
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([left (path-build root "top.txt")]
+              [right (path-build root "right.bin")]
+              [link (path-build root "link")])
+          (file-symlink "right.bin" link)
+          (and (for-all
+                (lambda (size)
+                  (let ([contents (make-bytevector size 97)])
+                    (write-u8vec! left contents)
+                    (write-u8vec! right contents)
+                    (and (same-file-contents? left right)
+                         (same-file-contents? left link)
+                         (or (fxzero? size)
+                             (and (begin
+                                    (bytevector-u8-set! contents (fx1- size) 98)
+                                    (write-u8vec! right contents)
+                                    (not (same-file-contents? left right)))
+                                  (begin
+                                    (bytevector-u8-set! contents (fx1- size) 97)
+                                    (bytevector-u8-set! contents 0 98)
+                                    (write-u8vec! right contents)
+                                    (not (same-file-contents? left right))))))))
+                '(0 1 31 16383 16384 16385 32768 32769 40001))
+               (begin
+                 (write-u8vec! left #vu8(1))
+                 (write-u8vec! right #vu8(1 2))
+                 (not (same-file-contents? left right)))
+               (not (same-file-contents? left root))
+               (not (same-file-contents? left (path-build root "missing"))))))))
+
+(mat file-content-comparison-zero-stat-size
+     ;; Linux virtual regular files can contain data despite reporting zero length.
+     (or (not (and (file-regular? "/proc/version") (file-regular? "/proc/sys/kernel/ostype")))
+         (and (same-file-contents? "/proc/version" "/proc/version")
+              (not (same-file-contents? "/proc/version" "/proc/sys/kernel/ostype")))))
+
 (mat file-rejects-nul-paths
      ($with-fs-fixture
       (lambda (root)
