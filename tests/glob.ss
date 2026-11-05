@@ -1,5 +1,54 @@
 (import (cspp) (cspp glob))
 
+(mat glob-windows-simple-unicode-case
+     (for-all
+      (lambda (left right equal?)
+        (and (eq? equal? (glob-match? 'windows left right))
+             (eq? equal? (glob-match? 'windows right left))
+             (eq? equal? (glob-match? 'windows (string-append "[" left "]") right))
+             (eq? (not equal?)
+                  (glob-match? 'windows (string-append "[!" left "]") right))
+             (eq? equal? (path-same-root?
+                          (path-unc left "share") (path-unc right "SHARE")))
+             (eq? equal? (glob-match? 'windows
+                          (string-append "//" left "/share/*.txt")
+                          (string-append "//" right "/SHARE/x.txt")))))
+      '("ſ" "ς" "ß" "İ" "ı" "σ")
+      '("s" "σ" "ẞ" "i" "I" "Σ")
+      '(#t #t #t #f #f #t))
+
+     (glob-match? 'windows "[A-Z]" "ſ")
+
+     (glob-match? 'windows "[ſ-ſ]" "s")
+
+     (not (glob-match? 'windows "straße" "STRASSE"))
+
+     (not (glob-match? 'unix "ſ" "s")))
+
+(mat glob-windows-broad-unicode-range
+     (let ([pattern (string #\[ (integer->char 1) #\- (integer->char #x10ffff) #\])])
+       (and (glob-match? 'windows pattern "ÿ")
+            (not (glob-match? 'windows
+                   (string-append "[!" (substring pattern 1 (string-length pattern))) "ÿ")))))
+
+(mat glob-windows-simple-unicode-filesystem
+     (let ([root (format "glob-simple-fold-~a" (get-process-id))])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (file-touch (path-build root "ſ.txt"))
+           (file-touch (path-build root "ẞ.txt"))
+           (file-touch (path-build root "İ.txt")))
+         (lambda ()
+           (and (equal? (list (string-append root "/s.txt"))
+                        (glob 'windows (string-append root "/s.txt")))
+                (equal? (list (string-append root "/ſ.txt"))
+                        (glob 'windows (string-append root "/[S].txt")))
+                (equal? (list (string-append root "/ß.txt"))
+                        (glob 'windows (string-append root "/ß.txt")))
+                (null? (glob 'windows (string-append root "/i.txt")))))
+         (lambda () (file-removetree root)))))
+
 (mat glob-finite-parent-traversal
      (let ([root (format "glob-finite-parent-~a" (get-process-id))])
        (dynamic-wind

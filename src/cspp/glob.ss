@@ -6,7 +6,7 @@
           (cspp file)
           (cspp iter)
           (cspp regex)
-          (only (cspp string) string-search)
+          (only (cspp string) string-search string-map)
           (cspp utils)
           (cspp list)
           (cspp system platform))
@@ -24,7 +24,8 @@
   `literal` is the original text when the component has no wildcard syntax.
   |#
   (define-record-type ($component %component component?)
-    (fields (immutable regex component-regex) (immutable literal component-literal)))
+    (fields (immutable regex component-regex) (immutable literal component-literal)
+            (immutable fold-case? component-fold-case?)))
 
   #|record:$branch
   An internal expanded pattern branch. `path` stores its parsed root and
@@ -205,15 +206,61 @@
                  (unless (null? run) (out (apply string-append (reverse run))))
                  (out (car atoms)) (loop (cdr atoms) '())])))))
 
+  (define $fold-string (lambda (text) (string-map char-foldcase text)))
+
+  (define $fold-range
+    (lambda (first last)
+      ;; Folding a range's endpoints is insufficient: case mappings are not monotone.
+      ;; Compress consecutive folded values into ranges as we enumerate Unicode scalars.
+      (let ([out (make-list-builder)] [end (char->integer last)])
+        (define emit
+          (lambda (first last)
+            (when first (out (integer->char first)) (out (integer->char last)))))
+        (let loop ([index (char->integer first)] [first #f] [last #f])
+          (cond [(fx> index end)
+                 (emit first last)
+                 ;; Folding can produce overlapping, out-of-order ranges. Reuse
+                 ;; the regex charset union before passing ranges to its compiler.
+                 (let ([ranges (regex-sre->cset (cons '/ (out)))]
+                       [normalized (make-list-builder)])
+                   (vector-for-each (lambda (range)
+                                      (normalized (car range)) (normalized (cdr range))) ranges)
+                   (cons '/ (normalized)))]
+                [(fx<= #xd800 index #xdfff) (loop #xe000 first last)]
+                [else
+                 (let ([folded (char->integer (char-foldcase (integer->char index)))])
+                   (if (and last (fx= folded (fx1+ last)))
+                       (loop (fx1+ index) first folded)
+                       (begin (emit first last) (loop (fx1+ index) folded folded))))])))))
+
+  (define $fold-sre
+    (lambda (sre)
+      (cond [(string? sre) ($fold-string sre)]
+            [(char? sre) (char-foldcase sre)]
+            [(pair? sre)
+             (if (eq? (car sre) '/)
+                 ($fold-range (cadr sre) (caddr sre))
+                 (cons (car sre) (map $fold-sre (cdr sre))))]
+            [else sre])))
+
+  (define $make-component
+    (lambda (flavor sre literal)
+      (let ([fold? (eq? flavor 'windows)])
+        (%component (sre->regex (if fold? ($fold-sre sre) sre)) literal fold?))))
+
+  (define $component-matches?
+    (lambda (component name)
+      (regex-matches? (component-regex component)
+                      (if (component-fold-case? component) ($fold-string name) name))))
+
   (define $component-compile
     (lambda (flavor s)
       (if (string=? s "**") #f
           (let ([n (string-length s)])
             (let loop ([i 0] [atoms '()] [literal '()] [magic? #f])
               (if (= i n)
-                  (%component (sre->regex ($component-sre (reverse atoms))
-                                         (if (eq? flavor 'windows) '(i) '()))
-                              (and (not magic?) (list->string (reverse literal))))
+                  ($make-component flavor ($component-sre (reverse atoms))
+                                   (and (not magic?) (list->string (reverse literal))))
                   (let ([c (string-ref s i)])
                     (cond [(char=? c #\\)
                            (when (= (+ i 1) n) ($error "trailing escape"))
@@ -277,10 +324,8 @@
                    (if (null? components) '()
                        (let ([component
                               (if (fx> literal-count 0)
-                                  (%component
-                                   (sre->regex (list 'seq (car components))
-                                               (if (eq? flavor 'windows) '(i) '()))
-                                   (car components))
+                                  ($make-component flavor (list 'seq (car components))
+                                                   (car components))
                                   ($component-compile flavor (car components)))]
                              [rest (loop (cdr components) (fx1- literal-count))])
                          ;; Adjacent globstars describe the same recursive search.
@@ -308,8 +353,7 @@
                                   (and (< j vn) (loop i (+ j 1))))]
                              [else
                               (and (< j vn)
-                                   (regex-matches? (component-regex (vector-ref ps i))
-                                                   (vector-ref vs j))
+                                   ($component-matches? (vector-ref ps i) (vector-ref vs j))
                                    (loop (+ i 1) (+ j 1)))])])
                   (hashtable-set! memo key answer)
                   answer)))))))
@@ -319,7 +363,7 @@
       (let ([root (path-root-info path)])
         (cons (cadr root)
               (if (caddr root)
-                  (map (lambda (part) (sre->regex (list 'seq part) '(i))) (cddr root))
+                  (map (lambda (part) (sre->regex (list 'seq ($fold-string part)))) (cddr root))
                   '())))))
 
   (define $glob-root=?
@@ -329,7 +373,7 @@
                       [parts (if (caddr candidate-root) (cddr candidate-root) '())])
              (cond [(null? matchers) (null? parts)]
                    [(null? parts) #f]
-                   [else (and (regex-matches? (car matchers) (car parts))
+                   [else (and (regex-matches? (car matchers) ($fold-string (car parts)))
                               (loop (cdr matchers) (cdr parts)))])))))
 
   (define $trailing-separator?
@@ -361,7 +405,9 @@
   Backslash escapes characters
   in Unix patterns; escaped `/` remains a separator. Windows treats both slash forms as
   separators, so bracket classes quote wildcard characters such as `[*]`. Windows component
-  matching uses the regex engine's character case rules for literals and wildcards alike.
+  matching uses Unicode simple case folding for literals, classes, and ranges, as in path equality.
+  `*` and `?` match within one component; `**` matches zero or more directory levels.
+  Dotfiles are eligible, and explicit `.` and `..` components retain their lexical meaning.
   Malformed syntax raises an error.
   |#
   (define make-glob
@@ -483,7 +529,7 @@
                              (let ([entry (fs-read-directory directory)])
                                (when entry
                                  (unless (member (car entry) '("." ".."))
-                                   (when (regex-matches? (component-regex component) (car entry))
+                                   (when ($component-matches? component (car entry))
                                      (set! found (car entry))))
                                  (unless found (loop)))))))
                        (lambda () (fs-close-directory directory)))
@@ -599,7 +645,7 @@
                                     (set! stack (cdr stack)) (loop)]
                                    [(member (car entry) '("." "..")) (loop)]
                                    [(or (not (car cs))
-                                        (regex-matches? (component-regex (car cs)) (car entry)))
+                                        ($component-matches? (car cs) (car entry)))
                                     (set! stack
                                           (cons (vector 'node (path-add-component p (car entry))
                                                         (path-add-component physical (car entry))
@@ -624,7 +670,7 @@
     (lambda (flavor path)
       (let ([components (path-components (path-parse flavor path))])
         (if (eq? flavor 'windows)
-            (map string-foldcase components)
+            (map $fold-string components)
             components))))
 
   (define $glob-expand
@@ -645,7 +691,8 @@
 
   #|proc:glob
   Expand string `pattern` against the filesystem and return duplicate-free path
-  strings sorted by component order. Optional `flavor` follows the host OS:
+  strings sorted by component order, using simple case folding for Windows sorting.
+  Optional `flavor` follows the host OS:
   `'windows` on Windows, `'unix` elsewhere. Traversal starts at the longest literal
   prefix and preserves the root spelling. Symlinked directories are not descended into;
   matching directories are excluded. An unmatched pattern returns the empty list.
@@ -697,9 +744,11 @@
   Return a boolean indicating whether string `path` matches any alternative of
   compiled `glob`, using that object's flavor. The three-argument form compiles
   string `pattern` for explicit `flavor` (`'unix` or `'windows`) before matching
-  `path`. Matching is lexical, case-insensitive for Windows, and performs no
+  `path`. Matching is lexical, uses Unicode simple case folding for Windows, and performs no
   filesystem access or dot-component normalization. A trailing separator on either
   pattern or candidate requires a trailing separator on both.
+  Simple folding is symmetric and preserves character count: `straße` differs from `STRASSE`.
+  Bracket classes, including negated classes and ranges, use the same rule as literals.
   |#
   (define glob-match?
     (case-lambda

@@ -720,7 +720,7 @@
 
   (define $windows-name=?
     (lambda (left right)
-      ;; Match glob's character case rules without multi-character Unicode folding.
+      ;; Chez char-ci=? uses Unicode simple folding, shared with Windows glob.
       (let ([length (string-length left)])
         (and (fx= length (string-length right))
              (let loop ([index 0])
@@ -750,7 +750,7 @@
 
   #|proc:path-same-root?
   Return whether path objects `path1` and `path2` have compatible roots for relativization.
-  Windows roots compare characters case-insensitively, without full Unicode string folding.
+  Windows roots use Unicode simple case folding, without multi-character string folding.
   |#
   (define path-same-root?
     (lambda (path1 path2)
