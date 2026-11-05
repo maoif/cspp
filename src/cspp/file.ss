@@ -2615,7 +2615,7 @@
             [(name . rest)
              (with-syntax ([(p) (generate-temporaries '(p))])
                #`(let ([n name])
-                   (if (string? n)
+                   (if ($filename? n)
                        (let ([p (path-build #,pdir n)])
                          #,(syntax-case #'rest ()
                              ;; files without contents are always touched
@@ -2645,7 +2645,7 @@
             [(name . rest)
              (with-syntax ([(p) (generate-temporaries '(p))])
                #`(let ([n name])
-                   (if (string? n)
+                   (if ($filename? n)
                        (let ([p (path-build #,pdir n)])
                          #,(syntax-case #'rest ()
                              [() (if overwrite? #'(mkdirs p) #'(mkdir p))]

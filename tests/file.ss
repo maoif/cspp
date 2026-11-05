@@ -120,6 +120,25 @@
                      (string=? content (read-string source)))))
             (lambda () (close-fswatcher watcher)))))))
 
+(mat file-tree-rejects-nul-declarations
+     (let ([bad-name (string-append "prefix" (string #\nul) "suffix")])
+       (define-file-tree nul-directory (dir bad-name))
+       (define-file-tree nul-mode-directory (dir bad-name (mode #o700)))
+       (define-file-tree nul-child-directory (dir bad-name (file "child")))
+       (define-file-tree nul-file (file bad-name))
+       ($with-fs-fixture
+        (lambda (root)
+          ;; Error cases: declared names cannot create a directory/file at their NUL prefix.
+          (for-all
+           (lambda (creator)
+             (let ([destination (path-build root ($random-file))])
+               (guard (failure [else (not (file-exists? (path-build destination "prefix") #f))])
+                 (creator destination)
+                 #f)))
+           (list create-nul-directory create-nul-mode-directory create-nul-child-directory
+                 create-nul-file create-nul-directory! create-nul-mode-directory!
+                 create-nul-child-directory! create-nul-file!))))))
+
 (mat file-hidden-argument-checks
      ($with-fs-fixture
       (lambda (root)
