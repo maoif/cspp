@@ -45,6 +45,41 @@
        (unless collected-during-query?
          (error 'system-native-faults "collection waited for native I/O" mode))))]
 
+  [(filesystem-snapshot)
+   ;; Error case: replacing a symlink during a query must not mix capacity and device identity.
+   (let* ([path (format "/tmp/cspp-filesystem-snapshot-~a" (getpid))]
+          [replacement (string-append path "-next")]
+          [mutex (make-mutex)] [changed (make-condition)]
+          [started? #f] [finished? #f] [observed #f] [failure #f])
+     (dynamic-wind
+       (lambda () (file-symlink "/" path) (file-symlink "/dev/shm" replacement))
+       (lambda ()
+         (fork-thread
+           (lambda ()
+             (with-mutex mutex (set! started? #t) (condition-signal changed))
+             (guard (condition [else (set! failure condition)])
+               (set! observed (filesystem-info path)))
+             (with-mutex mutex (set! finished? #t) (condition-signal changed))))
+         (with-mutex mutex
+           (let loop () (unless started? (condition-wait changed mutex) (loop))))
+         ;; strace holds the first capacity-query return while this path is replaced.
+         (sleep-milliseconds 100)
+         (rename-file replacement path)
+         (with-mutex mutex
+           (let loop () (unless finished? (condition-wait changed mutex) (loop))))
+         (when failure (raise failure))
+         (unless
+           (exists
+             (lambda (target)
+               (let ([expected (filesystem-info target)])
+                 (and (= (filesystem-info-device expected) (filesystem-info-device observed))
+                      (= (filesystem-info-blocks expected) (filesystem-info-blocks observed)))))
+             '("/" "/dev/shm"))
+           (error 'system-native-faults "filesystem record combines different targets")))
+       (lambda ()
+         (delete-file path)
+         (when (file-symbolic-link? replacement) (delete-file replacement)))))]
+
   [(procfs-without-mountinfo)
    ;; Error case: unavailable mountinfo must not prevent reading any procfs metric file.
    (unless (and (number? (linux-system-uptime)) (pair? (linux-memory-info))

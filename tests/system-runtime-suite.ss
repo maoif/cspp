@@ -25,8 +25,25 @@
              [script (string-append "--script=" root "/tests/system-native-faults.ss")])
         (process-exit-success?
           (process-run strace "-f" "--quiet=path-resolution,attach,personality,exit"
-            "-e" "trace=statfs" "-e" "inject=statfs:delay_enter=2s:when=1"
+            "-e" "trace=statfs,fstatfs" "-e" "inject=statfs:delay_enter=2s:when=1"
+            "-e" "inject=fstatfs:delay_enter=2s:when=1"
             "-o" "/dev/null" (begin launcher) (begin script) "filesystem-gc" :timeout 5000)))
+      #t))
+
+(mat system-filesystem-single-target
+
+  ;; Error case: a symlink replacement must not combine two filesystems in one record.
+  (if (and (file-directory? "/dev/shm")
+           (= 0 (system "strace -qq -o /dev/null true >/dev/null 2>&1")))
+      (let* ([root (if (file-exists? "system-native-faults.ss") ".." ".")]
+             [launcher (string-append root "/cspp")]
+             [script (string-append "--script=" root "/tests/system-native-faults.ss")])
+        (process-exit-success?
+          (process-run strace "-f" "--quiet=path-resolution,attach,personality,exit"
+            "-e" "trace=statfs,fstatfs" "-e" "inject=statfs:delay_exit=1s:when=1"
+            "-e" "inject=fstatfs:delay_exit=1s:when=1"
+            "-o" "/dev/null" (begin launcher) (begin script) "filesystem-snapshot"
+            :timeout 5000)))
       #t))
 
 (mat system-procfs-without-mountinfo

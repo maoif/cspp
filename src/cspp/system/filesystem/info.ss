@@ -147,6 +147,8 @@
   #|proc:filesystem-info
   The `filesystem-info` procedure returns filesystem capacity and identity information for `path`.
   The `path` parameter is a string without NUL characters naming the path to query.
+  Identity and capacity describe one resolved target even if `path` is replaced during the query.
+  On Linux, querying metadata requires no read permission and does not open device or FIFO streams.
   Native filesystem access permits other Scheme threads to run and collect while it blocks.
   |#
   (define filesystem-info

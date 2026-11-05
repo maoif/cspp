@@ -155,7 +155,18 @@ ptr cspp_filesystem_info(const char *path) {
   /* Filesystems may block on remote or userspace services. Only native-owned
    * storage crosses deactivation; the FFI's encoded path can move during GC. */
   Sdeactivate_thread();
-  if (statvfs(owned_path, &vfs) != 0 || stat(owned_path, &st) != 0) error = errno;
+  /* Resolve once so a concurrent rename or symlink replacement cannot mix
+   * capacity and device identity from different targets. O_PATH needs no read
+   * permission and does not open devices or wait for FIFO peers. */
+#ifdef O_PATH
+  int fd = open(owned_path, O_PATH | O_CLOEXEC);
+#elif defined(O_EVTONLY)
+  int fd = open(owned_path, O_EVTONLY | O_NONBLOCK | O_CLOEXEC);
+#else
+  int fd = open(owned_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+#endif
+  if (fd < 0 || fstatvfs(fd, &vfs) != 0 || fstat(fd, &st) != 0) error = errno;
+  if (fd >= 0) close(fd);
   Sactivate_thread();
   if (error != 0) {
     free(owned_path);

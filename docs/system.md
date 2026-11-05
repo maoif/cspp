@@ -255,6 +255,8 @@ are available separately through `current-euid` and `current-egid`.
 `filesystem-info` queries a NUL-free path. Byte-count helpers multiply the reported fragment
 size by total, free, or unprivileged-available blocks. Capacity is a snapshot, and the optional
 filesystem type may be `#f`. Slow native filesystem queries permit other Scheme threads to collect.
+Capacity and device identity come from one resolved target even if the path is replaced during
+the query. On Linux, the query needs no file read permission and does not open device or FIFO streams.
 Mount records expose source, target, type, and mount plus superblock
 options separated by a space.
 
