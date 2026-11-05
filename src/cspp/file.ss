@@ -1156,6 +1156,12 @@
           (and (eq? type 'FT_unknown) (file-directory? path follow-link?))
           (and (eq? type 'FT_symlink) follow-link? (file-directory? path #t)))))
 
+  (define $file-identity
+    (lambda (path follow-link?)
+      (let ([stat (file-stat path follow-link?)])
+        (list (file-stat-dev-major stat) (file-stat-dev-minor stat)
+              (file-stat-inode stat)))))
+
   #|proc:fs->iter
   Return an iterator lazily traversing directory `path`, including the root itself.
   `follow-link?` (default `#f`) enables symlink descent with directory cycle detection.
@@ -1163,6 +1169,8 @@
   Results are unsorted path strings, with each entry yielded once. Directory handles
   open on demand and close on exhaustion, reset, errors, or `iter-finalize!`.
   Reset starts a fresh pass over the current filesystem. Linux is required.
+  Distinct directory aliases are traversed separately; only ancestor cycles are skipped.
+  Input and yielded path strings do not share storage with the iterator's traversal state.
   |#
   (define fs->iter
     (case-lambda
@@ -1171,10 +1179,10 @@
       [(path follow-link? top-down?)
        (pcheck ([string? path] [boolean? follow-link? top-down?])
                ($fs-ensure-linux 'fs->iter)
-               ;; Frames hold the directory path and its lazily opened stream.
-               (let ([stack (list (vector path #f))]
-                     [visited (make-hashtable equal-hash equal?)]
-                     [finished? #f])
+               ;; Frames hold a private path, lazily opened stream, and ancestor identities.
+               (let* ([root-path (string-copy path)]
+                      [stack (list (vector root-path #f '()))]
+                      [finished? #f])
                  (define close-all
                    (lambda ()
                      (let ([frames stack] [failure #f])
@@ -1187,15 +1195,6 @@
                                 (fs-close-directory directory)))))
                         frames)
                        (when failure (raise failure)))))
-                 (define unseen-directory?
-                   (lambda (directory)
-                     (if (not follow-link?) #t
-                         (let* ([stat (file-stat directory)]
-                                [identity (list (file-stat-dev-major stat)
-                                                (file-stat-dev-minor stat)
-                                                (file-stat-inode stat))])
-                           (if (hashtable-contains? visited identity) #f
-                               (begin (hashtable-set! visited identity #t) #t))))))
                  (make-iter
                   (lambda ()
                     (guard (condition
@@ -1210,30 +1209,39 @@
                                    [root (vector-ref frame 0)]
                                    [directory (vector-ref frame 1)])
                               (if (not directory)
-                                  (begin
-                                    (unseen-directory? root)
-                                    (vector-set! frame 1 (fs-open-directory root))
-                                    (if top-down? root (loop)))
+                                  (let ([identity (and follow-link? ($file-identity root #t))]
+                                        [ancestors (vector-ref frame 2)])
+                                    (if (and identity (member identity ancestors))
+                                        (begin
+                                          (set! stack (cdr stack))
+                                          (string-copy root))
+                                        (begin
+                                          (vector-set! frame 2
+                                                       (if identity
+                                                           (cons identity ancestors) ancestors))
+                                          (vector-set! frame 1 (fs-open-directory root))
+                                          (if top-down? (string-copy root) (loop)))))
                                   (let ([entry (fs-read-directory directory)])
                                     (cond
                                      [(not entry)
                                       (fs-close-directory directory)
                                       (set! stack (cdr stack))
-                                      (if top-down? (loop) root)]
+                                      (if top-down? (loop) (string-copy root))]
                                      [(member (car entry) '("." "..")) (loop)]
                                      [else
                                       (let* ([child (path-build root (car entry))]
                                              [directory? ($fs-entry-directory?
                                                           child (cdr entry) follow-link?)])
-                                        (if (and directory? (unseen-directory? child))
+                                        (if directory?
                                             (begin
-                                              (set! stack (cons (vector child #f) stack))
+                                              (set! stack
+                                                    (cons (vector child #f (vector-ref frame 2))
+                                                          stack))
                                               (loop))
                                             child))]))))))))
                   (lambda ()
                     (close-all)
-                    (hashtable-clear! visited)
-                    (set! stack (list (vector path #f)))
+                    (set! stack (list (vector root-path #f '())))
                     (set! finished? #f))
                   close-all)))]))
 

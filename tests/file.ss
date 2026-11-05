@@ -131,6 +131,36 @@
                      #t)))
             (lambda () (iter-finalize! plain) (iter-finalize! followed)))))))
 
+(mat fs-directory-alias-descendants
+     ($with-fs-fixture
+      (lambda (root)
+        (file-symlink "sub" (path-build root "alias"))
+        (let ([iterator (fs->iter root #t)])
+          (dynamic-wind
+            void
+            (lambda ()
+              (let ([paths (iter->list iterator)])
+                (and (member (path-build root "sub/nested.txt") paths)
+                     (member (path-build root "alias/nested.txt") paths)
+                     #t)))
+            (lambda () (iter-finalize! iterator)))))))
+
+(mat fs-directory-result-ownership
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([input (string-copy root)] [iterator (fs->iter input)])
+          (dynamic-wind
+            void
+            (lambda ()
+              (string-set! input 0 #\X)
+              (let ([first (iter-next! iterator)])
+                (string-set! first 0 #\Y)
+                (and (for-all (lambda (entry) (file-exists? entry #f))
+                              ($fs-take-pass iterator))
+                     (begin (iter-reset! iterator) #t)
+                     (string=? root (iter-next! iterator)))))
+            (lambda () (iter-finalize! iterator)))))))
+
 (mat fs-directory-iterator-lifetime
      ($with-fs-fixture
       (lambda (root)
