@@ -482,11 +482,16 @@
               (let ([dlen (string-length delim)] [len (string-length str)])
                 (if (fx= dlen 1)
                     (string-split str (string-ref delim 0))
-                    (let loop ([lefti 0] [res '()])
-                      (let ([i ($string-search str delim lefti)])
-                        (if i
-                            (loop (fx+ i dlen) (cons (substring str lefti i) res))
-                            (reverse (cons (substring str lefti len) res)))))))]
+                    (if (fx> dlen len) (list (string-copy str))
+                        (let ([next ($make-string-search str delim 0 #f)]
+                              [fields (make-list-builder)])
+                          (let loop ([lefti 0])
+                            (let ([i (next)])
+                              (if i
+                                  (begin (fields (substring str lefti i))
+                                         (loop (fx+ i dlen)))
+                                  (begin (fields (substring str lefti len))
+                                         (fields)))))))))]
              [(char? delim)
               (let ([lb (make-list-builder)] [len (string-length str)])
                 (let loop-next ([leftcur 0])
@@ -556,12 +561,8 @@
       [(str c) ($string-trim who str c #f #t)]))
 
 
-  ;; currently use brute force
-  ;; TODO: Knuth-Morris-Pratt or Boyer-Moore?
-  ;; Search for `target` from position `start` in `str`,
-  ;; return the index if there's a match, or #f.
-  ;; No error checking here.
-  (define $string-search
+  ;; Direct scanning avoids preprocessing and allocation for short needles.
+  (define $string-search/direct
     (lambda (str target start)
       (let ([slen (string-length str)] [tlen (string-length target)])
         (define str=?
@@ -579,6 +580,56 @@
                             (if (str=? i)
                                 i
                                 (loop (add1 i))))))]))))
+
+  (define $string-prefix-table
+    (lambda (target)
+      (let* ([length (string-length target)] [prefix (make-vector length 0)])
+        (do ([index 1 (fx1+ index)]) ((fx= index length) prefix)
+          (let loop ([matched (vector-ref prefix (fx1- index))])
+            (cond [(char=? (string-ref target index) (string-ref target matched))
+                   (vector-set! prefix index (fx1+ matched))]
+                  [(fx> matched 0) (loop (vector-ref prefix (fx1- matched)))]))))))
+
+  ;; Return a private next-match procedure for a nonempty target. Long needles use
+  ;; KMP; retain the scan position and prefix table across all matches or split fields.
+  (define $make-string-search
+    (lambda (str target start overlap?)
+      (let ([slen (string-length str)] [tlen (string-length target)])
+        (if (fx<= tlen 16)
+            (let ([cursor start])
+              (lambda ()
+                (and cursor
+                     (let ([match ($string-search/direct str target cursor)])
+                       (set! cursor (and match (fx+ match (if overlap? 1 tlen))))
+                       match))))
+            (let ([prefix #f] [cursor start] [previous 0])
+              (define fallback
+                (lambda (matched)
+                  ;; Exact, nonoverlapping matches need no prefix preprocessing.
+                  (unless prefix (set! prefix ($string-prefix-table target)))
+                  (vector-ref prefix (fx1- matched))))
+              (lambda ()
+                (and (fx< cursor slen)
+                     (let loop ([index cursor]
+                                [matched (if (fx= previous tlen)
+                                             (if overlap? (fallback previous) 0) previous)])
+                       (cond [(fx= index slen) (set! cursor slen) #f]
+                             [(char=? (string-ref str index) (string-ref target matched))
+                              (if (fx= (fx1+ matched) tlen)
+                                  (begin
+                                    (set! cursor (fx1+ index))
+                                    (set! previous tlen)
+                                    (fx- cursor tlen))
+                                  (loop (fx1+ index) (fx1+ matched)))]
+                             [(fx> matched 0) (loop index (fallback matched))]
+                             [else (loop (fx1+ index) 0)])))))))))
+
+  (define $string-search
+    (lambda (str target start)
+      (let ([tlen (string-length target)])
+        (if (or (fx<= tlen 16) (fx>= tlen (fx- (string-length str) start)))
+            ($string-search/direct str target start)
+            (($make-string-search str target start #t))))))
 
 
   #|proc:string-search
@@ -608,13 +659,13 @@
                 (cond [(string=? "" target) '(0)]
                       [(< end 0) #f]
                       [(= end 0) (and (string=? str target) '(0))]
-                      [else (let loop ([i 0] [res '()])
-                              (if (< end i)
-                                  (and (not (null? res)) (reverse res))
-                                  (let ([j ($string-search str target i)])
-                                    (if j
-                                        (loop (add1 j) (cons j res))
-                                        (and (not (null? res)) (reverse res))))))])))))
+                      [else (let ([next ($make-string-search str target 0 #t)]
+                                  [matches (make-list-builder)])
+                              (let loop ([index (next)])
+                                (if index
+                                    (begin (matches index) (loop (next)))
+                                    (let ([result (matches)])
+                                      (and (pair? result) result)))))])))))
 
   #|proc:string-empty?
   Return whether `str` has length zero.

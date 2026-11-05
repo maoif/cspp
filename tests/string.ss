@@ -217,6 +217,16 @@
 
 (mat string-search
 
+     (= 2 (string-search (string-append (make-string 19 #\a) "b")
+                          (string-append (make-string 17 #\a) "b")))
+
+     (not (string-search (make-string 65536 #\a)
+                          (string-append (make-string 1024 #\a) "b")))
+
+     (= 6 (string-search "abababababababababababac" "ababababababababac"))
+
+     (= 1 (string-search "λababababababababac" "ababababababababac"))
+
      (= 0 (string-search "" ""))
      (not (string-search "" "1"))
      (not (string-search "" "13"))
@@ -227,6 +237,10 @@
 
 
 (mat string-search-all
+
+     (equal? (iota 48) (string-search-all (make-string 64 #\a) (make-string 17 #\a)))
+
+     (equal? '(0 2 4) (string-search-all "abababababababababababac" "ababababababababab"))
 
      (not (string-search-all "" "1"))
      (equal? '(0) (string-search-all "" ""))
@@ -275,6 +289,10 @@
 
 
 (mat string-split
+
+     (let ([needle (make-string 17 #\a)])
+       (equal? '("" "b" "c")
+               (string-split (string-append needle "b" needle "c") needle)))
 
      ;; type error
      (error? (string-split #\a #\a))
