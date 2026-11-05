@@ -219,13 +219,16 @@
   #|proc:read-u8vec
   The `read-u8vec` procedure reads the binary file at `path` as a bytevector.
   The `path` parameter is the filesystem path string to read.
+  An empty file returns an empty bytevector.
   |#
   (define read-u8vec
     (lambda (path)
       (pcheck-file
        (path)
        ($with-port (open-file-input-port path)
-         (lambda (p) (get-bytevector-all p))))))
+         (lambda (p)
+           (let ([value (get-bytevector-all p)])
+             (if (eof-object? value) #vu8() value)))))))
 
   (define all-strings? (lambda (x) (andmap string? x)))
   (define all-chars?   (lambda (x) (andmap char? x)))
@@ -1913,15 +1916,15 @@
                        (if (hashtable-contains? seen identity)
                            (errorf who "symlink cycle detected at: ~a" path)
                            (let* ([_ (hashtable-set! seen identity #t)]
-                                [ln (ffi who path)]
-                                [target (path-build (path-parent path) ln)])
-                           (if (file-symbolic-link? target)
-                               (if recursive?
-                                   (loop target)
-                                   ln)
-                               (if recursive?
-                                   (values ln (path-parent path))
-                                   ln))))))))])))
+                                  [ln (ffi who path)]
+                                  [target (path-build (path-parent path) ln)])
+                             (if (file-symbolic-link? target)
+                                 (if recursive?
+                                     (loop target)
+                                     ln)
+                                 (if recursive?
+                                     (values ln (path-parent path))
+                                     ln))))))))])))
 
 
   #|proc:readlink
@@ -2427,13 +2430,15 @@
 
 
   #|proc:mkdirs
-  Create directory; also create all intermediate directories as needed.
+  Create directory path string `path` and any missing intermediate directories.
+  Integer `mode` supplies permission bits from 0 through #o7777; the default is #o777.
+  Existing directories are left unchanged. Return unspecified values.
   |#
   (define-who mkdirs
     (case-lambda
       [(path) (mkdirs path #o777)]
       [(path mode)
-       (pcheck-string (path)
+       (pcheck ([string? path] [$mode-num? mode])
                       (if (file-exists? path)
                           (unless (file-directory? path)
                             ($err-file-exists who path))
@@ -2773,6 +2778,7 @@
   The optional `events` parameter is an unsigned 32-bit mask made with `fswatcher-mask`.
   It returns an unspecified value. Directories are watched without recursion.
   Multiple paths to the same inode share a watch; events report the first recorded path.
+  The recorded path is copied, so later mutations of the input string do not change it.
   Adding that inode again replaces its event mask unless `FSW_mask_add` is supplied.
   `FSW_dont_follow` watches a symbolic link itself, including a dangling link.
 
@@ -2801,7 +2807,7 @@
                (let* ([fid ($fsw-add! who ($fswatcher-id watcher) path events)]
                       [paths ($fswatcher-paths watcher)])
                  (unless (hashtable-contains? paths fid)
-                   (hashtable-set! paths fid (cons path #t)))))]))
+                   (hashtable-set! paths fid (cons (string-copy path) #t)))))]))
 
   (define $fswatcher-next!
     (lambda (who watcher timeout)
@@ -2816,7 +2822,7 @@
                    [paths ($fswatcher-paths watcher)]
                    [entry (hashtable-ref paths fid #f)])
               ($fswatcher-pending-set! watcher (cdr pending))
-              (vector-set! event 0 (and entry (car entry)))
+              (vector-set! event 0 (and entry (string-copy (car entry))))
               ;; Keep the path for queued events, including the final ignored notification.
               (when (flag-any-set? (fswatcher-mask FSW_ignored) (vector-ref event 1))
                 (hashtable-delete! paths fid))
@@ -2826,7 +2832,8 @@
   The `fswatcher-next!` procedure returns the next queued filesystem event from `watcher`.
   An event is a three-element vector: the watched path, the event bitmask, and the child
   filename, or `#f` for events without a child name. A directory event reports the watched
-  directory as its path. Queue overflow is reported with `FSW_overflow` and a `#f` path;
+  directory as its path. Each reported path is a fresh string independent of the watcher.
+  Queue overflow is reported with `FSW_overflow` and a `#f` path;
   events lost by the kernel cannot be recovered and callers should rescan their files.
   `FSW_ignored` is delivered with the recorded path and retires the watch.
   The optional `timeout` is an integer from 0 through 2147483647, in milliseconds.

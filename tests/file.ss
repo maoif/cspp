@@ -270,6 +270,19 @@
 
 (mat simple-read/write
 
+     (let ([path ($random-file)])
+       (dynamic-wind
+         (lambda () (write-u8vec path #vu8()))
+         (lambda () (equal? #vu8() (read-u8vec path)))
+         (lambda () (delete-file path))))
+
+     ;; Error case: invalid directory modes must be rejected even when the path exists.
+     ($with-fs-fixture
+      (lambda (root)
+        (for-all (lambda (mode)
+                   (guard (failure [else #t]) (mkdirs root mode) #f))
+                 '(#f bad -1 4096))))
+
      ;; Error case: a malformed datum must close the opened input port.
      (let ([path ($random-file)])
        (dynamic-wind
@@ -2072,6 +2085,27 @@
                            events)))))))
 
 (mat fswatcher-files-and-aliases
+
+     ($with-fswatcher-fixture
+      (lambda (root watcher)
+        (let ([input (string-copy root)])
+          (fswatcher-add! watcher input (fswatcher-mask FSW_create))
+          (string-set! input 0 #\X)
+          (file-touch (path-build root "created"))
+          (let ([event (fswatcher-next! watcher 1000)])
+            (and event (string=? root (vector-ref event 0)))))))
+
+     ($with-fswatcher-fixture
+      (lambda (root watcher)
+        (fswatcher-add! watcher (string-copy root) (fswatcher-mask FSW_create))
+        (file-touch (path-build root "created"))
+        (let ([event (fswatcher-next! watcher 1000)])
+          (and event
+               (begin
+                 (string-set! (vector-ref event 0) 0 #\X)
+                 (fswatcher-remove! watcher root)
+                 #t)))))
+
      ($with-fswatcher-fixture
       (lambda (root watcher)
         (let* ([first (path-build root "top.txt")]
