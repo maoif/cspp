@@ -276,9 +276,7 @@
       (let* ([components ($path-components p)]
              [body ($join-components components sep)]
              [rooted? (eq? ($path-root-kind p) 'absolute)]
-             [base (cond [(and rooted? (null? components)) (string sep)]
-                         [rooted? (string-append (string sep) body)]
-                         [else body])])
+             [base (if rooted? (string-append (string sep) body) body)])
         (if (and ($path-trailing? p) (not (string=? base "")))
             (string-append base (string sep))
             base))))
@@ -298,19 +296,15 @@
                      (string-append "." (string sep) body)
                      body)]
                 [(rooted)
-                 (if (null? components) (string sep) (string-append (string sep) body))]
+                 (string-append (string sep) body)]
                 [(drive-relative)
                  (string-append root ":" body)]
                 [(drive-absolute)
-                 (if (null? components)
-                     (string-append root ":" (string sep))
-                     (string-append root ":" (string sep) body))]
+                 (string-append root ":" (string sep) body)]
                 [(unc)
                  (let ([prefix (string-append (string sep) (string sep)
                                               (car root) (string sep) (cadr root))])
-                   (if (null? components)
-                       (string-append prefix (string sep))
-                       (string-append prefix (string sep) body)))]
+                   (string-append prefix (string sep) body))]
                 [(special)
                  (if (null? components)
                      (if (or (and (fx= (string-length root) 6)
@@ -527,14 +521,10 @@
                              (loop ($path-rebase 'path-join acc part) (cdr parts))]
                             [(string? part)
                              (let ([parsed (path-parse ($path-flavor acc) part)])
-                               (if (path-absolute-path? parsed)
-                                   (loop parsed (cdr parts))
-                                   (if (and (eq? ($path-flavor acc) 'windows)
-                                            (path-rooted-path? parsed))
-                                       (loop ($path-rebase 'path-join acc parsed) (cdr parts))
-                                       (begin
-                                     ($check-component 'path-join ($path-flavor acc) part)
-                                     (loop (path-add-component acc part) (cdr parts))))))]
+                               ;; Unrooted strings remain single components, not path fragments.
+                               (unless (path-rooted-path? parsed)
+                                 ($check-component 'path-join ($path-flavor acc) part))
+                               (loop ($path-rebase 'path-join acc parsed) (cdr parts)))]
                             [else ($err 'path-join "invalid path part: ~s" part)])))))))
 
   #|proc:path-append
@@ -668,7 +658,7 @@
       (pcheck ([path? p])
               (let ([components ($path-components p)])
                 (and (pair? components)
-                     (string-copy (car (reverse components))))))))
+                     (string-copy (car (last-pair components))))))))
 
   #|proc:path-dirname
   The `path-dirname` procedure returns the lexical parent path.

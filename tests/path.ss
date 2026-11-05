@@ -5,6 +5,28 @@
   (lambda (p s)
     (string=? (path-render p) s)))
 
+(mat path-join-string-component-contract
+     (for-all
+      (lambda (base)
+        (and (string=? "leaf" (path-basename (path-join base "leaf")))
+             ;; Error cases: relative strings must not become path fragments or empty components.
+             (for-all
+              (lambda (part)
+                (guard (condition [else #t])
+                  (path-join base part)
+                  #f))
+              '("" "a/b" "leaf/"))))
+      (list (path-rooted 'unix "base") (path-drive-absolute #\C "base")))
+
+     ;; A backslash is a separator only in Windows string components.
+     (guard (condition [else #t])
+       (path-join (path-drive-absolute #\C "base") "a\\b")
+       #f)
+
+     (string=? "a\\b" (path-basename (path-join (path-rooted 'unix "base") "a\\b")))
+
+     (same-path? (path-join (path-rooted 'unix "base") (path 'unix "a" "b")) "/base/a/b"))
+
 (mat path-windows-simple-case-comparison
      (same-path? (path-relative-to (path-parse 'windows "C:/straße")
                                    (path-parse 'windows "c:/STRASSE")) "..\\STRASSE")
