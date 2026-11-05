@@ -64,6 +64,11 @@
 
      (equal? ((compose1 vreverse list->vector string->list) "123456")
              '#(#\6 #\5 #\4 #\3 #\2 #\1))
+
+     (equal? '(5 6)
+             (call-with-values
+               (lambda () ((compose1 (lambda (value) (values value (+ value 1))) +) 2 3))
+               list))
      )
 
 

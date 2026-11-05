@@ -5,7 +5,6 @@
           let/cc let/1cc)
   (import (chezscheme)
           (cspp utils)
-          (cspp internal)
           (cspp list))
 
   ;; User examples and multiple-value contracts: docs/control-utils.md.
@@ -72,14 +71,12 @@
                    (if (null? proc*)
                        proc
                        (if (andmap procedure? proc*)
-                           (let* ([ps (cons proc proc*)]
-                                  [p* (list-head ps (sub1 (length ps)))]
-                                  [p1 (list-ref ps (sub1 (length ps)))])
+                           (let ([procedures (cons proc proc*)])
                              (lambda args
-                               (let loop ([p* p*])
-                                 (if (null? p*)
-                                     (apply p1 args)
-                                     ((car p*) (loop (cdr p*)))))))
+                               (let loop ([procedures procedures])
+                                 (if (null? (cdr procedures))
+                                     (apply (car procedures) args)
+                                     ((car procedures) (loop (cdr procedures)))))))
                            (errorf who "arguments contain non-procedure(s)"))))))
 
 
