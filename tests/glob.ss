@@ -1,5 +1,20 @@
 (import (cspp) (cspp glob))
 
+(mat glob-finite-parent-traversal
+     (let ([root (format "glob-finite-parent-~a" (get-process-id))])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (mkdir (string-append root "/sub"))
+           (file-touch (string-append root "/one.txt")))
+         (lambda ()
+           (for-all
+            (lambda (follow?)
+              (equal? (list (string-append root "/sub/../one.txt"))
+                      (glob* (string-append root "/*/../*.txt") follow? #f 'empty)))
+            '(#f #t)))
+         (lambda () (file-removetree root)))))
+
 (mat glob-adjacent-globstars
      (let* ([root (format "glob-adjacent-stars-~a" (get-process-id))]
             [leaf root]

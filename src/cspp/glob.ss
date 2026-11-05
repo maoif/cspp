@@ -542,8 +542,13 @@
                                                  (or (null? next)
                                                      (file-directory? ($physical physical-child)
                                                                       follow-link?)))
+                                        ;; An explicit parent consumes a pattern component,
+                                        ;; so the old descent chain is no longer a cycle guard.
+                                        ;; Subsequent recursive scans build a fresh chain.
                                         (set! stack (cons (vector 'node logical-child physical-child
-                                                                   next ancestors separator) stack))))
+                                                                   next (if (string=? component "..")
+                                                                            '() ancestors)
+                                                                   separator) stack))))
                                     (loop)]
                                    [(component-literal (car cs))
                                     (let ([actual (resolve-literal-name (glob-flavor compiled)
