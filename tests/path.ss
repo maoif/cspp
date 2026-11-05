@@ -5,6 +5,22 @@
   (lambda (p s)
     (string=? (path-render p) s)))
 
+(mat path-windows-simple-case-comparison
+     (same-path? (path-relative-to (path-parse 'windows "C:/straße")
+                                   (path-parse 'windows "c:/STRASSE")) "..\\STRASSE")
+
+     (not (path-same-root? (path-parse 'windows "//server/straße/a")
+                           (path-parse 'windows "//SERVER/STRASSE/a")))
+
+     (not (path-same-root? (path-parse 'windows "//straße/share/a")
+                           (path-parse 'windows "//STRASSE/share/a")))
+
+     (path-same-root? (path-parse 'windows "//σ/share/a")
+                      (path-parse 'windows "//Σ/SHARE/a"))
+
+     (same-path? (path-relative-to (path-parse 'windows "C:/σ/child")
+                                   (path-parse 'windows "c:/Σ/CHILD/leaf")) "leaf"))
+
 (mat path-windows-relative-rendering
      (for-all
       (lambda (p)

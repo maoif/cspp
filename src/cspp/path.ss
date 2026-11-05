@@ -718,6 +718,16 @@
                            (substring base 0 i)
                            base)))))))
 
+  (define $windows-name=?
+    (lambda (left right)
+      ;; Match glob's character case rules without multi-character Unicode folding.
+      (let ([length (string-length left)])
+        (and (fx= length (string-length right))
+             (let loop ([index 0])
+               (or (fx= index length)
+                   (and (char-ci=? (string-ref left index) (string-ref right index))
+                        (loop (fx1+ index)))))))))
+
   (define $root=?
     (lambda (a b)
       (and (eq? ($path-flavor a) ($path-flavor b))
@@ -728,19 +738,19 @@
                    [(and (eq? ak 'relative) (eq? bk 'relative)) #t]
                    [(and (eq? ak 'rooted) (eq? bk 'rooted)) #t]
                    [(and (eq? ak 'drive-relative) (eq? bk 'drive-relative))
-                    (string-ci=? ($path-root a) ($path-root b))]
+                    ($windows-name=? ($path-root a) ($path-root b))]
                    [(and (eq? ak 'drive-absolute) (eq? bk 'drive-absolute))
-                    (string-ci=? ($path-root a) ($path-root b))]
+                    ($windows-name=? ($path-root a) ($path-root b))]
                    [(and (eq? ak 'unc) (eq? bk 'unc))
-                    (and (string-ci=? (car ($path-root a)) (car ($path-root b)))
-                         (string-ci=? (cadr ($path-root a)) (cadr ($path-root b))))]
+                    (and ($windows-name=? (car ($path-root a)) (car ($path-root b)))
+                         ($windows-name=? (cadr ($path-root a)) (cadr ($path-root b))))]
                    [(and (eq? ak 'special) (eq? bk 'special))
-                    (string-ci=? ($path-root a) ($path-root b))]
+                    ($windows-name=? ($path-root a) ($path-root b))]
                    [else #f])))))
 
   #|proc:path-same-root?
-  The `path-same-root?` procedure returns whether two paths can be relativized
-  against each other.
+  Return whether path objects `path1` and `path2` have compatible roots for relativization.
+  Windows roots compare characters case-insensitively, without full Unicode string folding.
   |#
   (define path-same-root?
     (lambda (path1 path2)
@@ -767,7 +777,7 @@
   (define $drop-common-prefix
     (lambda (flavor a b)
       (if (and (pair? a) (pair? b)
-               ((if (eq? flavor 'windows) string-ci=? string=?) (car a) (car b)))
+               ((if (eq? flavor 'windows) $windows-name=? string=?) (car a) (car b)))
           ($drop-common-prefix flavor (cdr a) (cdr b))
           (values a b))))
 
@@ -785,7 +795,8 @@
 
   #|proc:path-relative-to
   Return a lexical relative path from `base` to `p`. Windows components compare
-  case-insensitively. Incompatible roots and unresolved divergent parent paths error.
+  character by character case-insensitively, as in glob. Incompatible roots and
+  unresolved divergent parent paths error.
   |#
   (define path-relative-to
     (lambda (base p)
