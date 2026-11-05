@@ -2400,7 +2400,7 @@
 
   #|proc:file-removetree
   Remove a directory, recursively.
-  It is an error if `path` is not a directory.
+  Path string `path` must name a directory, not a symlink, even with trailing separators.
 
   If `error?`, an error condition is raised when the procedure fails to remove
   a file or directory.
@@ -2414,19 +2414,23 @@
       [(path) (file-removetree path #f)]
       [(path err?)
        (pcheck ([string? path] [boolean? err?])
-               (if (file-exists? path #f)
-                   (if (and (file-directory? path #f)
-                            (not (file-symbolic-link? path)))
-                       (guard (e [(error? e) (if err? (raise e) #f)])
-                         (walk-files (lambda (dir dirs files)
-                                       (for-each (lambda (x) (delete-file x err?)) files)
-                                       ;; normally, directories in `dirs` are guaranteed to be empty
-                                       (for-each (lambda (x) (delete-directory x err?)) dirs))
-                                     path #f #f)
-                         (delete-directory path err?)
-                         #t)
-                       (when err? ($err-file-not-directory who path)))
-                   (when err? ($err-file-not-found who path))))]))
+               ;; A trailing slash makes lstat follow the final symlink on POSIX.
+               ;; Remove only the directory marker; preserve explicit dot components.
+               (let ([path (path-render
+                            (path-with-trailing-directory (path-parse 'unix path) #f))])
+                 (if (file-exists? path #f)
+                     (if (and (file-directory? path #f)
+                              (not (file-symbolic-link? path)))
+                         (guard (e [(error? e) (if err? (raise e) #f)])
+                           (walk-files (lambda (dir dirs files)
+                                         (for-each (lambda (x) (delete-file x err?)) files)
+                                         ;; Directories in `dirs` should now be empty.
+                                         (for-each (lambda (x) (delete-directory x err?)) dirs))
+                                       path #f #f)
+                           (delete-directory path err?)
+                           #t)
+                         (when err? ($err-file-not-directory who path)))
+                     (when err? ($err-file-not-found who path)))))]))
 
 
   #|proc:mkdirs

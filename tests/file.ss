@@ -1963,6 +1963,13 @@
      ;; error case: a symlink to a directory must not be accepted as a tree root.
      (error? (file-removetree (atdir "target-link") #t))
 
+     ;; Error case: trailing separators must not allow a symlink root to be followed.
+     (error? (file-removetree (atdir "target-link/") #t))
+
+     (begin (file-removetree (atdir "target-link///") #f)
+            (and (file-symbolic-link? (atdir "target-link"))
+                 (file-exists? (attarget "keep.txt"))))
+
      ;; the target directory and file must survive the failed removal.
      (and (file-directory? target)
           (string=? "keep" (read-string (attarget "keep.txt"))))
