@@ -3,9 +3,17 @@
 
 (mat string-edit-distance
      (= 0 (edit-distance "" ""))
+
+     (= 3 (edit-distance "" "aλ🚀"))
+
+     (= 3 (edit-distance "aλ🚀" ""))
+
      (= 3 (edit-distance "kitten" "sitting"))
      (= 2 (edit-distance "flaw" "lawn"))
-     (error? (edit-distance 'kitten "sitting")))
+     (error? (edit-distance 'kitten "sitting"))
+
+     ;; Error case: an empty operand must not bypass validation of the other operand.
+     (error? (edit-distance "" 'sitting)))
 
 (mat string-single-source-mapping-allocation
      ;; Mapping one string needs result storage, not a temporary list per character.

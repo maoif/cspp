@@ -746,17 +746,20 @@
   #|proc:edit-distance
   Return the Levenshtein distance between strings `left` and `right`.
   The distance counts single-character insertion, deletion, and replacement operations.
+  If either operand is empty, return the other string's length without scanning its characters.
   |#
   (define edit-distance
     (lambda (left right)
       (pcheck ([string? left right])
-              (let-values ([(rows columns)
-                            (if (fx>= (string-length left) (string-length right))
-                                (values left right)
-                                (values right left))])
-                (let* ([row-count (string-length rows)]
-                       [column-count (string-length columns)]
-                       [distances (make-fxvector (fx1+ column-count))])
+        (let-values ([(rows columns)
+                      (if (fx>= (string-length left) (string-length right))
+                          (values left right)
+                          (values right left))])
+          (let* ([row-count (string-length rows)]
+                 [column-count (string-length columns)])
+            (if (fxzero? column-count)
+                row-count
+                (let ([distances (make-fxvector (fx1+ column-count))])
                   (let initialize ([column 0])
                     (unless (fx> column column-count)
                       (fxvector-set! distances column column)
@@ -777,15 +780,13 @@
                                        [replacement
                                         (fx+ previous-diagonal
                                              (if (char=? row-char
-                                                         (string-ref columns
-                                                                     (fx1- column)))
+                                                         (string-ref columns (fx1- column)))
                                                  0
                                                  1))]
-                                       [distance
-                                        (min (fx1+ above)
-                                             (fx1+ left-distance)
-                                             replacement)])
+                                       [distance (min (fx1+ above)
+                                                      (fx1+ left-distance)
+                                                      replacement)])
                                   (fxvector-set! distances column distance)
-                                  (column-loop (fx1+ column) above))))))))))))
+                                  (column-loop (fx1+ column) above))))))))))))))
 
   )
