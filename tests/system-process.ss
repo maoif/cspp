@@ -1,5 +1,28 @@
 (import (cspp))
 
+(mat process-close-broken-stdin
+
+     ;; Error case: a failed stdin flush must not leave any process ports open.
+     (let* ([child (process-spawn "/bin/true" '()
+                     '((stdin . pipe) (stdout . pipe) (stderr . pipe)))]
+            [ports (list (process-stdin child) (process-stdout child) (process-stderr child))])
+       (dynamic-wind
+         void
+         (lambda ()
+           (put-bytevector (process-stdin child) #vu8(1 2 3))
+           (process-wait child)
+           (let ([failed? (guard (condition [(i/o-error? condition) #t])
+                            (process-close-ports! child) #f)])
+             (and failed? (for-all port-closed? ports)
+                  (begin (process-close-ports! child) #t))))
+         (lambda ()
+           (for-each
+             (lambda (port)
+               (unless (port-closed? port)
+                 (when (output-port? port) (clear-output-port port))
+                 (close-port port)))
+             ports)))))
+
 (mat process-run-discarded-captures
 
      ;; Error case: status-only runs must drain capture pipes without retaining stream-sized data.

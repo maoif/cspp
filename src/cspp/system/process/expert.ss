@@ -323,17 +323,28 @@
   The `process-close-ports!` procedure closes any open ports owned by `process`.
   Repeated calls are harmless. This does not terminate or wait for the child.
   The `process` parameter is a process object.
+  All ports are attempted before the first close error is raised. If flushing stdin fails,
+  its remaining buffered data is discarded so that the underlying descriptor can be closed.
   The return value is unspecified; callers must coordinate I/O and closing on shared ports.
   |#
   (define process-close-ports!
     (lambda (process)
       (pcheck ([process? process])
-              (for-each (lambda (port)
-                          (when (and (port? port) (not (port-closed? port)))
-                            (close-port port)))
-                        (list (process-stdin process)
-                              (process-stdout process)
-                              (process-stderr process))))))
+        (let ([failure #f])
+          (for-each
+            (lambda (port)
+              (when (and port (not (port-closed? port)))
+                (guard (condition
+                         [else
+                          (unless failure (set! failure condition))
+                          ;; Chez leaves a port open when flushing its buffer fails.
+                          (guard (cleanup-condition [else (void)])
+                            (unless (port-closed? port)
+                              (when (output-port? port) (clear-output-port port))
+                              (close-port port)))])
+                  (close-port port))))
+            (list (process-stdin process) (process-stdout process) (process-stderr process)))
+          (when failure (raise failure))))))
 
   #|proc:make-pipe
   The `make-pipe` procedure returns two binary ports backed by an OS pipe: input, then output.

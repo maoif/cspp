@@ -150,7 +150,9 @@ These process-object operations synchronize with reaping and avoid signaling a c
 process. Avoid reaping the same child through a separate raw wait API.
 
 `process-close-ports!` closes remaining open ports and may be called repeatedly. It neither
-terminates nor waits for the process. Port I/O and closing require caller coordination when the
+terminates nor waits for the process. It attempts every port before raising the first close error.
+If flushing stdin fails, its remaining buffered data is discarded and closing is retried.
+Port I/O and closing require caller coordination when the
 same port is shared between threads. The per-process status mutex does not serialize port I/O.
 `make-pipe` similarly returns two binary ports, input first and output second, both caller-owned.
 
