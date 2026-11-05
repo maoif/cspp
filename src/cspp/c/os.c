@@ -65,12 +65,8 @@ ptr cspp_fork() {
 }
 
 ptr cspp_vfork() {
-  int res = vfork();
-  if (res == -1) {
-    return errno_str();
-  }
-
-  return Sfixnum(res);
+  /* A vfork child cannot return through this wrapper or Chez's FFI stack. */
+  return cspp_unsupported_result("vfork");
 }
 
 static int shared_object_list_callback(struct dl_phdr_info *info, size_t size, void *data) {

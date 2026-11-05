@@ -416,16 +416,14 @@
           (if (string? result) ($err-process who result) result)))))
 
   #|proc:vfork
-  The `vfork` procedure performs a raw operating-system vfork.
-  This expert API is unsafe unless the child immediately execs or exits.
-  Returns zero in the child and the child pid in the parent; failure raises a system condition.
-  Do not return to ordinary Scheme evaluation in the child.
+  The `vfork` procedure raises a system unsupported condition without creating a child.
+  A native vfork child cannot safely return through the C wrapper and Scheme FFI stack.
+  Use `process-spawn` to launch an executable.
   |#
   (define-who vfork
     (let ([ffi (foreign-procedure "cspp_vfork" () ptr)])
       (lambda ()
-        (let ([result (ffi)])
-          (if (string? result) ($err-process who result) result)))))
+        (ffi-result-ref (ffi)))))
 
   #|proc:getpid
   The `getpid` procedure returns the current process id.

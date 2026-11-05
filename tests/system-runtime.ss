@@ -30,6 +30,17 @@
       (unless (null? failures) (raise (car failures))))))
 
 (case (string->symbol (cadr (command-line)))
+  [(vfork-rejected)
+   ;; Error case: returning from native vfork corrupts the parent's shared C/FFI stack.
+   (check
+     (guard (condition
+              [(system-unsupported-error? condition)
+               (eq? 'vfork (system-error-operation condition))])
+       (let ([pid (vfork)])
+         ;; Bound the unfixed regression in the isolated child rather than resume Scheme there.
+         (when (zero? pid) ((foreign-procedure "_exit" (int) void) 1)))
+       #f))]
+
   [(pipeline-contracts)
    ;; Error case: circular nested argv lists must be rejected before native traversal.
    (let ([spec (list "/bin/true")])

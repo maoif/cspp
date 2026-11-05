@@ -246,7 +246,9 @@ unaccepted process status. Context keys may be symbols in Scheme or strings in n
 
 CSPP `getenv`/`putenv`, native environment readers, and inherited process snapshots share a lock.
 Direct libc/Chez environment mutation outside these wrappers requires caller synchronization.
-Raw `fork` and especially `vfork` remain unsafe expert operations in a threaded Scheme runtime.
+Raw `fork` remains unsafe in a threaded Scheme runtime. `vfork` raises
+`system-unsupported-error?` without creating a child: returning through the C wrapper and Scheme
+FFI stack would corrupt the parent's shared state. Use `process-spawn` to launch executables.
 
 ## Implementation boundaries
 
