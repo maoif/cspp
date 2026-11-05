@@ -303,6 +303,21 @@
 
      (not (glob-match? 'windows "a" "a/")))
 
+(mat glob-precompiled-root-allocation
+     ;; Reusing a compiled glob must also reuse its root matchers.
+     (for-all
+      (lambda (fixture)
+        (let* ([compiled (make-glob 'windows (car fixture))]
+               [candidate (cadr fixture)]
+               [before (statistics)])
+          (let loop ([remaining 1000])
+            (and (glob-match? compiled candidate)
+                 (if (fx= remaining 1)
+                     (< (sstats-bytes (sstats-difference (statistics) before)) 5000000)
+                     (loop (fx1- remaining)))))))
+      '(("C:/dir/*.ss" "c:/dir/file.ss")
+        ("//server/share/dir/*.ss" "//SERVER/SHARE/dir/file.ss"))))
+
 (mat glob-rooted-and-pruned-expansion
      ($with-glob-tree
        (lambda (root)

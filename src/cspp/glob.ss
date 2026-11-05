@@ -28,10 +28,11 @@
 
   #|record:$branch
   An internal expanded pattern branch. `path` stores its parsed root and
-  components; `components` stores matchers; `separator` preserves output spelling.
+  components; `root` and `components` store matchers; `separator` preserves output spelling.
   |#
   (define-record-type ($branch %branch branch?)
-    (fields (immutable path branch-path) (immutable components branch-components)
+    (fields (immutable path branch-path) (immutable root branch-root)
+            (immutable components branch-components)
             (immutable separator branch-separator) (immutable directory? branch-directory?)))
 
   ;; Path syntax follows the host OS when callers omit an explicit flavor.
@@ -271,6 +272,7 @@
              [parsed (path-parse flavor expanded)]
              [home-count (if home (length (path-components home)) 0)])
         (%branch parsed
+                 ($compile-root parsed)
                  (let loop ([components (path-components parsed)] [literal-count home-count])
                    (if (null? components) '()
                        (let ([component
@@ -312,25 +314,23 @@
                   (hashtable-set! memo key answer)
                   answer)))))))
 
+  (define $compile-root
+    (lambda (path)
+      (let ([root (path-root-info path)])
+        (cons (cadr root)
+              (if (caddr root)
+                  (map (lambda (part) (sre->regex (list 'seq part) '(i))) (cddr root))
+                  '())))))
+
   (define $glob-root=?
-    (lambda (pattern-path candidate-path)
-      (and (eq? (path-flavor pattern-path) (path-flavor candidate-path))
-           (let ([pattern-root (path-root-info pattern-path)]
-                 [candidate-root (path-root-info candidate-path)])
-             (and (eq? (cadr pattern-root) (cadr candidate-root))
-                  (let loop ([pattern-parts (if (caddr pattern-root)
-                                                (cddr pattern-root) '())]
-                             [candidate-parts (if (caddr candidate-root)
-                                                  (cddr candidate-root) '())])
-                    (cond [(null? pattern-parts) (null? candidate-parts)]
-                          [(null? candidate-parts) #f]
-                          [(if (eq? (path-flavor pattern-path) 'windows)
-                               (regex-matches?
-                                (sre->regex (list 'seq (car pattern-parts)) '(i))
-                                (car candidate-parts))
-                               (string=? (car pattern-parts) (car candidate-parts)))
-                           (loop (cdr pattern-parts) (cdr candidate-parts))]
-                          [else #f])))))))
+    (lambda (compiled-root candidate-root)
+      (and (eq? (car compiled-root) (cadr candidate-root))
+           (let loop ([matchers (cdr compiled-root)]
+                      [parts (if (caddr candidate-root) (cddr candidate-root) '())])
+             (cond [(null? matchers) (null? parts)]
+                   [(null? parts) #f]
+                   [else (and (regex-matches? (car matchers) (car parts))
+                              (loop (cdr matchers) (cdr parts)))])))))
 
   (define $trailing-separator?
     (lambda (flavor path)
@@ -676,8 +676,9 @@
       [(glob path)
        (pcheck ([glob? glob] [string? path])
                (let* ([p (path-parse (glob-flavor glob) path)]
+                      [root (path-root-info p)]
                       [values (path-components p)])
-                 (exists (lambda (x) (and ($glob-root=? (branch-path x) p)
+                 (exists (lambda (x) (and ($glob-root=? (branch-root x) root)
                                          (eq? (branch-directory? x)
                                               ($trailing-separator? (glob-flavor glob) path))
                                          ($match? (branch-components x) values)))
