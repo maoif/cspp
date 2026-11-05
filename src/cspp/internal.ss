@@ -72,7 +72,7 @@
       (cond
        [(fixnum? m) m]
        [(and (symbol? m) (assq m e)) => cdr]
-       [(and (list? m) (eq? (car m) 'or))
+       [(and (pair? m) (list? m) (eq? (car m) 'or))
         (let f ((ls (cdr m)))
           (if (null? ls)
               0

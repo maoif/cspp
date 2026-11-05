@@ -97,6 +97,31 @@
                (lambda () (pcheck-output-binary-port (invalid) #t))
                (lambda () (pcheck-output-textual-port (invalid) #t))))))
 
+(mat flag-mask-syntax-safety
+
+     ;; Error case: empty, nested-empty, and improper masks must raise safe expansion errors.
+     (for-all
+       (lambda (mask)
+         (guard (condition
+                  [else (and (who-condition? condition)
+                             (eq? 'flag->mask (condition-who condition)))])
+           (eval `(let () (define-flags invalid-flags (bad ,mask)) (invalid-flags bad))
+                 (environment '(cspp chez) '(cspp utils)))
+           #f))
+       '(() (or 1 ()) (or . 1)))
+
+     ;; Error case: malformed masks passed to a generated flag macro use the same validation.
+     (guard (condition
+              [else (and (who-condition? condition)
+                         (eq? 'flag->mask (condition-who condition)))])
+       (eval '(let () (define-flags checked-flags (first 1)) (checked-flags ()))
+             (environment '(cspp chez) '(cspp utils)))
+       #f)
+
+     ;; An empty or expression remains a valid zero mask.
+     (eval '(let () (define-flags zero-flags (none (or))) (= 0 (zero-flags none)))
+           (environment '(cspp chez) '(cspp utils))))
+
 (mat flag-check-argument-safety
 
      ;; Error case: generated decoders must check fixnum arguments even at optimize level 3.
