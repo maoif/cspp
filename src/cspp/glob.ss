@@ -40,11 +40,6 @@
   (define $default-flavor
     (if (eq? (system-platform) 'windows) 'windows 'unix))
   (define $error (lambda (message . args) (apply errorf 'make-glob message args)))
-  (define $prefix?
-    (lambda (prefix s)
-      (let ([n (string-length prefix)])
-        (and (fx<= n (string-length s)) (string=? prefix (substring s 0 n))))))
-
   ;; The first member may be a literal closing bracket, after optional negation.
   ;; All brace scans share these class boundaries with the component grammar.
   (define $class-end
@@ -199,11 +194,11 @@
       (let ([out (make-list-builder)])
         (let loop ([atoms atoms] [run '()])
           (cond [(null? atoms)
-                 (unless (null? run) (out (apply string-append (reverse run))))
+                 (unless (null? run) (out (list->string (reverse run))))
                  (cons 'seq (out))]
-                [(string? (car atoms)) (loop (cdr atoms) (cons (car atoms) run))]
+                [(char? (car atoms)) (loop (cdr atoms) (cons (car atoms) run))]
                 [else
-                 (unless (null? run) (out (apply string-append (reverse run))))
+                 (unless (null? run) (out (list->string (reverse run))))
                  (out (car atoms)) (loop (cdr atoms) '())])))))
 
   (define $fold-string (lambda (text) (string-map char-foldcase text)))
@@ -267,25 +262,25 @@
     (lambda (flavor s)
       (if (string=? s "**") #f
           (let ([n (string-length s)])
-            (let loop ([i 0] [atoms '()] [literal '()] [magic? #f])
+            (let loop ([i 0] [atoms '()] [magic? #f])
               (if (= i n)
-                  ($make-component flavor ($component-sre (reverse atoms))
-                                   (and (not magic?) (list->string (reverse literal))))
+                  (let ([atoms (reverse atoms)])
+                    (if magic?
+                        ($make-component flavor ($component-sre atoms) #f)
+                        ($make-component flavor #f (list->string atoms))))
                   (let ([c (string-ref s i)])
                     (cond [(char=? c #\\)
                            (when (= (+ i 1) n) ($error "trailing escape"))
                            (let ([next (string-ref s (+ i 1))])
-                             (loop (+ i 2) (cons (string next) atoms)
-                                   (cons next literal) magic?))]
+                             (loop (+ i 2) (cons next atoms) magic?))]
                           [(char=? c #\*)
-                           (loop (+ i 1) (cons '(* any) atoms) literal #t)]
+                           (loop (+ i 1) (cons '(* any) atoms) #t)]
                           [(char=? c #\?)
-                           (loop (+ i 1) (cons 'any atoms) literal #t)]
+                           (loop (+ i 1) (cons 'any atoms) #t)]
                           [(char=? c #\[)
                            (let-values ([(next atom) ($class s (+ i 1))])
-                             (loop next (cons atom atoms) literal #t))]
-                          [else (loop (+ i 1) (cons (string c) atoms)
-                                      (cons c literal) magic?)]))))))))
+                             (loop next (cons atom atoms) #t))]
+                          [else (loop (+ i 1) (cons c atoms) magic?)]))))))))
 
   (define $normalize-unix-slashes
     (lambda (s)
@@ -333,8 +328,7 @@
                    (if (null? components) '()
                        (let ([component
                               (if (fx> literal-count 0)
-                                  ($make-component flavor (list 'seq (car components))
-                                                   (car components))
+                                  ($make-component flavor #f (car components))
                                   ($component-compile flavor (car components)))]
                              [rest (loop (cdr components) (fx1- literal-count))])
                          ;; Adjacent globstars describe the same recursive search.
