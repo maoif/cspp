@@ -290,6 +290,19 @@
      (not (glob-match? 'windows "\\\\straße\\share\\x"
                        "\\\\STRASSE\\share\\x")))
 
+(mat glob-windows-directory-markers
+     (glob-match? 'windows "a/" "A/")
+
+     (glob-match? 'windows "a\\" "A\\")
+
+     (glob-match? 'windows "C:/" "c:\\")
+
+     (glob-match? 'windows "//server/share/" "\\\\SERVER\\SHARE\\")
+
+     (not (glob-match? 'windows "a/" "a"))
+
+     (not (glob-match? 'windows "a" "a/")))
+
 (mat glob-rooted-and-pruned-expansion
      ($with-glob-tree
        (lambda (root)

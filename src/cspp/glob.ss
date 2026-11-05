@@ -339,7 +339,7 @@
              (let ([last (string-ref path (- n 1))])
                (if (eq? flavor 'unix)
                    (char=? last #\/)
-                   (memv last '(#\/ #\\))))))))
+                   (or (char=? last #\/) (char=? last #\\))))))))
 
   (define $tilde-home
     (lambda (flavor s)
