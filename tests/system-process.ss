@@ -1,4 +1,24 @@
-(import (cspp))
+(import (cspp) (only (cspp system process expert) $wait-status->exit-status))
+
+(mat process-wait-status-contract
+
+     ;; Error case: expert callers must not feed unchecked arithmetic nonfixnums or negative bits.
+     (for-all
+       (lambda (raw)
+         (guard (condition
+                  [else (and (who-condition? condition)
+                             (eq? 'pcheck (condition-who condition)))])
+           ($wait-status->exit-status raw)
+           #f))
+       '(#f "bad" -1 1.0 1/2 #x100000000000000000))
+
+     ;; Literal POSIX fixtures cover normal exit, termination, core dump, and suspension.
+     (for-all
+       (lambda (entry)
+         (let ([status ($wait-status->exit-status (car entry))])
+           (and (eq? (cadr entry) (process-exit-status-kind status))
+                (= (caddr entry) (process-exit-status-code status)))))
+       '((0 exit 0) (#x2a00 exit 42) (15 signal 15) (#x8b signal 11) (#x137f stopped 19))))
 
 (mat process-default-sigpipe
 

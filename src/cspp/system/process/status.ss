@@ -62,15 +62,17 @@
   #|proc:$wait-status->exit-status
   The internal `$wait-status->exit-status` procedure decodes POSIX `raw` wait status bits.
   `raw` is a nonnegative fixnum returned by a native wait helper. Returns an exit-status record.
+  Invalid arguments raise an argument error before decoding the status bits.
   Public process operations share this decoder so live and captured statuses have one type.
   |#
   (define $wait-status->exit-status
     (lambda (raw)
-      (cond [(fx= (fxand raw #x7f) 0)
-             (make-process-exit-status 'exit (fxsrl raw 8))]
-            [(fx= (fxand raw #x7f) #x7f)
-             (make-process-exit-status 'stopped (fxsrl raw 8))]
-            [else
-             (make-process-exit-status 'signal (fxand raw #x7f))])))
+      (pcheck ([(lambda (value) (and (fixnum? value) (fx>= value 0))) raw])
+        (cond [(fx= (fxand raw #x7f) 0)
+               (make-process-exit-status 'exit (fxsrl raw 8))]
+              [(fx= (fxand raw #x7f) #x7f)
+               (make-process-exit-status 'stopped (fxsrl raw 8))]
+              [else
+               (make-process-exit-status 'signal (fxand raw #x7f))]))))
 
 )
