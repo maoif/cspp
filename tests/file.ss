@@ -1958,6 +1958,48 @@
                (string=? "keep" (read-string (path-build dest "keep")))
                (not (file-exists? source #f))))))
 
+     ;; Removing the source entry from a parent destination must precede its final timestamps.
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([source (path-build root "sub")]
+              [stamp (make-time 'time-utc 123000000 1000000000)])
+          (file-touch source stamp)
+          (file-move source root)
+          (and (not (file-exists? source #f))
+               (file-exists? (path-build root "nested.txt"))
+               (time=? stamp (file-modification-time root))))))
+
+     ;; A directory alias receives directory metadata on its target, preserving the link.
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([source (path-build root "sub")]
+              [target (path-build root "target")]
+              [alias (path-build root "alias")]
+              [stamp (make-time 'time-utc 123000000 1000000000)]
+              [link-stamp (make-time 'time-utc 456000000 1100000000)])
+          (mkdir target)
+          (file-symlink "target" alias)
+          (file-touch alias link-stamp #f #f)
+          (file-touch source stamp)
+          (file-move source alias)
+          (and (time=? stamp (file-modification-time target))
+               (time=? link-stamp (file-modification-time alias #f))
+               (file-symbolic-link? alias)
+               (file-exists? (path-build target "nested.txt"))))))
+
+     ;; Restoring a read-only mode on the parent must not prevent removal of the source entry.
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([source (path-build root "readonly")])
+          (mkdir source)
+          (file-chmod source #o555)
+          (dynamic-wind
+            void
+            (lambda ()
+              (file-move source root)
+              (and (not (file-exists? source #f)) (= #o555 (file-mode root))))
+            (lambda () (file-chmod root #o700))))))
+
      ;; A custom fallback copier controls the content and metadata of individual files.
      ($with-fs-fixture
       (lambda (root)

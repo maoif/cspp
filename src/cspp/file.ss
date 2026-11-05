@@ -2322,10 +2322,10 @@
 
   (define $apply-copy-metadata
     (lambda (who dest stat)
-      (unless (eq? (file-type->symbol (file-stat-type stat)) 'FT_symlink)
-        (chmod dest (file-stat-mode stat)))
-      ($file-touch who dest (file-stat-access-time stat) (file-stat-modification-time stat)
-                   #f #f)))
+      (let ([link? (eq? (file-type->symbol (file-stat-type stat)) 'FT_symlink)])
+        (unless link? (chmod dest (file-stat-mode stat)))
+        ($file-touch who dest (file-stat-access-time stat) (file-stat-modification-time stat)
+                     (not link?) #f))))
 
   (define $copy-for-move
     (lambda (src dest)
@@ -2376,9 +2376,7 @@
                            (errorf who "destination's parent directory doesn't exist: ~a"
                                    parent))))
                  (do-copytree dest)
-                 ;; Reverse discovery order restores descendants before their parents.
-                 (for-each (lambda (entry) ($apply-copy-metadata who (car entry) (cdr entry)))
-                           metadata)))))
+                 metadata))))
 
   #|proc:file-copytree
   Copy the contents of directory path string `src` into directory path string `dest`.
@@ -2393,8 +2391,8 @@
   (define-who file-copytree
     (case-lambda
       [(src dest)
-       ($file-copytree who src dest (lambda (src dest) (file-copy src dest #f)) #f)]
-      [(src dest copy) ($file-copytree who src dest copy #f)]))
+       (file-copytree src dest (lambda (src dest) (file-copy src dest #f)))]
+      [(src dest copy) ($file-copytree who src dest copy #f) (void)]))
 
   (define $try-rename-file
     (lambda (src dest)
@@ -2408,8 +2406,14 @@
                 [procedure? copy])
                (cond [(and (not (file-exists? dest #f)) ($try-rename-file src dest)) #t]
                      [(and (file-directory? src #f) (not (file-symbolic-link? src)))
-                      ($file-copytree who src dest copy #t)
-                      (file-removetree src #t)]
+                      (let ([metadata ($file-copytree who src dest copy #t)])
+                        ;; Removal may change the destination if it contains the source.
+                        ;; Keep it writable until removal, then restore children first.
+                        (file-removetree src #t)
+                        (for-each (lambda (entry)
+                                    ($apply-copy-metadata who (car entry) (cdr entry)))
+                                  metadata)
+                        #t)]
                      [else
                       (begin (copy src dest)
                              (delete-file src))]))))
