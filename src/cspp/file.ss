@@ -2387,6 +2387,8 @@
   Optional `copy` has signature `(lambda (source-path destination-path) ...)` and copies
   each file or symlink; its return values are ignored. By default `file-copy` preserves
   symlinks. Directory metadata is not copied. Return unspecified values.
+  Existing child names cause an error unless `copy` handles a file collision; existing
+  child directories are not merged recursively. A failed copy can leave a partial destination.
   |#
   (define-who file-copytree
     (case-lambda
@@ -2427,6 +2429,8 @@
   Optional `copy` has signature `(lambda (source-path destination-path) ...)` and controls
   copying individual files and symlinks, including their metadata; return values are ignored.
   A successful rename bypasses `copy`. Source entries are removed only after copying succeeds.
+  Existing child directories are not merged recursively, as in `file-copytree`.
+  A failed copy can leave a partial destination; the source remains until copying succeeds.
   Return `#t` for a renamed file or moved directory, unspecified values for a copied file.
   |#
   (define-who file-move
