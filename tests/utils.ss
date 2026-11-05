@@ -97,6 +97,25 @@
                (lambda () (pcheck-output-binary-port (invalid) #t))
                (lambda () (pcheck-output-textual-port (invalid) #t))))))
 
+(mat flag-name-syntax-safety
+
+     ;; Error case: nonidentifier names must fail expansion before a decoder can return nonsymbols.
+     (for-all
+       (lambda (name)
+         (guard (condition [(syntax-violation? condition) #t])
+           (eval `(let ()
+                    (define-flags invalid-flags (,name 1))
+                    (invalid-flags->symbols 1))
+                 (environment '(cspp chez) '(cspp utils)))
+           #f))
+       '("read" 17 (read) #f #\r #(read)))
+
+     ;; With no declarations, the mask is zero and the decoder has no named flags.
+     (eval '(let ()
+              (define-flags empty-flags)
+              (and (= 0 (empty-flags)) (null? (empty-flags->symbols 1))))
+           (environment '(cspp chez) '(cspp utils))))
+
 (mat flag-mask-syntax-safety
 
      ;; Error case: empty, nested-empty, and improper masks must raise safe expansion errors.

@@ -757,6 +757,7 @@
   The `define-flags` macro defines a mask macro `name` and a procedure `name->symbols` from
   `(flag mask)` pairs. Masks are fixnums or expressions referring to earlier flags, combined with
   `or`. The macro combines its named flag arguments into one fixnum mask.
+  The `name` and each `flag` must be identifiers; nonidentifier names raise a syntax error.
   The generated decoder takes a fixnum and returns overlapping flag symbols in definition order.
   Any shared bit includes a flag, including composite masks and aliases; zero masks never appear.
   The definition's return value is unspecified.
@@ -773,6 +774,7 @@
                      (cons `(,(car flags) . ,mask) e)))))))
       (syntax-case exp ()
         [(_k name (flag mask) ...)
+         (and (identifier? #'name) (andmap identifier? #'(flag ...)))
          (with-syntax ([env (datum->syntax #'_k
                                            (mask-environment
                                             (datum (flag ...))
@@ -793,7 +795,8 @@
                            res
                            (if (not (fx= (fxlogand (cdar e) flags) 0))
                                (loop (cdr e) (cons (caar e) res))
-                               (loop (cdr e) res)))))))))])))
+                               (loop (cdr e) res)))))))))]
+        [_ (syntax-error exp "expected a name identifier and (flag-identifier mask) pairs")])))
 
   #|macro:flag-any-set?
   The `flag-any-set?` macro returns whether any bits in fixnum `mask` occur in fixnum `x`.

@@ -116,6 +116,7 @@ The result of `random-list` is undefined under replay of a continuation captured
 `define-flags` generates a flag-combining macro and a `name->symbols` decoder. Masks are fixnums;
 composites can refer to earlier flags using `or`. Decoding selects every flag with any overlapping
 bit, including aliases and composite masks, in declaration order. Zero masks are never listed.
+The macro name and flag names must be identifiers; nonidentifier names raise syntax errors.
 
 ```scheme
 (define-flags permissions (none 0) (read 1) (write 2) (both (or read write)))
