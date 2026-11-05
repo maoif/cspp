@@ -1,5 +1,18 @@
 (import (cspp))
 
+(mat system-filesystem-query-allows-collection
+
+  ;; Error case: a delayed statfs must allow another thread to complete garbage collection.
+  (if (= 0 (system "strace -qq -o /dev/null true >/dev/null 2>&1"))
+      (let* ([root (if (file-exists? "system-native-faults.ss") ".." ".")]
+             [launcher (string-append root "/cspp")]
+             [script (string-append "--script=" root "/tests/system-native-faults.ss")])
+        (process-exit-success?
+          (process-run strace "-f" "--quiet=path-resolution,attach,personality,exit"
+            "-e" "trace=statfs" "-e" "inject=statfs:delay_enter=2s:when=1"
+            "-o" "/dev/null" (begin launcher) (begin script) "filesystem-gc" :timeout 5000)))
+      #t))
+
 (mat system-procfs-without-mountinfo
 
   ;; Error case: all metric queries must work without opening the mount table.

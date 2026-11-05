@@ -244,7 +244,8 @@ are available separately through `current-euid` and `current-egid`.
 
 `filesystem-info` queries a NUL-free path. Byte-count helpers multiply the reported fragment
 size by total, free, or unprivileged-available blocks. Capacity is a snapshot, and the optional
-filesystem type may be `#f`. Mount records expose source, target, type, and mount plus superblock
+filesystem type may be `#f`. Slow native filesystem queries permit other Scheme threads to collect.
+Mount records expose source, target, type, and mount plus superblock
 options separated by a space.
 
 System conditions expose operation, code, message, and an association-list context. Native

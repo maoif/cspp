@@ -144,18 +144,28 @@ int cspp_cpu_count() {
 
 ptr cspp_filesystem_info(const char *path) {
 #if defined(__unix__) || defined(__APPLE__)
-  struct statvfs vfs;
-  if (statvfs(path, &vfs) != 0) {
+  char *owned_path = strdup(path);
+  if (owned_path == NULL) {
+    errno = ENOMEM;
     return cspp_errno_result("filesystem-info", Snil);
   }
-
+  struct statvfs vfs;
   struct stat st;
-  if (stat(path, &st) != 0) {
+  int error = 0;
+  /* Filesystems may block on remote or userspace services. Only native-owned
+   * storage crosses deactivation; the FFI's encoded path can move during GC. */
+  Sdeactivate_thread();
+  if (statvfs(owned_path, &vfs) != 0 || stat(owned_path, &st) != 0) error = errno;
+  Sactivate_thread();
+  if (error != 0) {
+    free(owned_path);
+    errno = error;
     return cspp_errno_result("filesystem-info", Snil);
   }
 
   ptr v = Smake_vector(10, Sfalse);
-  Svector_set(v, 0, Sstring_utf8(path, -1));
+  Svector_set(v, 0, Sstring_utf8(owned_path, -1));
+  free(owned_path);
   Svector_set(v, 1, Sunsigned64((Suint64_t)st.st_dev));
   Svector_set(v, 2, Sfalse);
   Svector_set(v, 3, Sunsigned64((Suint64_t)vfs.f_frsize));

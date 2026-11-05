@@ -147,6 +147,7 @@
   #|proc:filesystem-info
   The `filesystem-info` procedure returns filesystem capacity and identity information for `path`.
   The `path` parameter is a string without NUL characters naming the path to query.
+  Native filesystem access permits other Scheme threads to run and collect while it blocks.
   |#
   (define filesystem-info
     (lambda (path)

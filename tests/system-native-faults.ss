@@ -2,6 +2,33 @@
 
 ;; This driver runs under strace syscall injection, separately from the test runner.
 (case (string->symbol (cadr (command-line)))
+  [(filesystem-gc)
+   ;; Error case: slow filesystem metadata must not keep another thread from collecting.
+   (let ([mutex (make-mutex)] [changed (make-condition)]
+         [started? #f] [finished? #f] [query-failure #f])
+     (fork-thread
+       (lambda ()
+         (with-mutex mutex
+           (set! started? #t)
+           (condition-signal changed))
+         (let ([failure (guard (condition [else condition]) (filesystem-info ".") #f)])
+           (with-mutex mutex
+             (set! query-failure failure)
+             (set! finished? #t)
+             (condition-signal changed)))))
+     (with-mutex mutex
+       (let loop () (unless started? (condition-wait changed mutex) (loop))))
+     ;; strace delays the worker's first statfs for two seconds.
+     (sleep-milliseconds 100)
+     (let* ([failure (guard (condition [else condition]) (collect) #f)]
+            [collected-during-query? (with-mutex mutex (not finished?))])
+       (with-mutex mutex
+         (let loop () (unless finished? (condition-wait changed mutex) (loop))))
+       (when query-failure (raise query-failure))
+       (when failure (raise failure))
+       (unless collected-during-query?
+         (error 'system-native-faults "collection waited for the filesystem query"))))]
+
   [(procfs-without-mountinfo)
    ;; Error case: unavailable mountinfo must not prevent reading any procfs metric file.
    (unless (and (number? (linux-system-uptime)) (pair? (linux-memory-info))
