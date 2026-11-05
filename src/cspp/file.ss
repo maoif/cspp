@@ -1937,10 +1937,17 @@
 
 ;;;; soft and hard links
 
-  (define $same-path?
+  (define $same-file-entry?
     (lambda (path1 path2)
-      (string=? (path-render ($absolute-file-path path1))
-                (path-render ($absolute-file-path path2)))))
+      ;; Distinct hard links may be replaced, but two names for the same directory
+      ;; entry must not delete the source. Do not follow the final symlink.
+      (define parent-name
+        (lambda (path)
+          (let ([name (path-render (path-drop-basename path))])
+            (if (string=? name "") "." name))))
+      (let ([left (path-parse 'unix path1)] [right (path-parse 'unix path2)])
+        (and (equal? (path-basename left) (path-basename right))
+             (same-file? (parent-name left) (parent-name right))))))
 
   (define $link/copy-helper
     (lambda (who link/copy-what overwrite?)
@@ -1955,7 +1962,7 @@
                       (if (file-exists? dest #f)
                           (if overwrite?
                               (begin
-                                (when (and source-path ($same-path? source-path dest))
+                                (when (and source-path ($same-file-entry? source-path dest))
                                   ($err-file who dest "source and destination are the same file"))
                                 ;; Replace the destination symlink itself, matching `ln` semantics.
                                 (delete-file dest)
@@ -2274,17 +2281,25 @@
 
 
 
+  (define $canonical-file-path
+    (let ([resolve (foreign-procedure "cspp_realpath" (string) scheme-object)])
+      (lambda (who path)
+        (let ([result (resolve (if (string=? path "") "." path))])
+          (if (vector? result)
+              ($err-file who path (vector-ref result 0))
+              (path-parse 'unix result))))))
+
   (define $copytree-destination-inside-source?
-    (lambda (src dest)
-      (let* ([parsed (path-normalize (path-parse 'unix dest))]
-             [absolute (if (path-absolute-path? parsed)
-                           parsed
-                           (path-append (path-parse 'unix (current-directory)) parsed))])
-        (let loop ([ancestor absolute])
-          (let ([name (path-render ancestor)])
-            (or (and (file-exists? name) (same-file? src name))
-                (and (path-basename ancestor)
-                     (loop (path-drop-basename ancestor)))))))))
+    (lambda (who src dest)
+      ;; Resolve existing directories before lexical comparison: normalizing first
+      ;; would change the meaning of .. after a symlink.
+      (let* ([source ($canonical-file-path who src)]
+             [container (if (file-directory? dest)
+                            dest
+                            (path-render (path-drop-basename (path-parse 'unix dest))))]
+             [destination ($canonical-file-path who container)]
+             [relative (path-components (path-relative-to source destination))])
+        (not (and (pair? relative) (string=? (car relative) ".."))))))
 
   #|proc:file-copytree
   Copy the contents of directory path string `src` into directory path string `dest`.
@@ -2303,9 +2318,6 @@
       [(src dest copy)
        (pcheck ([string? src dest] [file-directory? src] [procedure? copy])
                (let* ([source-path ($absolute-file-path src)]
-                      [destination-path ($absolute-file-path dest)]
-                      [destination-relative (path-components
-                                             (path-relative-to source-path destination-path))]
                       [relativize (lambda (path)
                                     (path-render
                                      (path-relative-to source-path
@@ -2322,9 +2334,7 @@
                                                                  (copy f newd)))
                                                              files))
                                                  src #f #t))])
-                 (when (or (not (and (pair? destination-relative)
-                                     (string=? (car destination-relative) "..")))
-                           ($copytree-destination-inside-source? src dest))
+                 (when ($copytree-destination-inside-source? who src dest)
                    (errorf who "destination cannot be inside the source directory"))
                  (if (file-directory? dest #t)
                      (do-copytree dest)

@@ -18,6 +18,7 @@
 
 ptr cspp_statx(const char *path, int follow_link);
 ptr cspp_readlink(const char *path);
+ptr cspp_realpath(const char *path);
 ptr cspp_link(const char *src, const char *dest);
 ptr cspp_symlink(const char *src, const char *dest);
 ptr cspp_touch(const char *path, ptr atime, ptr mtime, int follow_link);
@@ -122,6 +123,20 @@ ptr cspp_statx(const char *path, int follow_link) {
   Svector_set(v, 17, Sfixnum(res.stx_dev_minor));
 
   return v;
+}
+
+ptr cspp_realpath(const char *path) {
+  char *expanded = expand_pathname(path);
+  char *resolved = realpath(expanded, NULL);
+  int saved_errno = errno;
+  free(expanded);
+  if (resolved == NULL) {
+    errno = saved_errno;
+    return errno_str_vector();
+  }
+  ptr result = Sstring_utf8(resolved, (iptr)strlen(resolved));
+  free(resolved);
+  return result;
 }
 
 ptr cspp_readlink(const char *path) {

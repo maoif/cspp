@@ -1202,6 +1202,25 @@
 
 (mat file-link
 
+     ;; Error case: overwriting through a parent alias must preserve the source file.
+     (let ([root ($random-file)])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (file-symlink "." (path-build root "alias")))
+         (lambda ()
+           (for-all
+            (lambda (operation)
+              (let ([source (path-build root "leaf")])
+                (write-string! source "original")
+                (and (guard (failure [else #t])
+                       (operation source (path-build root "alias/leaf"))
+                       #f)
+                     (file-exists? source)
+                     (string=? "original" (read-string source)))))
+            (list file-copy! file-link!)))
+         (lambda () (file-removetree root))))
+
      ;; Error case: overwriting a hard link with itself must preserve the source.
      (let ([path ($random-file)])
        (dynamic-wind
@@ -1593,6 +1612,32 @@
 
 
 (mat file-copytree
+
+     ;; Error case: aliases into any source descendant must be rejected before mutation.
+     (let ([root ($random-file)])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (mkdir (path-build root "source"))
+           (mkdir (path-build root "source/sub"))
+           (write-string (path-build root "source/sub/leaf") "leaf")
+           (file-symlink "source/sub" (path-build root "alias")))
+         (lambda ()
+           (for-all
+            (lambda (suffix)
+              (let ([destination (path-build root suffix)] [calls 0])
+                (and (guard (failure [else #t])
+                       (file-copytree (path-build root "source") destination
+                                      (lambda (from to)
+                                        (set! calls (fx1+ calls))
+                                        (when (fx> calls 5)
+                                          (error 'file-copytree "recursive copy"))
+                                        (file-copy from to)))
+                       #f)
+                     (fxzero? calls)
+                     (not (file-exists? destination #f)))))
+            '("alias/nested" "alias/../nested")))
+         (lambda () (file-removetree root))))
 
      ;; A destination that leaves the source through a parent component is allowed.
      (let ([root ($random-file)])
