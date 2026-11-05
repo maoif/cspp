@@ -1,5 +1,23 @@
 (import (cspp) (cspp glob))
 
+(mat glob-windows-skips-unrepresentable-entries
+     (let ([root (format "glob-separator-entry-~a" (get-process-id))])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (file-touch (string-append root "/normal.txt"))
+           (file-touch (string-append root "/odd\\name.txt"))
+           (mkdir (string-append root "/odd\\dir"))
+           (file-touch (string-append root "/odd\\dir/child.txt")))
+         (lambda ()
+           (let ([normal (string-append root "/normal.txt")])
+             (and (equal? (glob 'windows (string-append root "/*.txt")) (list normal))
+                  (equal? (glob 'windows (string-append root "/**/*.txt")) (list normal))
+                  (equal? (iter->list (glob->iter 'windows (string-append root "/*.txt")))
+                          (list normal))
+                  (= 3 (length (glob 'unix (string-append root "/**/*.txt")))))))
+         (lambda () (file-removetree root #t)))))
+
 (mat glob-windows-simple-unicode-case
      (for-all
       (lambda (left right equal?)

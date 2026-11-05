@@ -621,6 +621,9 @@
                                     (fs-close-directory directory)
                                     (set! stack (cdr stack)) (loop)]
                                    [(member (car entry) '("." "..")) (loop)]
+                                   ;; A Unix name containing backslash cannot be one Windows component.
+                                   [(and (eq? (glob-flavor compiled) 'windows)
+                                         (string-search (car entry) #\\)) (loop)]
                                    [(or (not (car cs))
                                         ($component-matches? (car cs) (car entry)))
                                     (set! stack
@@ -677,6 +680,7 @@
   `'windows` on Windows, `'unix` elsewhere. Unix literals use direct lookups; Windows
   components scan case-insensitively. Root spelling is preserved. Symlinked directories
   are not descended into; matching directories are excluded. An unmatched pattern returns `()`.
+  Windows expansion skips Unix entries containing backslash, which is a Windows separator.
   |#
   (define glob
     (case-lambda
