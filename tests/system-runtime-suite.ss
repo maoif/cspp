@@ -1,5 +1,21 @@
 (import (cspp))
 
+(mat system-pipeline-failure-allows-collection
+
+  ;; Error case: reaping a partially launched pipeline must not stall unrelated collections.
+  (if (= 0 (system "strace -qq -o /dev/null true >/dev/null 2>&1"))
+      (let* ([root (if (file-exists? "system-native-faults.ss") ".." ".")]
+             [launcher (string-append root "/cspp")]
+             [script (string-append "--script=" root "/tests/system-native-faults.ss")])
+        (for-all
+          (lambda (mode)
+            (process-exit-success?
+              (process-run strace "-f" "--quiet=path-resolution,attach,personality,exit"
+                "-e" "trace=wait4" "-e" "inject=wait4:delay_enter=2s:when=1"
+                "-o" "/dev/null" (begin launcher) (begin script) (begin mode) :timeout 5000)))
+          '("pipeline-run-gc" "pipeline-capture-gc" "pipeline-spawn-gc")))
+      #t))
+
 (mat system-filesystem-query-allows-collection
 
   ;; Error case: a delayed statfs must allow another thread to complete garbage collection.

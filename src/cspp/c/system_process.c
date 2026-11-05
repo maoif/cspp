@@ -469,6 +469,19 @@ static int wait_pid_block(pid_t pid, int *status) {
   }
 }
 
+/* Called with an active Scheme thread. The PID array is native-owned, and the
+ * caller retains the launch error separately from cleanup's errno. */
+static void cleanup_pipeline_children(pid_t *pids, int count) {
+  if (count == 0) return;
+  Sdeactivate_thread();
+  for (int i = 0; i < count; i += 1) kill(pids[i], SIGKILL);
+  for (int i = 0; i < count; i += 1) {
+    int status;
+    (void)wait_pid_block(pids[i], &status);
+  }
+  Sactivate_thread();
+}
+
 /* Only native-owned memory crosses poll/wait. A single bounded read per stream
  * per iteration keeps a busy producer from starving stdin or the deadline. */
 static int terminate_child(pid_t pid) {
@@ -864,11 +877,7 @@ ptr cspp_spawn_pipeline(ptr specs) {
     }
     free_string_array(candidates);
     if (rc != 0) {
-      for (int j = 0; j < spawned; j += 1) kill(pids[j], SIGKILL);
-      for (int j = 0; j < spawned; j += 1) {
-        int status;
-        (void)wait_pid_block(pids[j], &status);
-      }
+      cleanup_pipeline_children(pids, spawned);
       for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
       if (pipes != NULL) {
         for (int j = 0; j < count - 1; j += 1) {
@@ -1007,11 +1016,7 @@ static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
     }
     free_string_array(candidates);
     if (rc != 0) {
-      for (int j = 0; j < spawned; j += 1) kill(pids[j], SIGKILL);
-      for (int j = 0; j < spawned; j += 1) {
-        int status;
-        (void)wait_pid_block(pids[j], &status);
-      }
+      cleanup_pipeline_children(pids, spawned);
       for (int j = 0; j < count; j += 1) free_string_array(argvs[j]);
       for (int j = 0; j < count - 1; j += 1) {
         close_fd(&pipes[j][0]);

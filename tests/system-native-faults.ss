@@ -1,9 +1,10 @@
 (import (cspp))
 
 ;; This driver runs under strace syscall injection, separately from the test runner.
-(case (string->symbol (cadr (command-line)))
-  [(filesystem-gc)
-   ;; Error case: slow filesystem metadata must not keep another thread from collecting.
+(define mode (string->symbol (cadr (command-line))))
+(case mode
+  [(filesystem-gc pipeline-run-gc pipeline-capture-gc pipeline-spawn-gc)
+   ;; Error case: native queries and failed-launch cleanup must allow other threads to collect.
    (let ([mutex (make-mutex)] [changed (make-condition)]
          [started? #f] [finished? #f] [query-failure #f])
      (fork-thread
@@ -11,14 +12,29 @@
          (with-mutex mutex
            (set! started? #t)
            (condition-signal changed))
-         (let ([failure (guard (condition [else condition]) (filesystem-info ".") #f)])
+         (let ([failure
+                 (guard (condition [else condition])
+                   (if (eq? mode 'filesystem-gc)
+                       (filesystem-info ".")
+                       (unless
+                         (guard (condition
+                                  [(system-error? condition)
+                                   (= 2 (system-error-code condition))])
+                           (let ([specs '(("/bin/sleep" "0.2") (""))])
+                             (case mode
+                               [(pipeline-run-gc) (process-run-pipeline specs)]
+                               [(pipeline-capture-gc) (process-capture-pipeline specs)]
+                               [(pipeline-spawn-gc) (process-spawn-pipeline specs '())]))
+                           #f)
+                         (error 'system-native-faults "pipeline lost the launch error")))
+                   #f)])
            (with-mutex mutex
              (set! query-failure failure)
              (set! finished? #t)
              (condition-signal changed)))))
      (with-mutex mutex
        (let loop () (unless started? (condition-wait changed mutex) (loop))))
-     ;; strace delays the worker's first statfs for two seconds.
+     ;; strace delays the worker's first statfs or cleanup wait4 for two seconds.
      (sleep-milliseconds 100)
      (let* ([failure (guard (condition [else condition]) (collect) #f)]
             [collected-during-query? (with-mutex mutex (not finished?))])
@@ -27,7 +43,7 @@
        (when query-failure (raise query-failure))
        (when failure (raise failure))
        (unless collected-during-query?
-         (error 'system-native-faults "collection waited for the filesystem query"))))]
+         (error 'system-native-faults "collection waited for native I/O" mode))))]
 
   [(procfs-without-mountinfo)
    ;; Error case: unavailable mountinfo must not prevent reading any procfs metric file.
