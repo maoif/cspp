@@ -4,8 +4,7 @@
           sect sect+
           let/cc let/1cc)
   (import (chezscheme)
-          (cspp utils)
-          (cspp list))
+          (cspp utils))
 
   ;; User examples and multiple-value contracts: docs/control-utils.md.
   #|macro:forever
@@ -119,61 +118,47 @@
 
   (define-syntax $sect
     (lambda (stx)
-      (define categorize-args
-        (lambda (args ?curried)
-          (let loop ([arg* (syntax->datum args)] [args args] [nslots 0] [rres '()] [dots? #f])
-            (if (null? arg*)
-                (values nslots (reverse rres) dots?)
-                (let ([arg (car arg*)])
-                  (cond
-                   [(eq? arg '...)
-                    (if (null? (cdr arg*))
-                        (loop (cdr arg*) (cdr args) nslots (cons '(dots) rres) #t)
-                        (syntax-error arg* (if ?curried "sect+" "sect") ": ... must appear last:"))]
-                   [(eq? arg '_)
-                    (loop (cdr arg*) (cdr args) (add1 nslots) (cons '(slot) rres) dots?)]
-                   [else (loop (cdr arg*) (cdr args) nslots (cons (cons 'expr (car args)) rres) dots?)]))))))
+      (define parse-arguments
+        (lambda (expressions curried?)
+          (let loop ([expressions expressions] [slots '()] [bindings '()] [arguments '()])
+            (cond
+              [(null? expressions)
+               (values (reverse slots) (reverse bindings) (reverse arguments) #f)]
+              [(eq? (syntax->datum (car expressions)) '...)
+               (if (null? (cdr expressions))
+                   (values (reverse slots) (reverse bindings) (reverse arguments) #t)
+                   (syntax-error expressions (if curried? "sect+" "sect")
+                                 ": ... must appear last:"))]
+              [else
+               (let ([name (car (generate-temporaries '(argument)))])
+                 (if (eq? (syntax->datum (car expressions)) '_)
+                     (loop (cdr expressions) (cons name slots) bindings (cons name arguments))
+                     (loop (cdr expressions) slots
+                           (cons (list name (car expressions)) bindings)
+                           (cons name arguments))))]))))
       (syntax-case stx ()
         [(k ?curried proc e ...)
-         ;; res*: ('expr . e) | '(slot) | '(dots)
-         (let-values ([(nslots res* dots?) (categorize-args #'(e ...) (datum ?curried))])
-           ;; x*: params for lambdas
-           ;; p: bound to given procedure
-           ;; varg*: bound to e*
-           (with-syntax ([(x* ...) (generate-temporaries (iota nslots))]
-                         [(p xdot) (generate-temporaries '(proc xdot))]
-                         [(((varg*) e*) ...) (map
-                                              (lambda (p) (list (generate-temporaries '(arg)) (cdr p)))
-                                              (filter (lambda (x) (eq? 'expr (car x))) res*))])
-             ;; generate the args that are eventually fed to the procedure
-             ;; args: either given expressions bound in let (varg*) or formal parameters (x*)
-             (with-syntax ([(args ...)
-                            (let loop ([res* res*] [varg* #'(varg* ...)] [x* #'(x* ...)] [rres '()])
-                              (if (null? res*)
-                                  (reverse rres)
-                                  (case (caar res*)
-                                    [(slot) (loop (cdr res*) varg* (cdr x*) (cons (car x*) rres))]
-                                    [(expr) (loop (cdr res*) (cdr varg*) x* (cons (car varg*) rres))]
-                                    ;; don't care
-                                    [(dots) (reverse rres)])))])
-               (if (datum ?curried)
-                   #`(let ([p proc] [varg* e*] ...)
-                       (pcheck ([procedure? p])
-                         #,(let gen-lambs ([x* #'(x* ...)])
-                             (if (null? x*)
-                                 (if dots?
-                                     #`(lambda xdot
-                                         (apply p args ... xdot))
-                                     #'(p args ...))
-                                 #`(lambda (#,(car x*))
-                                     #,(gen-lambs (cdr x*)))))))
-                   #`(let ([p proc] [varg* e*] ...)
-                       (pcheck ([procedure? p])
-                         #,(if dots?
-                               #'(lambda (x* ... . xdot)
-                                   (apply p args ... xdot))
-                               #'(lambda (x* ...)
-                                   (p args ...)))))))))])))
+         (let-values ([(slots bindings arguments dots?)
+                       (parse-arguments #'(e ...) (datum ?curried))])
+           (with-syntax ([(slot ...) slots]
+                         [([capture expression] ...) bindings]
+                         [(argument ...) arguments]
+                         [(p rest) (generate-temporaries '(proc rest))])
+             (if (datum ?curried)
+                 #`(let ([p proc] [capture expression] ...)
+                     (pcheck ([procedure? p])
+                       #,(let gen-lambdas ([slots slots])
+                           (if (null? slots)
+                               (if dots?
+                                   #'(lambda rest (apply p argument ... rest))
+                                   #'(p argument ...))
+                               #`(lambda (#,(car slots))
+                                   #,(gen-lambdas (cdr slots)))))))
+                 #`(let ([p proc] [capture expression] ...)
+                     (pcheck ([procedure? p])
+                       #,(if dots?
+                             #'(lambda (slot ... . rest) (apply p argument ... rest))
+                             #'(lambda (slot ...) (p argument ...))))))))])))
 
   #|macro:sect
   The `sect` macro returns a procedure with one parameter per `_` placeholder in its arguments.

@@ -187,4 +187,20 @@
 
      (let ([calls 0])
        (let ([result (sect+ (lambda (value) (set! calls (+ calls 1)) value) 8)])
-         (and (= result 8) (= calls 1)))))
+         (and (= result 8) (= calls 1))))
+
+     (let ([captures 0])
+       (let ([section (sect list _ (begin (set! captures (+ captures 1)) 'fixed) _ ...)])
+         (and (equal? '(a fixed b c) (section 'a 'b 'c))
+              (equal? '(x fixed y) (section 'x 'y))
+              (= captures 1))))
+
+     (let ([captures 0])
+       (let ([section (sect+ list _ (begin (set! captures (+ captures 1)) 'fixed) _ ...)])
+         (and (equal? '(a fixed b c) (((section 'a) 'b) 'c))
+              (equal? '(x fixed y) (((section 'x) 'y)))
+              (= captures 1))))
+
+     (equal? '(fixed a b) ((sect+ list 'fixed ...) 'a 'b))
+
+     (equal? '(left right) (call-with-values (lambda () ((sect values _ _) 'left 'right)) list)))
