@@ -816,14 +816,15 @@
                                          ($path-trailing? p)))))))
 
   #|proc:path-starts-with-user-home?
-  The `path-starts-with-user-home?` procedure returns whether the first
-  component of `p` is exactly `~`.
+  Return whether path object `p` is unrooted and its first component is exactly `~`.
+  A `~` directory in an absolute, root-relative, or drive-relative path is an ordinary name.
   |#
   (define path-starts-with-user-home?
     (lambda (p)
       (pcheck ([path? p])
               (let ([components ($path-components p)])
-                (and (pair? components)
+                (and (eq? ($path-root-kind p) 'relative)
+                     (pair? components)
                      (string=? (car components) "~"))))))
 
   (define $home-from-environment
@@ -845,9 +846,10 @@
             [else ($err who "invalid home path: ~s" home)])))
 
   #|proc:path-expand-user
-  The `path-expand-user` procedure expands a leading `~` component using either
-  the host current user's home directory or explicit string/path object `home`.
-  Return a path object; an input without a leading `~` is returned unchanged.
+  Expand an unrooted path object's leading `~` component using either the host current
+  user's home directory or explicit string/path object `home`. The home must be absolute
+  and have the same flavor as `p`. Return the expanded, lexically normalized path object.
+  Other inputs, including rooted paths with a `~` directory, are returned unchanged.
   |#
   (define path-expand-user
     (case-lambda

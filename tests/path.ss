@@ -84,6 +84,26 @@
 
      (same-path? (path-expand-user (path 'unix "file") "/home/me") "file"))
 
+(mat path-rooted-tilde-is-literal
+     (for-all
+      (lambda (p)
+        (and (not (path-starts-with-user-home? p))
+             (eq? p (path-expand-user p))
+             (eq? p (path-expand-user p
+                        (if (eq? (path-flavor p) 'unix) "/home/me" "C:/Users/me")))))
+      (list (path-parse 'unix "/~/x")
+            (path-parse 'unix "/~/../x")
+            (path-parse 'windows "D:/~/x")
+            (path-parse 'windows "D:~/x")
+            (path-parse 'windows "/~/x")
+            (path-parse 'windows "//server/share/~/x")
+            (path-parse 'windows "//?/D:/~/x")))
+
+     (same-path? (path-expand-user (path 'unix "~" "x") "/home/me") "/home/me/x")
+
+     (same-path? (path-expand-user (path 'windows "~" "x") "C:/Users/me")
+                 "C:\\Users\\me\\x"))
+
 (mat path-private-components-do-not-need-recopying
      ;; A short append should not recopy a large, already-owned component each time.
      (let* ([base (path 'unix (make-string 4096 #\x))]
