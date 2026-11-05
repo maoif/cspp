@@ -1,5 +1,26 @@
 (import (cspp) (cspp glob))
 
+(mat glob-missing-prefix-allocation
+     ;; A missing first component must not require quadratic root-extraction allocation.
+     (let ([allocated
+            (lambda (depth)
+              (let* ([pattern (string-append "glob-absent-prefix-" (number->string (get-process-id))
+                                             (apply string-append (make-list depth "/x")))]
+                     [before (statistics)]
+                     [results (glob 'unix pattern)])
+                (and (null? results)
+                     (sstats-bytes (sstats-difference (statistics) before)))))])
+       (let ([short (allocated 32)] [long (allocated 256)])
+         (and short long (< long (* 12 short))))))
+
+(mat glob-shares-path-root-equality
+     (for-all
+      (lambda (pattern candidate)
+        (and (path-same-root? (path-parse 'windows pattern) (path-parse 'windows candidate))
+             (glob-match? 'windows pattern candidate)))
+      '("C:x" "C:/x" "//server/share/x" "//?/C:/x" "//?/UNC/server/share/x" "//./COM1/x")
+      '("c:X" "c:/X" "//SERVER/SHARE/X" "//?/c:/X" "//?/unc/SERVER/SHARE/X" "//./com1/X")))
+
 (mat glob-windows-skips-unrepresentable-entries
      (let ([root (format "glob-separator-entry-~a" (get-process-id))])
        (dynamic-wind

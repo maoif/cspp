@@ -28,11 +28,11 @@
             (immutable fold-case? component-fold-case?)))
 
   #|record:$branch
-  An internal expanded pattern branch. `path` stores its parsed root and
-  components; `root` and `components` store matchers; `separator` preserves output spelling.
+  An internal expanded pattern branch. `root` is a path object without components;
+  `components` stores matchers; `separator` preserves output spelling.
   |#
   (define-record-type ($branch %branch branch?)
-    (fields (immutable path branch-path) (immutable root branch-root)
+    (fields (immutable root branch-root)
             (immutable components branch-components)
             (immutable separator branch-separator) (immutable directory? branch-directory?)))
 
@@ -328,8 +328,7 @@
                            source)]
              [parsed (path-parse flavor expanded)]
              [home-count (if home (length (path-components home)) 0)])
-        (%branch parsed
-                 ($compile-root parsed)
+        (%branch ($path-root parsed)
                  (let loop ([components (path-components parsed)] [literal-count home-count])
                    (if (null? components) '()
                        (let ([component
@@ -368,23 +367,17 @@
                   (hashtable-set! memo key answer)
                   answer)))))))
 
-  (define $compile-root
-    (lambda (path)
-      (let ([root (path-root-info path)])
-        (cons (cadr root)
-              (if (caddr root)
-                  (map (lambda (part) (sre->regex (list 'seq ($fold-string part)))) (cddr root))
-                  '())))))
-
-  (define $glob-root=?
-    (lambda (compiled-root candidate-root)
-      (and (eq? (car compiled-root) (cadr candidate-root))
-           (let loop ([matchers (cdr compiled-root)]
-                      [parts (if (caddr candidate-root) (cddr candidate-root) '())])
-             (cond [(null? matchers) (null? parts)]
-                   [(null? parts) #f]
-                   [else (and (regex-matches? (car matchers) ($fold-string (car parts)))
-                              (loop (cdr matchers) (cdr parts)))])))))
+  (define $path-root
+    (lambda (parsed)
+      ;; Reconstruct only the root; dropping every basename would copy lists quadratically.
+      (let* ([root (path-root-info parsed)] [flavor (car root)])
+        (case (cadr root)
+          [(relative) (path flavor)]
+          [(absolute rooted) (path-rooted flavor)]
+          [(drive-relative) (path-drive (caddr root))]
+          [(drive-absolute) (path-drive-absolute (caddr root))]
+          [(unc) (path-unc (caddr root) (cadddr root))]
+          [(special) (path-parse flavor (caddr root))]))))
 
   (define $trailing-separator?
     (lambda (flavor path)
@@ -491,13 +484,9 @@
             ;; the same spelling many times. A single globstar cannot do so.
             (set! states (and (fx> (length (filter not (branch-components branch))) 1)
                                (make-eq-hashtable)))
-            (let* ([parsed (branch-path branch)]
-                   [root (let loop ([p parsed] [cs (path-components parsed)])
-                           (if (null? cs) (path-with-trailing-directory p #f)
-                               (loop (path-drop-basename p) (cdr cs))))])
-              (set! stack (list (vector 'node root
-                                        (branch-components branch) '()
-                                        (branch-separator branch)))))))
+            (set! stack (list (vector 'node (branch-root branch)
+                                      (branch-components branch) '()
+                                      (branch-separator branch))))))
         (define repeated-state?
           (lambda (path cs ancestors separator)
             (and states
@@ -741,9 +730,8 @@
       [(glob path)
        (pcheck ([glob? glob] [string? path])
                (let* ([p (path-parse (glob-flavor glob) path)]
-                      [root (path-root-info p)]
                       [values (path-components p)])
-                 (exists (lambda (x) (and ($glob-root=? (branch-root x) root)
+                 (exists (lambda (x) (and (path-same-root? (branch-root x) p)
                                          (eq? (branch-directory? x)
                                               ($trailing-separator? (glob-flavor glob) path))
                                          ($match? (branch-components x) values)))
