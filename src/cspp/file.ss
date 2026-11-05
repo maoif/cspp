@@ -230,31 +230,31 @@
            (let ([value (get-bytevector-all p)])
              (if (eof-object? value) #vu8() value)))))))
 
-  (define all-strings? (lambda (x) (andmap string? x)))
-  (define all-chars?   (lambda (x) (andmap char? x)))
+  (define all-strings? (lambda (x) (and (list? x) (andmap string? x))))
+  (define all-chars?   (lambda (x) (and (list? x) (andmap char? x))))
 
 
   ;; mode when file exists: 'error, 'truncate, 'append
   (define $write-helper
     (lambda (who path mode bin? writer)
-      (let ([go (lambda (mode)
-                  (let ([op (if mode
-                                (case mode
-                                  [truncate (file-options replace)]
-                                  [append   (file-options no-truncate no-fail append)]
-                                  [else ($err-bad-write-mode who mode)])
-                                (file-options))])
-                    ($with-port (open-file-output-port path op (buffer-mode block)
-                                                           (if bin? #f (current-transcoder)))
-                      (lambda (p) (writer p)))))])
-        (if (file-exists? path)
-            (if (eq? mode 'error)
-                ($err-file-exists who path)
-                (if (file-regular? path)
-                    (go mode)
-                    ($err-file-not-regular who path)))
-            ;; feel free to write
-            (go #f)))))
+      (pcheck ([string? path])
+              (let ([go (lambda (mode)
+                          (let ([op (if mode
+                                        (case mode
+                                          [truncate (file-options replace)]
+                                          [append (file-options no-truncate no-fail append)]
+                                          [else ($err-bad-write-mode who mode)])
+                                        (file-options))])
+                            ($with-port (open-file-output-port path op (buffer-mode block)
+                                                               (if bin? #f (current-transcoder)))
+                              (lambda (p) (writer p)))))])
+                (if (file-exists? path)
+                    (if (eq? mode 'error)
+                        ($err-file-exists who path)
+                        (if (file-regular? path)
+                            (go mode)
+                            ($err-file-not-regular who path)))
+                    (go #f))))))
 
   ;; a newline is added after writing each string
   (define $write-lines
@@ -1946,26 +1946,28 @@
   (define-who readlink2
     (case-lambda [(path) ($readlink who path #f)]
                  [(path recursive?)
-                  (if recursive?
-                      (let-values ([(ln pdir) ($readlink who path #t)])
-                        (path-build pdir ln))
-                      ($readlink who path #f))]))
+                  (pcheck ([string? path] [boolean? recursive?])
+                          (if recursive?
+                              (let-values ([(ln pdir) ($readlink who path #t)])
+                                (path-build pdir ln))
+                              ($readlink who path #f)))]))
 
 
 
 ;;;; soft and hard links
 
+  (define $parent-directory-name
+    (lambda (path)
+      (let ([name (path-render (path-drop-basename path))])
+        (if (string=? name "") "." name))))
+
   (define $same-file-entry?
     (lambda (path1 path2)
       ;; Distinct hard links may be replaced, but two names for the same directory
       ;; entry must not delete the source. Do not follow the final symlink.
-      (define parent-name
-        (lambda (path)
-          (let ([name (path-render (path-drop-basename path))])
-            (if (string=? name "") "." name))))
       (let ([left (path-parse 'unix path1)] [right (path-parse 'unix path2)])
         (and (equal? (path-basename left) (path-basename right))
-             (same-file? (parent-name left) (parent-name right))))))
+             (same-file? ($parent-directory-name left) ($parent-directory-name right))))))
 
   (define $link/copy-helper
     (lambda (who link/copy-what overwrite?)
@@ -2314,7 +2316,7 @@
       (let* ([source ($canonical-file-path who src)]
              [container (if (file-directory? dest)
                             dest
-                            (path-render (path-drop-basename (path-parse 'unix dest))))]
+                            ($parent-directory-name (path-parse 'unix dest)))]
              [destination ($canonical-file-path who container)]
              [relative (path-components (path-relative-to source destination))])
         (not (and (pair? relative) (string=? (car relative) ".."))))))
@@ -2356,13 +2358,11 @@
                    (errorf who "destination cannot be inside the source directory"))
                  (if (file-directory? dest #t)
                      (do-copytree dest)
-                     ;; TODO (path-parent dest) is brittle
-                     (if (file-directory? (path-parent dest) #t)
-                         (begin
-                           ;; TODO handle error?
-                           (mkdir dest)
-                           (do-copytree dest))
-                         (errorf who "destination's parent directory doesn't exist: ~a" (path-parent dest))))))]))
+                     (let ([parent ($parent-directory-name (path-parse 'unix dest))])
+                       (if (file-directory? parent #t)
+                           (begin (mkdir dest) (do-copytree dest))
+                           (errorf who "destination's parent directory doesn't exist: ~a"
+                                   parent))))))]))
 
 
   #|proc:file-move

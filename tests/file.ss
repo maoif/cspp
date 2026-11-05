@@ -40,6 +40,34 @@
   (lambda (datum port write)
     ($escape-file-write 'escaped)))
 
+(mat file-writer-argument-checks
+     ;; Error case: every writer rejects a non-string path before filesystem access.
+     (for-all
+      (lambda (writer payload)
+        (guard (failure
+                [else (and (who-condition? failure) (eq? (condition-who failure) 'pcheck))])
+          (writer #f payload)
+          #f))
+      (list write-lines write-string write-chars write-data write-datum
+            write-data-fasl write-datum-fasl write-u8vec)
+      (list '("a") "a" '(#\a) '(a) 'a '(a) 'a #vu8(1)))
+
+     ;; Error cases: malformed collections must fail through pcheck, not unsafe list access.
+     (let ([path ($random-file)])
+       (and (for-all
+             (lambda (value)
+               (for-all
+                (lambda (writer)
+                  (guard (failure
+                          [else (and (who-condition? failure)
+                                     (eq? (condition-who failure) 'pcheck))])
+                    (writer path value)
+                    #f))
+                (list write-lines write-lines! write-lines>>
+                      write-chars write-chars! write-chars>>)))
+             (list #\a '(#\a . #\b) '#("a") (let ([x (list #\a)]) (set-cdr! x x) x)))
+            (not (file-exists? path #f)))))
+
 (mat fs-directory-stream
      ($with-fs-fixture
       (lambda (root)
@@ -1193,6 +1221,17 @@
 
 (mat readlink
 
+     ;; Error case: readlink2 must validate the recursive flag before choosing a branch.
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([link (path-build root "link")])
+          (file-symlink "top.txt" link)
+          (guard (failure
+                  [else (and (who-condition? failure)
+                             (eq? (condition-who failure) 'pcheck))])
+            (readlink2 link 'yes)
+            #f))))
+
      ;; Hard-linked relative symlinks in different parents can form a finite chain.
      (let ([root ($random-file)])
        (dynamic-wind
@@ -1682,6 +1721,22 @@
 
 
 (mat file-copytree
+
+     ;; A basename and a basename with a directory marker both have the current parent.
+     (let ([src ($random-file)] [dest ($random-file)])
+       (dynamic-wind
+         (lambda () (mkdir src) (write-string (path-build src "leaf") "leaf"))
+         (lambda ()
+           (for-all
+            (lambda (suffix)
+              (file-copytree src (string-append dest suffix))
+              (let ([copied? (string=? "leaf" (read-string (path-build dest "leaf")))])
+                (file-removetree dest #t)
+                copied?))
+            '("" "/")))
+         (lambda ()
+           (file-removetree src #t)
+           (when (file-exists? dest #f) (file-removetree dest #t)))))
 
      ;; Error case: aliases into any source descendant must be rejected before mutation.
      (let ([root ($random-file)])
