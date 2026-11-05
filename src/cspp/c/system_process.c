@@ -857,7 +857,6 @@ ptr cspp_spawn_pipeline(ptr specs) {
     }
     free_string_array(candidates);
     if (rc != 0) {
-      errno = rc;
       for (int j = 0; j < spawned; j += 1) kill(pids[j], SIGKILL);
       for (int j = 0; j < spawned; j += 1) {
         int status;
@@ -874,6 +873,7 @@ ptr cspp_spawn_pipeline(ptr specs) {
       free(pids);
       free(pipes);
       free_string_array(cenv);
+      errno = rc; /* Cleanup may overwrite the launch error, including after a retried wait. */
       return cspp_errno_result("spawn-pipeline", Snil);
     }
     spawned += 1;
@@ -1000,7 +1000,6 @@ static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
     }
     free_string_array(candidates);
     if (rc != 0) {
-      errno = rc;
       for (int j = 0; j < spawned; j += 1) kill(pids[j], SIGKILL);
       for (int j = 0; j < spawned; j += 1) {
         int status;
@@ -1017,6 +1016,7 @@ static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
       free(pids);
       free(pipes);
       free_string_array(cenv);
+      errno = rc;
       return cspp_errno_result("spawn-pipeline", Snil);
     }
     spawned += 1;
