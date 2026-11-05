@@ -114,6 +114,13 @@
                  (close-port port)))
              ports)))))
 
+(mat process-port-setup-failures
+
+     ;; Error case: injected port-construction and close failures must complete cleanup.
+     (= 0 (system (if (file-exists? "system-process-cleanup-probe.ss")
+                      "../cspp --script=system-process-cleanup-probe.ss"
+                      "./cspp --script=tests/system-process-cleanup-probe.ss"))))
+
 (mat process-run-discarded-captures
 
      ;; Error case: status-only runs must drain capture pipes without retaining stream-sized data.
@@ -609,6 +616,16 @@
          (let ([data (get-bytevector-all in)])
            (close-input-port in)
            (string=? "pipe" (utf8->string data)))))
+
+     (if (file-directory? "/proc/self/fd")
+         (let ([before (length (directory-list "/proc/self/fd"))])
+           (do ([index 0 (fx+ index 1)]) ((fx= index 100))
+             (call-with-values make-pipe
+               (lambda (input output)
+                 (close-input-port input)
+                 (close-output-port output))))
+           (= before (length (directory-list "/proc/self/fd"))))
+         #t)
 
      (let ([statuses (process-run-pipeline
                       (list (list "printf" "abc")

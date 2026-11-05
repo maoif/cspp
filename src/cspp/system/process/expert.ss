@@ -128,6 +128,21 @@
     (lambda (pid command arguments stdin stdout stderr status)
       (%make-process pid command arguments stdin stdout stderr status (make-mutex))))
 
+  ;; Return the first close error, but finish releasing the port after a failed flush.
+  (define $close-port/cleanup
+    (lambda (port)
+      (if (not port)
+          #f
+          (guard (failure
+                   [else
+                    (guard (ignored [else (void)])
+                      (when (output-port? port) (clear-output-port port)))
+                    (guard (ignored [else (void)])
+                      (unless (port-closed? port) (close-port port)))
+                    failure])
+            (unless (port-closed? port) (close-port port))
+            #f))))
+
   #|proc:process-status
   The `process-status` procedure returns the cached exit status of `process`, or `#f`.
   The `process` argument is a process object. This does not poll the operating system.
@@ -186,7 +201,7 @@
                [pid (vector-ref result 0)] [ports '()])
           (guard (condition
                    [else
-                    (for-each close-port ports)
+                    (for-each $close-port/cleanup ports)
                     (let ([close-fd (foreign-procedure "close" (int) int)])
                       (do ([index 1 (fx+ index 1)]) ((fx= index 4))
                         (let ([fd (vector-ref result index)])
@@ -335,16 +350,9 @@
         (let ([failure #f])
           (for-each
             (lambda (port)
-              (when (and port (not (port-closed? port)))
-                (guard (condition
-                         [else
-                          (unless failure (set! failure condition))
-                          ;; Chez leaves a port open when flushing its buffer fails.
-                          (guard (cleanup-condition [else (void)])
-                            (unless (port-closed? port)
-                              (when (output-port? port) (clear-output-port port))
-                              (close-port port)))])
-                  (close-port port))))
+              (let ([condition ($close-port/cleanup port)])
+                (when (and condition (not failure))
+                  (set! failure condition))))
             (list (process-stdin process) (process-stdout process) (process-stderr process)))
           (when failure (raise failure))))))
 
@@ -354,9 +362,21 @@
   |#
   (define make-pipe
     (lambda ()
-      (let ([fds (ffi-result-ref ($make-pipe-ffi))])
-        (values (open-fd-input-port (vector-ref fds 0) 'block #f)
-                (open-fd-output-port (vector-ref fds 1) 'block #f)))))
+      (let ([fds (ffi-result-ref ($make-pipe-ffi))] [input #f] [output #f])
+        (guard (failure
+                 [else
+                  ($close-port/cleanup input)
+                  ($close-port/cleanup output)
+                  (let ([close-fd (foreign-procedure "close" (int) int)])
+                    (do ([index 0 (fx+ index 1)]) ((fx= index 2))
+                      (let ([fd (vector-ref fds index)])
+                        (when (fx>= fd 0) (close-fd fd)))))
+                  (raise failure)])
+          (set! input (open-fd-input-port (vector-ref fds 0) 'block #f))
+          (vector-set! fds 0 -1)
+          (set! output (open-fd-output-port (vector-ref fds 1) 'block #f))
+          (vector-set! fds 1 -1)
+          (values input output)))))
 
   #|proc:process-spawn-pipeline
   The `process-spawn-pipeline` procedure starts process specs as a live pipeline.
