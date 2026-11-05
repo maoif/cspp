@@ -47,9 +47,9 @@
      (let* ([root (format "glob-separated-stars-~a" (get-process-id))]
             [leaf root]
             [allocated
-             (lambda (pattern)
+             (lambda (pattern follow?)
                (collect)
-               (let* ([before (statistics)] [result (glob pattern)]
+               (let* ([before (statistics)] [result (glob* pattern follow? #f 'empty)]
                       [bytes (sstats-bytes (sstats-difference (statistics) before))])
                  (cons result bytes)))])
        (dynamic-wind
@@ -60,9 +60,12 @@
              (mkdir leaf))
            (file-touch (string-append leaf "/leaf.txt")))
          (lambda ()
-           (let* ([single (allocated (string-append root "/**/leaf.txt"))]
+           (let* ([single (allocated (string-append root "/**/leaf.txt") #f)]
                   [pattern (string-append root "/**/a/**/a/**/a/**/leaf.txt")]
-                  [separated (allocated pattern)] [iterator (glob->iter pattern)]
+                  [separated (allocated pattern #f)]
+                  [single-follow (allocated (string-append root "/**/leaf.txt") #t)]
+                  [separated-follow (allocated pattern #t)]
+                  [iterator (glob->iter pattern)]
                   [collect-pass
                    (lambda (iterator)
                      (let ([values (make-list-builder)])
@@ -75,6 +78,8 @@
                  (and (equal? (list (string-append leaf "/leaf.txt")) (car separated))
                       ;; Repeated pattern states must not multiply directory traversal.
                       (< (cdr separated) (* 20 (cdr single)))
+                      (equal? (car single) (car separated-follow))
+                      (< (cdr separated-follow) (* 20 (cdr single-follow)))
                       (equal? (car single) (collect-pass iterator))
                       (begin (iter-reset! iterator)
                              (equal? (car single) (collect-pass iterator)))))
@@ -439,6 +444,9 @@
                 (member (string-append root "/link/one.txt") followed)
                 (not (exists (lambda (name)
                                (glob-match? (make-glob "**/back/**/*.txt") name)) followed))
+                ;; Literal prefixes also establish ancestors for cycle detection.
+                (not (exists (lambda (name) (string-search name "/back/"))
+                             (glob* (string-append root "/a/**/*.txt") #t #f 'empty)))
                 (equal? (glob (string-append root "/broken"))
                         (list (string-append root "/broken")))
                 (let ([lazy (iter->list (glob->iter pattern))])

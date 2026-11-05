@@ -581,7 +581,11 @@
                                           (when (or (null? next)
                                                     (file-directory? child-name follow-link?))
                                             (set! stack (cons (vector 'node logical-child physical-child
-                                                                       next ancestors separator) stack))))))
+                                                                       next
+                                                                       (if (and follow-link? (pair? next))
+                                                                           (cons (identity name) ancestors)
+                                                                           ancestors)
+                                                                       separator) stack))))))
                                     (loop)]
                                    [else (open-scan p physical cs ancestors separator) (loop)]))]
                           [(scan)
@@ -658,7 +662,8 @@
   strings. Optional `flavor` follows the host OS: `'windows` on Windows, `'unix`
   elsewhere.
   Boolean `follow-link?` permits descending into symlinked directories with
-  cycle detection. Boolean `include-directories?` includes matching directories;
+  cycle detection that counts literal and wildcard directory ancestors. An explicit
+  parent component starts a new descent chain. Boolean `include-directories?` includes directories;
   files and symlinks are always eligible. `unmatched` is `'empty` to return `()`
   when nothing matches, or `'literal` to return a list of the original pattern.
   |#
