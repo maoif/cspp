@@ -444,12 +444,11 @@
   `include-directories?` controls whether matching directories are yielded.
 
   The iterator's `stack` contains task vectors. A `node` task is
-  `(kind logical-path physical-path remaining-components ancestors separator)`:
-  `logical-path` is the spelling returned to the caller, `physical-path` is the
-  case-correct path used for filesystem calls, `remaining-components` is the
+  `(kind path remaining-components ancestors separator)`: `path` uses the actual
+  entry names for both results and filesystem calls, `remaining-components` is the
   matcher suffix, `ancestors` records followed directory identities, and
-  `separator` preserves the branch's slash style. A `scan` task replaces the
-  physical path with an open directory stream and reads one entry per advance.
+  `separator` preserves the branch's slash style. A `scan` task inserts an open
+  directory stream before the separator and reads one entry per advance.
   Tasks are pushed and popped depth-first, so no complete subtree is collected.
   |#
   (define $expansion-iterator
@@ -461,21 +460,20 @@
             (let ([tasks stack] [failure #f])
               (set! stack '())
               (for-each (lambda (task)
-                            (when (eq? (task-kind task) 'scan)
+                          (when (eq? (task-kind task) 'scan)
                             (guard (condition
                                     [else (unless failure (set! failure condition))])
-                              (fs-close-directory (vector-ref task 5))))) tasks)
+                              (fs-close-directory (scan-directory task))))) tasks)
               (when failure (raise failure)))))
-        ;; Tasks are six/seven-slot vectors kept private to this iterator. These
+        ;; Tasks are five/six-slot vectors kept private to this iterator. These
         ;; accessors make the two task layouts explicit at their use sites.
         (define task-kind (lambda (task) (vector-ref task 0)))
-        (define task-logical (lambda (task) (vector-ref task 1)))
-        (define task-physical (lambda (task) (vector-ref task 2)))
-        (define task-components (lambda (task) (vector-ref task 3)))
-        (define task-ancestors (lambda (task) (vector-ref task 4)))
-        (define task-separator (lambda (task) (vector-ref task 5)))
-        (define scan-directory (lambda (task) (vector-ref task 5)))
-        (define scan-separator (lambda (task) (vector-ref task 6)))
+        (define task-path (lambda (task) (vector-ref task 1)))
+        (define task-components (lambda (task) (vector-ref task 2)))
+        (define task-ancestors (lambda (task) (vector-ref task 3)))
+        (define task-separator (lambda (task) (vector-ref task 4)))
+        (define scan-directory (lambda (task) (vector-ref task 4)))
+        (define scan-separator (lambda (task) (vector-ref task 5)))
         (define begin-branch
           (lambda (branch)
             (set! active-branch branch)
@@ -487,9 +485,7 @@
                    [root (let loop ([p parsed] [cs (path-components parsed)])
                            (if (null? cs) (path-with-trailing-directory p #f)
                                (loop (path-drop-basename p) (cdr cs))))])
-              ;; Keep logical and physical spellings separate. Literal components
-              ;; are resolved lazily against the parent directory below.
-              (set! stack (list (vector 'node root root
+              (set! stack (list (vector 'node root
                                         (branch-components branch) '()
                                         (branch-separator branch)))))))
         (define repeated-state?
@@ -506,48 +502,23 @@
                    ;; inode would lose directory aliases and explicit dot paths.
                    (if (member context previous) #t
                        (begin (hashtable-set! paths name (cons context previous)) #f))))))
-        (define resolve-literal-name
-          (lambda (flavor parent component)
-            ;; Unix literal components need no directory enumeration. The caller
-            ;; checks the child with file-directory? or the final eligibility check.
-            ;; Windows flavor resolves the on-disk spelling case-insensitively.
-            (cond [(not (file-directory? ($physical parent) follow-link?)) #f]
-                  [(eq? flavor 'unix)
-                   ;; Stat through the parent to check search permission without
-                   ;; requiring directory read permission. get-mode propagates
-                   ;; access errors that file-exists? would turn into no match.
-                   (get-mode (string-append ($physical parent) "/."))
-                   (component-literal component)]
-                  [else
-                   (let ([directory (fs-open-directory ($physical parent))]
-                         [found #f])
-                     (dynamic-wind
-                       void
-                       (lambda ()
-                         (let loop ()
-                           (unless found
-                             (let ([entry (fs-read-directory directory)])
-                               (when entry
-                                 (unless (member (car entry) '("." ".."))
-                                   (when ($component-matches? component (car entry))
-                                     (set! found (car entry))))
-                                 (unless found (loop)))))))
-                       (lambda () (fs-close-directory directory)))
-                     found)])))
         (define identity
           (lambda (name)
             (let ([stat (file-stat name)])
               (list (file-stat-dev-major stat) (file-stat-dev-minor stat)
                     (file-stat-inode stat)))))
         (define open-scan
-          (lambda (logical physical cs ancestors separator)
-            (let ([name ($physical physical)])
+          (lambda (path cs ancestors separator)
+            (let ([name ($physical path)])
               (when (file-directory? name follow-link?)
-                (let ([id (and follow-link? (identity name))])
-                  (unless (and id (member id ancestors))
+                (let ([id (and follow-link? (identity name))]
+                      [literal? (and (car cs) (component-literal (car cs)))])
+                  ;; A finite literal prefix may explicitly revisit a directory.
+                  ;; Its ancestors still constrain any later wildcard descent.
+                  (unless (and id (not literal?) (member id ancestors))
                     (let ([directory (fs-open-directory name)])
                       (set! stack
-                            (cons (vector 'scan logical physical cs
+                            (cons (vector 'scan path cs
                                           (if id (cons id ancestors) ancestors)
                                           directory separator) stack)))))))))
         (define eligible?
@@ -569,13 +540,13 @@
                             (set! branches (cdr branches)) (begin-branch branch) (loop)))]
                      [else
                         (let* ([task (car stack)] [kind (task-kind task)]
-                               [p (task-logical task)] [physical (task-physical task)]
+                               [p (task-path task)]
                                [cs (task-components task)]
                                [ancestors (task-ancestors task)])
                         (case kind
                           [(node)
                            (set! stack (cdr stack))
-                           (let ([separator (task-separator task)] [name ($physical physical)])
+                           (let ([separator (task-separator task)] [name ($physical p)])
                              (cond [(repeated-state? p cs ancestors separator) (loop)]
                                    [(null? cs)
                                     (let* ([result-path
@@ -594,49 +565,45 @@
                                             result)
                                           (loop)))]
                                    [(not (car cs))
-                                    (open-scan p physical cs ancestors separator)
-                                    (set! stack (cons (vector 'node p physical (cdr cs) ancestors separator) stack))
+                                    (open-scan p cs ancestors separator)
+                                    (set! stack (cons (vector 'node p (cdr cs) ancestors separator) stack))
                                     (loop)]
                                    [(member (component-literal (car cs)) '("." ".."))
                                     (let* ([component (component-literal (car cs))]
-                                           [logical-child (path-add-component p component)]
-                                           [physical-child (path-add-component physical component)]
+                                           [child (path-add-component p component)]
                                            [next (cdr cs)])
                                       ;; Dot traversal still descends through the parent.
                                       (when (and (file-directory? name follow-link?)
                                                  (or (null? next)
-                                                     (file-directory? ($physical physical-child)
+                                                     (file-directory? ($physical child)
                                                                       follow-link?)))
                                         ;; An explicit parent consumes a pattern component,
                                         ;; so the old descent chain is no longer a cycle guard.
                                         ;; Subsequent recursive scans build a fresh chain.
-                                        (set! stack (cons (vector 'node logical-child physical-child
+                                        (set! stack (cons (vector 'node child
                                                                    next (if (string=? component "..")
                                                                             '() ancestors)
                                                                    separator) stack))))
                                     (loop)]
-                                   [(component-literal (car cs))
-                                    (let ([actual (resolve-literal-name (glob-flavor compiled)
-                                                                      physical
-                                                                      (car cs))])
-                                      (when actual
-                                        (let* ([logical-child (path-add-component p (component-literal (car cs)))]
-                                               [physical-child (path-add-component physical actual)]
-                                               [next (cdr cs)]
-                                               [child-name ($physical physical-child)])
-                                          (when (or (null? next)
-                                                    (file-directory? child-name follow-link?))
-                                            (set! stack (cons (vector 'node logical-child physical-child
-                                                                       next
-                                                                       (if (and follow-link? (pair? next))
-                                                                           (cons (identity name) ancestors)
-                                                                           ancestors)
-                                                                       separator) stack))))))
+                                   [(and (eq? (glob-flavor compiled) 'unix)
+                                         (component-literal (car cs)))
+                                    ;; Unix literals need search permission, but no directory scan.
+                                    (when (file-directory? name follow-link?)
+                                      (get-mode (string-append name "/."))
+                                      (let* ([child (path-add-component p (component-literal (car cs)))]
+                                             [next (cdr cs)])
+                                        (when (or (null? next)
+                                                  (file-directory? ($physical child) follow-link?))
+                                          (set! stack (cons (vector 'node child next
+                                                                     (if (and follow-link? (pair? next))
+                                                                         (cons (identity name) ancestors)
+                                                                         ancestors)
+                                                                     separator) stack)))))
                                     (loop)]
-                                   [else (open-scan p physical cs ancestors separator) (loop)]))]
+                                   ;; Windows literals scan too: all case-equivalent names are eligible.
+                                   [else (open-scan p cs ancestors separator) (loop)]))]
                           [(scan)
-                           (let* ([physical (task-physical task)]
-                                  [cs (task-components task)]
+                           (let* ([cs (task-components task)]
                                   [directory (scan-directory task)]
                                   [separator (scan-separator task)]
                                   [entry (fs-read-directory directory)])
@@ -648,7 +615,6 @@
                                         ($component-matches? (car cs) (car entry)))
                                     (set! stack
                                           (cons (vector 'node (path-add-component p (car entry))
-                                                        (path-add-component physical (car entry))
                                                         (if (car cs) (cdr cs) cs) ancestors separator) stack))
                                     (loop)]
                                    [else (loop)]))]))]))))
@@ -685,17 +651,22 @@
           (lambda () (iter-finalize! iterator)))
         (let* ([entries (map (lambda (path) (cons ($path-sort-key flavor path) path))
                              (results))]
-               [sorted (sort (lambda (a b) ($components<? (car a) (car b))) entries)]
+               [sorted (sort (lambda (a b)
+                               (or ($components<? (car a) (car b))
+                                   (and (equal? (car a) (car b))
+                                        (string<? (cdr a) (cdr b))))) entries)]
                [values (map cdr sorted)])
           (if (and (null? values) (eq? unmatched 'literal)) (list pattern) values)))))
 
   #|proc:glob
   Expand string `pattern` against the filesystem and return duplicate-free path
   strings sorted by component order, using simple case folding for Windows sorting.
+  Equal folded keys are ordered by the rendered strings. Results use on-disk entry names,
+  including every case-equivalent Windows match, and retain the pattern's separator style.
   Optional `flavor` follows the host OS:
-  `'windows` on Windows, `'unix` elsewhere. Traversal starts at the longest literal
-  prefix and preserves the root spelling. Symlinked directories are not descended into;
-  matching directories are excluded. An unmatched pattern returns the empty list.
+  `'windows` on Windows, `'unix` elsewhere. Unix literals use direct lookups; Windows
+  components scan case-insensitively. Root spelling is preserved. Symlinked directories
+  are not descended into; matching directories are excluded. An unmatched pattern returns `()`.
   |#
   (define glob
     (case-lambda
@@ -706,7 +677,8 @@
 
   #|proc:glob*
   Expand string `pattern` and return sorted, duplicate-free matching path
-  strings. Optional `flavor` follows the host OS: `'windows` on Windows, `'unix`
+  strings, using the same entry spelling and sorting as `glob`.
+  Optional `flavor` follows the host OS: `'windows` on Windows, `'unix`
   elsewhere.
   Boolean `follow-link?` permits descending into symlinked directories with
   cycle detection that counts literal and wildcard directory ancestors. An explicit

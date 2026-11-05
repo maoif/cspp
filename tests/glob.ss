@@ -40,11 +40,11 @@
            (file-touch (path-build root "ẞ.txt"))
            (file-touch (path-build root "İ.txt")))
          (lambda ()
-           (and (equal? (list (string-append root "/s.txt"))
+           (and (equal? (list (string-append root "/ſ.txt"))
                         (glob 'windows (string-append root "/s.txt")))
                 (equal? (list (string-append root "/ſ.txt"))
                         (glob 'windows (string-append root "/[S].txt")))
-                (equal? (list (string-append root "/ß.txt"))
+                (equal? (list (string-append root "/ẞ.txt"))
                         (glob 'windows (string-append root "/ß.txt")))
                 (null? (glob 'windows (string-append root "/i.txt")))))
          (lambda () (file-removetree root)))))
@@ -165,10 +165,10 @@
          (lambda ()
            (and (null? (glob 'windows (string-append root "/straße.txt")))
                 (not (glob-match? 'windows "straße.txt" "STRASSE.TXT"))
-                (equal? (list (string-append root "/strasse.txt"))
+                (equal? (list (string-append root "/STRASSE.TXT"))
                         (glob 'windows (string-append root "/strasse.txt")))
                 (glob-match? 'windows "σ.txt" "Σ.txt")
-                (equal? (list (string-append root "/σ.txt"))
+                (equal? (list (string-append root "/Σ.txt"))
                         (glob 'windows (string-append root "/σ.txt")))))
          (lambda () (file-removetree root)))))
 
@@ -594,7 +594,42 @@
            (equal? (glob* 'windows
                          (string-append root "/casedir/mixed.txt")
                          #f #f 'empty)
-                   (list (string-append root "/casedir/mixed.txt")))))))
+                   (list (string-append root "/CaseDir/MiXeD.TXT")))))))
+
+(mat glob-windows-case-collisions
+     (let ([root (format "glob-case-collisions-~a" (get-process-id))])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (for-each
+            (lambda (directory file)
+              (mkdir (path-build root directory))
+              (file-touch (path-build (path-build root directory) file))
+              (file-touch (path-build (path-build root directory) "shared.bin")))
+            '("K" "k" "Σ" "σ") '("upper.txt" "lower.txt" "upper.txt" "lower.txt")))
+         (lambda ()
+           (and
+            (for-all
+             (lambda (literal bracket expected)
+               (let* ([prefix (string-append (string-upcase root) "/")]
+                      [pattern (string-append prefix literal "/*.txt")]
+                      [matches (glob 'windows pattern)])
+                 (and (equal? matches (glob 'windows (string-append prefix bracket "/*.txt")))
+                      (equal? (sort string<? matches) (sort string<? expected))
+                      (for-all file-exists? matches)
+                      (for-all (lambda (path) (glob-match? 'windows pattern path)) matches))))
+             '("k" "σ") '("[k]" "[σ]")
+             (list (list (string-append root "/K/upper.txt")
+                         (string-append root "/k/lower.txt"))
+                   (list (string-append root "/Σ/upper.txt")
+                         (string-append root "/σ/lower.txt"))))
+            ;; Different alternatives that resolve to one entry yield its actual spelling once.
+            (equal? (glob 'windows (string-append root "/{K,k}/upper.txt"))
+                    (list (string-append root "/K/upper.txt")))
+            (equal? (glob 'windows (string-append root "/[k]/shared.bin"))
+                    (list (string-append root "/K/shared.bin")
+                          (string-append root "/k/shared.bin")))))
+         (lambda () (file-removetree root #t)))))
 
 ;; A literal prefix that exists but cannot be opened is an expansion error.
 (mat glob-filesystem-inaccessible-literal
