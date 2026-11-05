@@ -162,7 +162,7 @@
 
   #|proc:process-spawn
   The `process-spawn` procedure starts executable string `program` with string-list `arguments`.
-  It returns a process object. `options` is an alist; `cwd` is a directory string or `#f`,
+  It returns a process object. `options` is an alist; `cwd` is a nonempty directory string or `#f`,
   and `env` is a string-pair alist or `#f` to inherit. An empty `env` clears the environment.
   Program, argument, directory, and environment strings must contain no NUL characters.
   Environment names must be nonempty and must not contain `=`.

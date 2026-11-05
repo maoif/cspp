@@ -28,7 +28,8 @@
                 (set! seen (cons key seen))
                 (unless
                   (case key
-                    [(cwd) (or (not value) ($os-string? value))]
+                    [(cwd) (or (not value)
+                               (and ($os-string? value) (fx> (string-length value) 0)))]
                     [(env) (or (not value)
                                (and (list? value)
                                     (andmap (lambda (pair) (and (pair? pair) ($environment-name? (car pair))

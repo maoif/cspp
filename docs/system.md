@@ -69,7 +69,7 @@ Callback exceptions propagate to the caller. A rejected status raises `system-ex
 
 | Option | Values and default |
 | --- | --- |
-| `:cwd` | Directory string, or `#f` to inherit the working directory; default `#f` |
+| `:cwd` | Nonempty directory string, or `#f` to inherit the working directory; default `#f` |
 | `:env` | Alist of string pairs replacing the environment, or `#f` to inherit; default `#f` |
 | `:env-mode` | Only `replace`; replacement is already implied by a supplied environment |
 | `:stdin` | String, bytevector, `null`, `inherit`, or `#f`; default `null` |

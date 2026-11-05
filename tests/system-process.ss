@@ -1,5 +1,21 @@
 (import (cspp))
 
+(mat process-empty-working-directory
+
+     ;; Error case: an explicitly empty cwd must not run in the parent's working directory.
+     (for-all
+       (lambda (start)
+         (guard (condition [else #t]) (start) #f))
+       (list
+         (lambda () (process-capture "/bin/true" :cwd ""))
+         (lambda () (process-run "/bin/true" :cwd ""))
+         (lambda () (process-capture-shell "exit 0" :cwd ""))
+         (lambda () (process-run-shell "exit 0" :cwd ""))
+         (lambda ()
+           (process-wait (process-spawn "/bin/true" '() '((cwd . "")))))
+         (lambda ()
+           (process-wait (process-spawn-shell "exit 0" '((cwd . ""))))))))
+
 (mat process-close-broken-stdin
 
      ;; Error case: a failed stdin flush must not leave any process ports open.

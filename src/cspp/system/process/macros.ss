@@ -112,7 +112,7 @@
   The `process-run` macro runs `program` with arguments and returns an exit status.
   Bare identifiers in `program` and arguments are literal command words.
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
-  The `:cwd` option accepts a string working directory or `#f`.
+  The `:cwd` option accepts a nonempty working-directory string or `#f`.
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
   Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
@@ -138,7 +138,7 @@
   The `process-run/check` macro runs `program` and raises on an unacceptable exit.
   Bare identifiers in `program` and arguments are literal command words.
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
-  The `:cwd` option accepts a string working directory or `#f`.
+  The `:cwd` option accepts a nonempty working-directory string or `#f`.
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
   Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
@@ -164,7 +164,7 @@
   The `process-capture` macro runs `program` with arguments and returns a result.
   Bare identifiers in `program` and arguments are literal command words.
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
-  The `:cwd` option accepts a string working directory or `#f`.
+  The `:cwd` option accepts a nonempty working-directory string or `#f`.
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
   Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
@@ -190,7 +190,7 @@
   The `process-capture/check` macro runs `program` and raises on an unacceptable exit.
   Bare identifiers in `program` and arguments are literal command words.
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
-  The `:cwd` option accepts a string working directory or `#f`.
+  The `:cwd` option accepts a nonempty working-directory string or `#f`.
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
   Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
@@ -216,7 +216,7 @@
   The `process-run-shell` macro runs `command` through the host shell.
   A bare `command` identifier is literal text; other forms evaluate to a command string.
   Use `(begin command)` for a variable, followed by optional keyword clauses.
-  The `:cwd` option accepts a string working directory or `#f`.
+  The `:cwd` option accepts a nonempty working-directory string or `#f`.
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
   Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
@@ -242,7 +242,7 @@
   The `process-capture-shell` macro runs `command` through the host shell.
   A bare `command` identifier is literal text; other forms evaluate to a command string.
   Use `(begin command)` for a variable, followed by optional keyword clauses.
-  The `:cwd` option accepts a string working directory or `#f`.
+  The `:cwd` option accepts a nonempty working-directory string or `#f`.
   The `:env` option accepts an alist of string pairs or `#f` to inherit the environment.
   Environment names are nonempty and contain no `=`; OS strings contain no NUL characters.
   The `:env-mode` option accepts `replace`; replacement is implied when `:env` is set.
