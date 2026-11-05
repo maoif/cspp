@@ -20,8 +20,8 @@
     (fields (immutable flavor glob-flavor) (immutable patterns glob-patterns)))
 
   #|record:$component
-  An internal path-component matcher. `regex` matches one complete component;
-  `literal` is the original text when the component has no wildcard syntax.
+  An internal path-component matcher. `literal` holds original text without wildcard syntax;
+  otherwise `regex` matches one complete component. The unused field is `#f`.
   |#
   (define-record-type ($component %component component?)
     (fields (immutable regex component-regex) (immutable literal component-literal)
@@ -246,12 +246,22 @@
   (define $make-component
     (lambda (flavor sre literal)
       (let ([fold? (eq? flavor 'windows)])
-        (%component (sre->regex (if fold? ($fold-sre sre) sre)) literal fold?))))
+        (%component (and (not literal) (sre->regex (if fold? ($fold-sre sre) sre)))
+                    literal fold?))))
 
   (define $component-matches?
     (lambda (component name)
-      (regex-matches? (component-regex component)
-                      (if (component-fold-case? component) ($fold-string name) name))))
+      (let ([literal (component-literal component)])
+        (if literal
+            (let ([length (string-length literal)]
+                  [same-char? (if (component-fold-case? component) char-ci=? char=?)])
+              (and (fx= length (string-length name))
+                   (let loop ([index 0])
+                     (or (fx= index length)
+                         (and (same-char? (string-ref literal index) (string-ref name index))
+                              (loop (fx1+ index)))))))
+            (regex-matches? (component-regex component)
+                            (if (component-fold-case? component) ($fold-string name) name))))))
 
   (define $component-compile
     (lambda (flavor s)
