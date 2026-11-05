@@ -78,6 +78,35 @@
          (and (same-file-contents? "/proc/version" "/proc/version")
               (not (same-file-contents? "/proc/version" "/proc/sys/kernel/ostype")))))
 
+(mat file-collection-callback-results
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([seen (make-list-builder)])
+          ;; A false callback result must not stop file-for-each or file-map traversal.
+          (file-for-each (lambda (path) (seen path) #f) root)
+          (let ([paths (seen)])
+            (and (= 3 (length paths))
+                 (equal? paths (file-map values root))
+                 (equal? paths (file-find-all (lambda (path) #t) root))
+                 (equal? '(#f #f #f) (file-map (lambda (path) #f) root))
+                 (null? (file-find-all (lambda (path) #f) root))))))))
+
+(mat file-readlink-text-only
+     ($with-fs-fixture
+      (lambda (root)
+        (for-each (lambda (entry)
+                    (file-symlink (cdr entry) (path-build root (car entry))))
+                  '(("plain" . "top.txt") ("chain" . "plain")
+                    ("dangling" . "missing") ("self" . "self")))
+        (for-all
+         (lambda (entry)
+           (let ([path (path-build root (car entry))] [text (cdr entry)])
+             (and (string=? text (readlink path))
+                  (string=? text (readlink path #f))
+                  (string=? text (readlink2 path #f)))))
+         '(("plain" . "top.txt") ("chain" . "plain")
+           ("dangling" . "missing") ("self" . "self"))))))
+
 (mat file-rejects-nul-paths
      ($with-fs-fixture
       (lambda (root)

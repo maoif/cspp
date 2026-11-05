@@ -924,12 +924,7 @@
   (define make-path
     (lambda (p . p*)
       (pcheck ([$filename? p] [(lambda (x) (andmap $filename? x)) p*])
-              (if (null? p*)
-                  p
-                  (let loop ([res p] [pp p*])
-                    (if (null? pp)
-                        res
-                        (path-build res (loop (car pp) (cdr pp)))))))))
+              (fold-left path-build p p*))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -1865,16 +1860,10 @@
        (pcheck ([procedure? pred] [$filename? path] [boolean? follow-link?])
          (let ([lb (make-list-builder)])
            (walk-files (lambda (dir dirs files)
-                       (let lp1 ([ds dirs])
-                         (if (null? ds)
-                             (let lp2 ([fs files])
-                               (unless (null? fs)
-                                 (when (pred (car fs))
-                                   (lb (car fs)))
-                                 (lp2 (cdr fs))))
-                             (begin (when (pred (car ds))
-                                      (lb (car ds)))
-                                    (lp1 (cdr ds))))))
+                         (let ([visit (lambda (path) (when (pred path) (lb path)))])
+                           (for-each visit dirs)
+                           (for-each visit files))
+                         #t)
                        path follow-link?)
            (lb)))]))
 
@@ -1891,14 +1880,10 @@
        (pcheck ([procedure? proc] [$filename? path] [boolean? follow-link?])
          (let ([lb (make-list-builder)])
            (walk-files (lambda (dir dirs files)
-                       (let lp1 ([ds dirs])
-                         (if (null? ds)
-                             (let lp2 ([fs files])
-                               (unless (null? fs)
-                                 (lb (proc (car fs)))
-                                 (lp2 (cdr fs))))
-                             (begin (lb (proc (car ds)))
-                                    (lp1 (cdr ds))))))
+                         (let ([visit (lambda (path) (lb (proc path)))])
+                           (for-each visit dirs)
+                           (for-each visit files))
+                         #t)
                        path follow-link?)
            (lb)))]))
 
@@ -1913,14 +1898,9 @@
       [(proc path follow-link?)
        (pcheck ([procedure? proc] [$filename? path] [boolean? follow-link?])
          (walk-files (lambda (dir dirs files)
-                     (let lp1 ([ds dirs])
-                       (if (null? ds)
-                           (let lp2 ([fs files])
-                             (unless (null? fs)
-                               (proc (car fs))
-                               (lp2 (cdr fs))))
-                           (begin (proc (car ds))
-                                  (lp1 (cdr ds))))))
+                       (for-each proc dirs)
+                       (for-each proc files)
+                       #t)
                      path follow-link?))]))
 
   ;; Some procedures only need the presence of the symlink per se, not its target.
@@ -1935,32 +1915,27 @@
                      (if (vector? x)
                          ($err-file who path (vector-ref x 0))
                          x))))])
-      (case-lambda
-        [(who path) ($readlink who path #f)]
-        [(who path recursive?)
-         ;; we don't care about whether the link is dangling or not
-         (pcheck ([$filename? path] [boolean? recursive?]
-                  [file-exists?-no-follow path] [file-symbolic-link? path])
-                 (let ([seen (make-hashtable equal-hash equal?)])
-                   (let loop ([path path])
-                     ;; A relative link's target depends on its parent directory.
-                     ;; Hard-linked symlinks in different parents need distinct keys.
-                     (let* ([parent (path-parent path)]
-                            [identity (list ($file-identity path #f)
-                                            ($file-identity
-                                             (if (string=? parent "") "." parent) #t))])
-                       (if (hashtable-contains? seen identity)
-                           (errorf who "symlink cycle detected at: ~a" path)
-                           (let* ([_ (hashtable-set! seen identity #t)]
-                                  [ln (ffi who path)]
-                                  [target (path-build (path-parent path) ln)])
-                             (if (file-symbolic-link? target)
-                                 (if recursive?
-                                     (loop target)
-                                     ln)
-                                 (if recursive?
-                                     (values ln (path-parent path))
-                                     ln))))))))])))
+      (lambda (who path recursive?)
+        ;; The link itself may exist even when its target does not.
+        (pcheck ([$filename? path] [boolean? recursive?]
+                 [file-exists?-no-follow path] [file-symbolic-link? path])
+          (if (not recursive?)
+              (ffi who path)
+              (let ([seen (make-hashtable equal-hash equal?)])
+                (let loop ([path path])
+                  ;; A relative link's target depends on its parent directory.
+                  ;; Hard-linked symlinks in different parents need distinct keys.
+                  (let* ([parent (path-parent path)]
+                         [identity (list ($file-identity path #f)
+                                         ($file-identity
+                                          (if (string=? parent "") "." parent) #t))])
+                    (when (hashtable-contains? seen identity)
+                      (errorf who "symlink cycle detected at: ~a" path))
+                    (hashtable-set! seen identity #t)
+                    (let* ([ln (ffi who path)] [target (path-build parent ln)])
+                      (if (file-symbolic-link? target)
+                          (loop target)
+                          (values ln parent)))))))))))
 
 
   #|proc:readlink
