@@ -29,6 +29,15 @@
     (let ([ffi (foreign-procedure "cspp_getgrgid" (unsigned-32) scheme-object)])
       (lambda (id) (ffi-result-ref (ffi id)))))
 
+  ;; Public callers validate the key before dispatching to the native lookup.
+  (define $lookup-user
+    (lambda (id)
+      (if (string? id) ($getpwnam id) ($getpwuid id))))
+
+  (define $lookup-group
+    (lambda (id)
+      (if (string? id) ($getgrnam id) ($getgrgid id))))
+
   (define $getpw-name   (lambda (v) (vector-ref v 0)))
   (define $getpw-passwd (lambda (v) (vector-ref v 1)))
   (define $getpw-uid    (lambda (v) (vector-ref v 2)))
@@ -69,11 +78,7 @@
   (define-who user-ref
     (lambda (id)
       (pcheck ([$user-key? id])
-        (cond [($unsigned-32? id)
-             (mk-unix-user ($getpwuid id))]
-            [($os-string? id)
-             (mk-unix-user ($getpwnam id))]
-            [else (errorf who "invalid user id: ~a" id)]))))
+        (mk-unix-user ($lookup-user id)))))
 
   #|proc:getuser
   The `getuser` procedure returns a Unix user record for `id`.
@@ -90,11 +95,7 @@
   (define-who group-ref
     (lambda (id)
       (pcheck ([$user-key? id])
-        (cond [($unsigned-32? id)
-             (mk-unix-group ($getgrgid id))]
-            [($os-string? id)
-             (mk-unix-group ($getgrnam id))]
-            [else (errorf who "invalid group id: ~a" id)]))))
+        (mk-unix-group ($lookup-group id)))))
 
   #|proc:getgroup
   The `getgroup` procedure returns a Unix group record for `id`.
@@ -195,9 +196,7 @@
   (define-who get-user-dir
     (lambda (id)
       (pcheck ([$user-key? id])
-        (cond [($os-string? id)  ($getpw-dir ($getpwnam id))]
-            [($unsigned-32? id) ($getpw-dir ($getpwuid id))]
-            [else (errorf who "invalid user id: ~a" id)]))))
+        ($getpw-dir ($lookup-user id)))))
 
   #|proc:get-user-shell
   The `get-user-shell` procedure returns the login shell for `id`.
@@ -207,9 +206,7 @@
   (define-who get-user-shell
     (lambda (id)
       (pcheck ([$user-key? id])
-        (cond [($os-string? id)  ($getpw-shell ($getpwnam id))]
-            [($unsigned-32? id) ($getpw-shell ($getpwuid id))]
-            [else (errorf who "invalid user id: ~a" id)]))))
+        ($getpw-shell ($lookup-user id)))))
 
   #|proc:get-user-group
   The `get-user-group` procedure returns the primary numeric group ID for `id`.
@@ -219,9 +216,7 @@
   (define-who get-user-group
     (lambda (id)
       (pcheck ([$user-key? id])
-        (cond [($os-string? id)  ($getpw-gid ($getpwnam id))]
-            [($unsigned-32? id) ($getpw-gid ($getpwuid id))]
-            [else (errorf who "invalid user id: ~a" id)]))))
+        ($getpw-gid ($lookup-user id)))))
 
   #|proc:user-exists?
   The `user-exists?` procedure returns `#t` when `id` identifies an existing user, otherwise `#f`.

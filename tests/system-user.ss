@@ -54,6 +54,13 @@
      (integer? (get-user-group (getuid)))
      (integer? (get-user-group (uid->user-name (getuid))))
 
+     (let* ([uid (getuid)]
+            [name (uid->user-name uid)]
+            [user (user-ref uid)])
+       (and (string=? (unix-user-dir user) (get-user-dir uid) (get-user-dir name))
+            (string=? (unix-user-shell user) (get-user-shell uid) (get-user-shell name))
+            (= (unix-user-gid user) (get-user-group uid) (get-user-group name))))
+
      (user-exists? (getuid))
      (user-exists? (uid->user-name (getuid)))
      (group-exists? (getgid))
