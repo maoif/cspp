@@ -629,6 +629,21 @@
 
 (mat process-pipe-processes
 
+     ;; Error case: a live pipeline must inherit final stdout, unlike a status-only pipeline.
+     (let* ([root (if (file-exists? "system-live-pipeline-stdout.ss") ".." ".")]
+            [path (format "/tmp/cspp-live-pipeline-stdout-~a" (getpid))]
+            [command (format "~a/cspp --script=~a/tests/system-live-pipeline-stdout.ss > ~a"
+                             root root path)])
+       (dynamic-wind
+         (lambda () (void))
+         (lambda ()
+           (and (= 0 (system command))
+                (call-with-input-file path
+                  (lambda (port)
+                    (let ([output (get-string-all port)])
+                      (and (string? output) (string=? "SINGLE\nCHAIN\n" output)))))))
+         (lambda () (when (file-exists? path) (delete-file path)))))
+
      (let* ([processes (process-spawn-pipeline
                         (list (list "printf" "abc")
                               (list "sh" "-c" "cat >/dev/null"))

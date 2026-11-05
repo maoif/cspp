@@ -796,6 +796,12 @@ ptr cspp_make_pipe() {
 }
 
 #if defined(__unix__) || defined(__APPLE__)
+typedef enum {
+  PIPELINE_STDOUT_INHERIT,
+  PIPELINE_STDOUT_CAPTURE,
+  PIPELINE_STDOUT_DISCARD
+} pipeline_stdout_mode;
+
 typedef struct {
   int count;
   int spawned;
@@ -833,7 +839,8 @@ static void dispose_pipeline(pipeline_launch *launch, int terminate) {
 
 /* Prepare and launch both live and synchronous pipelines. All resources belong
  * to launch on success; failure disposes them and returns the original error. */
-static int start_pipeline(ptr specs, int capture_stdout, pipeline_launch *launch) {
+static int start_pipeline(ptr specs, pipeline_stdout_mode stdout_mode,
+                          pipeline_launch *launch) {
   memset(launch, 0, sizeof(*launch));
   launch->capture_pipe[0] = -1;
   launch->capture_pipe[1] = -1;
@@ -865,7 +872,7 @@ static int start_pipeline(ptr specs, int capture_stdout, pipeline_launch *launch
     if (launch->argvs[i] == NULL) { error = EINVAL; goto failed; }
     remaining = Scdr(remaining);
   }
-  if (capture_stdout && make_pipe(launch->capture_pipe) != 0) {
+  if (stdout_mode == PIPELINE_STDOUT_CAPTURE && make_pipe(launch->capture_pipe) != 0) {
     error = errno;
     goto failed;
   }
@@ -877,7 +884,8 @@ static int start_pipeline(ptr specs, int capture_stdout, pipeline_launch *launch
       error = spawn_checked(&launch->pids[i], launch->argvs[i], launch->env, candidates, "",
                             i > 0 ? launch->pipes[i - 1][0] : -1,
                             i < launch->count - 1 ? launch->pipes[i][1] :
-                            (capture_stdout ? launch->capture_pipe[1] : -2),
+                            (stdout_mode == PIPELINE_STDOUT_CAPTURE ? launch->capture_pipe[1] :
+                             stdout_mode == PIPELINE_STDOUT_INHERIT ? -1 : -2),
                             -1, 0);
     }
     free_string_array(candidates);
@@ -897,7 +905,7 @@ static int start_pipeline(ptr specs, int capture_stdout, pipeline_launch *launch
 ptr cspp_spawn_pipeline(ptr specs) {
 #if defined(__unix__) || defined(__APPLE__)
   pipeline_launch launch;
-  int error = start_pipeline(specs, 0, &launch);
+  int error = start_pipeline(specs, PIPELINE_STDOUT_INHERIT, &launch);
   if (error != 0) {
     errno = error;
     return cspp_errno_result("spawn-pipeline", Snil);
@@ -918,7 +926,9 @@ ptr cspp_spawn_pipeline(ptr specs) {
 static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
 #if defined(__unix__) || defined(__APPLE__)
   pipeline_launch launch;
-  int error = start_pipeline(specs, capture_stdout, &launch);
+  int error = start_pipeline(specs,
+                             capture_stdout ? PIPELINE_STDOUT_CAPTURE : PIPELINE_STDOUT_DISCARD,
+                             &launch);
   if (error != 0) {
     errno = error;
     return cspp_errno_result("spawn-pipeline", Snil);
