@@ -620,7 +620,11 @@
            (mkdir (string-append root "/~"))
            (write-string (string-append root "/~/item.txt") "x")
            (current-directory root))
-         (lambda () (equal? (glob "\\~/*") '("~/item.txt")))
+         (lambda ()
+           (let ([names (glob "\\~/*")])
+             (and (equal? names '("./~/item.txt"))
+                  (equal? '("x") (map read-string names))
+                  (equal? names (iter->list (glob->iter "[~]/*"))))))
          (lambda () (current-directory original) (file-removetree root)))))
 
 ;; Windows literal components resolve actual entries case-insensitively.

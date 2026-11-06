@@ -426,14 +426,16 @@
   |#
   (define glob? (lambda (object) (%glob? object)))
 
-  (define $physical
-    (lambda (p)
-      (let ([s (path-render p #\/)])
+  (define $filesystem-spelling
+    (lambda (p separator)
+      (let ([s (path-render p separator)])
         ;; Chez pathname expansion treats a leading `~` specially. A literal
         ;; escaped tilde must be made explicitly relative for filesystem calls.
         (cond [(string=? s "") "."]
-              [(char=? (string-ref s 0) #\~) (string-append (current-directory) "/" s)]
+              [(char=? (string-ref s 0) #\~) (string-append "." (string separator) s)]
               [else s]))))
+
+  (define $physical (lambda (p) ($filesystem-spelling p #\/)))
 
   #|proc:$expansion-iterator
   Build the lazy traversal iterator shared by `glob`, `glob*`, and `glob->iter`.
@@ -546,8 +548,7 @@
                                             (if (and (branch-directory? active-branch)
                                                      (pair? (path-components p)))
                                                 (path-with-trailing-directory p #t) p)]
-                                           [rendered (path-render result-path separator)]
-                                           [result (if (string=? rendered "") "." rendered)])
+                                           [result ($filesystem-spelling result-path separator)])
                                       (if (and (eligible? name)
                                                (or (not (branch-directory? active-branch))
                                                    (file-directory? name follow-link?))
@@ -659,6 +660,8 @@
   strings sorted by component order, using simple case folding for Windows sorting.
   Equal folded keys are ordered by the rendered strings. Results use on-disk entry names,
   including every case-equivalent Windows match, and retain the pattern's separator style.
+  Literal leading tildes receive a `./` prefix (or `.\` with backslash separators),
+  so returned paths can be passed to filesystem APIs without home expansion.
   Optional `flavor` follows the host OS:
   `'windows` on Windows, `'unix` elsewhere. Unix literals use direct lookups; Windows
   components scan case-insensitively. Root spelling is preserved. Symlinked directories
