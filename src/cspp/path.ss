@@ -573,6 +573,12 @@
               ($check-components 'path-add-components ($path-flavor p) components)
               ($path-append-components p ($copy-components components) #f))))
 
+  ;; Copy a nonempty component list, replacing its last cell with the private tail.
+  (define $replace-last-component
+    (lambda (components tail)
+      (if (null? (cdr components)) tail
+          (cons (car components) ($replace-last-component (cdr components) tail)))))
+
   #|proc:path-replace-basename
   The `path-replace-basename` procedure replaces the final component.
   |#
@@ -586,8 +592,7 @@
                     ($make-path-object ($path-flavor p)
                            ($path-root-kind p)
                            ($path-root p)
-                           (append (reverse (cdr (reverse components)))
-                                   (list (string-copy basename)))
+                           ($replace-last-component components (list (string-copy basename)))
                            #f))))))
 
   #|proc:path-drop-basename
@@ -602,7 +607,7 @@
                     ($make-path-object ($path-flavor p)
                            ($path-root-kind p)
                            ($path-root p)
-                           (reverse (cdr (reverse components)))
+                           ($replace-last-component components '())
                            #f))))))
 
   (define $normalize-components
