@@ -305,6 +305,21 @@
             (lambda (value) (flag-reset value 1))
             (lambda (value) (flag-reset 1 value)))))
 
+(mat file-size-human-units
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([path (path-build root "top.txt")])
+          (call-with-port (open-file-output-port path (file-options no-fail))
+            (lambda (port)
+              (for-all
+               (lambda (entry)
+                 ;; Sparse lengths exercise unit boundaries without writing large files.
+                 (set-port-length! port (car entry))
+                 (string=? (cdr entry) (file-size-h path)))
+               '((0 . "0.00 B") (1023 . "1023.00 B") (1024 . "1.00 KiB")
+                 (1048576 . "1.00 MiB") (1073741824 . "1.00 GiB")
+                 (1099511627776 . "1024.00 GiB")))))))))
+
 (mat file-collection-callback-results
      ($with-fs-fixture
       (lambda (root)

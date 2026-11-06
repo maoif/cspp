@@ -1426,12 +1426,12 @@
   (define-who file-size-h
     (lambda (path)
       (define 1K 1024)
-      (define 1M (fx* 1K 1024))
-      (define 1G (fx* 1M 1024))
+      (define 1M (* 1K 1024))
+      (define 1G (* 1M 1024))
       (let ([size ($file-size who path)])
-        (cond [(fx< size 1K) (format "~,2f B" size)]
-              [(fx< size 1M) (format "~,2f KiB" (inexact (/ size 1K)))]
-              [(fx< size 1G) (format "~,2f MiB" (inexact (/ size 1M)))]
+        (cond [(< size 1K) (format "~,2f B" size)]
+              [(< size 1M) (format "~,2f KiB" (inexact (/ size 1K)))]
+              [(< size 1G) (format "~,2f MiB" (inexact (/ size 1M)))]
               [else (format "~,2f GiB" (inexact (/ size 1G)))]))))
 
 
@@ -1439,18 +1439,33 @@
     (lambda (path follow-link? bits)
       (not (fx= 0 (fxlogand (get-mode path follow-link?) bits)))))
 
+  #|proc:file-readable?
+  Return whether any user, group, or other read permission bit is set on path string `path`.
+  Boolean `follow-link?` defaults to `#t`. The selected entry must exist.
+  This inspects mode bits, not effective access for the current user or ACL permissions.
+  |#
   (define-who file-readable?
     (case-lambda [(path) (file-readable? path #t)]
                  [(path follow-link?)
                   (pcheck ([$filename? path] [boolean? follow-link?]
                            [(lambda (x) (file-exists? x follow-link?)) path])
                           ($mode-any-set? path follow-link? #o444))]))
+  #|proc:file-writable?
+  Return whether any user, group, or other write permission bit is set on path string `path`.
+  Boolean `follow-link?` defaults to `#t`. The selected entry must exist.
+  This inspects mode bits, not effective access for the current user or ACL permissions.
+  |#
   (define-who file-writable?
     (case-lambda [(path) (file-writable? path #t)]
                  [(path follow-link?)
                   (pcheck ([$filename? path] [boolean? follow-link?]
                            [(lambda (x) (file-exists? x follow-link?)) path])
                           ($mode-any-set? path follow-link? #o222))]))
+  #|proc:file-executable?
+  Return whether any user, group, or other execute permission bit is set on path string `path`.
+  Boolean `follow-link?` defaults to `#t`. The selected entry must exist.
+  This inspects mode bits, not effective access for the current user or ACL permissions.
+  |#
   (define-who file-executable?
     (case-lambda [(path) (file-executable? path #t)]
                  [(path follow-link?)
@@ -1741,15 +1756,18 @@
 
 
   #|proc:walk-files
-  Traverse the filesystem tree rooted at `path`.
-  This is similar to Python's os.walk() method.
+  Traverse the filesystem tree rooted at path string `path`.
+  Procedure `proc` has signature `(lambda (directory directories files) continue?)`.
 
-  For every directory `pdir` encounterd, `proc` is applied to three values:
+  For every directory `pdir` encountered, `proc` is applied to three values:
   1. pdir
   2. the list of all directories under `pdir`
   3. the list of all other files under `pdir`.
 
-  All paths in the above values are relative to `path`.
+  All paths retain the supplied root prefix; an absolute root produces absolute paths.
+  Return `#f` from `proc` to stop the whole traversal, or any other value to continue.
+  Return `#f` if traversal was stopped. A complete top-down walk returns `#t`;
+  a complete bottom-up walk returns the root callback's result.
   Calling `cd` or `current-directory` to change the current directory inside `proc`
   results in unspecified behavior.
 
@@ -1757,7 +1775,7 @@
   and are therefore regarded as files.
   When following links, distinct aliases are visited separately while ancestor cycles are skipped.
 
-  If `top-down?` is #t (the default), the tree is travaled in a top-down manner,
+  If `top-down?` is #t (the default), the tree is traversed in a top-down manner,
   descending into each directory as deep as possible.
   `proc` in this case is called before any of the subdirectories are visited in 2.
 
