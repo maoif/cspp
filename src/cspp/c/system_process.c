@@ -802,6 +802,41 @@ ptr cspp_waitpid(int pid, int nohang) {
 #endif
 }
 
+/* Opened under the process mutex before another CSPP waiter can reap the PID.
+ * Each wait invocation owns its descriptor. Any unavailable/resource-limited
+ * pidfd path falls back to the existing nonblocking wait loop. */
+int cspp_process_wait_open(int pid) {
+#if defined(__linux__) && defined(SYS_pidfd_open)
+  int fd = (int)syscall(SYS_pidfd_open, pid, 0);
+  if (fd >= 0 && fd < 3) {
+    int elevated = fcntl(fd, F_DUPFD_CLOEXEC, 3);
+    close(fd);
+    fd = elevated;
+  }
+  return fd;
+#else
+  (void)pid;
+  return -1;
+#endif
+}
+
+/* Bound with __collect_safe: Chez deactivates the thread before this blocking
+ * call and reactivates it on return. Only scalar arguments and native stack
+ * storage are used here; Scheme objects must never be accessed in this region.
+ * Readiness does not reap: Scheme reacquires the process mutex to publish status. */
+int cspp_process_wait_ready(int fd, int timeout_ms) {
+  if (fd < 0 || timeout_ms < -1) return -EINVAL;
+  int64_t deadline = timeout_ms < 0 ? 0 : monotonic_ms() + timeout_ms;
+  for (;;) {
+    int64_t remaining = timeout_ms < 0 ? -1 : deadline - monotonic_ms();
+    struct pollfd event = {fd, POLLIN, 0};
+    int ready = poll(&event, 1, remaining < 0 && timeout_ms >= 0 ? 0 : (int)remaining);
+    if (ready > 0) return event.revents & POLLNVAL ? -EBADF : 1;
+    if (ready == 0) return 0;
+    if (errno != EINTR) return -errno;
+  }
+}
+
 ptr cspp_make_pipe() {
 #if defined(__unix__) || defined(__APPLE__)
   int fds[2];

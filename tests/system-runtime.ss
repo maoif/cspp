@@ -217,6 +217,31 @@
              (lambda () (check (process-exit-success? (process-wait child))))
              (lambda () (check (process-exit-success? (process-wait/timeout child 2000)))))))]
 
+  [(wait-notification)
+   ;; Error case: a timeout must not hold the process mutex, reap the child, or block another waiter.
+   (let ([child (process-spawn "/bin/sleep" '("0.2") '())])
+     (run-threads
+       (list (lambda () (check (process-exit-success? (process-wait child))))
+             (lambda ()
+               (check (guard (failure [(system-timeout-error? failure) #t])
+                        (process-wait/timeout child 10) #f)))
+             (lambda ()
+               (milisleep 30)
+               (collect)
+               (check (process-exit-success? (process-wait/timeout child 2000))))))
+     (check (eq? (process-status child) (process-wait/timeout child 0))))
+   ;; Error case: repeated timeouts must release each invocation's notification descriptor.
+   (let* ([child (process-spawn "/bin/sleep" '("3") '())]
+          [before (length (directory-list "/proc/self/fd"))])
+     (dynamic-wind
+       void
+       (lambda ()
+         (do ([index 0 (+ index 1)]) ((= index 50))
+           (check (guard (failure [(system-timeout-error? failure) #t])
+                    (process-wait/timeout child 0) #f)))
+         (check (= before (length (directory-list "/proc/self/fd")))))
+       (lambda () (process-kill child 9) (process-wait child))))]
+
   [(ports)
    (let ([child (process-spawn "/bin/cat" '() '((stdin . pipe) (stdout . pipe)))])
      (check (and (output-port? (process-stdin child)) (input-port? (process-stdout child))))

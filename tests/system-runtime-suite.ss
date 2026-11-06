@@ -1,5 +1,49 @@
 (import (cspp))
 
+(mat system-live-wait-notification
+
+  ;; Error case: wait notification must preserve timeout, concurrent reaping, and GC contracts.
+  (= 0 (system (if (file-exists? "system-runtime-runner.ss")
+                   "../cspp --script=system-runtime-runner.ss wait-notification"
+                   "./cspp --script=tests/system-runtime-runner.ss wait-notification"))))
+
+(mat system-live-wait-fallback
+
+  ;; Error case: unavailable pidfds must retain the previous wait behavior.
+  (if (= 0 (system "strace -qq -o /dev/null true >/dev/null 2>&1"))
+      (let* ([root (if (file-exists? "system-native-faults.ss") ".." ".")]
+             [launcher (string-append root "/cspp")]
+             [script (string-append "--script=" root "/tests/system-native-faults.ss")])
+        (process-exit-success?
+          (process-run strace "-qq" "-e" "trace=pidfd_open"
+            "-e" "inject=pidfd_open:error=ENOSYS" "-o" "/dev/null"
+            (begin launcher) (begin script) "live-wait" :timeout 5000)))
+      #t))
+
+(mat system-live-wait-efficiency
+
+  ;; Error case: a supported native exit notification must not wake to reap every few milliseconds.
+  (let ([available?
+          (and (foreign-entry? "pidfd_open")
+               (let ([fd ((foreign-procedure "pidfd_open" (int unsigned) int) (getpid) 0)])
+                 (and (>= fd 0) (begin ((foreign-procedure "close" (int) int) fd) #t))))])
+    (if (and available? (= 0 (system "strace -qq -o /dev/null true >/dev/null 2>&1")))
+        (let* ([root (if (file-exists? "system-native-faults.ss") ".." ".")]
+               [launcher (string-append root "/cspp")]
+               [script (string-append "--script=" root "/tests/system-native-faults.ss")]
+               [trace (format "/tmp/cspp-live-wait-~a.trace" (getpid))])
+          (dynamic-wind
+            void
+            (lambda ()
+              (and
+                (process-exit-success?
+                  (process-run strace "-qq" "-e" "trace=wait4" "-o" (begin trace)
+                    (begin launcher) (begin script) "live-wait" :timeout 5000))
+                (< (length (filter (lambda (line) (string-startswith? line "wait4("))
+                                   (read-lines trace))) 10)))
+            (lambda () (when (file-exists? trace) (delete-file trace)))))
+        #t)))
+
 (mat system-native-error-details
 
   ;; Error case: native allocation and localized messages need isolation from the test runner.

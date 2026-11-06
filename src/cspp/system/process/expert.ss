@@ -158,6 +158,15 @@
   (define $waitpid-ffi
     (foreign-procedure "cspp_waitpid" (int int) ptr))
 
+  (define $wait-open-ffi
+    (foreign-procedure "cspp_process_wait_open" (int) int))
+
+  ;; Scalar-only native waiting permits GC throughout poll. Reaping remains synchronized here.
+  (define $wait-ready-ffi
+    (foreign-procedure __collect_safe "cspp_process_wait_ready" (int int) int))
+
+  (define $close-fd-ffi (foreign-procedure "close" (int) int))
+
   (define $send-signal-ffi
     (foreign-procedure "cspp_send_signal" (int int) ptr))
 
@@ -261,19 +270,50 @@
   #|proc:process-wait
   The `process-wait` procedure waits for `process` and returns its cached exit status.
   The `process` argument is a process object. Waiting leaves its streams open for draining.
+  Linux pidfds provide exit notification without polling when available; otherwise short polls
+  are used. Waiting permits other Scheme threads to collect and does not hold the status mutex.
   Drain live output concurrently with a running child; waiting first can deadlock on full pipes.
   |#
   (define-who process-wait
     (lambda (process)
       (pcheck-who who ([process? process])
-        (let loop ()
-          (or (process-wait/no-hang process)
-              (begin (milisleep 5) (loop)))))))
+        ($process-wait who process #f))))
 
   (define $monotonic-milliseconds
     (lambda ()
       (let ([now (current-time 'time-monotonic)])
         (+ (* (time-second now) 1000) (quotient (time-nanosecond now) 1000000)))))
+
+  (define $process-wait
+    (lambda (who process milliseconds)
+      (let ([deadline (and milliseconds (+ ($monotonic-milliseconds) milliseconds))]
+            [descriptor -1])
+        (dynamic-wind
+          (lambda ()
+            ;; Open before any concurrent CSPP reaping can make the PID reusable.
+            ;; A resumed continuation obtains a fresh descriptor rather than reusing a closed one.
+            (with-mutex (process-mutex process)
+              (unless ($process-status process)
+                (set! descriptor ($wait-open-ffi ($process-pid process))))))
+          (lambda ()
+            (let loop ()
+              (or (process-wait/no-hang process)
+                  (let ([remaining (and deadline (- deadline ($monotonic-milliseconds)))])
+                    (when (and remaining (<= remaining 0))
+                      (raise (make-system-timeout-error who "process wait timed out"
+                               `((pid . ,($process-pid process)) (timeout . ,milliseconds)))))
+                    (if (fx>= descriptor 0)
+                        (let ([ready ($wait-ready-ffi descriptor
+                                       (if remaining (min #x7fffffff remaining) -1))])
+                          (when (fx< ready 0)
+                            (raise (make-system-error who (- ready) "process wait failed"
+                                     `((pid . ,($process-pid process)))))))
+                        (milisleep (if remaining (min 5 remaining) 5)))
+                    (loop)))))
+          (lambda ()
+            (when (fx>= descriptor 0)
+              ($close-fd-ffi descriptor)
+              (set! descriptor -1)))))))
 
   #|proc:process-wait/timeout
   The `process-wait/timeout` procedure waits for `process` for at most `milliseconds`.
@@ -283,15 +323,7 @@
   (define-who process-wait/timeout
     (lambda (process milliseconds)
       (pcheck-who who ([process? process] [natural? milliseconds])
-        (let ([deadline (+ ($monotonic-milliseconds) milliseconds)])
-          (let loop ()
-            (or (process-wait/no-hang process)
-                (let ([remaining (- deadline ($monotonic-milliseconds))])
-                  (when (<= remaining 0)
-                    (raise (make-system-timeout-error who "process wait timed out"
-                             `((pid . ,(process-pid process)) (timeout . ,milliseconds)))))
-                  (milisleep (min 5 remaining))
-                  (loop))))))))
+        ($process-wait who process milliseconds))))
 
   #|proc:process-running?
   The `process-running?` procedure returns whether `process` is still running.

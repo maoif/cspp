@@ -3,6 +3,10 @@
 ;; This driver runs under strace syscall injection, separately from the test runner.
 (define mode (string->symbol (cadr (command-line))))
 (case mode
+  [(live-wait)
+   (unless (process-exit-success? (process-wait (process-spawn "/bin/sleep" '("1") '())))
+     (error 'system-native-faults "live wait lost the exit status"))]
+
   [(spawn-without-descriptor-enumeration)
    ;; Error case: older kernels without procfs must still launch and close inherited descriptors.
    ;; This isolated driver lowers its hard limit to keep syscall tracing bounded.

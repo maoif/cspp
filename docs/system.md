@@ -178,6 +178,11 @@ the same cached record. `process-wait/no-hang` polls and returns `#f` while runn
 `process-status` reads only the cache; `process-running?` polls and may reap an exited child.
 `process-wait/timeout` accepts any exact nonnegative millisecond count and raises on expiry,
 leaving the child running. It uses a monotonic deadline. None of these operations closes ports.
+On Linux, each blocking or timed wait owns a transient pidfd when available. It sleeps until
+exit notification or its deadline, then reaps under the process mutex. Concurrent waiters share
+the cached result while owning separate notification descriptors. Descriptors are closed on
+return or error; no background waiter is created. Unsupported or unavailable pidfds fall back
+to short nonblocking polls and sleeps outside the mutex.
 
 `process-kill` takes a positive signed 32-bit signal number; `process-terminate` and
 `process-interrupt` send TERM and INT. `send-process-signal` also accepts signal names/records.
@@ -319,5 +324,7 @@ draining outputs and checking one monotonic deadline. It has no global reactor o
 thread. Run forms use the same loop with retention disabled for discarded capture streams.
 Buffers and strings used while Chez's thread is inactive are native-owned; Scheme
 objects are constructed only after activation. With no streams or deadline left, it blocks in
-`waitpid` instead of polling. Live waits use short nonblocking polls under a per-process mutex
-and sleep outside that mutex. These are OS-thread operations, not fiber-aware scheduling APIs.
+`waitpid` instead of polling. Live waits use pidfd notification where available; their scalar-only
+native poll helper uses `__collect_safe` so Chez deactivates the thread around the wait. Reaping
+and status publication occur under the per-process mutex afterward. These are OS-thread
+operations, not fiber-aware scheduling APIs.
