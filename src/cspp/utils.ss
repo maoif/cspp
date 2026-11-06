@@ -311,16 +311,27 @@
 
   #|proc:unreachable!
   The `unreachable!` procedure raises a continuable error indicating an unreachable code path.
-  The optional `who` argument identifies the caller in the condition; without it no caller is set.
+  The optional `caller` argument is a caller-name symbol or `#f`; without it no caller is set.
   Its return values are those supplied if a handler resumes the continuable exception.
   |#
-  (define unreachable!
+  (define-who unreachable!
     (case-lambda
       [() (raise-continuable (condition (make-error)
                                         (make-message-condition "Should not reach here!")))]
-      [(who) (raise-continuable (condition (make-error)
-                                           (make-who-condition who)
-                                           (make-message-condition "Should not reach here!")))]))
+      [(caller)
+       (pcheck-who who ([(lambda (value) (or (symbol? value) (not value))) caller])
+         (raise-continuable (condition (make-error)
+                                      (make-who-condition caller)
+                                      (make-message-condition "Should not reach here!"))))]))
+
+  (define-syntax $numeric-update!
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ who operation target)
+         (identifier? #'target)
+         #'(let ([current target])
+             (pcheck-who who ([number? current])
+               (set! target (operation current 1))))])))
 
 
   #|macro:incr!
@@ -331,7 +342,7 @@
     (lambda (stx)
       (syntax-case stx ()
         [(_ n) (identifier? #'n)
-         #'(set! n (+ n 1))])))
+         #'(let ([who 'incr!]) ($numeric-update! who + n))])))
 
   #|macro:decr!
   The `decr!` macro decrements the numeric variable `n` by one, returning unspecified values.
@@ -341,7 +352,7 @@
     (lambda (stx)
       (syntax-case stx ()
         [(_ n) (identifier? #'n)
-         #'(set! n (- n 1))])))
+         #'(let ([who 'decr!]) ($numeric-update! who - n))])))
 
   #|macro:add1!
   The `add1!` macro increments numeric variable `n` by one. Its return value is unspecified.
@@ -349,7 +360,7 @@
   |#
   (define-syntax add1!
     (syntax-rules ()
-      [(_ n) (incr! n)]))
+      [(_ n) (let ([who 'add1!]) ($numeric-update! who + n))]))
 
   #|macro:sub1!
   The `sub1!` macro decrements numeric variable `n` by one. Its return value is unspecified.
@@ -357,7 +368,7 @@
   |#
   (define-syntax sub1!
     (syntax-rules ()
-      [(_ n) (decr! n)]))
+      [(_ n) (let ([who 'sub1!]) ($numeric-update! who - n))]))
 
   (define-syntax $fixnum-update!
     (lambda (stx)
@@ -769,7 +780,8 @@
   The `define-flags` macro defines a mask macro `name` and a procedure `name->symbols` from
   `(flag mask)` pairs. Masks are fixnums or expressions referring to earlier flags, combined with
   `or`. The macro combines its named flag arguments into one fixnum mask.
-  The `name` and each `flag` must be identifiers; nonidentifier names raise a syntax error.
+  The `name` and each `flag` must be identifiers. Flag names must be distinct;
+  duplicate or nonidentifier names raise a syntax error.
   The generated decoder takes a fixnum and returns overlapping flag symbols in definition order.
   Any shared bit includes a flag, including composite masks and aliases; zero masks never appear.
   The definition's return value is unspecified.
@@ -787,27 +799,33 @@
       (syntax-case exp ()
         [(_k name (flag mask) ...)
          (and (identifier? #'name) (andmap identifier? #'(flag ...)))
-         (with-syntax ([env (datum->syntax #'_k
-                                           (mask-environment
-                                            (datum (flag ...))
-                                            (datum (mask ...))))]
-                       [->symbols ($construct-name #'_k #'name "->symbols")])
-           #'(begin
-               (define-syntax name
-                 (lambda (x)
-                   (syntax-case x ()
-                     ((_k flags (... ...))
-                      (datum->syntax #'_k
-                                     (flag->mask `(or ,@(datum (flags (... ...)))) 'env))))))
-               (define-who ->symbols
-                 (lambda (flags)
-                   (pcheck-who who ([fixnum? flags])
-                     (let loop ([e 'env] [res '()])
-                       (if (null? e)
-                           res
-                           (if (not (fx= (fxlogand (cdar e) flags) 0))
-                               (loop (cdr e) (cons (caar e) res))
-                               (loop (cdr e) res)))))))))]
+         (begin
+           (let loop ([names (datum (flag ...))] [identifiers #'(flag ...)])
+             (unless (null? names)
+               (when (memq (car names) (cdr names))
+                 (syntax-error (car identifiers) "duplicate flag name"))
+               (loop (cdr names) (cdr identifiers))))
+           (with-syntax ([env (datum->syntax #'_k
+                                             (mask-environment
+                                              (datum (flag ...))
+                                              (datum (mask ...))))]
+                         [->symbols ($construct-name #'_k #'name "->symbols")])
+             #'(begin
+                 (define-syntax name
+                   (lambda (x)
+                     (syntax-case x ()
+                       ((_k flags (... ...))
+                        (datum->syntax #'_k
+                                       (flag->mask `(or ,@(datum (flags (... ...)))) 'env))))))
+                 (define-who ->symbols
+                   (lambda (flags)
+                     (pcheck-who who ([fixnum? flags])
+                       (let loop ([e 'env] [res '()])
+                         (if (null? e)
+                             res
+                             (if (not (fx= (fxlogand (cdar e) flags) 0))
+                                 (loop (cdr e) (cons (caar e) res))
+                                 (loop (cdr e) res))))))))))]
         [_ (syntax-error exp "expected a name identifier and (flag-identifier mask) pairs")])))
 
   #|macro:flag-any-set?

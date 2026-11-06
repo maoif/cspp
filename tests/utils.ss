@@ -1,5 +1,35 @@
 (import (cspp chez) (cspp utils))
 
+(mat utility-validation-consistency
+
+     ;; Error case: numeric mutation macros reject nonnumbers using their own public names.
+     (for-all
+       (lambda (name)
+         (parameterize ([optimize-level 3])
+           (eval `(let ([value #f])
+                    (guard (failure
+                             [else (and (eq? ',name (condition-who failure)) (not value))])
+                      (,name value)
+                      #f))
+             (environment '(cspp chez) '(cspp utils)))))
+       '(incr! decr! add1! sub1!))
+
+     ;; Error case: the optional unreachable caller must be a symbol or #f.
+     (guard (failure [else (eq? 'unreachable! (condition-who failure))])
+       (unreachable! 42)
+       #f))
+
+(mat flag-duplicate-names
+
+     ;; Error case: duplicate names cannot encode one mask while decoding several masks.
+     (for-all
+       (lambda (declarations)
+         (guard (failure [(syntax-violation? failure) #t] [else #f])
+           (eval `(let () (define-flags flags ,@declarations) (flags read))
+             (environment '(cspp chez) '(cspp utils)))
+           #f))
+       '(((read 1) (read 2)) ((read 1) (write 2) (read (or read write))))))
+
 (mat pcheck-explicit-caller
 
      ;; Error case: a failed argument check must retain the explicit API name.
