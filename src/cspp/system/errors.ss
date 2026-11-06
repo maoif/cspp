@@ -230,9 +230,11 @@
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
   |#
-  (define raise-system-error
+  (define-who raise-system-error
     (lambda (operation code message context)
-      (raise (make-system-error operation code message context))))
+      (pcheck-who who ([$system-operation? operation] [$system-code? code]
+                       [string? message] [$system-context? context])
+        (raise (make-system-error operation code message context)))))
 
   #|proc:raise-system-unsupported
   The `raise-system-unsupported` procedure raises a system error condition for an unsupported
@@ -240,9 +242,10 @@
   The `operation` parameter is a symbol naming the unsupported operation, or `#f` when unknown.
   The `message` parameter is a string describing the failure.
   |#
-  (define raise-system-unsupported
+  (define-who raise-system-unsupported
     (lambda (operation message)
-      (raise (make-system-unsupported-error operation message))))
+      (pcheck-who who ([$system-operation? operation] [string? message])
+        (raise (make-system-unsupported-error operation message)))))
 
 
 )

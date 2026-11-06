@@ -109,7 +109,7 @@
   The `spec` parameter is a signal record, symbol, string such as `"TERM"` or `"SIGTERM"`, or
   exact positive signed 32-bit integer signal number.
   |#
-  (define-who %signal
+  (define-who #(% signal)
     (lambda (spec)
       (pcheck-who who ([$signal-input? spec])
               ($signal-ref who spec))))

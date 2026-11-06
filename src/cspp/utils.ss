@@ -663,7 +663,10 @@
     (case-lambda
       [() (random-symbol 1 10)]
       [(upper-bound) (random-symbol 1 upper-bound)]
-      [(lower-bound upper-bound) (string->symbol (random-string lower-bound upper-bound))]
+      [(lower-bound upper-bound)
+       (pcheck-who who ([$length-bound? lower-bound upper-bound])
+         (when (fx>= lower-bound upper-bound) ($range-error who lower-bound upper-bound))
+         (string->symbol (random-string lower-bound upper-bound)))]
       [(generator lower-bound upper-bound)
        (pcheck-who who ([procedure? generator] [$length-bound? lower-bound upper-bound])
                (when (fx>= lower-bound upper-bound)

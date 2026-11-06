@@ -93,6 +93,7 @@
              (cons 'p/not (lambda () (p/not #f)))
              (cons 'procedure-arity (lambda () (procedure-arity #f)))
              (cons 'random-list (lambda () (random-list #f 0 1)))
+             (cons 'random-symbol (lambda () (random-symbol #f)))
              (cons 'random-u8vec (lambda () (random-u8vec 1.0))))))
 
 (mat pcase-fallback

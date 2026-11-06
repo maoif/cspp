@@ -111,10 +111,11 @@
   characters.
   The `default` parameter is the value returned when `id` does not identify an existing user.
   |#
-  (define user-ref/default
+  (define-who user-ref/default
     (lambda (id default)
-      (guard (c [(system-not-found-error? c) default])
-        (user-ref id))))
+      (pcheck-who who ([$user-key? id])
+        (guard (c [(system-not-found-error? c) default])
+          (user-ref id)))))
 
   #|proc:group-ref/default
   The `group-ref/default` procedure returns a Unix group record for `id`, or `default` when `id`
@@ -123,10 +124,11 @@
   characters.
   The `default` parameter is the value returned when `id` does not identify an existing group.
   |#
-  (define group-ref/default
+  (define-who group-ref/default
     (lambda (id default)
-      (guard (c [(system-not-found-error? c) default])
-        (group-ref id))))
+      (pcheck-who who ([$user-key? id])
+        (guard (c [(system-not-found-error? c) default])
+          (group-ref id)))))
 
   #|proc:uid->user
   The `uid->user` procedure returns the user name for `id`.
@@ -223,10 +225,11 @@
   The `id` parameter is either an exact unsigned 32-bit user ID or a user name string without NUL
   characters.
   |#
-  (define user-exists?
+  (define-who user-exists?
     (lambda (id)
-      (guard (c [(system-not-found-error? c) #f])
-        (if (user-ref id) #t #f))))
+      (pcheck-who who ([$user-key? id])
+        (guard (c [(system-not-found-error? c) #f])
+          (if (user-ref id) #t #f)))))
 
   #|proc:group-exists?
   The `group-exists?` procedure returns `#t` when `id` identifies an existing group, otherwise
@@ -234,10 +237,11 @@
   The `id` parameter is either an exact unsigned 32-bit group ID or a group name string without NUL
   characters.
   |#
-  (define group-exists?
+  (define-who group-exists?
     (lambda (id)
-      (guard (c [(system-not-found-error? c) #f])
-        (if (group-ref id) #t #f))))
+      (pcheck-who who ([$user-key? id])
+        (guard (c [(system-not-found-error? c) #f])
+          (if (group-ref id) #t #f)))))
 
   #|proc:current-user
   The `current-user` procedure returns the Unix user record for the real user ID of the calling
