@@ -70,13 +70,13 @@
   (define flag->mask
     (lambda (m e)
       (cond
-       [(fixnum? m) m]
+       [(and (integer? m) (exact? m)) m]
        [(and (symbol? m) (assq m e)) => cdr]
        [(and (pair? m) (list? m) (eq? (car m) 'or))
         (let f ((ls (cdr m)))
           (if (null? ls)
               0
-              (fxlogor (flag->mask (car ls) e) (f (cdr ls)))))]
+              (logor (flag->mask (car ls) e) (f (cdr ls)))))]
        ;; TODO better error report
        [else (errorf 'flag->mask "invalid mask ~s" m)])))
 

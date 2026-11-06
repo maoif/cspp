@@ -779,15 +779,18 @@
 ;;;; bit masks and flags
 ;;;;===----------------------------------------------------------------------===
 
+  (define $flag-integer? (lambda (value) (and (integer? value) (exact? value))))
+
   #|macro:define-flags
-  The `define-flags` macro defines a mask macro `name` and a procedure `name->symbols` from
-  `(flag mask)` pairs. Masks are fixnums or expressions referring to earlier flags, combined with
-  `or`. The macro combines its named flag arguments into one fixnum mask.
+  `(define-flags name (flag mask) ...)` defines a mask-building macro `name` and a
+  procedure `name->symbols`. Each mask is an exact integer or `(or earlier-flag ...)`.
+  The decoder accepts an exact integer and returns all nonzero flags whose bits are fully
+  present, in declaration order, including composite aliases. Unknown bits are ignored.
+  `(define-flags name mask? (flag mask) ...)` additionally requires decoder arguments to
+  satisfy predicate `mask?`, of signature `(lambda (mask) boolean)`.
   The `name` and each `flag` must be identifiers. Flag names must be distinct;
   duplicate or nonidentifier names raise a syntax error.
-  The generated decoder takes a fixnum and returns overlapping flag symbols in definition order.
   The decoder uses `name`'s lexical context, including when a wrapper macro supplies that name.
-  Any shared bit includes a flag, including composite masks and aliases; zero masks never appear.
   The definition's return value is unspecified.
   |#
   (define-syntax define-flags
@@ -802,6 +805,9 @@
                      (cons `(,(car flags) . ,mask) e)))))))
       (syntax-case exp ()
         [(_k name (flag mask) ...)
+         (and (identifier? #'name) (andmap identifier? #'(flag ...)))
+         #'(_k name $flag-integer? (flag mask) ...)]
+        [(_k name mask? (flag mask) ...)
          (and (identifier? #'name) (andmap identifier? #'(flag ...)))
          (begin
            (let loop ([names (datum (flag ...))] [identifiers #'(flag ...)])
@@ -823,53 +829,53 @@
                                        (flag->mask `(or ,@(datum (flags (... ...)))) 'env))))))
                  (define-who ->symbols
                    (lambda (flags)
-                     (pcheck-who who ([fixnum? flags])
+                     (pcheck-who who ([$flag-integer? flags] [mask? flags])
                        (let loop ([e 'env] [res '()])
                          (if (null? e)
                              res
-                             (if (not (fx= (fxlogand (cdar e) flags) 0))
+                             (if (and (not (zero? (cdar e))) (= (logand (cdar e) flags) (cdar e)))
                                  (loop (cdr e) (cons (caar e) res))
                                  (loop (cdr e) res))))))))))]
         [_ (syntax-error exp "expected a name identifier and (flag-identifier mask) pairs")])))
 
   #|macro:flag-any-set?
-  The `flag-any-set?` macro returns whether any bits in fixnum `mask` occur in fixnum `x`.
+  The `flag-any-set?` macro returns whether any bits in exact integer `mask` occur in `x`.
   |#
   (define-syntax flag-any-set?
     (syntax-rules ()
       ((_ mask x)
        (let ([who 'flag-any-set?] [bits mask] [value x])
-         (pcheck-who who ([fixnum? bits value])
-           (not (fx= (fxlogand bits value) 0)))))))
+         (pcheck-who who ([$flag-integer? bits value])
+           (not (zero? (logand bits value))))))))
 
   #|macro:flag-all-set?
-  The `flag-all-set?` macro returns whether every bit in fixnum `mask` occurs in fixnum `x`.
+  The `flag-all-set?` macro returns whether every bit in exact integer `mask` occurs in `x`.
   A zero mask always returns `#t`.
   |#
   (define-syntax flag-all-set?
     (syntax-rules ()
       ((_ mask x)
        (let ([who 'flag-all-set?] [bits mask] [value x])
-         (pcheck-who who ([fixnum? bits value])
-           (fx= (fxlogand bits value) bits))))))
+         (pcheck-who who ([$flag-integer? bits value])
+           (= (logand bits value) bits))))))
 
   #|macro:flag-set
-  The `flag-set` macro returns fixnum `x` with every bit of fixnum `mask` set, without mutation.
+  The `flag-set` macro returns exact integer `x` with every bit of exact integer `mask` set.
   |#
   (define-syntax flag-set
     (syntax-rules ()
       ((_ mask x)
        (let ([who 'flag-set] [bits mask] [value x])
-         (pcheck-who who ([fixnum? bits value]) (fxlogor bits value))))))
+         (pcheck-who who ([$flag-integer? bits value]) (logor bits value))))))
 
   #|macro:flag-reset
-  The `flag-reset` macro returns fixnum `x` with every bit of fixnum `mask` cleared.
+  The `flag-reset` macro returns exact integer `x` with every bit of exact integer `mask` cleared.
   Neither argument is mutated.
   |#
   (define-syntax flag-reset
     (syntax-rules ()
       ((_ mask x)
        (let ([who 'flag-reset] [bits mask] [value x])
-         (pcheck-who who ([fixnum? bits value]) (fxlogand (fxlognot bits) value))))))
+         (pcheck-who who ([$flag-integer? bits value]) (logand (lognot bits) value))))))
 
   )

@@ -246,6 +246,65 @@
                          (and (member path entries) (string=? "payload" (read-string path)))))
                      names))))))
 
+(define-flags $wide-test-mask
+  (low 1)
+  (high #x10000000000000000000000000)
+  (both (or low high)))
+
+(mat file-mask-decoding
+     (equal? '(FSW_access) (fswatcher-mask->symbols (fswatcher-mask FSW_access)))
+
+     (equal? '(FSW_close_write)
+             (fswatcher-mask->symbols (fswatcher-mask FSW_close_write)))
+
+     (equal? '(FSW_close_write FSW_close_nowrite FSW_close)
+             (fswatcher-mask->symbols (fswatcher-mask FSW_close)))
+
+     (equal? '(FSW_isdir FSW_oneshot)
+             (fswatcher-mask->symbols #xc0000000))
+
+     ;; Error cases: the exported watcher decoder requires an unsigned 32-bit integer.
+     (for-all (lambda (mask)
+                (guard (failure [(error? failure) #t])
+                  (fswatcher-mask->symbols mask) #f))
+              (list #f "bad" '() -1 1.0 #x100000000 (expt 2 100)))
+
+     ;; Generic flag definitions and operations support integers beyond the fixnum range.
+     (equal? '(high) ($wide-test-mask->symbols ($wide-test-mask high)))
+
+     (= #x10000000000000000000000001 ($wide-test-mask both))
+
+     (flag-any-set? ($wide-test-mask high) ($wide-test-mask both))
+
+     (not (flag-all-set? ($wide-test-mask both) ($wide-test-mask high)))
+
+     (= ($wide-test-mask both) (flag-set ($wide-test-mask high) 1))
+
+     (= 1 (flag-reset ($wide-test-mask high) ($wide-test-mask both))))
+
+(mat file-mask-roundtrips-and-types
+     (for-all
+      (lambda (mask)
+        (= mask (eval `(fswatcher-mask ,@(fswatcher-mask->symbols mask))
+                      (environment '(cspp)))))
+      '(1 8 24 4095 #xc0000000))
+
+     ;; Error cases: generic flag operations reject noninteger operands on either side.
+     (for-all
+      (lambda (operation)
+        (for-all
+         (lambda (value)
+           (guard (failure [(error? failure) #t]) (operation value) #f))
+         '(#f "bad" () 1.0 1/2)))
+      (list (lambda (value) (flag-any-set? value 1))
+            (lambda (value) (flag-any-set? 1 value))
+            (lambda (value) (flag-all-set? value 1))
+            (lambda (value) (flag-all-set? 1 value))
+            (lambda (value) (flag-set value 1))
+            (lambda (value) (flag-set 1 value))
+            (lambda (value) (flag-reset value 1))
+            (lambda (value) (flag-reset 1 value)))))
+
 (mat file-collection-callback-results
      ($with-fs-fixture
       (lambda (root)

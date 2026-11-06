@@ -2810,7 +2810,12 @@
   Filesystem events bitmask that can be given to `fswatcher-add!` or returned by `fswatcher-next!`.
   Use expressions like `(fswatcher-mask FSW_access FSW_modify)` to make the right bitmask.
   |#
-  (define-flags fswatcher-mask
+  #|proc:fswatcher-mask->symbols
+  Decode unsigned 32-bit integer `mask` into a list of fully present `FSW_*` symbols.
+  Composite aliases are included only when all their constituent bits are set.
+  Symbols follow declaration order; unknown bits are ignored.
+  |#
+  (define-flags fswatcher-mask u32?
     (FSW_access        #x00000001)
     (FSW_modify        #x00000002)
     (FSW_attrib        #x00000004)
