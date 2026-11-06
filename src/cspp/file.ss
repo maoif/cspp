@@ -2420,7 +2420,9 @@
     (lambda (who src dest copy)
        (pcheck ([$filename? src dest] [(lambda (path) (file-exists? path #f)) src]
                 [procedure? copy])
-               (cond [(and (not (file-exists? dest #f)) ($try-rename-file src dest)) #t]
+               (cond [(and (file-exists? dest #f) ($same-file-entry? src dest))
+                      ($err-file who dest "source and destination are the same file")]
+                     [(and (not (file-exists? dest #f)) ($try-rename-file src dest)) #t]
                      [(and (file-directory? src #f) (not (file-symbolic-link? src)))
                       (let ([metadata ($file-copytree who src dest copy #t)])
                         ;; Removal may change the destination if it contains the source.
@@ -2447,6 +2449,7 @@
   Optional `copy` has signature `(lambda (source-path destination-path) ...)` and controls
   copying individual files and symlinks, including their metadata; return values are ignored.
   A successful rename bypasses `copy`. Source entries are removed only after copying succeeds.
+  Moving an entry onto itself raises an error before calling `copy`.
   Existing child directories are not merged recursively, as in `file-copytree`.
   A failed copy can leave a partial destination; the source remains until copying succeeds.
   Return `#t` for a renamed file or moved directory, unspecified values for a copied file.

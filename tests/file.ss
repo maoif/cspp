@@ -2202,6 +2202,19 @@
 
 (mat file-move
 
+     ;; Error cases: a directory-target symlink must not become its own destination container.
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([source (path-build root "directory-link")])
+          (file-symlink "sub" source)
+          (for-all
+           (lambda (copy)
+             (and (guard (failure [else #t]) (file-move source source copy) #f)
+                  (file-symbolic-link? source)
+                  (not (file-exists? (path-build root "sub/directory-link") #f))))
+           (list file-copy! (lambda (source destination) (file-copy source destination #f))
+                 (lambda (source destination) (void)))))))
+
      ;; Moving to a missing destination on the same filesystem preserves directory identity.
      ($with-fs-fixture
       (lambda (root)
