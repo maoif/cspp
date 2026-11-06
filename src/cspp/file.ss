@@ -243,12 +243,11 @@
     (lambda (who path mode bin? writer)
       (pcheck ([$filename? path])
               (let ([go (lambda (mode)
-                          (let ([op (if mode
-                                        (case mode
-                                          [truncate (file-options replace)]
-                                          [append (file-options no-truncate no-fail append)]
-                                          [else ($err-bad-write-mode who mode)])
-                                        (file-options))])
+                          (let ([op (case mode
+                                      [error (file-options)]
+                                      [truncate (file-options no-fail)]
+                                      [append (file-options no-truncate no-fail append)]
+                                      [else ($err-bad-write-mode who mode)])])
                             ($with-port (open-file-output-port path op (buffer-mode block)
                                                                (if bin? #f (current-transcoder)))
                               (lambda (p) (writer p)))))])
@@ -258,7 +257,7 @@
                         (if (file-regular? path)
                             (go mode)
                             ($err-file-not-regular who path)))
-                    (go #f))))))
+                    (go mode))))))
 
   ;; a newline is added after writing each string
   (define $write-lines

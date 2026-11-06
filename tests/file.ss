@@ -40,6 +40,49 @@
   (lambda (datum port write)
     ($escape-file-write 'escaped)))
 
+(define-record-type $interleaved-append
+  (fields path (mutable appended?)))
+
+(record-writer (record-type-descriptor $interleaved-append)
+  (lambda (datum port write)
+    ;; The outer writer has created the file but has not flushed any bytes yet.
+    ;; Chez may invoke a record writer once for graph discovery and again for output.
+    (unless ($interleaved-append-appended? datum)
+      ($interleaved-append-appended?-set! datum #t)
+      (write-string>> ($interleaved-append-path datum) "inner"))
+    (put-string port "outer")))
+
+(mat file-writer-preserves-entry
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([path (path-build root "top.txt")]
+              [alias (path-build root "alias")]
+              [link (path-build root "link")])
+          (write-string! path "old contents")
+          (file-chmod path #o600)
+          (file-link path alias)
+          (file-symlink "top.txt" link)
+          (let ([inode (file-inode path)])
+            (write-string! path "short")
+            (and (= inode (file-inode path))
+                 (= #o600 (file-mode path))
+                 (string=? "short" (read-string alias))
+                 (begin (write-u8vec! link #vu8(110 101 119)) #t)
+                 (file-symbolic-link? link)
+                 (string=? "new" (read-string path))))))))
+
+(mat file-append-created-descriptor
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([path (path-build root "new")]
+              [link (path-build root "dangling")])
+          (write-datum>> path (make-$interleaved-append path #f))
+          (file-symlink "target" link)
+          (and (string=? "innerouter\n" (read-string path))
+               (begin (write-string>> link "created") #t)
+               (file-symbolic-link? link)
+               (string=? "created" (read-string (path-build root "target"))))))))
+
 (mat file-content-comparison-chunk-boundaries
      ($with-fs-fixture
       (lambda (root)
