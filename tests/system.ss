@@ -27,6 +27,41 @@
              (cons 'process-spawn-shell
                    (lambda () (process-spawn-shell "exit 0" '((cwd . ""))))))))
 
+(mat cpu-count-affinity
+
+     ;; Error case: an online CPU outside the caller's affinity mask is not available to it.
+     (or (not (linux?))
+         (let* ([get-affinity
+                  (foreign-procedure __errno "sched_getaffinity" (int uptr u8*) int)]
+                [set-affinity (foreign-procedure "sched_setaffinity" (int uptr u8*) int)]
+                [original
+                  (let loop ([size 128])
+                    (let ([mask (make-bytevector size 0)])
+                      (let-values ([(result code) (get-affinity 0 size mask)])
+                        (cond [(= result 0) mask]
+                              [(= code 22) (loop (* size 2))]
+                              [else (error 'cpu-count-affinity "cannot read CPU affinity" code)]))))]
+                [single (make-bytevector (bytevector-length original) 0)]
+                [before (cpu-count)])
+           (let find-byte ([index 0])
+             (let ([byte (bytevector-u8-ref original index)])
+               (if (= byte 0)
+                   (find-byte (+ index 1))
+                   (let find-bit ([bit 1])
+                     (if (= (logand byte bit) 0)
+                         (find-bit (* bit 2))
+                         (bytevector-u8-set! single index bit))))))
+           (and
+             (dynamic-wind
+               (lambda ()
+                 (unless (= 0 (set-affinity 0 (bytevector-length single) single))
+                   (error 'cpu-count-affinity "cannot restrict CPU affinity")))
+               (lambda () (= 1 (cpu-count)))
+               (lambda ()
+                 (unless (= 0 (set-affinity 0 (bytevector-length original) original))
+                   (error 'cpu-count-affinity "cannot restore CPU affinity"))))
+             (= before (cpu-count))))))
+
 (mat shared-object-unicode-path
 
      ;; Error case: native UTF-8 library paths must retain their Unicode characters.

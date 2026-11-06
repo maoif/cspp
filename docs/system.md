@@ -23,6 +23,10 @@ an empty list when that file is absent.
 `hostname` (also `system-hostname`) and `cpu-arch` return strings. Native query failures raise
 system conditions with the operation and error code.
 
+`cpu-count` reports CPUs allowed by the calling native thread's affinity mask on Linux.
+When affinity information is unavailable, it uses the online CPU count, falling back to one.
+CPU-time quotas are not converted into CPU counts.
+
 `linux-system-uptime`, `linux-memory-info`, and `linux-load-average` read their requested procfs
 files directly on each call. They do not enumerate mounts or cache mount-namespace state.
 An absent file raises `system-unsupported-error?`. `linux-procfs-mounted?` remains the explicit

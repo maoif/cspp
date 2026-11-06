@@ -17,6 +17,9 @@
 #endif
 #include <time.h>
 #include <sys/utsname.h>
+#if defined(__linux__)
+#include <sched.h>
+#endif
 
 extern char **environ;
 
@@ -124,14 +127,37 @@ ptr cspp_cpu_arch() {
 }
 
 
-int cspp_cpu_count() {
-  long num_cores = sysconf(_SC_NPROCESSORS_ONLN); 
-  if (num_cores == -1) {
-    // just return a fallback value
-    return 1;
-  }
+#if defined(__linux__)
+static int affinity_cpu_count(void) {
+  cpu_set_t mask;
+  CPU_ZERO(&mask);
+  if (sched_getaffinity(0, sizeof(mask), &mask) == 0) return CPU_COUNT(&mask);
+  if (errno != EINVAL) return 0;
 
-  return (int) num_cores;
+  /* Large kernel CPU masks can exceed CPU_SETSIZE, even with few online CPUs. */
+  for (size_t capacity = CPU_SETSIZE * 2; capacity <= INT_MAX; capacity *= 2) {
+    size_t size = CPU_ALLOC_SIZE(capacity);
+    cpu_set_t *large_mask = CPU_ALLOC(capacity);
+    if (large_mask == NULL) return 0;
+    CPU_ZERO_S(size, large_mask);
+    int result = sched_getaffinity(0, size, large_mask);
+    int error = errno;
+    int count = result == 0 ? CPU_COUNT_S(size, large_mask) : 0;
+    CPU_FREE(large_mask);
+    if (result == 0) return count;
+    if (error != EINVAL || capacity > INT_MAX / 2) break;
+  }
+  return 0;
+}
+#endif
+
+int cspp_cpu_count() {
+#if defined(__linux__)
+  int available = affinity_cpu_count();
+  if (available > 0) return available;
+#endif
+  long online = sysconf(_SC_NPROCESSORS_ONLN);
+  return online > 0 ? (online > INT_MAX ? INT_MAX : (int)online) : 1;
 }
 
 

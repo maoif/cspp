@@ -39,6 +39,9 @@
 
   #|proc:cpu-count
   The `cpu-count` procedure returns the number of available logical processors.
+  On Linux it counts CPUs allowed by the calling native thread's affinity mask.
+  When affinity is unavailable, it uses the online CPU count, with a minimum fallback of one.
+  This is a CPU count, not a measure of CPU-time quotas imposed by a container.
   |#
   (define cpu-count
     (foreign-procedure "cspp_cpu_count" () int))
