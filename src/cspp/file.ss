@@ -1075,10 +1075,11 @@
     (sealed #t))
 
   (define $fs-ensure-linux
-    (lambda (who)
-      (let* ([name (symbol->string (machine-type))] [length (string-length name)])
-        (unless (and (fx>= length 2)
-                     (string=? "le" (substring name (fx- length 2) length)))
+    (let* ([name (symbol->string (machine-type))] [length (string-length name)]
+           [supported? (and (fx>= length 2)
+                            (string=? "le" (substring name (fx- length 2) length)))])
+      (lambda (who)
+        (unless supported?
           (errorf who "local directory iteration is unsupported on this platform")))))
 
   #|proc:fs-directory?
@@ -1130,12 +1131,14 @@
                           [(string? value) ($err-file 'fs-read-directory
                                                      (fs-directory-path directory) value)]
                           [else
-                           (cons (car value)
-                                 (case (cdr value)
-                                   [(4) 'FT_dir] [(8) 'FT_regular]
-                                   [(10) 'FT_symlink] [(6) 'FT_block]
-                                   [(2) 'FT_chardev] [(1) 'FT_fifo]
-                                   [(12) 'FT_socket] [else 'FT_unknown]))]))))))
+                           ;; The native result is fresh; translate its type in place.
+                           (set-cdr! value
+                                     (case (cdr value)
+                                       [(4) 'FT_dir] [(8) 'FT_regular]
+                                       [(10) 'FT_symlink] [(6) 'FT_block]
+                                       [(2) 'FT_chardev] [(1) 'FT_fifo]
+                                       [(12) 'FT_socket] [else 'FT_unknown]))
+                           value]))))))
 
   #|proc:fs-close-directory
   Close stream `directory` and return the same object. Closing an already closed
