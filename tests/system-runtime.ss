@@ -30,6 +30,55 @@
       (unless (null? failures) (raise (car failures))))))
 
 (case (string->symbol (cadr (command-line)))
+  [(native-allocation-errors)
+   ;; Error case: failed native argument copies must preserve ENOMEM, not report invalid arguments.
+   (let* ([argument (make-string 30000000 #\a)]
+          [original (make-bytevector 16 0)] [limited (make-bytevector 16 0)]
+          [get-limit (foreign-procedure "getrlimit" (int u8*) int)]
+          [set-limit (foreign-procedure "setrlimit" (int u8*) int)]
+          [page-size ((foreign-procedure "getpagesize" () int))]
+          [pages (call-with-input-file "/proc/self/statm"
+                   (lambda (port)
+                     (string->number (car (string-split (get-line port) #\space)))))]
+          [codes #f])
+     (check (= 0 (get-limit 9 original)))
+     (bytevector-copy! original 0 limited 0 16)
+     (bytevector-u64-native-set! limited 0 (+ (* pages page-size) 4194304))
+     (dynamic-wind
+       (lambda () (check (= 0 (set-limit 9 limited))))
+       (lambda ()
+         (set! codes
+           (map
+             (lambda (thunk)
+               (guard (failure [(system-error? failure) (system-error-code failure)])
+                 (thunk)
+                 #f))
+             (list (lambda () (process-wait (process-spawn "/bin/true" (list argument) '())))
+                   (lambda () (process-capture /bin/true (begin argument)))
+                   (lambda () (process-run-pipeline (list (list "/bin/true" argument))))))))
+       (lambda () (check (= 0 (set-limit 9 original)))))
+     (check (equal? '(12 12 12) codes)))]
+
+  [(localized-errors)
+   ;; Error case: UTF-8 native messages must be decoded rather than widened byte by byte.
+   ;; Locale mutation is isolated from other test processes and restored before returning.
+   (let* ([locale (foreign-procedure "setlocale" (int utf-8) utf-8)]
+          [native-message (foreign-procedure "strerror" (int) utf-8)]
+          [original (locale 6 #f)])
+     (dynamic-wind
+       void
+       (lambda ()
+         (when (exists (lambda (name) (locale 6 name))
+                       '("zh_CN.UTF-8" "fr_FR.UTF-8" "de_DE.UTF-8"))
+           (check
+             (guard (failure
+                      [(system-error? failure)
+                       (and (string=? (native-message 2) (system-error-message failure))
+                            (string=? (native-message 2) (condition-message failure)))])
+               (filesystem-info "/definitely-missing-cspp-system-runtime")
+               #f))))
+       (lambda () (locale 6 original))))]
+
   [(pipeline-low-descriptor-limit)
    ;; Error case: pipeline length must not require every connection open in the parent at once.
    ;; Only this isolated process lowers its descriptor limit.

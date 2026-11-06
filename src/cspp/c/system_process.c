@@ -49,15 +49,17 @@ static ptr buffer_to_bytes(byte_buffer *buffer) {
 
 /* Encode Unicode scalar values without truncation at embedded NUL. */
 static char *copy_scheme_string(ptr str) {
-  if (!Sstringp(str)) return NULL;
+  if (!Sstringp(str)) { errno = EINVAL; return NULL; }
   iptr count = Sstring_length(str);
-  if ((size_t)count > (SIZE_MAX - 1) / 4) return NULL;
+  if ((size_t)count > (SIZE_MAX - 1) / 4) { errno = ENOMEM; return NULL; }
   char *result = malloc((size_t)count * 4 + 1);
   if (!result) return NULL;
   size_t offset = 0;
   for (iptr i = 0; i < count; i++) {
     uint32_t ch = (uint32_t)Sstring_ref(str, i);
-    if (!ch || ch > 0x10ffff || (ch >= 0xd800 && ch <= 0xdfff)) { free(result); return NULL; }
+    if (!ch || ch > 0x10ffff || (ch >= 0xd800 && ch <= 0xdfff)) {
+      free(result); errno = EINVAL; return NULL;
+    }
     if (ch < 0x80) result[offset++] = (char)ch;
     else {
       if (ch < 0x800) result[offset++] = (char)(0xc0 | (ch >> 6));
@@ -92,19 +94,24 @@ static void free_string_array(char **items) {
   free(items);
 }
 
+static char **string_array_failure(char **items, int error) {
+  free_string_array(items);
+  errno = error;
+  return NULL;
+}
+
 // Converts a nonempty Scheme list of strings into a NULL-terminated argv array.
 // The caller owns the returned array and must release it with free_string_array.
 static char **argv_from_list(ptr argv) {
   int argc = list_length(argv);
-  if (argc <= 0) return NULL;
+  if (argc <= 0) { errno = EINVAL; return NULL; }
   char **out = (char **)calloc((size_t)argc + 1, sizeof(char *));
   if (out == NULL) return NULL;
   ptr ls = argv;
   for (int i = 0; i < argc; i += 1) {
     out[i] = copy_scheme_string(Scar(ls));
     if (out[i] == NULL) {
-      free_string_array(out);
-      return NULL;
+      return string_array_failure(out, errno);
     }
     ls = Scdr(ls);
   }
@@ -117,32 +124,31 @@ static char **argv_from_list(ptr argv) {
 static char **env_from_alist(ptr env) {
   if (env == Sfalse) return cspp_copy_environment();
   int count = list_length(env);
-  if (count < 0) return NULL;
+  if (count < 0) { errno = EINVAL; return NULL; }
   char **out = (char **)calloc((size_t)count + 1, sizeof(char *));
   if (out == NULL) return NULL;
   ptr ls = env;
   for (int i = 0; i < count; i += 1) {
     ptr entry = Scar(ls);
     if (!Spairp(entry) || !Sstringp(Scar(entry)) || !Sstringp(Scdr(entry))) {
-      free_string_array(out);
-      return NULL;
+      return string_array_failure(out, EINVAL);
     }
     char *key = copy_scheme_string(Scar(entry));
+    if (!key) return string_array_failure(out, errno);
     char *value = copy_scheme_string(Scdr(entry));
-    if (key == NULL || value == NULL) {
+    if (value == NULL) {
+      int error = errno;
       free(key);
-      free(value);
-      free_string_array(out);
-      return NULL;
+      return string_array_failure(out, error);
     }
     size_t key_len = strlen(key);
     size_t value_len = strlen(value);
     out[i] = (char *)malloc(key_len + value_len + 2);
     if (out[i] == NULL) {
+      int error = errno;
       free(key);
       free(value);
-      free_string_array(out);
-      return NULL;
+      return string_array_failure(out, error);
     }
     memcpy(out[i], key, key_len);
     out[i][key_len] = '=';
@@ -153,6 +159,16 @@ static char **env_from_alist(ptr env) {
   }
   out[count] = NULL;
   return out;
+}
+
+/* Preserve the first conversion failure; a subsequent successful allocation
+ * or malformed environment must not replace its errno. Callers free both arrays. */
+static int copy_command(ptr argv, ptr env, char ***cargv, char ***cenv) {
+  *cenv = NULL;
+  *cargv = argv_from_list(argv);
+  if (!*cargv) return errno;
+  *cenv = env_from_alist(env);
+  return *cenv ? 0 : errno;
 }
 
 #if defined(__unix__) || defined(__APPLE__)
@@ -612,12 +628,12 @@ ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
                          int stdout_null, int stderr_null, int stderr_to_stdout,
                          int timeout_ms) {
 #if defined(__unix__) || defined(__APPLE__)
-  char **cargv = argv_from_list(argv);
-  char **cenv = env_from_alist(env);
-  if (cargv == NULL || cenv == NULL) {
+  char **cargv, **cenv;
+  int rc = copy_command(argv, env, &cargv, &cenv);
+  if (rc != 0) {
     free_string_array(cargv);
     free_string_array(cenv);
-    errno = EINVAL;
+    errno = rc;
     return cspp_errno_result("spawn-capture", Snil);
   }
   char **candidates = NULL;
@@ -632,7 +648,6 @@ ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
   int stdin_pipe[2] = {-1, -1};
   int stdout_pipe[2] = {-1, -1};
   int stderr_pipe[2] = {-1, -1};
-  int rc = 0;
   if (Sbytevectorp(stdin_payload)) {
     if (make_pipe(stdin_pipe) != 0) rc = errno;
   }
@@ -723,14 +738,13 @@ ptr cspp_spawn_process(ptr argv, ptr env, const char *cwd,
                          int stdin_mode, int stdout_mode, int stderr_mode) {
 #if defined(__unix__) || defined(__APPLE__)
   const char *operation = "process-spawn";
-  char **cargv = argv_from_list(argv);
-  char **cenv = env_from_alist(env);
+  char **cargv, **cenv;
   char **candidates = NULL;
   int pipes[3][2] = {{-1, -1}, {-1, -1}, {-1, -1}};
   int modes[3] = {stdin_mode, stdout_mode, stderr_mode};
-  int sources[3], error = 0;
+  int sources[3], error = copy_command(argv, env, &cargv, &cenv);
   pid_t pid = -1;
-  if (!cargv || !cenv) { error = EINVAL; goto done; }
+  if (error) goto done;
   error = executable_candidates(cargv[0], cenv, &candidates);
   if (error) goto done;
   for (int i = 0; i < 3; i++) {
@@ -852,7 +866,7 @@ static int start_pipeline(ptr specs, pipeline_stdout_mode stdout_mode,
   if (launch->count <= 0) return EINVAL;
 
   launch->env = env_from_alist(Sfalse);
-  if (launch->env == NULL) { error = ENOMEM; goto failed; }
+  if (launch->env == NULL) { error = errno; goto failed; }
   launch->argvs = calloc((size_t)launch->count, sizeof(*launch->argvs));
   launch->pids = calloc((size_t)launch->count, sizeof(*launch->pids));
   if (launch->argvs == NULL || launch->pids == NULL) { error = ENOMEM; goto failed; }
@@ -860,7 +874,7 @@ static int start_pipeline(ptr specs, pipeline_stdout_mode stdout_mode,
   ptr remaining = specs;
   for (int i = 0; i < launch->count; i += 1) {
     launch->argvs[i] = argv_from_list(Scar(remaining));
-    if (launch->argvs[i] == NULL) { error = EINVAL; goto failed; }
+    if (launch->argvs[i] == NULL) { error = errno; goto failed; }
     remaining = Scdr(remaining);
   }
   if (stdout_mode == PIPELINE_STDOUT_CAPTURE && make_pipe(launch->capture_pipe) != 0) {

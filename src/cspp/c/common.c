@@ -6,7 +6,7 @@ ptr errno_str() {
     // e.g., getpwnam("bad_user")
     return Sstring("internal error");
   }
-  return Sstring(strerror(errno));
+  return Sstring_utf8(strerror(errno), -1);
 }
 
 ptr errno_str_vector() {
@@ -32,7 +32,7 @@ ptr cspp_errno_result(const char *operation, ptr context) {
   Svector_set(v, 0, Sstring_to_symbol("errno"));
   Svector_set(v, 1, symbol_or_false(operation));
   Svector_set(v, 2, Sfixnum(code));
-  Svector_set(v, 3, code == 0 ? Sstring("internal error") : Sstring(strerror(code)));
+  Svector_set(v, 3, code == 0 ? Sstring("internal error") : Sstring_utf8(strerror(code), -1));
   Svector_set(v, 4, context);
   return v;
 }
