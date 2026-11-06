@@ -1,5 +1,19 @@
 (import (cspp))
 
+(mat system-spawn-without-descriptor-enumeration
+
+  ;; Error case: neither close_range nor /proc/self/fd is mandatory for process creation.
+  (if (= 0 (system "strace -qq -o /dev/null true >/dev/null 2>&1"))
+      (let* ([root (if (file-exists? "system-native-faults.ss") ".." ".")]
+             [launcher (string-append root "/cspp")]
+             [script (string-append "--script=" root "/tests/system-native-faults.ss")])
+        (process-exit-success?
+          (process-run strace "-f" "-qq" "-e" "trace=close_range,openat"
+            "-e" "inject=close_range:error=ENOSYS" "-e" "inject=openat:error=ENOENT:when=1"
+            "-o" "/dev/null" (begin launcher) (begin script)
+            "spawn-without-descriptor-enumeration" :timeout 5000)))
+      #t))
+
 (mat system-pipeline-io-failure-cleanup
 
   ;; Error case: an I/O error must not wait indefinitely for independent upstream work.
