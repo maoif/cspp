@@ -30,6 +30,32 @@
       (unless (null? failures) (raise (car failures))))))
 
 (case (string->symbol (cadr (command-line)))
+  [(loader-list-race)
+   ;; Error case: loader callbacks must not acquire Chez locks while holding the loader lock.
+   (let* ([root (if (file-exists? "libcspp.so") "." "..")]
+          [source (path-build root "libcspp.so")]
+          [paths (map (lambda (index)
+                        (format "/tmp/cspp-loader-~a-~a.so" (getpid) index))
+                      (iota 100))])
+     (dynamic-wind
+       void
+       (lambda ()
+         (parameterize ([collect-trip-bytes 1048576])
+           (run-threads
+             (list
+               (lambda ()
+                 (do ([index 0 (+ index 1)]) ((= index 30000))
+                   (check (for-all string? (shared-object-list)))))
+               (lambda ()
+                 (for-each
+                   (lambda (path)
+                     (file-copy source path)
+                     (load-shared-object path)
+                     (delete-file path))
+                   paths))))))
+       (lambda ()
+         (for-each (lambda (path) (when (file-exists? path) (delete-file path))) paths))))]
+
   [(vfork-rejected)
    ;; Error case: returning from native vfork corrupts the parent's shared C/FFI stack.
    (check

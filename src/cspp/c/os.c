@@ -72,20 +72,52 @@ ptr cspp_vfork() {
   return cspp_unsupported_result("vfork");
 }
 
+typedef struct {
+  char **names;
+  size_t count;
+  size_t capacity;
+  int error;
+} shared_object_snapshot;
+
+/* dl_iterate_phdr holds the loader lock. Scheme allocation can acquire Chez's
+ * runtime lock, which load-shared-object holds before entering dlopen. Keep
+ * this callback entirely native to avoid that reversed lock order. */
 static int shared_object_list_callback(struct dl_phdr_info *info, size_t size, void *data) {
   (void)size;
-  ptr *objs_addr = (ptr *)data;
-  ptr objects = *objs_addr;
-  *objs_addr = Scons(Sstring_utf8(info->dlpi_name, -1), objects);
-
+  shared_object_snapshot *snapshot = data;
+  if (snapshot->count == snapshot->capacity) {
+    size_t capacity = snapshot->capacity ? snapshot->capacity * 2 : 32;
+    if (capacity < snapshot->capacity || capacity > SIZE_MAX / sizeof(char *)) {
+      snapshot->error = ENOMEM;
+      return 1;
+    }
+    char **names = realloc(snapshot->names, capacity * sizeof(char *));
+    if (!names) { snapshot->error = ENOMEM; return 1; }
+    snapshot->names = names;
+    snapshot->capacity = capacity;
+  }
+  char *name = strdup(info->dlpi_name);
+  if (!name) { snapshot->error = ENOMEM; return 1; }
+  snapshot->names[snapshot->count++] = name;
   return 0;
 }
 
 ptr cspp_shared_object_list() {
-  ptr objs = Snil;
-  dl_iterate_phdr(shared_object_list_callback, &objs);
-  
-  return objs;
+  shared_object_snapshot snapshot = {0};
+  Sdeactivate_thread();
+  dl_iterate_phdr(shared_object_list_callback, &snapshot);
+  Sactivate_thread();
+  ptr objects = Snil;
+  for (size_t i = 0; i < snapshot.count; i++) {
+    if (!snapshot.error) objects = Scons(Sstring_utf8(snapshot.names[i], -1), objects);
+    free(snapshot.names[i]);
+  }
+  free(snapshot.names);
+  if (snapshot.error) {
+    errno = snapshot.error;
+    return cspp_errno_result("shared-object-list", Snil);
+  }
+  return cspp_ok(objects);
 }
 
 ptr cspp_send_signal(int pid, int sig) {

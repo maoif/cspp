@@ -52,13 +52,14 @@
 
   #|proc:shared-object-list
   The `shared-object-list` procedure returns shared objects currently loaded by the process,
-  in load order, as a list of strings.
+  in load order, as a list of strings. Concurrent loading and collection are supported;
+  native snapshot failures raise a system condition.
   |#
   (define-who shared-object-list
     (let ([ffi (foreign-procedure "cspp_shared_object_list" () ptr)])
       (lambda ()
-        (let* ([x (ffi)] [rx (reverse x)]
-               [res (if (string=? "" (car rx)) (cdr rx) rx)])
+        (let* ([x (ffi-result-ref (ffi))] [rx (reverse x)]
+               [res (if (and (pair? rx) (string=? "" (car rx))) (cdr rx) rx)])
           res))))
 
   )

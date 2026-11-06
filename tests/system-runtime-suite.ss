@@ -95,3 +95,10 @@
   (= 0 (system (if (file-exists? "system-runtime-runner.ss")
                    "../cspp --script=system-runtime-runner.ss boundaries capture gc inherit wait ports environment-race signals pipeline-contracts vfork-rejected"
                    "./cspp --script=tests/system-runtime-runner.ss boundaries capture gc inherit wait ports environment-race signals pipeline-contracts vfork-rejected"))))
+
+(mat system-loader-concurrency
+
+  ;; Error case: loading new libraries while listing them must not deadlock Chez's runtime.
+  (= 0 (system (if (file-exists? "system-runtime-runner.ss")
+                   "../cspp --script=system-runtime-runner.ss loader-list-race"
+                   "./cspp --script=tests/system-runtime-runner.ss loader-list-race"))))
