@@ -1,5 +1,18 @@
 (import (cspp))
 
+(mat system-pipeline-io-failure-cleanup
+
+  ;; Error case: an I/O error must not wait indefinitely for independent upstream work.
+  (if (= 0 (system "strace -qq -o /dev/null true >/dev/null 2>&1"))
+      (let* ([root (if (file-exists? "system-native-faults.ss") ".." ".")]
+             [launcher (string-append root "/cspp")]
+             [script (string-append "--script=" root "/tests/system-native-faults.ss")])
+        (process-exit-success?
+          (process-run strace "-f" "-qq" "-e" "trace=poll"
+            "-e" "inject=poll:error=EIO:when=1" "-o" "/dev/null"
+            (begin launcher) (begin script) "pipeline-io-failure" :timeout 5000)))
+      #t))
+
 (mat system-pipeline-failure-allows-collection
 
   ;; Error case: reaping a partially launched pipeline must not stall unrelated collections.

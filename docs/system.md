@@ -212,6 +212,8 @@ waits for all children, and returns the final child's status and pid. `process-r
 for all children, discards final stdout without buffering, inherits stderr, and returns a list
 containing the final status. These APIs have no timeout or binary-capture options and do not
 implement pipefail: an earlier failure is not substituted for the final status.
+If native capture fails, all remaining immediate pipeline children are terminated and reaped
+before the original failure is raised.
 
 `process-spawn-pipeline` takes the specifications and a reserved options argument that must be `'()`.
 It returns a process object per command immediately, with no exposed stream ports. The first

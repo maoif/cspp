@@ -939,12 +939,18 @@ static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
   ptr result = capture_child(launch.pids[launch.count - 1], -1, NULL, 0, stdout_fd, -1,
                              capture_stdout, 0, timeout_ms, "spawn-pipeline");
   Slock_object(result);
-  Sdeactivate_thread();
-  for (int i = 0; i < launch.count - 1; i += 1) {
-    int status;
-    (void)wait_pid_block(launch.pids[i], &status);
+  if (Svector_ref(result, 0) != Sstring_to_symbol("ok")) {
+    /* capture_child already cleaned up the final stage. Upstream stages may
+     * never write to their output, so closing pipes alone cannot stop them. */
+    cleanup_pipeline_children(launch.pids, launch.count - 1);
+  } else {
+    Sdeactivate_thread();
+    for (int i = 0; i < launch.count - 1; i += 1) {
+      int status;
+      (void)wait_pid_block(launch.pids[i], &status);
+    }
+    Sactivate_thread();
   }
-  Sactivate_thread();
   Sunlock_object(result);
   dispose_pipeline(&launch, 0);
   return result;

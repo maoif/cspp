@@ -3,6 +3,19 @@
 ;; This driver runs under strace syscall injection, separately from the test runner.
 (define mode (string->symbol (cadr (command-line))))
 (case mode
+  [(pipeline-io-failure)
+   ;; Error case: capture I/O failure must terminate upstream stages before reporting the error.
+   (let ([start (current-time 'time-monotonic)])
+     (unless
+       (guard (condition [(system-error? condition) (= 5 (system-error-code condition))])
+         (process-capture-pipeline '(("/bin/sleep" "3") ("/bin/echo" "out")))
+         #f)
+       (error 'system-native-faults "pipeline lost the capture error"))
+     (let ([elapsed (time-difference (current-time 'time-monotonic) start)])
+       (unless (< (+ (* 1000 (time-second elapsed))
+                     (quotient (time-nanosecond elapsed) 1000000)) 1500)
+         (error 'system-native-faults "pipeline waited for an upstream stage after I/O failure"))))]
+
   [(filesystem-gc pipeline-run-gc pipeline-capture-gc pipeline-spawn-gc)
    ;; Error case: native queries and failed-launch cleanup must allow other threads to collect.
    (let ([mutex (make-mutex)] [changed (make-condition)]
