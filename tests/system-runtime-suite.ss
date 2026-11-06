@@ -4,8 +4,8 @@
 
   ;; Error case: wait notification must preserve timeout, concurrent reaping, and GC contracts.
   (= 0 (system (if (file-exists? "system-runtime-runner.ss")
-                   "../cspp --script=system-runtime-runner.ss wait-notification"
-                   "./cspp --script=tests/system-runtime-runner.ss wait-notification"))))
+                   "../cspp --script=system-runtime-runner.ss wait-notification wait-interrupt"
+                   "./cspp --script=tests/system-runtime-runner.ss wait-notification wait-interrupt"))))
 
 (mat system-live-wait-fallback
 

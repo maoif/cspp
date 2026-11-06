@@ -30,6 +30,42 @@
       (unless (null? failures) (raise (car failures))))))
 
 (case (string->symbol (cadr (command-line)))
+  [(wait-interrupt)
+   ;; Error case: native exit notification must promptly return to Scheme for keyboard interrupts.
+   (for-each
+     (lambda (wait)
+       (let* ([child (process-spawn "/bin/sleep" '("0.8") '())]
+              [main-thread ((foreign-procedure "pthread_self" () uptr))]
+              [send (foreign-procedure "pthread_kill" (uptr int) int)]
+              [start (current-time 'time-monotonic)] [handled #f])
+         (dynamic-wind
+           void
+           (lambda ()
+             (parameterize ([keyboard-interrupt-handler
+                              (lambda ()
+                                (set! handled (time-difference
+                                                (current-time 'time-monotonic) start)))])
+               (fork-thread (lambda () (milisleep 50) (send main-thread 2)))
+               (check (process-exit-success? (wait child)))
+               (check (and handled (= 0 (time-second handled))
+                           (< (time-nanosecond handled) 500000000)))))
+           (lambda () (process-kill child 9) (process-wait child)))))
+     (list process-wait (lambda (child) (process-wait/timeout child 2000))))
+   ;; Error case: servicing an interrupted wait must preserve a caller's disabled interrupts.
+   (let* ([child (process-spawn "/bin/sleep" '("0.2") '())]
+          [main-thread ((foreign-procedure "pthread_self" () uptr))]
+          [send (foreign-procedure "pthread_kill" (uptr int) int)] [handled? #f])
+     (dynamic-wind
+       void
+       (lambda ()
+         (parameterize ([keyboard-interrupt-handler (lambda () (set! handled? #t))])
+           (with-interrupts-disabled
+             (fork-thread (lambda () (milisleep 50) (send main-thread 2)))
+             (check (process-exit-success? (process-wait child)))
+             (check (not handled?)))
+           (check handled?)))
+       (lambda () (process-kill child 9) (process-wait child))))]
+
   [(native-allocation-errors)
    ;; Error case: failed native argument copies must preserve ENOMEM, not report invalid arguments.
    (let* ([argument (make-string 30000000 #\a)]

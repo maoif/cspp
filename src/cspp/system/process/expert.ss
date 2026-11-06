@@ -305,6 +305,10 @@
                     (if (fx>= descriptor 0)
                         (let ([ready ($wait-ready-ffi descriptor
                                        (if remaining (min #x7fffffff remaining) -1))])
+                          ;; Chez checks events when a balanced interrupt-disable scope ends.
+                          ;; Preserve the caller's disable count while servicing pending handlers
+                          ;; before another blocking call; ordinary FFI return is not a safe point.
+                          (when (fx= ready 2) (with-interrupts-disabled (void)))
                           (when (fx< ready 0)
                             (raise (make-system-error who (- ready) "process wait failed"
                                      `((pid . ,($process-pid process)))))))

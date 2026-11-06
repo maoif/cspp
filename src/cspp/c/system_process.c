@@ -837,15 +837,14 @@ int cspp_process_wait_open(int pid) {
  * Readiness does not reap: Scheme reacquires the process mutex to publish status. */
 int cspp_process_wait_ready(int fd, int timeout_ms) {
   if (fd < 0 || timeout_ms < -1) return -EINVAL;
-  int64_t deadline = timeout_ms < 0 ? 0 : monotonic_ms() + timeout_ms;
-  for (;;) {
-    int64_t remaining = timeout_ms < 0 ? -1 : deadline - monotonic_ms();
-    struct pollfd event = {fd, POLLIN, 0};
-    int ready = poll(&event, 1, remaining < 0 && timeout_ms >= 0 ? 0 : (int)remaining);
-    if (ready > 0) return event.revents & POLLNVAL ? -EBADF : 1;
-    if (ready == 0) return 0;
-    if (errno != EINTR) return -errno;
-  }
+  struct pollfd event = {fd, POLLIN, 0};
+  int ready = poll(&event, 1, timeout_ms);
+  if (ready > 0) return event.revents & POLLNVAL ? -EBADF : 1;
+  if (ready == 0) return 0;
+  /* Distinguish interruption so Scheme can force an event check before another
+   * blocking call. Merely returning may leave its event-trap counter unexpired.
+   * Scheme retains the original monotonic deadline when it waits again. */
+  return errno == EINTR ? 2 : -errno;
 }
 
 ptr cspp_make_pipe() {

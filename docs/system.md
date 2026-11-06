@@ -186,6 +186,8 @@ exit notification or its deadline, then reaps under the process mutex. Concurren
 the cached result while owning separate notification descriptors. Descriptors are closed on
 return or error; no background waiter is created. Unsupported or unavailable pidfds fall back
 to short nonblocking polls and sleeps outside the mutex.
+Interrupted waits return to Scheme to run pending signal handlers, then resume against the
+original monotonic deadline.
 
 `process-kill` takes a positive signed 32-bit signal number; `process-terminate` and
 `process-interrupt` send TERM and INT. `send-process-signal` also accepts signal names/records.
