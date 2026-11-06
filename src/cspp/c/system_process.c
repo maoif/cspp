@@ -6,7 +6,6 @@
 #include <dirent.h>
 #include <stddef.h>
 #include <sys/syscall.h>
-#include <sys/resource.h>
 #endif
 
 typedef struct {
@@ -268,6 +267,7 @@ static void wait_child_after_exec_error(pid_t pid) {
  * are permitted after fork; Linux's procfs fallback uses a native stack buffer. */
 static int child_close_descriptors(int preserve, long descriptor_limit) {
 #if defined(__linux__)
+  (void)descriptor_limit;
 #ifdef SYS_close_range
   if ((preserve == 3 || syscall(SYS_close_range, 3U, (unsigned int)preserve - 1, 0) == 0)
       && syscall(SYS_close_range, (unsigned int)preserve + 1, ~0U, 0) == 0)
@@ -275,7 +275,10 @@ static int child_close_descriptors(int preserve, long descriptor_limit) {
 #endif
 
   int directory = open("/proc/self/fd", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-  if (directory < 0) goto sweep;
+  /* Current resource limits do not bound already-open descriptors: limits may
+   * have been lowered after opening them. Refuse exec rather than leak a handle
+   * when neither close_range nor complete procfs enumeration is available. */
+  if (directory < 0) return ENOTSUP;
   int error = 0;
   for (;;) {
     char entries[4096];
@@ -303,15 +306,13 @@ static int child_close_descriptors(int preserve, long descriptor_limit) {
     if (closed && lseek(directory, 0, SEEK_SET) < 0) { error = errno; break; }
   }
   close(directory);
-  if (!error) return 0;
- sweep:
-#endif
-  /* Restricted/older Linux hosts may offer neither close_range nor procfs.
-   * The bound was obtained before fork; the child performs only close calls. */
+  return error;
+#else
   for (long fd = 3; fd < descriptor_limit; fd++) {
     if (fd != preserve) close((int)fd);
   }
   return 0;
+#endif
 }
 
 static int spawn_native(pid_t *pid, char *const argv[], char *const env[],
@@ -319,13 +320,7 @@ static int spawn_native(pid_t *pid, char *const argv[], char *const env[],
                          int stdin_source, int stdout_source,
                          int stderr_source, int stderr_to_stdout) {
   long descriptor_limit = 0;
-#if defined(__linux__)
-  struct rlimit limit;
-  if (getrlimit(RLIMIT_NOFILE, &limit) != 0) return errno;
-  /* Use the hard limit to include descriptors above a lowered soft limit. */
-  rlim_t maximum = limit.rlim_max == RLIM_INFINITY ? limit.rlim_cur : limit.rlim_max;
-  descriptor_limit = maximum > INT_MAX ? INT_MAX : (long)maximum;
-#else
+#if !defined(__linux__)
   descriptor_limit = sysconf(_SC_OPEN_MAX);
   if (descriptor_limit < 0) return errno ? errno : EINVAL;
 #endif

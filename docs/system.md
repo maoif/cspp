@@ -82,6 +82,9 @@ fallback for executable text without a shebang.
 
 All process creation APIs close unrelated descriptors in the child before running the executable.
 Only standard input, output, and error follow the stream options; parent descriptors stay open.
+On Linux, this requires either the `close_range` syscall or readable `/proc/self/fd` enumeration.
+If neither is available, launch raises a system error with `ENOTSUP`. A resource-limit sweep
+cannot guarantee closure because limits can be lowered below descriptors that are already open.
 They also restore default `SIGPIPE` handling in the child, so commands terminate normally on broken
 pipes instead of inheriting Chez's ignored disposition. The parent's signal handling is unchanged.
 Children inherit the spawning native thread's signal mask; blocked signals remain blocked.

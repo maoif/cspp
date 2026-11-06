@@ -8,27 +8,31 @@
      (error 'system-native-faults "live wait lost the exit status"))]
 
   [(spawn-without-descriptor-enumeration)
-   ;; Error case: older kernels without procfs must still launch and close inherited descriptors.
-   ;; This isolated driver lowers its hard limit to keep syscall tracing bounded.
-   (let ([limits (make-bytevector 16 0)])
-     (bytevector-u64-native-set! limits 0 256)
-     (bytevector-u64-native-set! limits 8 256)
-     (unless (= 0 ((foreign-procedure "setrlimit" (int u8*) int) 7 limits))
-       (error 'system-native-faults "cannot lower descriptor limit")))
+   ;; Error case: if reliable closure is unavailable, never inherit descriptors above a lowered limit.
    (let* ([port (open-file-input-port "/dev/null")]
           [duplicate ((foreign-procedure "fcntl" (int int int) int)
-                       (port-file-descriptor port) 0 128)])
+                       (port-file-descriptor port) 0 128)]
+          [limits (make-bytevector 16 0)])
      (dynamic-wind
        void
        (lambda ()
          (unless (>= duplicate 128) (error 'system-native-faults "cannot duplicate descriptor"))
-         (let* ([command (format "test ! -e /proc/self/fd/~a" duplicate)]
-                [child (process-spawn-shell command '())])
-           (unless (process-exit-success? (process-wait child))
-             (error 'system-native-faults "unrelated descriptor survived exec")))
-         (unless (process-exit-success?
-                   (process-result-status (process-capture /bin/true :stdin inherit)))
-           (error 'system-native-faults "capture failed without descriptor enumeration")))
+         ;; This isolated driver alone lowers its hard limit below an already-open descriptor.
+         (bytevector-u64-native-set! limits 0 64)
+         (bytevector-u64-native-set! limits 8 64)
+         (unless (= 0 ((foreign-procedure "setrlimit" (int u8*) int) 7 limits))
+           (error 'system-native-faults "cannot lower descriptor limit"))
+         (for-each
+           (lambda (thunk)
+             (unless (guard (failure [(system-error? failure) (= 95 (system-error-code failure))])
+                       (thunk) #f)
+               (error 'system-native-faults "launch did not reject unreliable descriptor closure")))
+           (list
+             (lambda () (process-wait (process-spawn "/bin/true" '() '())))
+             (lambda () (process-capture /bin/true :stdin inherit))
+             (lambda () (process-capture-pipeline '(("/bin/true"))))
+             (lambda () (for-each process-wait
+                          (process-spawn-pipeline '(("/bin/true")) '()))))))
        (lambda ()
          (when (>= duplicate 0) ((foreign-procedure "close" (int) int) duplicate))
          (close-port port))))]

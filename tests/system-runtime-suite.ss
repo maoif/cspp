@@ -60,7 +60,7 @@
 
 (mat system-spawn-without-descriptor-enumeration
 
-  ;; Error case: neither close_range nor /proc/self/fd is mandatory for process creation.
+  ;; Error case: without reliable descriptor closure, launch must fail rather than inherit handles.
   (if (= 0 (system "strace -qq -o /dev/null true >/dev/null 2>&1"))
       (let* ([root (if (file-exists? "system-native-faults.ss") ".." ".")]
              [launcher (string-append root "/cspp")]
