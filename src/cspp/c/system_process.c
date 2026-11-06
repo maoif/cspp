@@ -410,7 +410,9 @@ static int spawn_native(pid_t *pid, char *const argv[], char *const env[],
   *pid = child;
   return 0;
 }
-/* Caller strings used by fork/exec are copied before allowing Scheme GC. */
+/* Fork/exec setup and its error-pipe handshake may block. Deactivate to permit
+ * concurrent GC; argv, env, candidates, and directory are all native-owned.
+ * The calling Scheme thread remains responsible for reactivation afterward. */
 static int spawn_checked(pid_t *pid, char *const argv[], char *const env[],
                          char *const candidates[], const char *cwd,
                          int stdin_source, int stdout_source, int stderr_source,
@@ -420,7 +422,7 @@ static int spawn_checked(pid_t *pid, char *const argv[], char *const env[],
   Sdeactivate_thread();
   int error = spawn_native(pid, argv, env, candidates, directory, stdin_source,
                             stdout_source, stderr_source, stderr_to_stdout);
-  Sactivate_thread();
+  Sactivate_thread(); /* Resume Scheme access before returning to the caller. */
   free(directory);
   return error;
 }
@@ -493,8 +495,9 @@ static int wait_pid_block(pid_t pid, int *status) {
   }
 }
 
-/* Called with an active Scheme thread. The PID array is native-owned, and the
- * caller retains the launch error separately from cleanup's errno. */
+/* Called with an active Scheme thread. Reaping may block, so deactivate for GC;
+ * only the native PID array and stack status cross this region. The caller
+ * retains its original error separately from cleanup's errno. */
 static void cleanup_pipeline_children(pid_t *pids, int count) {
   if (count == 0) return;
   Sdeactivate_thread();
@@ -503,7 +506,7 @@ static void cleanup_pipeline_children(pid_t *pids, int count) {
     int status;
     (void)wait_pid_block(pids[i], &status);
   }
-  Sactivate_thread();
+  Sactivate_thread(); /* Caller may now access/construct Scheme error results. */
 }
 
 /* Only native-owned memory crosses poll/wait. A single bounded read per stream
@@ -534,7 +537,10 @@ static ptr capture_child(pid_t pid, int input_fd, const unsigned char *input,
   sigset_t pipe_signal, old_mask, pending;
   sigemptyset(&pipe_signal);
   sigaddset(&pipe_signal, SIGPIPE);
-  /* Writes can race a child's close. Block only this thread's SIGPIPE, then
+  /* poll, I/O, reaping, and termination can block: release Chez's GC coordination.
+   * input and output buffers are native-owned; only native descriptors, signal
+   * sets, and stack values are accessed until Sactivate_thread below.
+   * Writes can race a child's close. Block only this thread's SIGPIPE, then
    * consume only a newly generated pending instance before restoring its mask. */
   Sdeactivate_thread();
   int mask_error = pthread_sigmask(SIG_BLOCK, &pipe_signal, &old_mask);
@@ -604,7 +610,7 @@ static ptr capture_child(pid_t pid, int input_fd, const unsigned char *input,
     }
     (void)pthread_sigmask(SIG_SETMASK, &old_mask, NULL);
   }
-  Sactivate_thread();
+  Sactivate_thread(); /* Resume before creating Scheme captures and tagged results. */
   ptr result;
   if (error) { errno = error; result = cspp_errno_result(operation, pid_context(pid)); }
   else if (timed_out) result = cspp_timeout_result(operation, pid_context(pid));
@@ -702,7 +708,11 @@ ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
   if (stdin_payload != Sfalse && !Ssymbolp(stdin_payload)) {
     if (!Sbytevectorp(stdin_payload)) {
       close_fd(&stdin_pipe[1]); close_fd(&stdout_pipe[0]); close_fd(&stderr_pipe[0]);
-      Sdeactivate_thread(); terminate_child(pid); Sactivate_thread();
+      /* Termination may block. Only pid crosses deactivation; stdin_payload
+       * remains locked and is not accessed until activation resumes. */
+      Sdeactivate_thread();
+      terminate_child(pid);
+      Sactivate_thread();
       Sunlock_object(stdin_payload);
       errno = EINVAL; return cspp_errno_result("spawn-capture", Snil);
     }
@@ -710,7 +720,11 @@ ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
     input = malloc(input_size ? input_size : 1);
     if (!input) {
       close_fd(&stdin_pipe[1]); close_fd(&stdout_pipe[0]); close_fd(&stderr_pipe[0]);
-      Sdeactivate_thread(); terminate_child(pid); Sactivate_thread();
+      /* Allow GC during cleanup using only the native pid; reactivate before
+       * unlocking stdin_payload or constructing the allocation error. */
+      Sdeactivate_thread();
+      terminate_child(pid);
+      Sactivate_thread();
       Sunlock_object(stdin_payload);
       errno = ENOMEM; return cspp_errno_result("spawn-capture", Snil);
     }
@@ -783,12 +797,14 @@ ptr cspp_waitpid(int pid, int nohang) {
 #if defined(__unix__) || defined(__APPLE__)
   int status;
   pid_t r;
+  /* Blocking waitpid must not stall GC. Only scalar pid/nohang and native stack
+   * status are used while inactive; preserve errno across reactivation. */
   Sdeactivate_thread();
   do {
     r = waitpid((pid_t)pid, &status, nohang ? WNOHANG : 0);
   } while (r < 0 && errno == EINTR);
   int saved_errno = errno;
-  Sactivate_thread();
+  Sactivate_thread(); /* Resume before allocating status vectors or error context. */
   errno = saved_errno;
   if (r == 0) return cspp_ok(Sfalse);
   if (r < 0) return cspp_errno_result("waitpid", pid_context((pid_t)pid));
@@ -991,12 +1007,14 @@ static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
      * never write to their output, so closing pipes alone cannot stop them. */
     cleanup_pipeline_children(launch.pids, launch.count - 1);
   } else {
+    /* Earlier stages may still run. Release GC coordination while reaping;
+     * launch owns native PIDs and result stays locked without being accessed. */
     Sdeactivate_thread();
     for (int i = 0; i < launch.count - 1; i += 1) {
       int status;
       (void)wait_pid_block(launch.pids[i], &status);
     }
-    Sactivate_thread();
+    Sactivate_thread(); /* Resume before unlocking and returning the Scheme result. */
   }
   Sunlock_object(result);
   dispose_pipeline(&launch, 0);

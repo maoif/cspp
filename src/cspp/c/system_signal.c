@@ -135,12 +135,13 @@ ptr cspp_wait_signal(ptr numbers) {
       return signal_error("wait-signal", EINVAL);
   }
   int received = 0;
-  /* Only native stack storage crosses sigwait, so other Scheme threads can collect. */
+  /* sigwait can block indefinitely. Release Chez's GC coordination; requested
+   * and received are native stack storage, and numbers is not accessed again. */
   Sdeactivate_thread();
   do {
     code = sigwait(&requested, &received);
   } while (code == EINTR);
-  Sactivate_thread();
+  Sactivate_thread(); /* Resume before allocating a tagged result or condition. */
   if (code != 0) return signal_error("wait-signal", code);
   return cspp_ok(Sfixnum(received));
 #else

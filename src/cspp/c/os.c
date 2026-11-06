@@ -104,8 +104,11 @@ static int shared_object_list_callback(struct dl_phdr_info *info, size_t size, v
 
 ptr cspp_shared_object_list() {
   shared_object_snapshot snapshot = {0};
+  /* Loader lock contention can block. Deactivation permits concurrent GC;
+   * snapshot owns native strings and the callback never touches Scheme data. */
   Sdeactivate_thread();
   dl_iterate_phdr(shared_object_list_callback, &snapshot);
+  /* Reactivate before constructing the Scheme list or any error condition. */
   Sactivate_thread();
   ptr objects = Snil;
   for (size_t i = 0; i < snapshot.count; i++) {
@@ -225,6 +228,8 @@ ptr cspp_filesystem_info(const char *path) {
 #endif
   if (fd < 0 || fstatvfs(fd, &vfs) != 0 || fstat(fd, &st) != 0) error = errno;
   if (fd >= 0) close(fd);
+  /* No encoded FFI path or Scheme object was accessed while inactive. Resume
+   * GC coordination before allocating the returned vector and strings. */
   Sactivate_thread();
   if (error != 0) {
     free(owned_path);

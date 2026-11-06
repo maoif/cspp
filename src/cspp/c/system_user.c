@@ -13,6 +13,8 @@ static ptr user_lookup(const char *name, unsigned int id, int group) {
   size_t capacity = 1024;
   char *buffer = NULL;
   int error = 0;
+  /* NSS can block on remote account services. Release Chez's GC coordination;
+   * the lookup uses only owned_name, native records, and the native buffer. */
   Sdeactivate_thread();
   for (;;) {
     char *next = realloc(buffer, capacity);
@@ -28,7 +30,7 @@ static ptr user_lookup(const char *name, unsigned int id, int group) {
     if (capacity > SIZE_MAX / 2) { error = ENOMEM; break; }
     capacity *= 2;
   }
-  Sactivate_thread();
+  Sactivate_thread(); /* Resume before converting native records into Scheme objects. */
   ptr context = Scons(Scons(Sstring(owned_name ? "name" : "id"),
                            owned_name ? Sstring_utf8(owned_name, -1) : Sunsigned(id)), Snil);
   ptr result;
