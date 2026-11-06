@@ -114,23 +114,31 @@
     (lambda (x)
       (and (list? x) (andmap pair? x))))
 
+  ;; Keep the system hierarchy and standard Chez condition handlers compatible.
+  (define $make-system-condition
+    (lambda (constructor operation code message context)
+      (condition (constructor operation code message context)
+                 (make-who-condition operation)
+                 (make-message-condition message))))
+
   #|proc:make-system-error
   The `make-system-error` procedure constructs a system error condition.
   The `operation` parameter is a symbol naming the operation that failed, or `#f` when unknown.
   The `code` parameter is an exact integer error code, or `#f` when no code is available.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
+  The returned condition also supplies standard Chez caller and message components.
   |#
   (define-who make-system-error
     (lambda (operation code message context)
       (pcheck-who who ([$system-operation? operation] [$system-code? code] [string? message] [$system-context? context])
-              (%make-system-error operation code message context))))
+              ($make-system-condition %make-system-error operation code message context))))
 
   (define $make-special-system-error
     (lambda (who make-condition operation message context)
       (pcheck-who who
         ([$system-operation? operation] [string? message] [$system-context? context])
-        (make-condition operation #f message context))))
+        ($make-system-condition make-condition operation #f message context))))
 
   #|proc:make-system-unsupported-error
   The `make-system-unsupported-error` procedure constructs a system error condition for an
@@ -138,6 +146,7 @@
   The `operation` parameter is a symbol naming the unsupported operation, or `#f` when unknown.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
+  The returned condition also supplies standard Chez caller and message components.
   |#
   (define make-system-unsupported-error
     (case-lambda
@@ -153,6 +162,7 @@
   The `operation` parameter is a symbol naming the operation that failed, or `#f` when unknown.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
+  The returned condition also supplies standard Chez caller and message components.
   |#
   (define make-system-not-found-error
     (case-lambda
@@ -169,6 +179,7 @@
   The `code` parameter is an exact integer error code, or `#f` when no code is available.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
+  The returned condition also supplies standard Chez caller and message components.
   |#
   (define-who make-system-permission-error
     (case-lambda
@@ -178,13 +189,15 @@
        (make-system-permission-error operation #f message context)]
       [(operation code message context)
        (pcheck-who who ([$system-operation? operation] [$system-code? code] [string? message] [$system-context? context])
-               (%make-system-permission-error operation code message context))]))
+               ($make-system-condition %make-system-permission-error
+                 operation code message context))]))
 
   #|proc:make-system-timeout-error
   The `make-system-timeout-error` procedure constructs a system error condition for a timeout.
   The `operation` parameter is a symbol naming the operation that failed, or `#f` when unknown.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
+  The returned condition also supplies standard Chez caller and message components.
   |#
   (define make-system-timeout-error
     (case-lambda
@@ -200,6 +213,7 @@
   The `operation` parameter is a symbol naming the operation that failed, or `#f` when unknown.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
+  The returned condition also supplies standard Chez caller and message components.
   |#
   (define make-system-exit-error
     (case-lambda

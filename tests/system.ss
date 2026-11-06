@@ -122,6 +122,40 @@
                unix-user-gecos unix-user-dir unix-user-shell
                unix-group-name unix-group-passwd unix-group-gid unix-group-mems))))
 
+(mat system-standard-condition-fields
+
+     ;; Error case: system errors must be readable by ordinary Chez condition handlers.
+     (for-all
+       (lambda (make-error)
+         (let ([failure (make-error 'example "failure ~s" '((detail . 17)))])
+           (and (system-error? failure) (error? failure)
+                (who-condition? failure) (message-condition? failure)
+                (eq? 'example (condition-who failure))
+                (string=? "failure ~s" (condition-message failure))
+                (equal? '((detail . 17)) (system-error-context failure)))))
+       (list (lambda (operation message context)
+               (make-system-error operation 5 message context))
+             make-system-unsupported-error make-system-not-found-error
+             make-system-permission-error make-system-timeout-error make-system-exit-error))
+
+     ;; Unknown operations still expose a standard who component with the value #f.
+     (let ([failure (make-system-error #f #f "unknown operation" '())])
+       (and (who-condition? failure) (not (condition-who failure))
+            (string=? "unknown operation" (condition-message failure))))
+
+     ;; Native FFI errors and checked process failures must carry the same standard fields.
+     (and
+       (guard (failure
+                [(system-permission-error? failure)
+                 (and (eq? 'native-op (condition-who failure))
+                      (string=? "denied" (condition-message failure)))])
+         (ffi-result-ref '#(errno native-op 13 "denied" ())) #f)
+       (guard (failure
+                [(system-exit-error? failure)
+                 (and (eq? 'process-run (condition-who failure))
+                      (string? (condition-message failure)))])
+         (process-run/check /bin/false) #f)))
+
 (mat system-errors
 
      ;; Error case: system context must be an alist and native error codes must be exact.

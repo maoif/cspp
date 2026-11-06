@@ -260,8 +260,10 @@ the query. On Linux, the query needs no file read permission and does not open d
 Mount records expose source, target, type, and mount plus superblock
 options separated by a space.
 
-System conditions expose operation, code, message, and an association-list context. Native
-helpers use `ffi-result-ref` to decode `ok`, `errno`, `not-found`, `unsupported`, and `timeout`
+System conditions expose operation, code, message, and an association-list context. They also
+provide standard `condition-who` and `condition-message` fields, so ordinary Chez handlers can
+read them. An unknown operation has caller value `#f`.
+Native helpers use `ffi-result-ref` to decode `ok`, `errno`, `not-found`, `unsupported`, and `timeout`
 vectors. Permission errors specialize errno 1 and 13. Exit errors instead describe an
 unaccepted process status. Context keys may be symbols in Scheme or strings in native results.
 
