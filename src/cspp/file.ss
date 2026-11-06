@@ -1074,6 +1074,9 @@
     (opaque #t)
     (sealed #t))
 
+  (define-condition-type &$filename-encoding &i/o-filename
+    $make-filename-encoding-error $filename-encoding-error?)
+
   (define $fs-ensure-linux
     (let* ([name (symbol->string (machine-type))] [length (string-length name)]
            [supported? (and (fx>= length 2)
@@ -1128,6 +1131,11 @@
                   (let* ([read (foreign-procedure "cspp_fs_read_directory" (uptr) scheme-object)]
                          [value (read (fs-directory-handle directory))])
                     (cond [(eq? value #f) #f]
+                          [(eqv? value -1)
+                           ($err-file 'fs-read-directory
+                                      ($make-filename-encoding-error
+                                       (fs-directory-path directory))
+                                      "filesystem entry name is not valid UTF-8")]
                           [(string? value) ($err-file 'fs-read-directory
                                                      (fs-directory-path directory) value)]
                           [else
@@ -1167,19 +1175,27 @@
   ;; Use the checked native stream for every traversal, including eager walkers.
   ;; Chez directory-list replaces invalid UTF-8 and strips a leading UTF-8 BOM.
   (define $directory-entries
-    (lambda (path)
-      (let ([directory (fs-open-directory path)] [entries (make-list-builder)])
-        (dynamic-wind
-          void
-          (lambda ()
-            (let loop ([entry (fs-read-directory directory)])
-              (if entry
-                  (begin
-                    (unless (member (car entry) '("." ".."))
-                      (entries (path-build path (car entry))))
-                    (loop (fs-read-directory directory)))
-                  (entries))))
-          (lambda () (fs-close-directory directory))))))
+    (case-lambda
+      [(path) ($directory-entries path #f)]
+      [(path on-invalid)
+       (let ([directory (fs-open-directory path)] [entries (make-list-builder)])
+         (define next-entry
+           (lambda ()
+             (guard (failure [(and on-invalid ($filename-encoding-error? failure))
+                              (on-invalid)
+                              (next-entry)])
+               (fs-read-directory directory))))
+         (dynamic-wind
+           void
+           (lambda ()
+             (let loop ([entry (next-entry)])
+               (if entry
+                   (begin
+                     (unless (member (car entry) '("." ".."))
+                       (entries (path-build path (car entry))))
+                     (loop (next-entry)))
+                   (entries))))
+           (lambda () (fs-close-directory directory))))]))
 
   (define $file-identity
     (lambda (path follow-link?)
@@ -2505,6 +2521,7 @@
   a file or directory.
   Otherwise, no error condition is raised and the procedure tries to remove
   as many files and directories as possible.
+  Undecodable entry names are left in place; valid siblings are still removed in that mode.
   Return `#t` if the whole tree was removed without errors, or `#f` otherwise.
   A missing root or a root that is not a directory also returns `#f` when errors are suppressed.
 
@@ -2524,7 +2541,11 @@
                      (operation))))
                (define remove-tree
                  (lambda (directory)
-                   (let ([entries (attempt (lambda () ($directory-entries directory)))])
+                   (let ([entries
+                          (attempt
+                           (lambda ()
+                             ($directory-entries directory
+                               (and (not err?) (lambda () (set! complete? #f))))))])
                      (when entries
                        (for-each
                         (lambda (entry)

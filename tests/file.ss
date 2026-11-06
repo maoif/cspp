@@ -226,7 +226,12 @@
                       (rejects? (lambda () (file-copytree root (string-append root "-copy"))))
                       (rejects? (lambda () (file-removetree root #t)))
                       (string=? "keep replacement name" (read-string (path-build root "�")))
-                      (rejects? (lambda () (fswatcher-next! watcher 1000)))))
+                      (rejects? (lambda () (fswatcher-next! watcher 1000)))
+                      ;; Suppressed decoding errors still allow valid sibling removals.
+                      (eq? #f (file-removetree root #f))
+                      (not (file-exists? (path-build root "�") #f))
+                      (not (file-exists? (path-build root "top.txt") #f))
+                      (not (file-exists? (path-build root "sub") #f))))
                (lambda ()
                  (close-fswatcher watcher)
                  (unlink raw)

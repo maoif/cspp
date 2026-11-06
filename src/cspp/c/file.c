@@ -88,7 +88,9 @@ ptr cspp_fs_read_directory(uptr value) {
     return Sfalse;
   }
   size_t length = strlen(entry->d_name);
-  if (!filesystem_utf8_valid(entry->d_name, length)) return filesystem_utf8_error();
+  /* Distinguish a consumed invalid name from a readdir failure, allowing
+   * best-effort removal to skip that entry without retrying a failed read. */
+  if (!filesystem_utf8_valid(entry->d_name, length)) return Sfixnum(-1);
   return Scons(Sstring_utf8(entry->d_name, (iptr)length), Sfixnum(entry->d_type));
 }
 
