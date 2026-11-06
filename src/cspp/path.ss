@@ -178,7 +178,10 @@
              [parts ($string-split-path who 'windows s 4)]
              [trailing? ($trailing-sep? 'windows s)])
         (cond [(null? parts)
-               ($make-path-object 'windows 'special head '() #f)]
+               ($err who "device namespace requires a root: ~s" s)]
+              [(and (string-ci=? (car parts) "UNC")
+                    (or (null? (cdr parts)) (null? (cddr parts))))
+               ($err who "UNC path requires server and share: ~s" s)]
               [(and (string-ci=? (car parts) "UNC")
                     (pair? (cdr parts))
                     (pair? (cddr parts)))
@@ -244,6 +247,7 @@
   #|proc:path-parse
   Parse string `str` as a lexical path using `flavor`, either `'unix` or `'windows`.
   Return a path object without checking whether the path exists.
+  Incomplete Windows UNC and device namespace roots raise an error.
   |#
   (define path-parse
     (lambda (flavor str)
@@ -508,6 +512,9 @@
   flavor replace the accumulated base. A Windows root-relative part uses the current
   drive from a drive-absolute base; unresolved or different drive-relative parts error.
   Extended drive bases retain their device namespace prefix.
+  `base` is a path object; each part is a same-flavor path object or a string.
+  An unrooted string must be one nonempty component without separators; use `path-parse`
+  to pass a relative fragment with multiple components. Return a new path object.
   |#
   (define path-join
     (lambda (base . parts)

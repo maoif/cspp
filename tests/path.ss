@@ -5,6 +5,21 @@
   (lambda (p s)
     (string=? (path-render p) s)))
 
+(mat path-incomplete-windows-namespaces
+     ;; Error cases: recognized device namespaces require a root, and UNC requires a share.
+     (for-all
+      (lambda (text)
+        (guard (failure [else #t]) (path-parse 'windows text) #f))
+      '("//?/" "//./" "//?/UNC" "//?/UNC/server" "//./UNC/server/"))
+
+     (for-all
+      (lambda (text)
+        (let* ([path (path-add-component (path-parse 'windows text) "leaf")]
+               [again (path-parse 'windows (path-render path))])
+          (and (equal? (path-root-info path) (path-root-info again))
+               (equal? '("leaf") (path-components again)))))
+      '("//?/UNC/server/share" "//?/C:/" "//./COM1")))
+
 (mat path-join-string-component-contract
      (for-all
       (lambda (base)
