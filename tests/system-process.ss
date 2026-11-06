@@ -1,5 +1,52 @@
 (import (cspp) (only (cspp system process expert) $wait-status->exit-status))
 
+(mat process-rejected-capture-result
+
+     ;; Error case: a rejected exit must preserve the completed stdout/stderr and process metadata.
+     (guard (failure
+              [(system-exit-error? failure)
+               (let* ([context (system-error-context failure)] [entry (assq 'result context)]
+                      [result (and entry (cdr entry))])
+                 (and (process-result? result)
+                      (string=? "output" (process-result-stdout result))
+                      (string=? "diagnostic" (process-result-stderr result))
+                      (string=? "/bin/sh" (process-result-command result))
+                      (positive-natural? (process-result-pid result))
+                      (= 17 (process-exit-status-code (process-result-status result)))
+                      (= 17 (cdr (assq 'status-code context)))
+                      (eq? 'exit (cdr (assq 'status-kind context)))))])
+       (process-capture/check /bin/sh "-c" "printf output; printf diagnostic >&2; exit 17")
+       #f)
+
+     ;; Error case: an explicit success predicate may reject a normal exit after seeing it once.
+     (let ([calls 0] [observed #f])
+       (guard (failure
+                [(system-exit-error? failure)
+                 (let ([entry (assq 'result (system-error-context failure))])
+                   (and entry (= calls 1)
+                        (eq? observed (process-result-status (cdr entry)))
+                        (equal? #vu8(0 255) (process-result-stdout (cdr entry)))
+                        (not (process-result-stderr (cdr entry)))))])
+         (process-capture-shell "printf '\\000\\377'"
+           :stderr stdout :encoding binary
+           :success (lambda (status) (set! calls (+ calls 1)) (set! observed status) #f))
+         #f))
+
+     ;; Error case: uncaptured streams remain #f in a recovered rejected result.
+     (guard (failure
+              [(system-exit-error? failure)
+               (let ([entry (assq 'result (system-error-context failure))])
+                 (and entry (not (process-result-stdout (cdr entry)))
+                      (string=? "diagnostic" (process-result-stderr (cdr entry)))))])
+       (process-capture /bin/sh "-c" "printf diagnostic >&2" :stdout null :success '())
+       #f)
+
+     ;; Error case: exceptions from a success callback must propagate unchanged.
+     (let ([sentinel (list 'callback-failure)])
+       (guard (failure [else (eq? sentinel failure)])
+         (process-capture /bin/true :success (lambda (status) (raise sentinel)))
+         #f)))
+
 (mat process-wait-status-contract
 
      ;; Error case: expert callers must not feed unchecked arithmetic nonfixnums or negative bits.

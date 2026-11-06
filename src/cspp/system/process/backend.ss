@@ -81,12 +81,13 @@
 ;;;;===----------------------------------------------------------------------===
 
   (define $raise-exit-error
-    (lambda (who command status)
-      (raise (make-system-exit-error who
-                                     (format "process exited with status ~a" (process-exit-status-code status))
-                                     `((command . ,command)
-                                       (status-kind . ,(process-exit-status-kind status))
-                                       (status-code . ,(process-exit-status-code status)))))))
+    (lambda (who command status result)
+      (let ([context `((command . ,command)
+                       (status-kind . ,(process-exit-status-kind status))
+                       (status-code . ,(process-exit-status-code status)))])
+        (raise (make-system-exit-error who
+                 (format "process exited with status ~a" (process-exit-status-code status))
+                 (if result (cons (cons 'result result) context) context))))))
 
   (define $status-accepted?
     (lambda (status success)
@@ -98,10 +99,10 @@
             [else #f])))
 
   (define $check-accepted-status
-    (lambda (who command status options check?)
+    (lambda (who command status options check? result)
       (let ([success ($option-ref options 'success (if check? '(0) #f))])
         (unless ($status-accepted? status success)
-          ($raise-exit-error who command status)))))
+          ($raise-exit-error who command status result)))))
 
   (define $stdin-payload
     (lambda (options)
@@ -155,18 +156,19 @@
       (let* ([pid (vector-ref result 0)]
              [status ($wait-status->exit-status (vector-ref result 1))]
              [stdout-mode ($option-ref options 'stdout 'capture)]
-             [stderr-mode ($option-ref options 'stderr 'capture)])
-        ($check-accepted-status who command status options check?)
-        (make-process-result status
-                             (if (eq? stdout-mode 'capture) ($decode-output (vector-ref result 2) options) #f)
-                             (if (eq? stderr-mode 'capture) ($decode-output (vector-ref result 3) options) #f)
-                             pid
-                             command))))
+             [stderr-mode ($option-ref options 'stderr 'capture)]
+             [completed
+               (make-process-result status
+                 (if (eq? stdout-mode 'capture) ($decode-output (vector-ref result 2) options) #f)
+                 (if (eq? stderr-mode 'capture) ($decode-output (vector-ref result 3) options) #f)
+                 pid command)])
+        ($check-accepted-status who command status options check? completed)
+        completed)))
 
   (define $run-vector->status
     (lambda (command result options check? who)
       (let ([status ($wait-status->exit-status (vector-ref result 1))])
-        ($check-accepted-status who command status options check?)
+        ($check-accepted-status who command status options check? #f)
         status)))
 
   (define $spawn-capture

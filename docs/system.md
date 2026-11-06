@@ -87,6 +87,16 @@ The `:success` option overrides either default: `#f` accepts any status, a list 
 exits with one of those codes, and a callback `(status -> object)` accepts a nonfalse result.
 The callback receives one process-exit-status record and runs once after completion.
 Callback exceptions propagate to the caller. A rejected status raises `system-exit-error?`.
+For capture forms, that condition's context includes a `result` association containing the
+completed process result, with its captured streams, status, command, and pid:
+
+```scheme
+(define rejected-result
+  (guard (failure [(system-exit-error? failure)
+                   (cdr (assq 'result (system-error-context failure)))])
+    (process-capture/check sh "-c" "printf diagnostic >&2; exit 7")))
+(process-result-stderr rejected-result) ; => "diagnostic"
+```
 
 | Option | Values and default |
 | --- | --- |

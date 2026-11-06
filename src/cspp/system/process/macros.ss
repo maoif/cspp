@@ -181,6 +181,8 @@
   It runs once after completion; callback errors propagate. Rejection raises a system exit error.
   Without `:success`, any status is accepted. A code list accepts only normal exits.
   Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
+  A rejected exit condition's context includes a `result` association holding the completed
+  process result, including captured streams, status, command, and pid.
   |#
   (define-syntax process-capture
     (syntax-rules ()
@@ -207,6 +209,8 @@
   It runs once after completion; callback errors propagate. Rejection raises a system exit error.
   Without `:success`, only exit code zero is accepted. `#f` accepts any status.
   Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
+  A rejected exit condition's context includes a `result` association holding the completed
+  process result, including captured streams, status, command, and pid.
   |#
   (define-syntax process-capture/check
     (syntax-rules ()
@@ -259,6 +263,8 @@
   It runs once after completion; callback errors propagate. Rejection raises a system exit error.
   Without `:success`, any status is accepted. A code list accepts only normal exits.
   Bare `capture`, `inherit`, `null`, `stdout`, `replace`, `binary`, and `utf-8` are symbols.
+  A rejected exit condition's context includes a `result` association holding the completed
+  process result, including captured streams, status, command, and pid.
   |#
   (define-syntax process-capture-shell
     (syntax-rules ()
