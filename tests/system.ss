@@ -34,6 +34,27 @@
              (cons 'process-spawn-shell
                    (lambda () (process-spawn-shell "exit 0" '((cwd . ""))))))))
 
+(mat system-wrapper-error-origins
+
+     ;; Error case: /check forms must retain their own names on type, option, and exit failures.
+     (for-all
+       (lambda (entry)
+         (guard (failure [else (eq? (car entry) (condition-who failure))])
+           ((cdr entry))
+           #f))
+       (list
+         (cons 'process-run/check (lambda () (process-run/check #f)))
+         (cons 'process-run/check (lambda () (process-run/check /bin/true :timeout -1)))
+         (cons 'process-run/check (lambda () (process-run/check /bin/sh "-c" "exit 3")))
+         (cons 'process-capture/check (lambda () (process-capture/check #f)))
+         (cons 'process-capture/check (lambda () (process-capture/check /bin/true :timeout -1)))
+         (cons 'process-capture/check
+               (lambda () (process-capture/check /bin/sh "-c" "exit 3")))
+         ;; Error case: Linux wrappers must reject invalid OS strings and unknown signals themselves.
+         (cons 'linux-filesystem-info (lambda () (linux-filesystem-info "x\x0;y")))
+         (cons 'linux-send-signal
+               (lambda () (linux-send-signal (getpid) 'unknown-signal))))))
+
 (mat cpu-count-affinity
 
      ;; Error case: an online CPU outside the caller's affinity mask is not available to it.
@@ -194,7 +215,7 @@
          (ffi-result-ref '#(errno native-op 13 "denied" ())) #f)
        (guard (failure
                 [(system-exit-error? failure)
-                 (and (eq? 'process-run (condition-who failure))
+                 (and (eq? 'process-run/check (condition-who failure))
                       (string? (condition-message failure)))])
          (process-run/check /bin/false) #f)))
 

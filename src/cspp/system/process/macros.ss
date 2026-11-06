@@ -76,7 +76,7 @@
                                               out))]))))))
       (lambda (stx)
         (syntax-case stx ()
-          [(_ kind check? form ...)
+          [(_ kind check? caller form ...)
            (let ([kind (syntax->datum #'kind)]
                  [check? (syntax->datum #'check?)]
                  [forms (syntax->list #'(form ...))])
@@ -94,17 +94,17 @@
                                [check check?])
                    (case kind
                      [(process-run)
-                      #'(%process-run 'process-run command-expr (list argument ...) (list option ...) check)]
+                      #'(%process-run 'caller command-expr (list argument ...) (list option ...) check)]
                      [(process-capture)
-                      #'(%process-capture 'process-capture command-expr (list argument ...) (list option ...) check)]
+                      #'(%process-capture 'caller command-expr (list argument ...) (list option ...) check)]
                      [(process-run-shell)
                       (unless (null? arguments)
                         (syntax-error stx "process-run-shell accepts one command expression"))
-                      #'(%process-run-shell 'process-run-shell command-expr (list option ...) check)]
+                      #'(%process-run-shell 'caller command-expr (list option ...) check)]
                      [(process-capture-shell)
                       (unless (null? arguments)
                         (syntax-error stx "process-capture-shell accepts one command expression"))
-                      #'(%process-capture-shell 'process-capture-shell command-expr (list option ...) check)]
+                      #'(%process-capture-shell 'caller command-expr (list option ...) check)]
                      [else
                       (syntax-error #'kind "unknown process macro kind")])))))]))))
 
@@ -132,7 +132,7 @@
   |#
   (define-syntax process-run
     (syntax-rules ()
-      [(_ form ...) ($process-form process-run #f form ...)]))
+      [(_ form ...) ($process-form process-run #f process-run form ...)]))
 
   #|macro:process-run/check
   The `process-run/check` macro runs `program` and raises on an unacceptable exit.
@@ -158,7 +158,7 @@
   |#
   (define-syntax process-run/check
     (syntax-rules ()
-      [(_ form ...) ($process-form process-run #t form ...)]))
+      [(_ form ...) ($process-form process-run #t process-run/check form ...)]))
 
   #|macro:process-capture
   The `process-capture` macro runs `program` with arguments and returns a result.
@@ -186,7 +186,7 @@
   |#
   (define-syntax process-capture
     (syntax-rules ()
-      [(_ form ...) ($process-form process-capture #f form ...)]))
+      [(_ form ...) ($process-form process-capture #f process-capture form ...)]))
 
   #|macro:process-capture/check
   The `process-capture/check` macro runs `program` and raises on an unacceptable exit.
@@ -214,7 +214,7 @@
   |#
   (define-syntax process-capture/check
     (syntax-rules ()
-      [(_ form ...) ($process-form process-capture #t form ...)]))
+      [(_ form ...) ($process-form process-capture #t process-capture/check form ...)]))
 
   #|macro:process-run-shell
   The `process-run-shell` macro runs `command` through the host shell.
@@ -240,7 +240,7 @@
   |#
   (define-syntax process-run-shell
     (syntax-rules ()
-      [(_ form ...) ($process-form process-run-shell #f form ...)]))
+      [(_ form ...) ($process-form process-run-shell #f process-run-shell form ...)]))
 
   #|macro:process-capture-shell
   The `process-capture-shell` macro runs `command` through the host shell.
@@ -268,6 +268,6 @@
   |#
   (define-syntax process-capture-shell
     (syntax-rules ()
-      [(_ form ...) ($process-form process-capture-shell #f form ...)]))
+      [(_ form ...) ($process-form process-capture-shell #f process-capture-shell form ...)]))
 
   )

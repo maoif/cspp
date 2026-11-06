@@ -22,7 +22,7 @@
           (only (cspp file) read-lines)
           (cspp system private)
           (cspp system linux os-release)
-          (only (cspp system signal values) $signal-input?)
+          (only (cspp system signal values) $signal-input? $signal-ref)
           (cspp system common)
           (cspp system filesystem)
           (only (cspp system info) system-platform)
@@ -109,11 +109,11 @@
   #|proc:linux-filesystem-info
   The `linux-filesystem-info` procedure returns filesystem capacity and identity information for
   `path` on Linux.
-  The `path` parameter is a string naming a path on the filesystem to query.
+  The `path` parameter is a string without NUL characters naming a path on the filesystem.
   |#
   (define-who linux-filesystem-info
     (lambda (path)
-      (pcheck-who who ([string? path])
+      (pcheck-who who ([$os-string? path])
               ($ensure-linux who)
               (filesystem-info path))))
 
@@ -135,7 +135,7 @@
     (lambda (pid sig)
       (pcheck-who who ([$positive-pid? pid] [$signal-input? sig])
               ($ensure-linux who)
-              (send-signal pid sig))))
+              (send-signal pid ($signal-ref who sig)))))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; procfs and os-release
