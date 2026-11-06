@@ -1925,10 +1925,10 @@
                 (let loop ([path path])
                   ;; A relative link's target depends on its parent directory.
                   ;; Hard-linked symlinks in different parents need distinct keys.
-                  (let* ([parent (path-parent path)]
+                  (let* ([parent (let ([parent (path-parent path)])
+                                   (if (string=? parent "") "." parent))]
                          [identity (list ($file-identity path #f)
-                                         ($file-identity
-                                          (if (string=? parent "") "." parent) #t))])
+                                         ($file-identity parent #t))])
                     (when (hashtable-contains? seen identity)
                       (errorf who "symlink cycle detected at: ~a" path))
                     (hashtable-set! seen identity #t)
@@ -1942,7 +1942,8 @@
   Return the content of a symbolic link.
 
   If `recursive?`, then the dereference continues until a non-symlink target is met,
-  and *both* the target and the link's parent directory is returned.
+  and both the target text and the final link's parent directory are returned.
+  A bare link uses `.` as its parent, so joining preserves literal leading tildes.
 
   Otherwise the first symlink content is returned.
   |#

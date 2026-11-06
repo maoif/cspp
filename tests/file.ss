@@ -1467,6 +1467,25 @@
 
 (mat readlink
 
+     ;; Link text beginning with tilde stays relative to the link, not the user's home.
+     ($with-fs-fixture
+      (lambda (root)
+        (mkdir (path-build root "~"))
+        (write-string (path-build root "~/literal-target") "literal")
+        (file-symlink "~/literal-target" (path-build root "tilde-link"))
+        (file-symlink "tilde-link" (path-build root "chain-link"))
+        (let ([saved-directory (current-directory)])
+          (dynamic-wind
+            (lambda () (current-directory root))
+            (lambda ()
+              (and (string=? "literal" (read-string (readlink2 "tilde-link" #t)))
+                   (string=? "literal" (read-string (readlink2 "chain-link" #t)))
+                   (begin (file-copy "tilde-link" "copied")
+                          (string=? "literal" (read-string "copied")))
+                   (begin (file-link "tilde-link" "hard-linked")
+                          (same-file? "./~/literal-target" "hard-linked"))))
+            (lambda () (current-directory saved-directory))))))
+
      ;; Error case: readlink2 must validate the recursive flag before choosing a branch.
      ($with-fs-fixture
       (lambda (root)
