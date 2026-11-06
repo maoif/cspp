@@ -30,6 +30,18 @@
       (unless (null? failures) (raise (car failures))))))
 
 (case (string->symbol (cadr (command-line)))
+  [(pipeline-low-descriptor-limit)
+   ;; Error case: pipeline length must not require every connection open in the parent at once.
+   ;; Only this isolated process lowers its descriptor limit.
+   (let ([limits (make-bytevector 16 0)] [specs (make-list 40 '("/bin/true"))])
+     (bytevector-u64-native-set! limits 0 64)
+     (bytevector-u64-native-set! limits 8 64)
+     (check (= 0 ((foreign-procedure "setrlimit" (int u8*) int) 7 limits)))
+     (check (for-all process-exit-success? (process-run-pipeline specs)))
+     (check (process-exit-success? (process-result-status (process-capture-pipeline specs))))
+     (check (for-all process-exit-success? (map process-wait
+                                              (process-spawn-pipeline specs '())))))]
+
   [(loader-list-race)
    ;; Error case: loader callbacks must not acquire Chez locks while holding the loader lock.
    (let* ([root (if (file-exists? "libcspp.so") "." "..")]

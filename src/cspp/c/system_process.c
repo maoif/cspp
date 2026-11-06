@@ -816,17 +816,12 @@ typedef struct {
   char **env;
   char ***argvs;
   pid_t *pids;
-  int (*pipes)[2];
+  int input_fd;
   int capture_pipe[2];
 } pipeline_launch;
 
 static void close_pipeline_connections(pipeline_launch *launch) {
-  if (launch->pipes != NULL) {
-    for (int i = 0; i < launch->count - 1; i += 1) {
-      close_fd(&launch->pipes[i][0]);
-      close_fd(&launch->pipes[i][1]);
-    }
-  }
+  close_fd(&launch->input_fd);
   close_fd(&launch->capture_pipe[1]);
 }
 
@@ -841,7 +836,6 @@ static void dispose_pipeline(pipeline_launch *launch, int terminate) {
   }
   free(launch->argvs);
   free(launch->pids);
-  free(launch->pipes);
   free_string_array(launch->env);
 }
 
@@ -850,6 +844,7 @@ static void dispose_pipeline(pipeline_launch *launch, int terminate) {
 static int start_pipeline(ptr specs, pipeline_stdout_mode stdout_mode,
                           pipeline_launch *launch) {
   memset(launch, 0, sizeof(*launch));
+  launch->input_fd = -1;
   launch->capture_pipe[0] = -1;
   launch->capture_pipe[1] = -1;
   int error = 0;
@@ -861,18 +856,6 @@ static int start_pipeline(ptr specs, pipeline_stdout_mode stdout_mode,
   launch->argvs = calloc((size_t)launch->count, sizeof(*launch->argvs));
   launch->pids = calloc((size_t)launch->count, sizeof(*launch->pids));
   if (launch->argvs == NULL || launch->pids == NULL) { error = ENOMEM; goto failed; }
-
-  if (launch->count > 1) {
-    launch->pipes = calloc((size_t)(launch->count - 1), sizeof(*launch->pipes));
-    if (launch->pipes == NULL) { error = ENOMEM; goto failed; }
-    for (int i = 0; i < launch->count - 1; i += 1) {
-      launch->pipes[i][0] = -1;
-      launch->pipes[i][1] = -1;
-    }
-    for (int i = 0; i < launch->count - 1; i += 1) {
-      if (make_pipe(launch->pipes[i]) != 0) { error = errno; goto failed; }
-    }
-  }
 
   ptr remaining = specs;
   for (int i = 0; i < launch->count; i += 1) {
@@ -886,18 +869,25 @@ static int start_pipeline(ptr specs, pipeline_stdout_mode stdout_mode,
   }
 
   for (int i = 0; i < launch->count; i += 1) {
+    /* Retain only the preceding reader and the next connection. Closing each
+     * writer after spawn also lets earlier stages observe EOF promptly. */
+    int next_pipe[2] = {-1, -1};
+    if (i < launch->count - 1 && make_pipe(next_pipe) != 0) { error = errno; goto failed; }
     char **candidates = NULL;
     error = executable_candidates(launch->argvs[i][0], launch->env, &candidates);
     if (error == 0) {
       error = spawn_checked(&launch->pids[i], launch->argvs[i], launch->env, candidates, "",
-                            i > 0 ? launch->pipes[i - 1][0] : -1,
-                            i < launch->count - 1 ? launch->pipes[i][1] :
+                            launch->input_fd,
+                            i < launch->count - 1 ? next_pipe[1] :
                             (stdout_mode == PIPELINE_STDOUT_CAPTURE ? launch->capture_pipe[1] :
                              stdout_mode == PIPELINE_STDOUT_INHERIT ? -1 : -2),
                             -1, 0);
     }
     free_string_array(candidates);
-    if (error != 0) goto failed;
+    close_fd(&launch->input_fd);
+    close_fd(&next_pipe[1]);
+    if (error != 0) { close_fd(&next_pipe[0]); goto failed; }
+    launch->input_fd = next_pipe[0];
     launch->spawned += 1;
   }
   return 0;

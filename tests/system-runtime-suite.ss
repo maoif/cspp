@@ -1,5 +1,12 @@
 (import (cspp))
 
+(mat system-pipeline-descriptor-limit
+
+  ;; Error case: pipeline launch must use a bounded number of connection descriptors.
+  (= 0 (system (if (file-exists? "system-runtime-runner.ss")
+                   "../cspp --script=system-runtime-runner.ss pipeline-low-descriptor-limit"
+                   "./cspp --script=tests/system-runtime-runner.ss pipeline-low-descriptor-limit"))))
+
 (mat system-spawn-without-descriptor-enumeration
 
   ;; Error case: neither close_range nor /proc/self/fd is mandatory for process creation.

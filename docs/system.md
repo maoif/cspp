@@ -199,6 +199,8 @@ but the strings and accessor results are shared mutable objects; coordinate muta
 
 Pipeline specifications are nonempty proper lists of nonempty proper string lists, each starting
 with a program. All OS string restrictions apply.
+The parent closes connections as each stage starts, so its connection descriptor use stays bounded
+as the pipeline grows.
 
 ```scheme
 (define pipeline-result
