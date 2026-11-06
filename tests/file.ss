@@ -1310,6 +1310,29 @@
 
 (mat define-file-tree
 
+     ;; Final read-only modes must not prevent constructing a directory's children.
+     (let ()
+       (define-file-tree readonly-tree
+         (dir "readonly" (mode #o555)
+              (dir "nested" (mode #o555) (file "child" (text "complete")))))
+       (for-all
+        (lambda (create)
+          (let* ([root ($random-file)]
+                 [parent (path-build root "readonly")]
+                 [nested (path-build parent "nested")])
+            (dynamic-wind
+              void
+              (lambda ()
+                (create root)
+                (and (= #o555 (file-mode parent))
+                     (= #o555 (file-mode nested))
+                     (string=? "complete" (read-string (path-build nested "child")))))
+              (lambda ()
+                (when (file-directory? parent) (chmod parent #o700))
+                (when (file-directory? nested) (chmod nested #o700))
+                (when (file-directory? root) (file-removetree root #t))))))
+        (list create-readonly-tree create-readonly-tree!)))
+
      (begin (define testsrc1 "test src 1")
             (define testsrc2 "test src 2")
             (define lines (map (lambda (x) (random-string)) (iota 10)))

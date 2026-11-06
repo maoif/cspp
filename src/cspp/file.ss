@@ -2530,6 +2530,7 @@
   consisting of data from bytevectors.
   Permission bits (mode) of each kind of file can be set individually.
   They can be in either octal mode or symbolic mode.
+  Directory modes are applied after constructing their children, allowing read-only trees.
   If mode is not given, default mode is applied.
   Owner and group of files are the effective user and group of the process.
 
@@ -2662,8 +2663,8 @@
                              [((mode m m* ...) decl* ...)
                               (eq? 'mode (datum mode))
                               #`(begin #,(if overwrite? #'(mkdirs p) #'(mkdir p))
-                                       (file-chmod p m m* ...)
-                                       #,(parse-decls overwrite? who #'p #'(decl* ...)))]
+                                       #,(parse-decls overwrite? who #'p #'(decl* ...))
+                                       (file-chmod p m m* ...))]
                              [(decl* ...)
                               #`(begin #,(if overwrite? #'(mkdirs p) #'(mkdir p))
                                        #,(parse-decls overwrite? who #'p #'(decl* ...)))]
