@@ -2467,6 +2467,8 @@
   a file or directory.
   Otherwise, no error condition is raised and the procedure tries to remove
   as many files and directories as possible.
+  Return `#t` if the whole tree was removed without errors, or `#f` otherwise.
+  A missing root or a root that is not a directory also returns `#f` when errors are suppressed.
 
   Use `delete-file` or `delete-directory` to remove a single file or directory.
   |#
@@ -2475,6 +2477,27 @@
       [(path) (file-removetree path #f)]
       [(path err?)
        (pcheck ([$filename? path] [boolean? err?])
+               (define complete? #t)
+               (define attempt
+                 (lambda (operation)
+                   (guard (failure [(and (not err?) (error? failure))
+                                    (set! complete? #f)
+                                    #f])
+                     (operation))))
+               (define remove-tree
+                 (lambda (directory)
+                   (let ([entries (attempt (lambda () (directory-list directory)))])
+                     (when entries
+                       (for-each
+                        (lambda (name)
+                          (attempt
+                           (lambda ()
+                             (let ([entry (path-build directory name)])
+                               (if (file-directory? entry #f)
+                                   (remove-tree entry)
+                                   (delete-file entry #t))))))
+                        entries)))
+                   (attempt (lambda () (delete-directory directory #t)))))
                ;; A trailing slash makes lstat follow the final symlink on POSIX.
                ;; Remove only the directory marker; preserve explicit dot components.
                (let ([path (path-render
@@ -2482,16 +2505,9 @@
                  (if (file-exists? path #f)
                      (if (and (file-directory? path #f)
                               (not (file-symbolic-link? path)))
-                         (guard (e [(error? e) (if err? (raise e) #f)])
-                           (walk-files (lambda (dir dirs files)
-                                         (for-each (lambda (x) (delete-file x err?)) files)
-                                         ;; Directories in `dirs` should now be empty.
-                                         (for-each (lambda (x) (delete-directory x err?)) dirs))
-                                       path #f #f)
-                           (delete-directory path err?)
-                           #t)
-                         (when err? ($err-file-not-directory who path)))
-                     (when err? ($err-file-not-found who path)))))]))
+                         (begin (remove-tree path) complete?)
+                         (if err? ($err-file-not-directory who path) #f))
+                     (if err? ($err-file-not-found who path) #f))))]))
 
 
   #|proc:mkdirs
