@@ -1,5 +1,20 @@
 (import (cspp))
 
+(mat string-result-list-ownership
+     ;; Mutating one result must not affect a later call, including fast paths.
+     (let ([indexes (string-search-all "abc" "abc")])
+       (set-car! indexes 99)
+       (equal? '(0) (string-search-all "abc" "abc")))
+
+     (let ([indexes (string-search-all "" "")])
+       (set-car! indexes 99)
+       (equal? '(0) (string-search-all "abc" "")))
+
+     (let ([fields (string-split "" #\,)])
+       (set-car! fields "changed")
+       (and (equal? '("") (string-split "" #\,))
+            (equal? '("") (string-split "" "::")))))
+
 
 (mat string-edit-distance
      (= 0 (edit-distance "" ""))

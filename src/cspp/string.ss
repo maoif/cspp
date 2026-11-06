@@ -468,7 +468,7 @@
          (errorf who "invalid delimiter: ~a" delim))
        (when (and (string? delim) (fx= 0 (string-length delim)))
          (errorf who "empty delimiter"))
-       (cond [(equal? str "") '("")]
+       (cond [(equal? str "") (list "")]
              [(string? delim)
               (let ([dlen (string-length delim)] [len (string-length str)])
                 (if (fx= dlen 1)
@@ -647,9 +647,9 @@
                                     [char? (string target)])]
                      [end (- (string-length str)
                              (string-length target))])
-                (cond [(string=? "" target) '(0)]
+                (cond [(string=? "" target) (list 0)]
                       [(< end 0) #f]
-                      [(= end 0) (and (string=? str target) '(0))]
+                      [(= end 0) (and (string=? str target) (list 0))]
                       [else (let ([next ($make-string-search str target 0 #t)]
                                   [matches (make-list-builder)])
                               (let loop ([index (next)])
