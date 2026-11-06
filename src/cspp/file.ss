@@ -1993,7 +1993,9 @@
                       (if (file-exists? dest #f)
                           (if overwrite?
                               (begin
-                                (when (and source-path ($same-file-entry? source-path dest))
+                                (when (and source-path
+                                           (or ($same-file-entry? source-path dest)
+                                               ($same-file-entry? name-src dest)))
                                   ($err-file who dest "source and destination are the same file"))
                                 ;; Replace the destination symlink itself, matching `ln` semantics.
                                 (delete-file dest)
@@ -2428,8 +2430,12 @@
                                   metadata)
                         #t)]
                      [else
-                      (begin (copy src dest)
-                             (delete-file src))]))))
+                      (let ([target (if (file-directory? dest)
+                                        (path-build dest (path-last src)) dest)])
+                        (when (and (file-exists? target #f) ($same-file-entry? src target))
+                          ($err-file who target "source and destination are the same file"))
+                        (copy src dest)
+                        (delete-file src))]))))
 
   #|proc:file-move
   Move filesystem path string `src` to `dest`, renaming when `dest` is absent and the

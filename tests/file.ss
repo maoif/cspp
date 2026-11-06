@@ -1557,6 +1557,26 @@
 
 (mat file-link
 
+     ;; Error cases: replacing the original source link, including through aliases, must fail.
+     ($with-fs-fixture
+      (lambda (root)
+        (file-symlink "." (path-build root "alias"))
+        (let ([source (path-build root "link")])
+          (file-symlink "top.txt" source)
+          (for-all
+           (lambda (operation)
+             (for-all
+              (lambda (destination)
+                (and (guard (failure [else #t]) (operation source destination) #f)
+                     (file-symbolic-link? source)
+                     (string=? "top.txt" (readlink source))))
+              (list source (path-build root "alias/link") root)))
+           (list file-copy! file-link!
+                 (lambda (source destination) (file-move source destination file-copy!))
+                 ;; A custom copier must never be called for a move onto the source entry.
+                 (lambda (source destination)
+                   (file-move source destination (lambda (source destination) (void)))))))))
+
      ;; Error case: overwriting through a parent alias must preserve the source file.
      (let ([root ($random-file)])
        (dynamic-wind
