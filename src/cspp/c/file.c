@@ -32,6 +32,43 @@ uptr cspp_fs_open_directory(const char *path);
 ptr cspp_fs_read_directory(uptr directory);
 ptr cspp_fs_close_directory(uptr directory);
 
+/* Path bytes identify entries. Never let Sstring_utf8 replace malformed bytes
+ * with U+FFFD and thereby select a different file. Leave decoding to Chez. */
+static int filesystem_utf8_valid(const char *text, size_t length) {
+  const unsigned char *bytes = (const unsigned char *)text;
+  size_t i = 0;
+  while (i < length) {
+    unsigned char first = bytes[i++];
+    unsigned char low = 0x80, high = 0xbf;
+    size_t count;
+    if (first < 0x80) continue;
+    if (first >= 0xc2 && first <= 0xdf) {
+      count = 1;
+    } else if (first >= 0xe0 && first <= 0xef) {
+      count = 2;
+      if (first == 0xe0) low = 0xa0;
+      if (first == 0xed) high = 0x9f;
+    } else if (first >= 0xf0 && first <= 0xf4) {
+      count = 3;
+      if (first == 0xf0) low = 0x90;
+      if (first == 0xf4) high = 0x8f;
+    } else {
+      return 0;
+    }
+    if (length - i < count || bytes[i] < low || bytes[i] > high) return 0;
+    i++;
+    while (--count > 0) {
+      if (bytes[i] < 0x80 || bytes[i] > 0xbf) return 0;
+      i++;
+    }
+  }
+  return 1;
+}
+
+static ptr filesystem_utf8_error(void) {
+  return Sstring("filesystem name or link target is not valid UTF-8");
+}
+
 uptr cspp_fs_open_directory(const char *path) {
   char *p = expand_pathname(path);
   DIR *directory = opendir(p);
@@ -50,7 +87,9 @@ ptr cspp_fs_read_directory(uptr value) {
     if (errno != 0) return errno_str();
     return Sfalse;
   }
-  return Scons(Sstring_utf8(entry->d_name, (iptr)strlen(entry->d_name)), Sfixnum(entry->d_type));
+  size_t length = strlen(entry->d_name);
+  if (!filesystem_utf8_valid(entry->d_name, length)) return filesystem_utf8_error();
+  return Scons(Sstring_utf8(entry->d_name, (iptr)length), Sfixnum(entry->d_type));
 }
 
 ptr cspp_fs_close_directory(uptr value) {
@@ -134,7 +173,10 @@ ptr cspp_realpath(const char *path) {
     errno = saved_errno;
     return errno_str_vector();
   }
-  ptr result = Sstring_utf8(resolved, (iptr)strlen(resolved));
+  size_t length = strlen(resolved);
+  ptr result = filesystem_utf8_valid(resolved, length)
+                 ? Sstring_utf8(resolved, (iptr)length)
+                 : Smake_vector(1, filesystem_utf8_error());
   free(resolved);
   return result;
 }
@@ -160,7 +202,9 @@ ptr cspp_readlink(const char *path) {
       return errno_str_vector();
     }
     if ((size_t)length < capacity) {
-      ptr result = Sstring_utf8(link, length);
+      ptr result = filesystem_utf8_valid(link, (size_t)length)
+                     ? Sstring_utf8(link, length)
+                     : Smake_vector(1, filesystem_utf8_error());
       free(link);
       free(p);
       return result;
@@ -354,6 +398,9 @@ ptr cspp_fswatcher_next(int fsw, int timeout_ms) {
   size_t count = 0;
   for (size_t offset = 0; offset < (size_t)len;) {
     const struct inotify_event *event = (const struct inotify_event *)(buf + offset);
+    if (event->len > 0 && !filesystem_utf8_valid(event->name, strlen(event->name))) {
+      return filesystem_utf8_error();
+    }
     offset += sizeof(*event) + event->len;
     count++;
   }

@@ -62,6 +62,8 @@
   Filesystem path arguments must be strings without NUL characters. Invalid names raise
   an error before filesystem access, rather than selecting a prefix of the supplied name.
   File contents may contain NUL characters.
+  Names and symbolic-link targets read from the filesystem must be valid UTF-8.
+  Undecodable bytes raise an error; they are never replaced with another filename.
   |#
   ;; Validate the original Scheme string before any C-string conversion or filesystem probe.
   ;; Empty names retain each operation's existing behavior; NUL is never a filename character.
@@ -1097,6 +1099,7 @@
   #|proc:fs-open-directory
   Open local directory named by string `path` and return an opaque directory stream.
   Linux is required. A missing or inaccessible directory raises an error.
+  Serialize operations on the same stream; do not close it while another thread reads it.
   |#
   (define fs-open-directory
     (lambda (path)
@@ -1113,6 +1116,7 @@
   or `#f` at EOF. Types are `FT_*` symbols; unrecognized types are `FT_unknown`.
   Entries include `.` and `..`, as returned by Linux `readdir`.
   Reading a closed stream raises an error.
+  An entry name containing invalid UTF-8 bytes raises an error.
   |#
   (define fs-read-directory
     (lambda (directory)
@@ -1156,6 +1160,23 @@
       (or (eq? type 'FT_dir)
           (and (eq? type 'FT_unknown) (file-directory? path follow-link?))
           (and (eq? type 'FT_symlink) follow-link? (file-directory? path #t)))))
+
+  ;; Use the checked native stream for every traversal, including eager walkers.
+  ;; Chez directory-list replaces invalid UTF-8 and strips a leading UTF-8 BOM.
+  (define $directory-entries
+    (lambda (path)
+      (let ([directory (fs-open-directory path)] [entries (make-list-builder)])
+        (dynamic-wind
+          void
+          (lambda ()
+            (let loop ([entry (fs-read-directory directory)])
+              (if entry
+                  (begin
+                    (unless (member (car entry) '("." ".."))
+                      (entries (path-build path (car entry))))
+                    (loop (fs-read-directory directory)))
+                  (entries))))
+          (lambda () (fs-close-directory directory))))))
 
   (define $file-identity
     (lambda (path follow-link?)
@@ -1765,13 +1786,9 @@
                                                 (file-stat-inode stat))])
                            (and (not (member identity ancestors))
                                 (cons identity ancestors))))))
-                 (define list-entries
-                   (lambda (directory)
-                     (map! (lambda (name) (path-build directory name))
-                           (directory-list directory))))
                  (define walk-top-down
                    (lambda (directory ancestors)
-                     (let-values ([(dirs files) (partition dir? (list-entries directory))])
+                     (let-values ([(dirs files) (partition dir? ($directory-entries directory))])
                        (if (proc directory dirs files)
                            (let visit ([remaining dirs])
                              (cond
@@ -1787,7 +1804,7 @@
                            #f))))
                  (define walk-bottom-up
                    (lambda (directory ancestors)
-                     (let-values ([(dirs files) (partition dir? (list-entries directory))])
+                     (let-values ([(dirs files) (partition dir? ($directory-entries directory))])
                        (let visit ([remaining dirs])
                          (cond
                           [(null? remaining) (proc directory dirs files)]
@@ -2486,16 +2503,15 @@
                      (operation))))
                (define remove-tree
                  (lambda (directory)
-                   (let ([entries (attempt (lambda () (directory-list directory)))])
+                   (let ([entries (attempt (lambda () ($directory-entries directory)))])
                      (when entries
                        (for-each
-                        (lambda (name)
+                        (lambda (entry)
                           (attempt
                            (lambda ()
-                             (let ([entry (path-build directory name)])
-                               (if (file-directory? entry #f)
-                                   (remove-tree entry)
-                                   (delete-file entry #t))))))
+                             (if (file-directory? entry #f)
+                                 (remove-tree entry)
+                                 (delete-file entry #t)))))
                         entries)))
                    (attempt (lambda () (delete-directory directory #t)))))
                ;; A trailing slash makes lstat follow the final symlink on POSIX.

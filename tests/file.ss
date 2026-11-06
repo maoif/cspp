@@ -177,6 +177,75 @@
              (not (file-exists? root #f))
              (eq? #f (file-removetree root #f))))))
 
+(mat file-rejects-invalid-utf8-names
+     (for-all
+      (lambda (bytes)
+        ($with-fs-fixture
+         (lambda (root)
+           (let* ([open (foreign-procedure "open" (u8* int int) int)]
+                  [close (foreign-procedure "close" (int) int)]
+                  [unlink (foreign-procedure "unlink" (u8*) int)]
+                  [symlink (foreign-procedure "symlink" (u8* string) int)]
+                  [prefix (string->utf8 (string-append root "/"))]
+                  [raw (make-bytevector (+ (bytevector-length prefix)
+                                          (bytevector-length bytes) 1) 0)]
+                  [target (make-bytevector (fx1+ (bytevector-length bytes)) 0)]
+                  [link (path-build root "link")]
+                  [copy (path-build root "copy")]
+                  [watcher (make-fswatcher #f)]
+                  [rejects? (lambda (thunk)
+                              (guard (failure [(error? failure) #t]) (thunk) #f))])
+             (bytevector-copy! prefix 0 raw 0 (bytevector-length prefix))
+             (bytevector-copy! bytes 0 raw (bytevector-length prefix) (bytevector-length bytes))
+             (bytevector-copy! bytes 0 target 0 (bytevector-length bytes))
+             (dynamic-wind
+               void
+               (lambda ()
+                 (write-string (path-build root "�") "keep replacement name")
+                 (fswatcher-add! watcher root (fswatcher-mask FSW_create))
+                 (let ([fd (open raw #o101 #o600)])
+                   (when (< fd 0) (error 'utf8-fixture "cannot create raw name"))
+                   (close fd))
+                 (when (< (symlink target link) 0)
+                   (error 'utf8-fixture "cannot create raw target"))
+                 ;; Error cases: reject undecodable identity bytes instead of replacing them.
+                 (and (rejects? (lambda () (readlink link)))
+                      (rejects? (lambda () (file-copy link copy #f)))
+                      (not (file-exists? copy #f))
+                      (rejects? (lambda () (file-copy link copy)))
+                      (not (file-exists? copy #f))
+                      (rejects?
+                       (lambda ()
+                         (let ([directory (fs-open-directory root)])
+                           (dynamic-wind
+                             void
+                             (lambda ()
+                               (let loop () (when (fs-read-directory directory) (loop))))
+                             (lambda () (fs-close-directory directory))))))
+                      (rejects? (lambda () (walk-files (lambda args #t) root)))
+                      (rejects? (lambda () (file-copytree root (string-append root "-copy"))))
+                      (rejects? (lambda () (file-removetree root #t)))
+                      (string=? "keep replacement name" (read-string (path-build root "�")))
+                      (rejects? (lambda () (fswatcher-next! watcher 1000)))))
+               (lambda ()
+                 (close-fswatcher watcher)
+                 (unlink raw)
+                 (when (file-directory? (string-append root "-copy"))
+                   (file-removetree (string-append root "-copy") #t))))))))
+      '(#vu8(255) #vu8(128) #vu8(192 128) #vu8(237 160 128)
+        #vu8(244 144 128 128) #vu8(226 130))))
+
+(mat file-unicode-name-roundtrip
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([names '("�" "\xFEFF;name" "λ🚀")])
+          (for-each (lambda (name) (write-string (path-build root name) "payload")) names)
+          (let ([entries (file-find-all (lambda (entry) #t) root)])
+            (for-all (lambda (name)
+                       (let ([path (path-build root name)])
+                         (and (member path entries) (string=? "payload" (read-string path)))))
+                     names))))))
+
 (mat file-collection-callback-results
      ($with-fs-fixture
       (lambda (root)
