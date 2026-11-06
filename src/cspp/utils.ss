@@ -1,6 +1,6 @@
 #!chezscheme
 (library (cspp utils)
-  (export pcase pcheck pcheck-pair pcheck-list pcheck-string pcheck-char pcheck-proc
+  (export pcase pcheck pcheck-who pcheck-pair pcheck-list pcheck-string pcheck-char pcheck-proc
           pcheck-hashtable pcheck-vector pcheck-port pcheck-binary-port pcheck-textual-port
           pcheck-open-port pcheck-open-binary-port pcheck-open-textual-port
           pcheck-input-binary-port  pcheck-input-textual-port
@@ -25,6 +25,29 @@
           define-flags flag-any-set? flag-all-set? flag-set flag-reset)
   (import (chezscheme)
           (cspp internal))
+
+  #|macro:define-who
+  The `define-who` macro defines `id` from an expression with `who` bound to the name symbol.
+  The `(id . arguments)` form defines a procedure from body expressions. The `#(prefix id)` form
+  defines the concatenated name and permits recursion through `id`.
+  Definition values are unspecified.
+  |#
+  (define-syntax define-who
+    (lambda (x)
+      (syntax-case x ()
+        [(k (id . args) b1 b2 ...)
+         #'(k id (lambda args b1 b2 ...))]
+        [(k #(prefix id) e)
+         (and (identifier? #'prefix) (identifier? #'id))
+         (with-implicit (k who)
+           (with-syntax ([ext-id ($construct-name #'id #'prefix #'id)])
+             #'(define ext-id (let ([who 'id]) (rec id e)))))]
+        [(k id e)
+         (identifier? #'id)
+         (with-implicit (k who)
+           #'(define id (let ([who 'id]) e)))])))
+
+
 
   #|proc:id
   The `id` procedure returns its arbitrary `value` argument unchanged.
@@ -70,8 +93,23 @@
   Each predicate has signature `object -> object`; a false result raises an argument error.
   Checks run in clause order before the body, whose values are returned on success.
   Use this macro at API argument boundaries; each predicate expression is evaluated once per clause.
+  Errors identify `pcheck`; use `pcheck-who` to supply the caller's name explicitly.
   |#
   (define-syntax pcheck
+    (syntax-rules ()
+      [(_ checks body body* ...)
+       (let ([who 'pcheck]) (pcheck-who who checks body body* ...))]))
+
+  #|macro:pcheck-who
+  The `pcheck-who` macro checks `[predicate argument ...]` clauses before evaluating its body.
+  The `who` form must be a variable reference whose value is a symbol naming the caller.
+  Its value is read once before checking arguments; a nonsymbol value raises an argument error.
+  Inside `define-who`, pass its `who` binding. A rejection raises an error naming that caller.
+  Each predicate has signature `object -> object` and is evaluated once per clause; checks run
+  in order and stop at the first rejection. Successful checks return all body values.
+  Argument forms must be bound identifiers. An empty clause list performs no argument checks.
+  |#
+  (define-syntax pcheck-who
     (lambda (stx)
       (define all-ids?
         (lambda (ls*)
@@ -80,11 +118,11 @@
              (andmap identifier? ls))
            ls*)))
       (syntax-case stx ()
-        [(k () e e* ...)
-         #'(begin e e* ...)]
-        [(k ([pred x x* ...] ...) e e* ...)
-         (all-ids? #'((x x* ...) ...))
-         (let loop ([preds #'(pred ...)] [id** #'((x x* ...) ...)])
+        [(k who ([pred x x* ...] ...) e e* ...)
+         (and (identifier? #'who) (all-ids? #'((x x* ...) ...)))
+         #`(let ([caller who])
+             (unless (symbol? caller) (errorf 'pcheck-who "caller is not a symbol: ~s" caller))
+             #,(let loop ([preds #'(pred ...)] [id** #'((x x* ...) ...)])
            (if (null? preds)
                #`(let () e e* ...)
                (with-syntax ([pred (car preds)] [ids (car id**)]
@@ -95,8 +133,9 @@
                              (loop (cdr preds) (cdr id**))
                              #`(if (p #,(car id*))
                                    #,(f (cdr id*))
-                                   (errorf 'k "failed ~a ~a: ~a, value: ~a" 'k 'pred '#,(car id*) #,(car id*)))))))))]
-        [_ (syntax-error stx "invalid pcheck form:")])))
+                                   (errorf caller "failed predicate ~s for ~s, value: ~s"
+                                     'pred '#,(car id*) #,(car id*))))))))))]
+        [_ (syntax-error stx "invalid pcheck-who form:")])))
 
   (define-syntax gen-pcheck
     (lambda (stx)
@@ -323,12 +362,12 @@
   (define-syntax $fixnum-update!
     (lambda (stx)
       (syntax-case stx ()
-        [(_ operation target operand ...)
+        [(_ who operation target operand ...)
          (identifier? #'target)
          (with-syntax ([(current-value value ...)
                         (generate-temporaries #'(target operand ...))])
            #'(let ([current-value target] [value operand] ...)
-               (pcheck ([fixnum? current-value value ...])
+               (pcheck-who who ([fixnum? current-value value ...])
                  (set! target (operation current-value value ...)))))])))
 
   #|macro:fx+!
@@ -338,7 +377,7 @@
   |#
   (define-syntax fx+!
     (syntax-rules ()
-      [(_ n x ...) ($fixnum-update! #2%fx+ n x ...)]))
+      [(_ n x ...) (let ([who 'fx+!]) ($fixnum-update! who #2%fx+ n x ...))]))
 
   #|macro:fx-!
   The `fx-!` macro assigns `(fx- n x ...)` to fixnum variable `n`, returning unspecified values.
@@ -347,7 +386,7 @@
   |#
   (define-syntax fx-!
     (syntax-rules ()
-      [(_ n x ...) ($fixnum-update! #2%fx- n x ...)]))
+      [(_ n x ...) (let ([who 'fx-!]) ($fixnum-update! who #2%fx- n x ...))]))
 
   #|macro:fx*!
   The `fx*!` macro assigns `(fx* n x ...)` to fixnum variable `n`, returning unspecified values.
@@ -356,7 +395,7 @@
   |#
   (define-syntax fx*!
     (syntax-rules ()
-      [(_ n x ...) ($fixnum-update! #2%fx* n x ...)]))
+      [(_ n x ...) (let ([who 'fx*!]) ($fixnum-update! who #2%fx* n x ...))]))
 
   #|macro:fx/!
   The `fx/!` macro assigns `(fx/ n x ...)` to fixnum variable `n`, returning unspecified values.
@@ -365,7 +404,7 @@
   |#
   (define-syntax fx/!
     (syntax-rules ()
-      [(_ n x ...) ($fixnum-update! #2%fx/ n x ...)]))
+      [(_ n x ...) (let ([who 'fx/!]) ($fixnum-update! who #2%fx/ n x ...))]))
 
   #|macro:cons!
   The `cons!` macro sets variable `p` to a new pair with car `a` and cdr equal to its old value.
@@ -385,7 +424,7 @@
     (lambda (stx)
       (syntax-case stx ()
         [(_ v) (identifier? #'v)
-         #'(pcheck ([pair? v]) (set! v (cdr v)))])))
+         #'(let ([who 'cdr!]) (pcheck-who who ([pair? v]) (set! v (cdr v))))])))
 
 
   #|macro:neq?
@@ -420,56 +459,35 @@
   The optional `readable?` selects the Scheme `#o` prefix when true (the default), or `0o`
   otherwise.
   |#
-  (define octal
+  (define-who octal
     (case-lambda
       [(number) (octal number #t)]
       [(number readable?)
-       (pcheck ([number? number])
+       (pcheck-who who ([number? number])
                (string-append (if readable? "#o" "0o") (number->string number 8)))]))
   #|proc:hex
   The `hex` procedure returns a hexadecimal string for `number`.
   The optional `readable?` selects the Scheme `#x` prefix when true (the default), or `0x`
   otherwise.
   |#
-  (define hex
+  (define-who hex
     (case-lambda
       [(number) (hex number #t)]
       [(number readable?)
-       (pcheck ([number? number])
+       (pcheck-who who ([number? number])
                (string-append (if readable? "#x" "0x") (number->string number 16)))]))
   #|proc:bin
   The `bin` procedure returns a binary string for `number`.
   The optional `readable?` selects the Scheme `#b` prefix when true (the default), or `0b`
   otherwise.
   |#
-  (define bin
+  (define-who bin
     (case-lambda
       [(number) (bin number #t)]
       [(number readable?)
-       (pcheck ([number? number])
+       (pcheck-who who ([number? number])
                (string-append (if readable? "#b" "0b") (number->string number 2)))]))
 
-
-  #|macro:define-who
-  The `define-who` macro defines `id` from an expression with `who` bound to the name symbol.
-  The `(id . arguments)` form defines a procedure from body expressions. The `#(prefix id)` form
-  defines the concatenated name and permits recursion through `id`.
-  Definition values are unspecified.
-  |#
-  (define-syntax define-who
-    (lambda (x)
-      (syntax-case x ()
-        [(k (id . args) b1 b2 ...)
-         #'(k id (lambda args b1 b2 ...))]
-        [(k #(prefix id) e)
-         (and (identifier? #'prefix) (identifier? #'id))
-         (with-implicit (k who)
-           (with-syntax ([ext-id ($construct-name #'id #'prefix #'id)])
-             #'(define ext-id (let ([who 'id]) (rec id e)))))]
-        [(k id e)
-         (identifier? #'id)
-         (with-implicit (k who)
-           #'(define id (let ([who 'id]) e)))])))
 
   #|macro:trace-define-who
   The `trace-define-who` macro defines a traced procedure named `id`, binding `who` to its symbol
@@ -495,7 +513,7 @@
   |#
   (define-who p/and
     (lambda procs
-      (pcheck ([(lambda (procedures) (andmap procedure? procedures)) procs])
+      (pcheck-who who ([(lambda (procedures) (andmap procedure? procedures)) procs])
               (lambda (x)
                 (andmap (lambda (p) (p x)) procs)))))
 
@@ -507,7 +525,7 @@
   |#
   (define-who p/or
     (lambda procs
-      (pcheck ([(lambda (procedures) (andmap procedure? procedures)) procs])
+      (pcheck-who who ([(lambda (procedures) (andmap procedure? procedures)) procs])
               (lambda (x)
                 (ormap (lambda (p) (p x)) procs)))))
 
@@ -517,7 +535,7 @@
   |#
   (define-who p/not
     (lambda (proc)
-      (pcheck ([procedure? proc])
+      (pcheck-who who ([procedure? proc])
               (lambda (x) (not (proc x))))))
 
 
@@ -535,9 +553,9 @@
   A procedure accepting every arity returns `(*)`; one accepting no arities returns `()`.
   The `proc` parameter is any procedure; it is inspected without calling it.
   |#
-  (define procedure-arity
+  (define-who procedure-arity
     (lambda (proc)
-      (pcheck ([procedure? proc])
+      (pcheck-who who ([procedure? proc])
               (let ([builder ($make-list-builder)])
                 (let loop ([mask (procedure-arity-mask proc)] [index 0])
                   (cond
@@ -559,9 +577,9 @@
   The `procedure-variable-arity?` procedure returns whether procedure `proc` accepts all argument
   counts above some lower bound. It inspects the procedure without calling it and returns a boolean.
   |#
-  (define procedure-variable-arity?
+  (define-who procedure-variable-arity?
     (lambda (proc)
-      (pcheck ([procedure? proc])
+      (pcheck-who who ([procedure? proc])
               (let ([m (procedure-arity-mask proc)])
                 (< m 0)))))
 
@@ -570,9 +588,9 @@
   The `procedure-name` procedure returns the name string of procedure `proc`, or `#f` if unnamed.
   The `proc` parameter is inspected without calling it.
   |#
-  (define procedure-name
+  (define-who procedure-name
     (lambda (proc)
-      (pcheck ([procedure? proc])
+      (pcheck-who who ([procedure? proc])
               (#%$procedure-name proc))))
 
 
@@ -598,7 +616,7 @@
       [()   (random-char #\space #\~)]
       [(upper-bound) (random-char #\nul upper-bound)]
       [(lower-bound upper-bound)
-       (pcheck ([char? lower-bound upper-bound])
+       (pcheck-who who ([char? lower-bound upper-bound])
                (when (char>=? lower-bound upper-bound)
                  ($range-error who lower-bound upper-bound))
                (let* ([lower (char->integer lower-bound)]
@@ -623,7 +641,7 @@
       [(upper-bound) (random-string random-char 0 upper-bound)]
       [(lower-bound upper-bound) (random-string random-char lower-bound upper-bound)]
       [(generator lower-bound upper-bound)
-       (pcheck ([procedure? generator] [$length-bound? lower-bound upper-bound])
+       (pcheck-who who ([procedure? generator] [$length-bound? lower-bound upper-bound])
                (when (fx>= lower-bound upper-bound)
                  ($range-error who lower-bound upper-bound))
                (let* ([length ($rand lower-bound upper-bound)] [result (make-string length)])
@@ -647,7 +665,7 @@
       [(upper-bound) (random-symbol 1 upper-bound)]
       [(lower-bound upper-bound) (string->symbol (random-string lower-bound upper-bound))]
       [(generator lower-bound upper-bound)
-       (pcheck ([procedure? generator] [$length-bound? lower-bound upper-bound])
+       (pcheck-who who ([procedure? generator] [$length-bound? lower-bound upper-bound])
                (when (fx>= lower-bound upper-bound)
                  ($range-error who lower-bound upper-bound))
                (let ([name (generator)])
@@ -684,7 +702,7 @@
       [(upper-bound) (random-list random-datum 0 upper-bound)]
       [(lower-bound upper-bound) (random-list random-datum lower-bound upper-bound)]
       [(generator lower-bound upper-bound)
-       (pcheck ([procedure? generator] [$length-bound? lower-bound upper-bound])
+       (pcheck-who who ([procedure? generator] [$length-bound? lower-bound upper-bound])
                (when (fx>= lower-bound upper-bound)
                  ($range-error who lower-bound upper-bound))
                (let ([builder ($make-list-builder)] [length ($rand lower-bound upper-bound)])
@@ -698,14 +716,14 @@
   (define-who random-box
     (case-lambda
       [()  (box (random-datum))]
-      [(generator) (pcheck ([procedure? generator]) (box (generator)))]))
+      [(generator) (pcheck-who who ([procedure? generator]) (box (generator)))]))
 
   (define $random-bytevector
     (case-lambda
       [(who)    ($random-bytevector who 0 10)]
       [(who upper-bound) ($random-bytevector who 0 upper-bound)]
       [(who lower-bound upper-bound)
-       (pcheck ([$length-bound? lower-bound upper-bound])
+       (pcheck-who who ([$length-bound? lower-bound upper-bound])
         (when (fx>= lower-bound upper-bound) ($range-error who lower-bound upper-bound))
         (let* ([len ($rand lower-bound upper-bound)] [u8vec (make-bytevector len 0)])
           (let loop ([i 0])
@@ -778,9 +796,9 @@
                      ((_k flags (... ...))
                       (datum->syntax #'_k
                                      (flag->mask `(or ,@(datum (flags (... ...)))) 'env))))))
-               (define ->symbols
+               (define-who ->symbols
                  (lambda (flags)
-                   (pcheck ([fixnum? flags])
+                   (pcheck-who who ([fixnum? flags])
                      (let loop ([e 'env] [res '()])
                        (if (null? e)
                            res
@@ -795,8 +813,8 @@
   (define-syntax flag-any-set?
     (syntax-rules ()
       ((_ mask x)
-       (let ([bits mask] [value x])
-         (pcheck ([fixnum? bits value])
+       (let ([who 'flag-any-set?] [bits mask] [value x])
+         (pcheck-who who ([fixnum? bits value])
            (not (fx= (fxlogand bits value) 0)))))))
 
   #|macro:flag-all-set?
@@ -806,8 +824,8 @@
   (define-syntax flag-all-set?
     (syntax-rules ()
       ((_ mask x)
-       (let ([bits mask] [value x])
-         (pcheck ([fixnum? bits value])
+       (let ([who 'flag-all-set?] [bits mask] [value x])
+         (pcheck-who who ([fixnum? bits value])
            (fx= (fxlogand bits value) bits))))))
 
   #|macro:flag-set
@@ -816,8 +834,8 @@
   (define-syntax flag-set
     (syntax-rules ()
       ((_ mask x)
-       (let ([bits mask] [value x])
-         (pcheck ([fixnum? bits value]) (fxlogor bits value))))))
+       (let ([who 'flag-set] [bits mask] [value x])
+         (pcheck-who who ([fixnum? bits value]) (fxlogor bits value))))))
 
   #|macro:flag-reset
   The `flag-reset` macro returns fixnum `x` with every bit of fixnum `mask` cleared.
@@ -826,7 +844,7 @@
   (define-syntax flag-reset
     (syntax-rules ()
       ((_ mask x)
-       (let ([bits mask] [value x])
-         (pcheck ([fixnum? bits value]) (fxlogand (fxlognot bits) value))))))
+       (let ([who 'flag-reset] [bits mask] [value x])
+         (pcheck-who who ([fixnum? bits value]) (fxlogand (fxlognot bits) value))))))
 
   )

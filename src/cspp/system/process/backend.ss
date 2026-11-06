@@ -36,45 +36,45 @@
   The `process-result-status` procedure returns the process exit-status record stored in `result`.
   The `result` parameter is a process result record.
   |#
-  (define process-result-status
+  (define-who process-result-status
     (lambda (result)
-      (pcheck ([process-result? result]) ($process-result-status result))))
+      (pcheck-who who ([process-result? result]) ($process-result-status result))))
 
   #|proc:process-result-stdout
   The `process-result-stdout` procedure returns captured standard output as a string or bytevector,
   or `#f` when output was not requested.
   The `result` parameter is a process result record.
   |#
-  (define process-result-stdout
+  (define-who process-result-stdout
     (lambda (result)
-      (pcheck ([process-result? result]) ($process-result-stdout result))))
+      (pcheck-who who ([process-result? result]) ($process-result-stdout result))))
 
   #|proc:process-result-stderr
   The `process-result-stderr` procedure returns captured standard error as a string or bytevector,
   or `#f` when error output was not requested.
   The `result` parameter is a process result record.
   |#
-  (define process-result-stderr
+  (define-who process-result-stderr
     (lambda (result)
-      (pcheck ([process-result? result]) ($process-result-stderr result))))
+      (pcheck-who who ([process-result? result]) ($process-result-stderr result))))
 
   #|proc:process-result-pid
   The `process-result-pid` procedure returns the process id stored in `result`, or `#f` when no
   process id is available.
   The `result` parameter is a process result record.
   |#
-  (define process-result-pid
+  (define-who process-result-pid
     (lambda (result)
-      (pcheck ([process-result? result]) ($process-result-pid result))))
+      (pcheck-who who ([process-result? result]) ($process-result-pid result))))
 
   #|proc:process-result-command
   The `process-result-command` procedure returns the program or shell-command string in `result`.
   Pipeline results instead store the symbol `pipeline`.
   The `result` parameter is a process result record.
   |#
-  (define process-result-command
+  (define-who process-result-command
     (lambda (result)
-      (pcheck ([process-result? result]) ($process-result-command result))))
+      (pcheck-who who ([process-result? result]) ($process-result-command result))))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; process backend
@@ -170,8 +170,8 @@
         status)))
 
   (define $spawn-capture
-    (lambda (argv options capture-default)
-      ($validate-process-options options #f)
+    (lambda (who argv options capture-default)
+      ($validate-process-options options #f who)
       (ffi-result-ref
        ($spawn-capture-ffi argv
                            ($option-ref options 'env #f)
@@ -186,11 +186,11 @@
 
   (define $run-command
     (lambda (who command argv options check?)
-      ($run-vector->status command ($spawn-capture argv options 'inherit) options check? who)))
+      ($run-vector->status command ($spawn-capture who argv options 'inherit) options check? who)))
 
   (define $capture-command
     (lambda (who command argv options check?)
-      ($capture-vector->result command ($spawn-capture argv options 'capture) options check? who)))
+      ($capture-vector->result command ($spawn-capture who argv options 'capture) options check? who)))
 
   #|proc:%process-run
   The internal `%process-run` procedure implements direct command forms and returns an exit status.
@@ -201,7 +201,8 @@
   |#
   (define %process-run
     (lambda (who program arguments options check?)
-      (pcheck ([symbol? who] [$os-string? program] [$os-string-list? arguments]
+      (pcheck-who who
+        ([symbol? who] [$os-string? program] [$os-string-list? arguments]
                [list? options] [boolean? check?])
               ($run-command who program (cons program arguments) options check?))))
 
@@ -213,7 +214,8 @@
   |#
   (define %process-capture
     (lambda (who program arguments options check?)
-      (pcheck ([symbol? who] [$os-string? program] [$os-string-list? arguments]
+      (pcheck-who who
+        ([symbol? who] [$os-string? program] [$os-string-list? arguments]
                [list? options] [boolean? check?])
               ($capture-command who program (cons program arguments) options check?))))
 
@@ -225,7 +227,8 @@
   |#
   (define %process-run-shell
     (lambda (who command options check?)
-      (pcheck ([symbol? who] [$os-string? command] [list? options] [boolean? check?])
+      (pcheck-who who
+        ([symbol? who] [$os-string? command] [list? options] [boolean? check?])
               ($run-command who command (list "sh" "-c" command) options check?))))
 
   #|proc:%process-capture-shell
@@ -236,7 +239,8 @@
   |#
   (define %process-capture-shell
     (lambda (who command options check?)
-      (pcheck ([symbol? who] [$os-string? command] [list? options] [boolean? check?])
+      (pcheck-who who
+        ([symbol? who] [$os-string? command] [list? options] [boolean? check?])
               ($capture-command who command (list "sh" "-c" command) options check?))))
 
   #|proc:process-capture-pipeline
@@ -246,9 +250,9 @@
   Stdin and stderr are inherited. The result's stderr field is `#f`, and its command is `pipeline`.
   The status and pid belong to the final command; all children are waited for before returning.
   |#
-  (define process-capture-pipeline
+  (define-who process-capture-pipeline
     (lambda (process-specs)
-      (pcheck ([$process-specs? process-specs])
+      (pcheck-who who ([$process-specs? process-specs])
               (let ([result (ffi-result-ref ($spawn-pipeline-capture-ffi process-specs -1))])
                 ($capture-vector->result 'pipeline result '((stdout . capture) (stderr . inherit)) #f
                                         'process-capture-pipeline)))))

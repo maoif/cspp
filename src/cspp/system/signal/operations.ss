@@ -22,7 +22,7 @@
   |#
   (define-who send-signal
     (lambda (pid sig)
-      (pcheck ([$positive-pid? pid] [$signal-input? sig])
+      (pcheck-who who ([$positive-pid? pid] [$signal-input? sig])
               (ffi-result-ref ($send-signal-ffi pid (signal-number ($signal-ref who sig))))
               (void))))
 
@@ -36,7 +36,7 @@
   |#
   (define-who send-process-signal
     (lambda (process sig)
-      (pcheck ([process? process] [$signal-input? sig])
+      (pcheck-who who ([process? process] [$signal-input? sig])
               (process-kill process (signal-number ($signal-ref who sig)))
               (void))))
 
@@ -50,7 +50,7 @@
   |#
   (define-who send-process-group-signal
     (lambda (process-group-id sig)
-      (pcheck ([(lambda (value) (and ($positive-pid? value) (> value 1))) process-group-id]
+      (pcheck-who who ([(lambda (value) (and ($positive-pid? value) (> value 1))) process-group-id]
                [$signal-input? sig])
               (ffi-result-ref
                ($send-signal-ffi (- process-group-id) (signal-number ($signal-ref who sig))))
@@ -88,7 +88,7 @@
   |#
   (define-who signal-mask-set!
     (lambda (signals)
-      (pcheck ([list? signals])
+      (pcheck-who who ([list? signals])
               (ffi-result-ref ($mask-update-ffi ($signal-numbers who signals) 0))
               (void))))
 
@@ -102,7 +102,7 @@
   |#
   (define-who signal-block!
     (lambda (signals)
-      (pcheck ([list? signals])
+      (pcheck-who who ([list? signals])
               (ffi-result-ref ($mask-update-ffi ($signal-numbers who signals) 1))
               (void))))
 
@@ -114,7 +114,7 @@
   |#
   (define-who signal-unblock!
     (lambda (signals)
-      (pcheck ([list? signals])
+      (pcheck-who who ([list? signals])
               (ffi-result-ref ($mask-update-ffi ($signal-numbers who signals) 2))
               (void))))
 
@@ -129,7 +129,7 @@
   |#
   (define-who wait-signal
     (lambda (signals)
-      (pcheck ([list? signals])
+      (pcheck-who who ([list? signals])
               ($signal-ref who
                            (ffi-result-ref ($wait-signal-ffi ($signal-numbers who signals)))))))
 

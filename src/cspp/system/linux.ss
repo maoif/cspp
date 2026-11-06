@@ -113,7 +113,7 @@
   |#
   (define-who linux-filesystem-info
     (lambda (path)
-      (pcheck ([string? path])
+      (pcheck-who who ([string? path])
               ($ensure-linux who)
               (filesystem-info path))))
 
@@ -133,7 +133,7 @@
   |#
   (define-who linux-send-signal
     (lambda (pid sig)
-      (pcheck ([$positive-pid? pid] [$signal-input? sig])
+      (pcheck-who who ([$positive-pid? pid] [$signal-input? sig])
               ($ensure-linux who)
               (send-signal pid sig))))
 

@@ -33,36 +33,36 @@
   mounted filesystem record.
   The `mount` parameter is a mounted filesystem record returned by `mounted-filesystems`.
   |#
-  (define mounted-filesystem-source
+  (define-who mounted-filesystem-source
     (lambda (mount)
-      (pcheck ([mounted-filesystem? mount]) ($mounted-filesystem-source mount))))
+      (pcheck-who who ([mounted-filesystem? mount]) ($mounted-filesystem-source mount))))
 
   #|proc:mounted-filesystem-target
   The `mounted-filesystem-target` procedure returns the mount target path of a mounted filesystem
   record.
   The `mount` parameter is a mounted filesystem record returned by `mounted-filesystems`.
   |#
-  (define mounted-filesystem-target
+  (define-who mounted-filesystem-target
     (lambda (mount)
-      (pcheck ([mounted-filesystem? mount]) ($mounted-filesystem-target mount))))
+      (pcheck-who who ([mounted-filesystem? mount]) ($mounted-filesystem-target mount))))
 
   #|proc:mounted-filesystem-type
   The `mounted-filesystem-type` procedure returns the filesystem type string of a mounted
   filesystem record.
   The `mount` parameter is a mounted filesystem record returned by `mounted-filesystems`.
   |#
-  (define mounted-filesystem-type
+  (define-who mounted-filesystem-type
     (lambda (mount)
-      (pcheck ([mounted-filesystem? mount]) ($mounted-filesystem-type mount))))
+      (pcheck-who who ([mounted-filesystem? mount]) ($mounted-filesystem-type mount))))
 
   #|proc:mounted-filesystem-options
   The `mounted-filesystem-options` procedure returns mount and superblock options separated by
   a space, as reported by Linux mountinfo.
   The `mount` parameter is a mounted filesystem record returned by `mounted-filesystems`.
   |#
-  (define mounted-filesystem-options
+  (define-who mounted-filesystem-options
     (lambda (mount)
-      (pcheck ([mounted-filesystem? mount]) ($mounted-filesystem-options mount))))
+      (pcheck-who who ([mounted-filesystem? mount]) ($mounted-filesystem-options mount))))
 
   (define $mountinfo-unescape
     (lambda (field)

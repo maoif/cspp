@@ -1,5 +1,100 @@
 (import (cspp chez) (cspp utils))
 
+(mat pcheck-explicit-caller
+
+     ;; Error case: a failed argument check must retain the explicit API name.
+     (guard (condition
+              [else (and (who-condition? condition)
+                         (eq? 'different-name (condition-who condition)))])
+       (eval '(let ([example-api 'different-name] [value #f]) (pcheck-who example-api ([string? value]) #t))
+             (environment '(cspp chez) '(cspp utils)))
+       #f)
+
+     ;; Predicate expressions run once per clause and bodies preserve internal definitions/values.
+     (guard (condition [else #f])
+       (eval '(let ([example-api 'different-name] [events '()] [first 1] [second 2])
+                (let ([answer
+                        (call-with-values
+                          (lambda ()
+                            (pcheck-who example-api
+                              ([(begin (set! events (cons 'predicate events))
+                                   (lambda (value) (set! events (cons value events)) 'accepted))
+                                first second])
+                              (define result (+ first second))
+                              (values result 'done)))
+                          list)])
+                  (and (equal? '(3 done) answer)
+                       (equal? '(2 1 predicate) events))))
+             (environment '(cspp chez) '(cspp utils))))
+
+     ;; Error case: later checks and the body must not run after a rejection.
+     (guard (condition [else #f])
+       (eval '(let ([example-api 'different-name] [value #f] [later? #f])
+                (and (guard (condition
+                              [else (and (who-condition? condition)
+                                         (eq? 'different-name (condition-who condition)))])
+                       (pcheck-who example-api
+                         ([(begin (set! example-api 'changed-caller) string?) value]
+                          [(begin (set! later? #t) string?) value])
+                         (set! later? #t))
+                       #f)
+                     (not later?)))
+             (environment '(cspp chez) '(cspp utils))))
+
+     ;; Empty checks preserve zero return values with any symbol-valued caller variable.
+     (guard (condition [else #f])
+       (eval '(let ([example-api 'different-name])
+                (null? (call-with-values
+                              (lambda ()
+                                (pcheck-who example-api () (values)))
+                              list)))
+             (environment '(cspp chez) '(cspp utils))))
+
+     ;; Error case: define-who's bound name is used when the caller identifier is who.
+     (guard (condition
+              [else (and (who-condition? condition)
+                         (eq? 'example-api (condition-who condition)))])
+       (eval '(let ()
+                (define-who example-api
+                  (lambda (value) (pcheck-who who ([string? value]) #t)))
+                (example-api #f))
+             (environment '(cspp chez) '(cspp utils)))
+       #f)
+
+     ;; Error case: a dynamic who binding must hold a symbol, even when no checks are requested.
+     (for-all
+       (lambda (value)
+         (guard (condition
+                  [else (and (who-condition? condition)
+                             (eq? 'pcheck-who (condition-who condition)))])
+           (eval `(let ([caller ',value]) (pcheck-who caller () #t))
+                 (environment '(cspp chez) '(cspp utils)))
+           #f))
+       '(#f "example-api" 17))
+
+     ;; Error case: caller forms must be identifiers, not literals or compound expressions.
+     (for-all
+       (lambda (caller)
+         (guard (condition [(syntax-violation? condition) #t] [else #f])
+           (eval `(pcheck-who ,caller () #t) (environment '(cspp chez) '(cspp utils)))
+           #f))
+       '('example-api "example-api" #f (begin 'example-api))))
+
+(mat utility-error-origins
+
+     ;; Error case: invalid arguments identify the API, including shared bytevector workers.
+     (for-all
+       (lambda (entry)
+         (guard (condition
+                  [else (and (who-condition? condition)
+                             (eq? (car entry) (condition-who condition)))])
+           ((cdr entry)) #f))
+       (list (cons 'hex (lambda () (hex #f)))
+             (cons 'p/not (lambda () (p/not #f)))
+             (cons 'procedure-arity (lambda () (procedure-arity #f)))
+             (cons 'random-list (lambda () (random-list #f 0 1)))
+             (cons 'random-u8vec (lambda () (random-u8vec 1.0))))))
+
 (mat pcase-fallback
 
      (let ([value 1]) (eq? 'fallback (pcase value [else 'fallback])))

@@ -77,7 +77,7 @@
   |#
   (define-who user-ref
     (lambda (id)
-      (pcheck ([$user-key? id])
+      (pcheck-who who ([$user-key? id])
         (mk-unix-user ($lookup-user id)))))
 
   #|proc:getuser
@@ -94,7 +94,7 @@
   |#
   (define-who group-ref
     (lambda (id)
-      (pcheck ([$user-key? id])
+      (pcheck-who who ([$user-key? id])
         (mk-unix-group ($lookup-group id)))))
 
   #|proc:getgroup
@@ -132,9 +132,9 @@
   The `uid->user` procedure returns the user name for `id`.
   The `id` parameter is an exact unsigned 32-bit user ID.
   |#
-  (define uid->user
+  (define-who uid->user
     (lambda (id)
-      (pcheck ([$unsigned-32? id])
+      (pcheck-who who ([$unsigned-32? id])
                       ($getpw-name ($getpwuid id)))))
 
   #|proc:uid->user-name
@@ -147,9 +147,9 @@
   The `user->uid` procedure returns the numeric user ID for `name`.
   The `name` parameter is a user name string without NUL characters.
   |#
-  (define user->uid
+  (define-who user->uid
     (lambda (name)
-      (pcheck ([$os-string? name])
+      (pcheck-who who ([$os-string? name])
                      ($getpw-uid ($getpwnam name)))))
 
   #|proc:user-name->uid
@@ -162,9 +162,9 @@
   The `gid->group` procedure returns the group name for `id`.
   The `id` parameter is an exact unsigned 32-bit group ID.
   |#
-  (define gid->group
+  (define-who gid->group
     (lambda (id)
-      (pcheck ([$unsigned-32? id])
+      (pcheck-who who ([$unsigned-32? id])
                       ($getgr-name ($getgrgid id)))))
 
   #|proc:gid->group-name
@@ -177,9 +177,9 @@
   The `group->gid` procedure returns the numeric group ID for `name`.
   The `name` parameter is a group name string without NUL characters.
   |#
-  (define group->gid
+  (define-who group->gid
     (lambda (name)
-      (pcheck ([$os-string? name])
+      (pcheck-who who ([$os-string? name])
                      ($getgr-gid ($getgrnam name)))))
 
   #|proc:group-name->gid
@@ -195,7 +195,7 @@
   |#
   (define-who get-user-dir
     (lambda (id)
-      (pcheck ([$user-key? id])
+      (pcheck-who who ([$user-key? id])
         ($getpw-dir ($lookup-user id)))))
 
   #|proc:get-user-shell
@@ -205,7 +205,7 @@
   |#
   (define-who get-user-shell
     (lambda (id)
-      (pcheck ([$user-key? id])
+      (pcheck-who who ([$user-key? id])
         ($getpw-shell ($lookup-user id)))))
 
   #|proc:get-user-group
@@ -215,7 +215,7 @@
   |#
   (define-who get-user-group
     (lambda (id)
-      (pcheck ([$user-key? id])
+      (pcheck-who who ([$user-key? id])
         ($getpw-gid ($lookup-user id)))))
 
   #|proc:user-exists?

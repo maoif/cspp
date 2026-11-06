@@ -1,5 +1,21 @@
 (import (cspp chez) (cspp control) (cspp utils) (cspp list) (cspp string) (cspp vector))
 
+(mat control-error-origins
+
+     ;; Error case: callback validation identifies the public composition or section form.
+     (for-all
+       (lambda (entry)
+         (guard (condition
+                  [else (and (who-condition? condition)
+                             (eq? (car entry) (condition-who condition)))])
+           ((cdr entry)) #f))
+       (list (cons 'compose (lambda () (compose #f)))
+             (cons 'compose1 (lambda () (compose1 values #f)))
+             (cons '>>> (lambda () (>>> 1 #f)))
+             (cons '>>>1 (lambda () (>>>1 1 values #f)))
+             (cons 'sect (lambda () (sect #f _)))
+             (cons 'sect+ (lambda () (sect+ #f _))))))
+
 (mat section-procedure-contract
 
      ;; Error case: reject a nonprocedure while constructing a section, before it is called.

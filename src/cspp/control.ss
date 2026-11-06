@@ -7,6 +7,8 @@
           (cspp utils))
 
   ;; User examples and multiple-value contracts: docs/control-utils.md.
+  (define $procedures? (lambda (procedures) (andmap procedure? procedures)))
+
   #|macro:forever
   The `forever` macro repeats its body until the implicitly bound `(break value ...)` escapes,
   returning those values. The optional `(index identifier)` binds a zero-based iteration count.
@@ -42,19 +44,16 @@
   |#
   (define-who compose
     (lambda (proc . proc*)
-      (pcheck-proc (proc)
-                   (if (null? proc*)
-                       proc
-                       (if (andmap procedure? proc*)
-                           (let ([p* (cons proc proc*)])
-                             (lambda args
-                               (let loop ([p* p*])
-                                 (if (null? p*)
-                                     (apply values args)
-                                     ;; recurse to the last proc first
-                                     (call-with-values (lambda () (loop (cdr p*)))
-                                       (car p*))))))
-                           (errorf who "arguments contain non-procedure(s)"))))))
+      (pcheck-who who ([procedure? proc] [$procedures? proc*])
+        (if (null? proc*)
+            proc
+            (let ([p* (cons proc proc*)])
+              (lambda args
+                (let loop ([p* p*])
+                  (if (null? p*)
+                      (apply values args)
+                      ;; Recurse to the last procedure first.
+                      (call-with-values (lambda () (loop (cdr p*))) (car p*))))))))))
 
 
   #|proc:compose1
@@ -66,17 +65,15 @@
   |#
   (define-who compose1
     (lambda (proc . proc*)
-      (pcheck-proc (proc)
-                   (if (null? proc*)
-                       proc
-                       (if (andmap procedure? proc*)
-                           (let ([procedures (cons proc proc*)])
-                             (lambda args
-                               (let loop ([procedures procedures])
-                                 (if (null? (cdr procedures))
-                                     (apply (car procedures) args)
-                                     ((car procedures) (loop (cdr procedures)))))))
-                           (errorf who "arguments contain non-procedure(s)"))))))
+      (pcheck-who who ([procedure? proc] [$procedures? proc*])
+        (if (null? proc*)
+            proc
+            (let ([procedures (cons proc proc*)])
+              (lambda args
+                (let loop ([procedures procedures])
+                  (if (null? (cdr procedures))
+                      (apply (car procedures) args)
+                      ((car procedures) (loop (cdr procedures)))))))))))
 
 
   #|proc:>>>
@@ -86,16 +83,13 @@
   |#
   (define-who >>>
     (lambda (v proc . proc*)
-      (pcheck-proc (proc)
-                   (if (null? proc*)
-                       (proc v)
-                       (if (andmap procedure? proc*)
-                           (let loop ([p* (reverse proc*)])
-                             (if (null? p*)
-                                 (proc v)
-                                 (call-with-values (lambda () (loop (cdr p*)))
-                                   (car p*))))
-                           (errorf who "arguments contain non-procedure(s)"))))))
+      (pcheck-who who ([procedure? proc] [$procedures? proc*])
+        (if (null? proc*)
+            (proc v)
+            (let loop ([p* (reverse proc*)])
+              (if (null? p*)
+                  (proc v)
+                  (call-with-values (lambda () (loop (cdr p*))) (car p*))))))))
 
 
   #|proc:>>>1
@@ -105,15 +99,13 @@
   |#
   (define-who >>>1
     (lambda (v proc . proc*)
-      (pcheck-proc (proc)
-                   (if (null? proc*)
-                       (proc v)
-                       (if (andmap procedure? proc*)
-                           (let loop ([p* proc*] [res (proc v)])
-                             (if (null? (cdr p*))
-                                 ((car p*) res)
-                                 (loop (cdr p*) ((car p*) res))))
-                           (errorf who "arguments contain non-procedure(s)"))))))
+      (pcheck-who who ([procedure? proc] [$procedures? proc*])
+        (if (null? proc*)
+            (proc v)
+            (let loop ([p* proc*] [res (proc v)])
+              (if (null? (cdr p*))
+                  ((car p*) res)
+                  (loop (cdr p*) ((car p*) res))))))))
 
 
   (define-syntax $sect
@@ -145,8 +137,8 @@
                          [(argument ...) arguments]
                          [(p rest) (generate-temporaries '(proc rest))])
              (if (datum ?curried)
-                 #`(let ([p proc] [capture expression] ...)
-                     (pcheck ([procedure? p])
+                 #`(let ([who 'sect+] [p proc] [capture expression] ...)
+                     (pcheck-who who ([procedure? p])
                        #,(let gen-lambdas ([slots slots])
                            (if (null? slots)
                                (if dots?
@@ -154,8 +146,8 @@
                                    #'(p argument ...))
                                #`(lambda (#,(car slots))
                                    #,(gen-lambdas (cdr slots)))))))
-                 #`(let ([p proc] [capture expression] ...)
-                     (pcheck ([procedure? p])
+                 #`(let ([who 'sect] [p proc] [capture expression] ...)
+                     (pcheck-who who ([procedure? p])
                        #,(if dots?
                              #'(lambda (slot ... . rest) (apply p argument ... rest))
                              #'(lambda (slot ...) (p argument ...))))))))])))

@@ -31,57 +31,57 @@
   The `unix-user-name` procedure returns the login name of a Unix user record.
   The `user` parameter is the user record returned by `user-ref`.
   |#
-  (define unix-user-name
+  (define-who unix-user-name
     (lambda (user)
-      (pcheck ([unix-user? user]) ($unix-user-name user))))
+      (pcheck-who who ([unix-user? user]) ($unix-user-name user))))
 
   #|proc:unix-user-passwd
   The `unix-user-passwd` procedure returns the password field of a Unix user record.
   The `user` parameter is the user record returned by `user-ref`.
   |#
-  (define unix-user-passwd
+  (define-who unix-user-passwd
     (lambda (user)
-      (pcheck ([unix-user? user]) ($unix-user-passwd user))))
+      (pcheck-who who ([unix-user? user]) ($unix-user-passwd user))))
 
   #|proc:unix-user-uid
   The `unix-user-uid` procedure returns the numeric user ID of a Unix user record.
   The `user` parameter is the user record returned by `user-ref`.
   |#
-  (define unix-user-uid
+  (define-who unix-user-uid
     (lambda (user)
-      (pcheck ([unix-user? user]) ($unix-user-uid user))))
+      (pcheck-who who ([unix-user? user]) ($unix-user-uid user))))
 
   #|proc:unix-user-gid
   The `unix-user-gid` procedure returns the primary numeric group ID of a Unix user record.
   The `user` parameter is the user record returned by `user-ref`.
   |#
-  (define unix-user-gid
+  (define-who unix-user-gid
     (lambda (user)
-      (pcheck ([unix-user? user]) ($unix-user-gid user))))
+      (pcheck-who who ([unix-user? user]) ($unix-user-gid user))))
 
   #|proc:unix-user-gecos
   The `unix-user-gecos` procedure returns the GECOS field of a Unix user record.
   The `user` parameter is the user record returned by `user-ref`.
   |#
-  (define unix-user-gecos
+  (define-who unix-user-gecos
     (lambda (user)
-      (pcheck ([unix-user? user]) ($unix-user-gecos user))))
+      (pcheck-who who ([unix-user? user]) ($unix-user-gecos user))))
 
   #|proc:unix-user-dir
   The `unix-user-dir` procedure returns the home directory of a Unix user record.
   The `user` parameter is the user record returned by `user-ref`.
   |#
-  (define unix-user-dir
+  (define-who unix-user-dir
     (lambda (user)
-      (pcheck ([unix-user? user]) ($unix-user-dir user))))
+      (pcheck-who who ([unix-user? user]) ($unix-user-dir user))))
 
   #|proc:unix-user-shell
   The `unix-user-shell` procedure returns the login shell of a Unix user record.
   The `user` parameter is the user record returned by `user-ref`.
   |#
-  (define unix-user-shell
+  (define-who unix-user-shell
     (lambda (user)
-      (pcheck ([unix-user? user]) ($unix-user-shell user))))
+      (pcheck-who who ([unix-user? user]) ($unix-user-shell user))))
 
   #|proc:make-unix-user
   The `make-unix-user` procedure returns a Unix user record from the supplied fields.
@@ -89,9 +89,9 @@
   field, user information, home directory, and login shell. `uid` and `gid` are exact
   unsigned 32-bit user and primary group IDs.
   |#
-  (define make-unix-user
+  (define-who make-unix-user
     (lambda (name passwd uid gid gecos dir shell)
-      (pcheck ([string? name passwd gecos dir shell] [$unsigned-32? uid gid])
+      (pcheck-who who ([string? name passwd gecos dir shell] [$unsigned-32? uid gid])
         (%make-unix-user name passwd uid gid gecos dir shell))))
 
   #|proc:unix-group?
@@ -115,34 +115,34 @@
   The `unix-group-name` procedure returns the name of a Unix group record.
   The `group` parameter is the group record returned by `group-ref`.
   |#
-  (define unix-group-name
+  (define-who unix-group-name
     (lambda (group)
-      (pcheck ([unix-group? group]) ($unix-group-name group))))
+      (pcheck-who who ([unix-group? group]) ($unix-group-name group))))
 
   #|proc:unix-group-passwd
   The `unix-group-passwd` procedure returns the password field of a Unix group record.
   The `group` parameter is the group record returned by `group-ref`.
   |#
-  (define unix-group-passwd
+  (define-who unix-group-passwd
     (lambda (group)
-      (pcheck ([unix-group? group]) ($unix-group-passwd group))))
+      (pcheck-who who ([unix-group? group]) ($unix-group-passwd group))))
 
   #|proc:unix-group-gid
   The `unix-group-gid` procedure returns the numeric group ID of a Unix group record.
   The `group` parameter is the group record returned by `group-ref`.
   |#
-  (define unix-group-gid
+  (define-who unix-group-gid
     (lambda (group)
-      (pcheck ([unix-group? group]) ($unix-group-gid group))))
+      (pcheck-who who ([unix-group? group]) ($unix-group-gid group))))
 
   #|proc:unix-group-mems
   The `unix-group-mems` procedure returns a vector of member names for a Unix group record, or
   `#f` when none are listed.
   The `group` parameter is the group record returned by `group-ref`.
   |#
-  (define unix-group-mems
+  (define-who unix-group-mems
     (lambda (group)
-      (pcheck ([unix-group? group]) ($unix-group-mems group))))
+      (pcheck-who who ([unix-group? group]) ($unix-group-mems group))))
 
   (define $group-members?
     (lambda (members)
@@ -157,9 +157,9 @@
   `name` and `passwd` are group-name and password-field strings. `gid` is an exact unsigned
   32-bit group ID. `members` is a vector of member-name strings or `#f` when none are listed.
   |#
-  (define make-unix-group
+  (define-who make-unix-group
     (lambda (name passwd gid members)
-      (pcheck ([string? name passwd] [$unsigned-32? gid] [$group-members? members])
+      (pcheck-who who ([string? name passwd] [$unsigned-32? gid] [$group-members? members])
         (%make-unix-group name passwd gid members))))
 
 )

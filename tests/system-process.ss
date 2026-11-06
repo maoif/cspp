@@ -7,7 +7,7 @@
        (lambda (raw)
          (guard (condition
                   [else (and (who-condition? condition)
-                             (eq? 'pcheck (condition-who condition)))])
+                             (eq? '$wait-status->exit-status (condition-who condition)))])
            ($wait-status->exit-status raw)
            #f))
        '(#f "bad" -1 1.0 1/2 #x100000000000000000))

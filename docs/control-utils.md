@@ -56,11 +56,17 @@ Predicates are unary, run in clause order, and accept any nonfalse result. Each 
 expression is evaluated once per clause. A false result raises an argument error before the
 body; successful checks preserve the body's return values. Convenience `pcheck-*` forms select
 common predicates. Input/output binary/textual port checks additionally require open ports.
+`pcheck` attributes failures to `pcheck`. Use
+`(pcheck-who who ([predicate argument ...] ...) body ...)` to report the caller's name.
+The caller must be a variable reference whose value is a symbol. Its value is read once before
+argument checks; nonsymbol values are rejected. Inside `define-who`, use its `who` binding.
+Public APIs in control, utils, and system supply their names explicitly; aliases reuse the
+validation of their target procedures.
 
 ```scheme
-(define repeat-character
+(define-who repeat-character
   (lambda (character count)
-    (pcheck ([char? character] [natural? count])
+    (pcheck-who who ([char? character] [natural? count])
       (make-string count character))))
 (string=? "aaa" (repeat-character #\a 3)) ; => #t
 ```

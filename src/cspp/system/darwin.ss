@@ -42,7 +42,7 @@
   |#
   (define-who darwin-filesystem-info
     (lambda (path)
-      (pcheck ([string? path])
+      (pcheck-who who ([string? path])
               (raise-system-unsupported who "Darwin filesystem information is unsupported"))))
 
   )

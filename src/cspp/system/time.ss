@@ -10,18 +10,18 @@
   The `sleep` procedure pauses the current thread for `seconds` seconds.
   `seconds` is an exact nonnegative integer. The return value is unspecified.
   |#
-  (define sleep
+  (define-who sleep
     (lambda (seconds)
-      (pcheck ([natural? seconds])
+      (pcheck-who who ([natural? seconds])
         ($sleep (make-time 'time-duration 0 seconds)))))
 
   #|proc:milisleep
   The `milisleep` procedure pauses the current thread for `milliseconds` milliseconds.
   `milliseconds` is an exact nonnegative integer. The return value is unspecified.
   |#
-  (define milisleep
+  (define-who milisleep
     (lambda (milliseconds)
-      (pcheck ([natural? milliseconds])
+      (pcheck-who who ([natural? milliseconds])
         ($sleep (make-time 'time-duration
                   (* 1000000 (modulo milliseconds 1000))
                   (quotient milliseconds 1000))))))
@@ -30,9 +30,9 @@
   The `nanosleep` procedure pauses the current thread for `nanoseconds` nanoseconds.
   `nanoseconds` is an exact nonnegative integer. The return value is unspecified.
   |#
-  (define nanosleep
+  (define-who nanosleep
     (lambda (nanoseconds)
-      (pcheck ([natural? nanoseconds])
+      (pcheck-who who ([natural? nanoseconds])
         ($sleep (make-time 'time-duration
                   (modulo nanoseconds 1000000000)
                   (quotient nanoseconds 1000000000))))))

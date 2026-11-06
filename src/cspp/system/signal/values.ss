@@ -27,17 +27,17 @@
   The `signal-name` procedure returns the canonical symbolic name of `sig`.
   The `sig` parameter is a signal record returned by `signal`, `string->signal`, or `signal-list`.
   |#
-  (define signal-name
+  (define-who signal-name
     (lambda (sig)
-      (pcheck ([signal? sig]) ($signal-name sig))))
+      (pcheck-who who ([signal? sig]) ($signal-name sig))))
 
   #|proc:signal-number
   The `signal-number` procedure returns the operating-system signal number of `sig`.
   The `sig` parameter is a signal record returned by `signal`, `string->signal`, or `signal-list`.
   |#
-  (define signal-number
+  (define-who signal-number
     (lambda (sig)
-      (pcheck ([signal? sig]) ($signal-number sig))))
+      (pcheck-who who ([signal? sig]) ($signal-number sig))))
 
   (define $signal-table
     (guard (condition [(system-unsupported-error? condition) '()])
@@ -111,7 +111,7 @@
   |#
   (define-who %signal
     (lambda (spec)
-      (pcheck ([$signal-input? spec])
+      (pcheck-who who ([$signal-input? spec])
               ($signal-ref who spec))))
 
   #|macro:signal
@@ -135,16 +135,16 @@
   |#
   (define-who string->signal
     (lambda (string)
-      (pcheck ([string? string])
+      (pcheck-who who ([string? string])
               ($signal-ref who string))))
 
   #|proc:signal->string
   The `signal->string` procedure returns the conventional `"SIG..."` name for `sig`.
   The `sig` parameter is a signal record.
   |#
-  (define signal->string
+  (define-who signal->string
     (lambda (sig)
-      (pcheck ([signal? sig])
+      (pcheck-who who ([signal? sig])
               (string-append "SIG" (string-upcase (symbol->string (signal-name sig)))))))
 
   #|proc:signal-list

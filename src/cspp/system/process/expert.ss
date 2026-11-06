@@ -78,51 +78,51 @@
   The `process-pid` procedure returns the operating-system process id of `process`.
   The `process` parameter is a process object.
   |#
-  (define process-pid
+  (define-who process-pid
     (lambda (process)
-      (pcheck ([process? process]) ($process-pid process))))
+      (pcheck-who who ([process? process]) ($process-pid process))))
 
   #|proc:process-command
   The `process-command` procedure returns the program or command for `process`.
   The `process` parameter is a process object.
   For `process-spawn-shell` this is `"sh"`; shell text is stored among `process-arguments`.
   |#
-  (define process-command
+  (define-who process-command
     (lambda (process)
-      (pcheck ([process? process]) ($process-command process))))
+      (pcheck-who who ([process? process]) ($process-command process))))
 
   #|proc:process-arguments
   The `process-arguments` procedure returns the argument list stored in `process`.
   The `process` parameter is a process object.
   The list was copied at spawn time, but strings and accessor results remain shared and mutable.
   |#
-  (define process-arguments
+  (define-who process-arguments
     (lambda (process)
-      (pcheck ([process? process]) ($process-arguments process))))
+      (pcheck-who who ([process? process]) ($process-arguments process))))
 
   #|proc:process-stdin
   The `process-stdin` procedure returns the stdin port for `process`, or `#f`.
   The `process` parameter is a process object.
   |#
-  (define process-stdin
+  (define-who process-stdin
     (lambda (process)
-      (pcheck ([process? process]) ($process-stdin process))))
+      (pcheck-who who ([process? process]) ($process-stdin process))))
 
   #|proc:process-stdout
   The `process-stdout` procedure returns the stdout port for `process`, or `#f`.
   The `process` parameter is a process object.
   |#
-  (define process-stdout
+  (define-who process-stdout
     (lambda (process)
-      (pcheck ([process? process]) ($process-stdout process))))
+      (pcheck-who who ([process? process]) ($process-stdout process))))
 
   #|proc:process-stderr
   The `process-stderr` procedure returns the stderr port for `process`, or `#f`.
   The `process` parameter is a process object.
   |#
-  (define process-stderr
+  (define-who process-stderr
     (lambda (process)
-      (pcheck ([process? process]) ($process-stderr process))))
+      (pcheck-who who ([process? process]) ($process-stderr process))))
 
   (define make-process
     (lambda (pid command arguments stdin stdout stderr status)
@@ -147,9 +147,9 @@
   The `process-status` procedure returns the cached exit status of `process`, or `#f`.
   The `process` argument is a process object. This does not poll the operating system.
   |#
-  (define process-status
+  (define-who process-status
     (lambda (process)
-      (pcheck ([process? process])
+      (pcheck-who who ([process? process])
         (with-mutex (process-mutex process) ($process-status process)))))
 
   (define $process-spawn-ffi
@@ -189,10 +189,14 @@
   Callers own these ports and must close them, including stdin to deliver EOF to the child.
   Waiting does not close ports. Concurrent waiters share one cached exit status.
   |#
-  (define-who process-spawn
+  (define process-spawn
     (lambda (program arguments options)
-      (pcheck ([$os-string? program] [$os-string-list? arguments] [list? options])
-        ($validate-process-options options #t)
+      ($process-spawn 'process-spawn program arguments options)))
+
+  (define $process-spawn
+    (lambda (who program arguments options)
+      (pcheck-who who ([$os-string? program] [$os-string-list? arguments] [list? options])
+        ($validate-process-options options #t who)
         (let* ([argv (cons program arguments)]
                [result (ffi-result-ref
                          ($process-spawn-ffi argv ($option-ref options 'env #f) ($cwd-option options)
@@ -231,8 +235,8 @@
   |#
   (define-who process-spawn-shell
     (lambda (command options)
-      (pcheck ([$os-string? command] [list? options])
-              (process-spawn "sh" (list "-c" command) options))))
+      (pcheck-who who ([$os-string? command] [list? options])
+              ($process-spawn who "sh" (list "-c" command) options))))
 
   (define $wait-vector->status
     (lambda (result)
@@ -244,9 +248,9 @@
   The `process-wait/no-hang` procedure returns `process`'s exit status, or `#f` if still running.
   The `process` argument is a process object. Reaping and status publication are synchronized.
   |#
-  (define process-wait/no-hang
+  (define-who process-wait/no-hang
     (lambda (process)
-      (pcheck ([process? process])
+      (pcheck-who who ([process? process])
         (with-mutex (process-mutex process)
           (or ($process-status process)
               (let ([status ($wait-vector->status
@@ -259,9 +263,9 @@
   The `process` argument is a process object. Waiting leaves its streams open for draining.
   Drain live output concurrently with a running child; waiting first can deadlock on full pipes.
   |#
-  (define process-wait
+  (define-who process-wait
     (lambda (process)
-      (pcheck ([process? process])
+      (pcheck-who who ([process? process])
         (let loop ()
           (or (process-wait/no-hang process)
               (begin (milisleep 5) (loop)))))))
@@ -278,7 +282,7 @@
   |#
   (define-who process-wait/timeout
     (lambda (process milliseconds)
-      (pcheck ([process? process] [natural? milliseconds])
+      (pcheck-who who ([process? process] [natural? milliseconds])
         (let ([deadline (+ ($monotonic-milliseconds) milliseconds)])
           (let loop ()
             (or (process-wait/no-hang process)
@@ -293,9 +297,9 @@
   The `process-running?` procedure returns whether `process` is still running.
   The `process` parameter is a process object.
   |#
-  (define process-running?
+  (define-who process-running?
     (lambda (process)
-      (pcheck ([process? process])
+      (pcheck-who who ([process? process])
               (not (process-wait/no-hang process)))))
 
   #|proc:process-kill
@@ -307,7 +311,7 @@
   |#
   (define-who process-kill
     (lambda (process signal-number)
-      (pcheck ([process? process]
+      (pcheck-who who ([process? process]
                [(lambda (value) (and (fixnum? value) (<= 1 value #x7fffffff))) signal-number])
         (with-mutex (process-mutex process)
           ;; A reaped PID may be reused. Never signal it through a completed process object.
@@ -323,18 +327,18 @@
   The `process` parameter is a process object.
   The return value is unspecified. This does not wait for the process to exit.
   |#
-  (define process-terminate
+  (define-who process-terminate
     (lambda (process)
-      (process-kill process 15)))
+      (pcheck-who who ([process? process]) (process-kill process 15))))
 
   #|proc:process-interrupt
   The `process-interrupt` procedure sends `SIGINT` to `process`.
   The `process` parameter is a process object.
   The return value is unspecified. This does not wait for the process to exit.
   |#
-  (define process-interrupt
+  (define-who process-interrupt
     (lambda (process)
-      (process-kill process 2)))
+      (pcheck-who who ([process? process]) (process-kill process 2))))
 
   #|proc:process-close-ports!
   The `process-close-ports!` procedure closes any open ports owned by `process`.
@@ -344,9 +348,9 @@
   its remaining buffered data is discarded so that the underlying descriptor can be closed.
   The return value is unspecified; callers must coordinate I/O and closing on shared ports.
   |#
-  (define process-close-ports!
+  (define-who process-close-ports!
     (lambda (process)
-      (pcheck ([process? process])
+      (pcheck-who who ([process? process])
         (let ([failure #f])
           (for-each
             (lambda (port)
@@ -388,9 +392,9 @@
   Stdin for the first command, stdout for the final command, and all stderrs are inherited.
   No pipe ports are exposed; the returned list follows specification order.
   |#
-  (define process-spawn-pipeline
+  (define-who process-spawn-pipeline
     (lambda (process-specs options)
-      (pcheck ([$process-specs? process-specs] [null? options])
+      (pcheck-who who ([$process-specs? process-specs] [null? options])
               (let ([pids (ffi-result-ref ($spawn-pipeline-ffi process-specs))])
                 (let loop ([i 0] [specs process-specs] [out '()])
                   (if (fx= i (vector-length pids))
@@ -411,9 +415,9 @@
   It returns a list containing the final process exit status.
   The final process's stdout is discarded without buffering; stderr is inherited.
   |#
-  (define process-run-pipeline
+  (define-who process-run-pipeline
     (lambda (process-specs)
-      (pcheck ([$process-specs? process-specs])
+      (pcheck-who who ([$process-specs? process-specs])
               (let ([result (ffi-result-ref ($process-run-pipeline-ffi process-specs))])
                 (list ($wait-status->exit-status (vector-ref result 1)))))))
 

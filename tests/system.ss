@@ -3,6 +3,30 @@
         (only (cspp system process expert) make-process-exit-status)
         (only (cspp system user records) make-unix-user make-unix-group))
 
+(mat system-argument-error-origins
+
+     ;; Error case: argument rejection must identify the system API before reaching native code.
+     (for-all
+       (lambda (entry)
+         (guard (condition
+                  [else (and (who-condition? condition)
+                             (eq? (car entry) (condition-who condition)))])
+           ((cdr entry)) #f))
+       (list (cons 'process-pid (lambda () (process-pid #f)))
+             (cons 'filesystem-info (lambda () (filesystem-info #f)))
+             (cons 'unix-user-name (lambda () (unix-user-name #f)))
+             (cons 'user-ref (lambda () (user-ref 1.0)))
+             (cons 'signal-name (lambda () (signal-name #f)))
+             (cons 'send-signal (lambda () (send-signal 0 'term)))
+             (cons 'sleep (lambda () (sleep 1.0)))
+             (cons 'make-system-error (lambda () (make-system-error 'test #f #f '())))
+             (cons 'make-system-timeout-error
+                   (lambda () (make-system-timeout-error 'test #f)))
+             (cons 'process-capture (lambda () (process-capture #f)))
+             (cons 'process-capture (lambda () (process-capture /bin/true :timeout -1)))
+             (cons 'process-spawn-shell
+                   (lambda () (process-spawn-shell "exit 0" '((cwd . ""))))))))
+
 (mat shared-object-unicode-path
 
      ;; Error case: native UTF-8 library paths must retain their Unicode characters.

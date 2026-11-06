@@ -38,9 +38,9 @@
   decode escapes for quotes, backslashes, dollar signs, and backticks. Unquoted escapes quote the
   following character. No variable expansion or command substitution is performed.
   |#
-  (define $read-os-release
+  (define-who $read-os-release
     (lambda (path)
-      (pcheck ([$os-string? path])
+      (pcheck-who who ([$os-string? path])
         (call-with-input-file path
           (lambda (port)
             (let ([builder (make-list-builder)] [entries (make-eq-hashtable)])

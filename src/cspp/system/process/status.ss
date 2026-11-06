@@ -27,35 +27,35 @@
   The `process-exit-status-kind` procedure returns the kind stored in `status`.
   The `status` parameter is a process exit-status record.
   |#
-  (define process-exit-status-kind
+  (define-who process-exit-status-kind
     (lambda (status)
-      (pcheck ([process-exit-status? status]) ($process-exit-status-kind status))))
+      (pcheck-who who ([process-exit-status? status]) ($process-exit-status-kind status))))
 
   #|proc:process-exit-status-code
   The `process-exit-status-code` procedure returns the numeric code in `status`.
   The `status` parameter is a process exit-status record.
   |#
-  (define process-exit-status-code
+  (define-who process-exit-status-code
     (lambda (status)
-      (pcheck ([process-exit-status? status]) ($process-exit-status-code status))))
+      (pcheck-who who ([process-exit-status? status]) ($process-exit-status-code status))))
 
   #|proc:make-process-exit-status
   The `make-process-exit-status` procedure returns an exit-status record.
   `kind` is `exit`, `signal`, or `stopped`; `code` is an exact nonnegative integer.
   For `exit` the code is an exit code; for the other kinds it is a signal number.
   |#
-  (define make-process-exit-status
+  (define-who make-process-exit-status
     (lambda (kind code)
-      (pcheck ([(lambda (value) (memq value '(exit signal stopped))) kind] [natural? code])
+      (pcheck-who who ([(lambda (value) (memq value '(exit signal stopped))) kind] [natural? code])
         (%make-process-exit-status kind code))))
 
   #|proc:process-exit-success?
   The `process-exit-success?` procedure returns whether `status` is exit code 0.
   The `status` parameter is a process exit-status record.
   |#
-  (define process-exit-success?
+  (define-who process-exit-success?
     (lambda (status)
-      (pcheck ([process-exit-status? status])
+      (pcheck-who who ([process-exit-status? status])
               (and (eq? 'exit (process-exit-status-kind status))
                    (= 0 (process-exit-status-code status))))))
 
@@ -65,9 +65,9 @@
   Invalid arguments raise an argument error before decoding the status bits.
   Public process operations share this decoder so live and captured statuses have one type.
   |#
-  (define $wait-status->exit-status
+  (define-who $wait-status->exit-status
     (lambda (raw)
-      (pcheck ([(lambda (value) (and (fixnum? value) (fx>= value 0))) raw])
+      (pcheck-who who ([(lambda (value) (and (fixnum? value) (fx>= value 0))) raw])
         (cond [(fx= (fxand raw #x7f) 0)
                (make-process-exit-status 'exit (fxsrl raw 8))]
               [(fx= (fxand raw #x7f) #x7f)
