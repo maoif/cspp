@@ -1492,25 +1492,24 @@
   (define $same-file-port-contents?
     (lambda (left right)
       (let ([length (file-length left)])
-        (and (= length (file-length right))
-             ;; Empty files and an immediate mismatch need no buffers.
-             (let ([first-left (get-u8 left)] [first-right (get-u8 right)])
-               (cond [(eof-object? first-left) (eof-object? first-right)]
-                     [(or (eof-object? first-right) (not (fx= first-left first-right))) #f]
-                     [else
-                      ;; Virtual files may report zero size despite having data.
-                      (let* ([capacity (if (zero? length) 16384 (min length 16384))]
-                             [left-buffer (make-bytevector capacity 0)]
-                             [right-buffer (make-bytevector capacity 0)])
-                        (let loop ()
-                          (let ([left-count (get-bytevector-n! left left-buffer 0 capacity)]
-                                [right-count (get-bytevector-n! right right-buffer 0 capacity)])
-                            (if (eof-object? left-count)
-                                (eof-object? right-count)
-                                (and (eqv? left-count right-count)
-                                     ;; Unwritten suffixes stay equal after each successful comparison.
-                                     (bytevector=? left-buffer right-buffer)
-                                     (loop))))))]))))))
+        ;; Reported sizes are hints only: virtual files can report zero.
+        ;; Empty files and an immediate mismatch need no buffers.
+        (let ([first-left (get-u8 left)] [first-right (get-u8 right)])
+          (cond [(eof-object? first-left) (eof-object? first-right)]
+                [(or (eof-object? first-right) (not (fx= first-left first-right))) #f]
+                [else
+                 (let* ([capacity (if (zero? length) 16384 (min length 16384))]
+                        [left-buffer (make-bytevector capacity 0)]
+                        [right-buffer (make-bytevector capacity 0)])
+                   (let loop ()
+                     (let ([left-count (get-bytevector-n! left left-buffer 0 capacity)]
+                           [right-count (get-bytevector-n! right right-buffer 0 capacity)])
+                       (if (eof-object? left-count)
+                           (eof-object? right-count)
+                           (and (eqv? left-count right-count)
+                                ;; Unwritten suffixes stay equal after each successful comparison.
+                                (bytevector=? left-buffer right-buffer)
+                                (loop))))))])))))
 
   #|proc:same-file-contents?
   Return whether regular files named by path strings `path1` and `path2` have equal byte contents.
@@ -1596,13 +1595,13 @@
       [(who path mode)
        (cond [($mode-num? mode)
               (chmod path mode)]
-             [(list? mode)
+             [(or (not mode) (list? mode))
               ($file-chmod who path #f mode #f #f)]
              [else (errorf who "invalid file mode: ~a" mode)])]
       [(who path umode gmode)
-       ($file-chmod who path '() umode gmode '())]
+       ($file-chmod who path #f umode gmode #f)]
       [(who path umode gmode omode)
-       ($file-chmod who path '() umode gmode omode)]
+       ($file-chmod who path #f umode gmode omode)]
       [(who path smode umode gmode omode)
        (pcheck ([$filename? path]
                 [(lambda (mode) ($mode-adjustment? mode $valid-smodes?)) smode]
@@ -1640,6 +1639,7 @@
   If two modes are given, they represent user mode and group mode;
   If three modes are given, they represent user mode, group mode and others mode;
   If four modes are given, they represent special mode, user mode, group mode, and others mode.
+  Omitted symbolic groups keep their current bits, as if supplied as `#f`.
 
   Special modes are set-user-ID, set-group-ID and sticky bit.
 

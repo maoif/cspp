@@ -121,6 +121,29 @@
          (and (same-file-contents? "/proc/version" "/proc/version")
               (not (same-file-contents? "/proc/version" "/proc/sys/kernel/ostype")))))
 
+(mat file-content-comparison-virtual-copy
+     (or (not (file-regular? "/proc/version"))
+         ($with-fs-fixture
+          (lambda (root)
+            (let ([copy (path-build root "copy")])
+              (write-u8vec copy (read-u8vec "/proc/version"))
+              (and (same-file-contents? "/proc/version" copy)
+                   (same-file-contents? copy "/proc/version")))))))
+
+(mat file-chmod-preserves-omitted-groups
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([path (path-build root "top.txt")])
+          (file-chmod path #o6754)
+          (file-chmod path #f #f)
+          (and (= #o6754 (file-mode path))
+               (begin (file-chmod path #f) #t)
+               (= #o6754 (file-mode path))
+               (begin (file-chmod path '(r w) '(r) '(r)) #t)
+               (= #o6644 (file-mode path))
+               (begin (file-chmod path '() #f) #t)
+               (= #o6044 (file-mode path)))))))
+
 (mat file-collection-callback-results
      ($with-fs-fixture
       (lambda (root)
