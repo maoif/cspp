@@ -1,11 +1,74 @@
 (import (cspp) (cspp glob))
 
+(mat glob-zero-padded-ranges
+     (for-all
+      (lambda (fixture)
+        (for-all (lambda (candidate) (glob-match? 'unix (car fixture) candidate)) (cdr fixture)))
+      '(("file{01..3}" "file01" "file02" "file03")
+        ("{03..01..-2}" "03" "01")
+        ("{-02..02}" "-02" "-01" "000" "001" "002")
+        ("{-2..02}" "-2" "-1" "00" "01" "02")
+        ("{+01..03}" "001" "002" "003")
+        ("{-00..02}" "000" "001" "002")
+        ("{009..011..2}" "009" "011")))
+
+     (not (glob-match? 'unix "file{01..03}" "file1"))
+
+     (not (glob-match? 'unix "{009..011..2}" "010")))
+
+(mat glob-padded-and-named-class-expansion
+     (let ([root (format "glob-padded-classes-~a" (get-process-id))])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (for-each (lambda (name) (file-touch (path-build root name)))
+                     '("file01" "file02" "file1" "a.txt" "Z.txt" "7.txt")))
+         (lambda ()
+           (and (equal? (glob (string-append root "/file{01..02}"))
+                        (map (lambda (name) (path-build root name)) '("file01" "file02")))
+                (equal? (glob (string-append root "/[[:alpha:]].txt"))
+                        (map (lambda (name) (path-build root name)) '("Z.txt" "a.txt")))))
+         (lambda () (file-removetree root #t)))))
+
+(mat glob-posix-named-classes
+     (for-all
+      (lambda (fixture)
+        (let ([pattern (car fixture)] [yes (cadr fixture)] [no (caddr fixture)])
+          (and (glob-match? 'unix pattern yes)
+               (not (glob-match? 'unix pattern no)))))
+      '(("[[:alnum:]]" "7" "_") ("[[:alpha:]]" "a" "λ")
+        ("[[:blank:]]" "\t" "\n") ("[[:cntrl:]]" "\x7f;" " ")
+        ("[[:digit:]]" "5" "٥") ("[[:graph:]]" "!" " ")
+        ("[[:lower:]]" "z" "Z") ("[[:print:]]" " " "\n")
+        ("[[:punct:]]" "$" "A") ("[[:space:]]" "\n" "x")
+        ("[[:upper:]]" "A" "a") ("[[:xdigit:]]" "F" "g")
+        ("[![:digit:]]" "a" "5") ("[a[:digit:]z]" "5" "b")
+        ("[[:alpha:][:digit:]]" "9" "_") ("[[:alpha:]0-9]" "9" "_")))
+
+     (glob-match? 'windows "[[:upper:]]" "a")
+
+     (glob-match? 'windows "[[:alpha:]]" "K")
+
+     (glob-match? 'unix "{[[:alpha:]],x}" "a")
+
+     (glob-match? 'unix "[[:punct:]]" "{")
+
+     ;; Error cases: unknown and unterminated named classes are malformed patterns.
+     (error? (make-glob "[[:unknown:]]"))
+
+     (error? (make-glob "[[:alpha]]"))
+
+     ;; Error case: a multi-character class cannot be a range endpoint.
+     (error? (make-glob "[a-[:digit:]]")))
+
 (mat glob-missing-prefix-allocation
      ;; A missing first component must not require quadratic root-extraction allocation.
      (let ([allocated
             (lambda (depth)
               (let* ([pattern (string-append "glob-absent-prefix-" (number->string (get-process-id))
                                              (apply string-append (make-list depth "/x")))]
+                     ;; Exclude collection work triggered by unrelated earlier test cases.
+                     [collected (collect)]
                      [before (statistics)]
                      [results (glob 'unix pattern)])
                 (and (null? results)

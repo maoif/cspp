@@ -40,6 +40,43 @@
   (define $default-flavor
     (if (eq? (system-platform) 'windows) 'windows 'unix))
   (define $error (lambda (message . args) (apply errorf 'make-glob message args)))
+
+  ;; Fixed C/POSIX classes, independent of locale and Unicode category updates.
+  ;; Use the existing regex SRE compiler for unions, ranges, and negation.
+  (define $posix-classes
+    '(("alnum" or (/ #\a #\z) (/ #\A #\Z) (/ #\0 #\9))
+      ("alpha" or (/ #\a #\z) (/ #\A #\Z))
+      ("blank" or #\space #\tab)
+      ("cntrl" or (/ #\nul #\x1f) #\x7f)
+      ("digit" / #\0 #\9)
+      ("graph" / #\! #\~)
+      ("lower" / #\a #\z)
+      ("print" / #\space #\~)
+      ("punct" or (/ #\! #\/) (/ #\: #\@) (/ #\[ #\`) (/ #\{ #\~))
+      ("space" or #\space (/ #\tab #\return))
+      ("upper" / #\A #\Z)
+      ("xdigit" or (/ #\0 #\9) (/ #\a #\f) (/ #\A #\F))))
+
+  (define $named-class-start?
+    (lambda (s i)
+      (and (fx< (fx1+ i) (string-length s))
+           (char=? (string-ref s i) #\[)
+           (char=? (string-ref s (fx1+ i)) #\:))))
+
+  (define $named-class
+    (lambda (s open)
+      (let ([start (fx+ open 2)] [n (string-length s)])
+        (let loop ([i start])
+          (cond [(fx>= (fx1+ i) n) ($error "unterminated POSIX character class")]
+                [(and (char=? (string-ref s i) #\:)
+                      (char=? (string-ref s (fx1+ i)) #\]))
+                 (let ([entry (assoc (substring s start i) $posix-classes)])
+                   (unless entry ($error "unknown POSIX character class"))
+                   (values (fx+ i 2) (cdr entry)))]
+                [(char=? (string-ref s i) #\])
+                 ($error "unterminated POSIX character class")]
+                [else (loop (fx1+ i))])))))
+
   ;; The first member may be a literal closing bracket, after optional negation.
   ;; All brace scans share these class boundaries with the component grammar.
   (define $class-end
@@ -49,6 +86,8 @@
                         (fx1+ start) start)])
         (let loop ([i start])
           (cond [(fx= i n) ($error "unterminated bracket class")]
+                [($named-class-start? s i)
+                 (let-values ([(next atom) ($named-class s i)]) (loop next))]
                 [(char=? (string-ref s i) #\\)
                  (if (fx< (fx1+ i) n) (loop (fx+ i 2))
                      ($error "trailing escape in class"))]
@@ -114,6 +153,23 @@
              (or (and (char=? (string-ref s i) #\.)
                       (char=? (string-ref s (+ i 1)) #\.))
                  (loop (+ i 1)))))))
+
+  (define $zero-padded?
+    (lambda (text)
+      (let ([start (if (memv (string-ref text 0) '(#\+ #\-)) 1 0)])
+        (and (fx> (string-length text) (fx1+ start))
+             (char=? (string-ref text start) #\0)))))
+
+  (define $range-number
+    (lambda (value width)
+      (let* ([text (format "~a" value)] [length (string-length text)])
+        (if (fx>= length width) text
+            (let ([result (make-string width #\0)] [negative? (< value 0)])
+              (when negative? (string-set! result 0 #\-))
+              (let ([start (if negative? 1 0)])
+                (string-copy! text start result (fx+ (fx- width length) start)
+                              (fx- length start)))
+              result)))))
   (define $range
     (lambda (s)
       (let ([dots (let loop ([i 0] [out '()])
@@ -133,14 +189,16 @@
                             (substring s (fx+ b 2) (string-length s)))])
                (and ($integer? x) ($integer? y) (or (not z) ($integer? z))
                     (let* ([start (string->number x)] [end (string->number y)]
-                           [step (if z (string->number z) (if (<= start end) 1 -1))])
+                           [step (if z (string->number z) (if (<= start end) 1 -1))]
+                           [width (if (or ($zero-padded? x) ($zero-padded? y))
+                                      (fxmax (string-length x) (string-length y)) 0)])
                       (when (or (= step 0)
                                 (and (< start end) (< step 0))
                                 (and (> start end) (> step 0)))
                         ($error "invalid numeric range step"))
                       (let loop ([v start] [out '()])
                         (if (if (> step 0) (> v end) (< v end)) (reverse out)
-                            (loop (+ v step) (cons (format "~a" v) out)))))))))))
+                            (loop (+ v step) (cons ($range-number v width) out)))))))))))
   (define $expand-braces
     (lambda (s)
       (let ([open ($brace-open s)])
@@ -176,6 +234,9 @@
                        (if (and (pair? (cdr xs)) (pair? (cddr xs))
                                 (eqv? (cadr xs) #\-))
                            (begin
+                             (unless (and (or (char? (car xs)) (string? (car xs)))
+                                          (or (char? (caddr xs)) (string? (caddr xs))))
+                               ($error "POSIX character class cannot be a range endpoint"))
                              (when (char>? (if (char? (car xs)) (car xs) (string-ref (car xs) 0))
                                            (if (char? (caddr xs)) (caddr xs) (string-ref (caddr xs) 0)))
                                ($error "descending bracket range"))
@@ -183,6 +244,9 @@
                                      (cons (list '/ (if (char? (car xs)) (car xs) (string-ref (car xs) 0))
                                                       (if (char? (caddr xs)) (caddr xs) (string-ref (caddr xs) 0))) atoms)))
                            (ranges (cdr xs) (cons (car xs) atoms)))))]
+                [($named-class-start? s i)
+                 (let-values ([(next atom) ($named-class s i)])
+                   (scan next (cons atom members)))]
                 [(char=? (string-ref s i) #\\)
                  (if (< (+ i 1) n)
                      (scan (+ i 2) (cons (string (string-ref s (+ i 1))) members))
@@ -399,6 +463,12 @@
   Optional `flavor` follows the host OS: `'windows` on Windows, `'unix`
   elsewhere. Brace alternatives form an ordered union; numeric ranges and a leading
   current-user tilde expand before component compilation. Home-directory names stay literal.
+  Numeric ranges preserve zero padding when either endpoint has a leading zero. The width
+  is the longer endpoint spelling, including any sign; nonnegative results omit `+`.
+  Signed steps are supported and must move toward the endpoint.
+  Bracket expressions support the C/POSIX ASCII classes `alnum`, `alpha`, `blank`, `cntrl`,
+  `digit`, `graph`, `lower`, `print`, `punct`, `space`, `upper`, and `xdigit`, as in
+  `[[:alpha:]]`. Classes can be mixed with literals, ranges, and other named classes.
   Backslash escapes characters
   in Unix patterns; escaped `/` remains a separator. Windows treats both slash forms as
   separators, so bracket classes quote wildcard characters such as `[*]`. Windows component
