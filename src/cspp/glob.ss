@@ -500,7 +500,7 @@
                         (if (eq? flavor 'unix) (char=? last #\/)
                             (or (char=? last #\/) (char=? last #\\)))))))))
 
-  (define $match?
+  (define $match/recursive?
     (lambda (components names)
       (let* ([ps (list->vector components)] [vs (list->vector names)]
              [pn (vector-length ps)] [vn (vector-length vs)]
@@ -519,6 +519,17 @@
                                    (loop (+ i 1) (+ j 1)))])])
                   (hashtable-set! memo key answer)
                   answer)))))))
+
+  (define $match?
+    (lambda (components names)
+      ;; Only recursive components can revisit states and need memoization.
+      (if (memq #f components)
+          ($match/recursive? components names)
+          (let loop ([components components] [names names])
+            (if (null? components) (null? names)
+                (and (pair? names)
+                     ($component-matches? (car components) (car names))
+                     (loop (cdr components) (cdr names))))))))
 
   (define $path-root
     (lambda (parsed)
