@@ -328,6 +328,8 @@
   With one argument it uses the flavor's default separator; with two arguments
   it uses the given separator character. Windows relative paths whose first component
   looks like a drive prefix receive a leading dot component to preserve their root kind.
+  Windows device namespace roots retain canonical backslashes (`\\?\` or `\\.\`);
+  the requested separator applies to components outside those roots.
   |#
   (define path-render
     (case-lambda

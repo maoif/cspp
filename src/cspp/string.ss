@@ -470,53 +470,53 @@
     (lambda (left right)
       (pcheck ([string? left right])
         (if (eq? left right) 0
-        (let* ([left-length (string-length left)] [right-length (string-length right)]
-               [limit (fxmin left-length right-length)]
-               [start (let loop ([index 0])
-                        (if (and (fx< index limit)
-                                 (char=? (string-ref left index) (string-ref right index)))
-                            (loop (fx1+ index)) index))])
-          (let-values ([(left-end right-end)
-                        (let loop ([left-end left-length] [right-end right-length])
-                          (if (and (fx> left-end start) (fx> right-end start)
-                                   (char=? (string-ref left (fx1- left-end))
-                                           (string-ref right (fx1- right-end))))
-                              (loop (fx1- left-end) (fx1- right-end))
-                              (values left-end right-end)))])
-          (let-values ([(rows columns row-count column-count)
-                        (if (fx>= left-end right-end)
-                            (values left right (fx- left-end start) (fx- right-end start))
-                            (values right left (fx- right-end start) (fx- left-end start)))])
-            (if (fxzero? column-count)
-                row-count
-                (let ([distances (make-fxvector (fx1+ column-count))])
-                  (let initialize ([column 0])
-                    (unless (fx> column column-count)
-                      (fxvector-set! distances column column)
-                      (initialize (fx1+ column))))
-                  (let row-loop ([row 1])
-                    (if (fx> row row-count)
-                        (fxvector-ref distances column-count)
-                        (let ([row-char (string-ref rows (fx+ start (fx1- row)))]
-                              [previous-diagonal (fx1- row)])
-                          (fxvector-set! distances 0 row)
-                          (let column-loop ([column 1]
-                                            [previous-diagonal previous-diagonal])
-                            (if (fx> column column-count)
-                                (row-loop (fx1+ row))
-                                (let* ([above (fxvector-ref distances column)]
-                                       [left-distance
-                                        (fxvector-ref distances (fx1- column))]
-                                       [replacement
-                                        (fx+ previous-diagonal
-                                             (if (char=? row-char
-                                                         (string-ref columns (fx+ start (fx1- column))))
-                                                 0
-                                                 1))]
-                                       [distance (min (fx1+ above)
-                                                      (fx1+ left-distance)
-                                                      replacement)])
-                                  (fxvector-set! distances column distance)
-                                  (column-loop (fx1+ column) above))))))))))))))))
+          (let* ([left-length (string-length left)] [right-length (string-length right)]
+                 [limit (fxmin left-length right-length)]
+                 [start (let loop ([index 0])
+                          (if (and (fx< index limit)
+                                   (char=? (string-ref left index) (string-ref right index)))
+                              (loop (fx1+ index)) index))])
+            (let-values ([(left-end right-end)
+                          (let loop ([left-end left-length] [right-end right-length])
+                            (if (and (fx> left-end start) (fx> right-end start)
+                                     (char=? (string-ref left (fx1- left-end))
+                                             (string-ref right (fx1- right-end))))
+                                (loop (fx1- left-end) (fx1- right-end))
+                                (values left-end right-end)))])
+              (let-values ([(rows columns row-count column-count)
+                            (if (fx>= left-end right-end)
+                                (values left right (fx- left-end start) (fx- right-end start))
+                                (values right left (fx- right-end start) (fx- left-end start)))])
+                (if (fxzero? column-count)
+                    row-count
+                    (let ([distances (make-fxvector (fx1+ column-count))])
+                      (let initialize ([column 0])
+                        (unless (fx> column column-count)
+                          (fxvector-set! distances column column)
+                          (initialize (fx1+ column))))
+                      (let row-loop ([row 1])
+                        (if (fx> row row-count)
+                            (fxvector-ref distances column-count)
+                            (let ([row-char (string-ref rows (fx+ start (fx1- row)))]
+                                  [previous-diagonal (fx1- row)])
+                              (fxvector-set! distances 0 row)
+                              (let column-loop ([column 1]
+                                                [previous-diagonal previous-diagonal])
+                                (if (fx> column column-count)
+                                    (row-loop (fx1+ row))
+                                    (let* ([above (fxvector-ref distances column)]
+                                           [left-distance
+                                            (fxvector-ref distances (fx1- column))]
+                                           [replacement
+                                            (fx+ previous-diagonal
+                                                 (if (char=? row-char
+                                                             (string-ref columns (fx+ start (fx1- column))))
+                                                     0
+                                                     1))]
+                                           [distance (min (fx1+ above)
+                                                          (fx1+ left-distance)
+                                                          replacement)])
+                                      (fxvector-set! distances column distance)
+                                      (column-loop (fx1+ column) above))))))))))))))))
 
   )

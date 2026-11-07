@@ -920,7 +920,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
   #|proc:make-path
-  Build paths. A multi-arity variant of builtin `path-build`.
+  Join path strings `p` and the remaining `p*` strings with Chez `path-build` rules.
+  Return the resulting path string; a rooted later part replaces the preceding path.
   |#
   (define make-path
     (lambda (p . p*)
@@ -1113,7 +1114,7 @@
                      [handle (open path)])
                 (if (= handle 0)
                     ($err-file 'fs-open-directory path "cannot open directory")
-                    (%make-fs-directory handle path #f))))))
+                    (%make-fs-directory handle (string-copy path) #f))))))
 
   #|proc:fs-read-directory
   Read one entry from open stream `directory`. Return `(entry-name . entry-type)`,
@@ -1211,6 +1212,7 @@
   open on demand and close on exhaustion, reset, errors, or `iter-finalize!`.
   Reset starts a fresh pass over the current filesystem. Linux is required.
   Distinct directory aliases are traversed separately; only ancestor cycles are skipped.
+  A root symlink is followed even when `follow-link?` is `#f`; that flag controls descendants.
   Input and yielded path strings do not share storage with the iterator's traversal state.
   |#
   (define fs->iter
@@ -1349,74 +1351,145 @@
                      atime mtime ctime btime))]))
 
 
+  #|proc:file-access-time
+  Return the last access timestamp of the selected filesystem entry.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is a Chez `time-utc` object, or `#f` when unavailable.
+  |#
   (define-who file-access-time
     (case-lambda [(path)
                   ($statx-atime ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-atime ($statx who path follow-link?))]))
+  #|proc:file-modification-time
+  Return the content modification timestamp of the selected filesystem entry.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is a Chez `time-utc` object, or `#f` when unavailable.
+  |#
   (define-who file-modification-time
     (case-lambda [(path)
                   ($statx-mtime ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-mtime ($statx who path follow-link?))]))
+  #|proc:file-change-time
+  Return the metadata change timestamp of the selected filesystem entry.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is a Chez `time-utc` object, or `#f` when unavailable.
+  |#
   (define-who file-change-time
     (case-lambda [(path)
                   ($statx-ctime ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-ctime ($statx who path follow-link?))]))
+  #|proc:file-creation-time
+  Return the creation timestamp of the selected filesystem entry.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is a Chez `time-utc` object, or `#f` when unavailable.
+  |#
   (define-who file-creation-time
     (case-lambda [(path)
                   ($statx-btime ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-btime ($statx who path follow-link?))]))
+  #|proc:file-type
+  Return the selected filesystem entry's type as an `FT_*` symbol.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  Unrecognized or unavailable type bits produce `FT_unknown`.
+  |#
   (define-who file-type
     (case-lambda [(path)
                   (file-type->symbol ($statx-type ($statx who path #t)))]
                  [(path follow-link?)
                   (file-type->symbol ($statx-type ($statx who path follow-link?)))]))
+  #|proc:file-mode
+  Return the selected filesystem entry's integer permission and special mode bits.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is `#f` when those bits are unavailable.
+  |#
   (define-who file-mode
     (case-lambda [(path)
                   ($statx-mode ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-mode ($statx who path follow-link?))]))
+  #|proc:file-inode
+  Return the selected filesystem entry's nonnegative exact inode number.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is `#f` when unavailable.
+  |#
   (define-who file-inode
     (case-lambda [(path)
                   ($statx-inode ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-inode ($statx who path follow-link?))]))
+  #|proc:file-nlinks
+  Return the selected filesystem entry's nonnegative exact hard-link count.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is `#f` when unavailable.
+  |#
   (define-who file-nlinks
     (case-lambda [(path)
                   ($statx-nlinks ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-nlinks ($statx who path follow-link?))]))
+  #|proc:file-dev-major
+  Return the nonnegative exact major number of the entry's containing device.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The device identity is reported independently of file type.
+  |#
   (define-who file-dev-major
     (case-lambda [(path)
                   ($statx-dev-major ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-dev-major ($statx who path follow-link?))]))
+  #|proc:file-dev-minor
+  Return the nonnegative exact minor number of the entry's containing device.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The device identity is reported independently of file type.
+  |#
   (define-who file-dev-minor
     (case-lambda [(path)
                   ($statx-dev-minor ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-dev-minor ($statx who path follow-link?))]))
+  #|proc:file-blocks
+  Return the selected entry's nonnegative exact count of allocated 512-byte blocks.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is `#f` when unavailable; sparse files can use fewer bytes than their size.
+  |#
   (define-who file-blocks
     (case-lambda [(path)
                   ($statx-blocks ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-blocks ($statx who path follow-link?))]))
-  ;; this is implemented using port above
-  #;
-  (define-who file-size
-  (case-lambda [(path)
-  ($statx-size ($statx who path #t))]
-  [(path follow-link?)
-  ($statx-size ($statx who path follow-link?))]))
 
+  #|proc:file-owner
+  Return the selected filesystem entry's nonnegative exact owner user ID.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is `#f` when unavailable.
+  |#
   (define-who file-owner
     (case-lambda [(path)
                   ($statx-uid ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-uid ($statx who path follow-link?))]))
+  #|proc:file-group
+  Return the selected filesystem entry's nonnegative exact owner group ID.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is `#f` when unavailable.
+  |#
   (define-who file-group
     (case-lambda [(path)
                   ($statx-gid ($statx who path #t))]
@@ -1601,6 +1674,11 @@
           (valid? (if (and (pair? mode) (memq (car mode) '(+ -)))
                       (cdr mode) mode)))))
 
+  #|proc:file-mode->symbols
+  Convert integer permission bits `mode` (0 through #o7777) to four fresh lists:
+  special, user, group, and other permissions. Read/write/execute use `r`, `w`, `x`;
+  set-user-ID, set-group-ID, and sticky bits use `su`, `sg`, `t`.
+  |#
   (define file-mode->symbols
     (lambda (mode)
           (pcheck ([$mode-num? mode])
@@ -1620,6 +1698,11 @@
                      [g (scanX gs)]
                      [o (scanX os)])
                 `(,(s '()) ,(u '()) ,(g '()) ,(o '()))))))
+  #|proc:symbols->file-mode
+  Convert special/user/group/other symbol lists `smode`, `umode`, `gmode`, `omode`
+  to integer permission bits. Special symbols are `su`, `sg`, `t`; other groups use
+  `r`, `w`, `x`. Each list must contain unique symbols. Return an integer from 0 through #o7777.
+  |#
   (define symbols->file-mode
     (lambda (smode umode gmode omode)
       (pcheck ([list? smode umode gmode omode]
@@ -1788,7 +1871,7 @@
   results in unspecified behavior.
 
   If `follow-link?` is #f (the default), symlinks to directories are not followed
-  and are therefore regarded as files.
+  and are therefore regarded as files. A symlink supplied as the root is always followed.
   When following links, distinct aliases are visited separately while ancestor cycles are skipped.
 
   If `top-down?` is #t (the default), the tree is traversed in a top-down manner,
@@ -2511,29 +2594,29 @@
                      [directory-marked? (and (fx> (string-length src) 0)
                                              (char=? #\/ (string-ref src
                                                           (fx1- (string-length src)))))])
-               (unless (file-exists? src #f) ($err-file-not-found who src))
-               (when (and directory-marked? (not (file-symbolic-link? src))
-                          (not (file-directory? src)))
-                 ($err-file-not-directory who src))
-               (cond [(and (file-exists? dest #f) ($same-file-entry? src dest))
-                      ($err-file who dest "source and destination are the same file")]
-                     [(and (not (file-exists? dest #f)) ($try-rename-file src dest)) #t]
-                     [(and (file-directory? src #f) (not (file-symbolic-link? src)))
-                      (let ([metadata ($file-copytree who src dest copy #t)])
-                        ;; Removal may change the destination if it contains the source.
-                        ;; Keep it writable until removal, then restore children first.
-                        (file-removetree src #t)
-                        (for-each (lambda (entry)
-                                    ($apply-copy-metadata who (car entry) (cdr entry)))
-                                  metadata)
-                        #t)]
-                     [else
-                      (let ([target (if (file-directory? dest)
-                                        (path-build dest (path-last src)) dest)])
-                        (when (and (file-exists? target #f) ($same-file-entry? src target))
-                          ($err-file who target "source and destination are the same file"))
-                        (copy src dest)
-                        (delete-file src))])))))
+                 (unless (file-exists? src #f) ($err-file-not-found who src))
+                 (when (and directory-marked? (not (file-symbolic-link? src))
+                            (not (file-directory? src)))
+                   ($err-file-not-directory who src))
+                 (cond [(and (file-exists? dest #f) ($same-file-entry? src dest))
+                        ($err-file who dest "source and destination are the same file")]
+                       [(and (not (file-exists? dest #f)) ($try-rename-file src dest)) #t]
+                       [(and (file-directory? src #f) (not (file-symbolic-link? src)))
+                        (let ([metadata ($file-copytree who src dest copy #t)])
+                          ;; Removal may change the destination if it contains the source.
+                          ;; Keep it writable until removal, then restore children first.
+                          (file-removetree src #t)
+                          (for-each (lambda (entry)
+                                      ($apply-copy-metadata who (car entry) (cdr entry)))
+                                    metadata)
+                          #t)]
+                       [else
+                        (let ([target (if (file-directory? dest)
+                                          (path-build dest (path-last src)) dest)])
+                          (when (and (file-exists? target #f) ($same-file-entry? src target))
+                            ($err-file who target "source and destination are the same file"))
+                          (copy src dest)
+                          (delete-file src))])))))
 
   #|proc:file-move
   Move filesystem path string `src` to `dest`, renaming when `dest` is absent and the
@@ -2655,6 +2738,8 @@
   Permission bits (mode) of each kind of file can be set individually.
   They can be in either octal mode or symbolic mode.
   Directory modes are applied after constructing their children, allowing read-only trees.
+  A file declaration without content touches the entry, preserving existing bytes in overwrite
+  mode. Use `(text "")` to explicitly truncate a file to empty contents.
   If mode is not given, default mode is applied.
   Owner and group of files are the effective user and group of the process.
 

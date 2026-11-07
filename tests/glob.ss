@@ -1,5 +1,11 @@
 (import (cspp) (cspp glob))
 
+(mat glob-unmatched-result-ownership
+     (let* ([pattern (string-copy "__cspp_absent_owned_glob__")]
+            [result (glob* pattern #f #f 'literal)])
+       (string-set! (car result) 0 #\X)
+       (string=? pattern "__cspp_absent_owned_glob__")))
+
 (mat glob-zero-padded-ranges
      (for-all
       (lambda (fixture)

@@ -728,7 +728,7 @@
                                    (and (equal? (car a) (car b))
                                         (string<? (cdr a) (cdr b))))) entries)]
                [values (map cdr sorted)])
-          (if (and (null? values) (eq? unmatched 'literal)) (list pattern) values)))))
+          (if (and (null? values) (eq? unmatched 'literal)) (list (string-copy pattern)) values)))))
 
   #|proc:glob
   Expand string `pattern` against the filesystem and return duplicate-free path
@@ -759,7 +759,7 @@
   cycle detection that counts literal and wildcard directory ancestors. An explicit
   parent component starts a new descent chain. Boolean `include-directories?` includes directories;
   files and symlinks are always eligible. `unmatched` is `'empty` to return `()`
-  when nothing matches, or `'literal` to return a list of the original pattern.
+  when nothing matches, or `'literal` to return a list containing a fresh copy of the pattern.
   |#
   (define glob*
     (case-lambda
