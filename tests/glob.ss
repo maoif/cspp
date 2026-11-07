@@ -640,6 +640,36 @@
             '(unix windows)))
          (lambda () (file-removetree root #t)))))
 
+(mat glob-terminal-globstar-literal-equivalence
+     ($with-glob-tree
+      (lambda (root)
+        (file-symlink "missing" (path-build root "broken"))
+        (file-symlink "a" (path-build root "link"))
+        (for-all
+         (lambda (flavor)
+           (for-all
+            (lambda (follow?)
+              (for-all
+               (lambda (directories?)
+                 (for-all
+                  (lambda (name quoted)
+                    (let ([literal (path-build root (string-append name "/**"))]
+                          [bracket (path-build root (string-append quoted "/**"))])
+                      (and (equal? (glob* flavor literal follow? directories? 'empty)
+                                   (glob* flavor bracket follow? directories? 'empty))
+                           (member (path-build root name)
+                                   (glob* flavor literal follow? directories? 'empty))
+                           ;; A marker still requires a directory with the selected link policy.
+                           (equal? (glob* flavor (string-append literal "/")
+                                          follow? directories? 'empty)
+                                   (glob* flavor (string-append bracket "/")
+                                          follow? directories? 'empty)))))
+                  '("z.txt" "broken" "link")
+                  '("[z].txt" "[b]roken" "[l]ink")))
+               '(#f #t)))
+            '(#f #t)))
+         '(unix windows)))))
+
 (mat glob-terminal-globstar-cycle-links
      (let* ([root (format "glob-terminal-cycle-~a" (get-process-id))]
             [directory (path-build root "a")]

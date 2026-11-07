@@ -665,7 +665,9 @@
                                       (get-mode (string-append name "/."))
                                       (let* ([child (path-add-component p (component-literal (car cs)))]
                                              [next (cdr cs)])
+                                        ;; A terminal globstar also accepts this entry itself.
                                         (when (or (null? next)
+                                                  (and (not (car next)) (null? (cdr next)))
                                                   (file-directory? ($physical child) follow-link?))
                                           (set! stack (cons (vector 'node child next
                                                                      (if (and follow-link? (pair? next))
