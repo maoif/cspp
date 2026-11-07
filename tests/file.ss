@@ -85,6 +85,45 @@
         (guard (failure [(i/o-file-not-regular-error? failure) #t] [else #f])
           (file-copy root (path-build root "copy")) #f))))
 
+(mat file-destructive-directory-root-validation
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([destination (path-build root "destination")])
+          (mkdir destination)
+          (mkdir (path-build root "sub/deeper"))
+          (and
+           ;; Error cases: final dot/parent roots must be rejected before removing contents.
+           (for-all
+            (lambda (suffix)
+              (and (guard (failure [(error? failure) #t])
+                     (file-move (string-append root suffix) destination) #f)
+                   (file-exists? (path-build root "top.txt"))
+                   (file-exists? (path-build root "sub/nested.txt"))
+                   (null? (directory-list destination))
+                   (guard (failure [(error? failure) #t])
+                     (file-removetree (string-append root suffix) #t) #f)
+                   (eq? #f (file-removetree (string-append root suffix) #f))
+                   (file-exists? (path-build root "top.txt"))))
+            '("/sub/." "/sub/deeper/..")))))))
+
+(mat file-move-directory-symlink-with-marker
+     (for-all
+      (lambda (existing-destination?)
+        ($with-fs-fixture
+         (lambda (root)
+           (let ([source (path-build root "alias")]
+                 [destination (path-build root "destination")])
+             (file-symlink "sub" source)
+             (when existing-destination? (mkdir destination))
+             (file-move (string-append source "///") destination)
+             (let ([target (if existing-destination?
+                               (path-build destination "alias") destination)])
+               (and (not (file-exists? source #f))
+                    (file-symbolic-link? target)
+                    (string=? "sub" (readlink target))
+                    (file-exists? (path-build root "sub/nested.txt"))))))))
+      '(#f #t)))
+
 (mat file-writer-preserves-entry
      ($with-fs-fixture
       (lambda (root)

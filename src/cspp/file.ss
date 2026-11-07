@@ -2494,10 +2494,19 @@
         (rename-file src dest)
         #t)))
 
+  (define $removable-entry-path
+    (lambda (path)
+      (let* ([parsed (path-with-trailing-directory (path-parse 'unix path) #f)]
+             [basename (path-basename parsed)])
+        ;; Do not normalize: a parent component after a symlink has physical meaning.
+        (and basename (not (member basename '("." ".."))) (path-render parsed)))))
+
   (define $file-move
     (lambda (who src dest copy)
-       (pcheck ([$filename? src dest] [(lambda (path) (file-exists? path #f)) src]
-                [procedure? copy])
+       (pcheck ([$filename? src dest] [procedure? copy])
+               (let ([src (or ($removable-entry-path src)
+                              (errorf who "source must name a removable entry: ~a" src))])
+               (unless (file-exists? src #f) ($err-file-not-found who src))
                (cond [(and (file-exists? dest #f) ($same-file-entry? src dest))
                       ($err-file who dest "source and destination are the same file")]
                      [(and (not (file-exists? dest #f)) ($try-rename-file src dest)) #t]
@@ -2516,7 +2525,7 @@
                         (when (and (file-exists? target #f) ($same-file-entry? src target))
                           ($err-file who target "source and destination are the same file"))
                         (copy src dest)
-                        (delete-file src))]))))
+                        (delete-file src))])))))
 
   #|proc:file-move
   Move filesystem path string `src` to `dest`, renaming when `dest` is absent and the
@@ -2528,6 +2537,8 @@
   copying individual files and symlinks, including their metadata; return values are ignored.
   A successful rename bypasses `copy`. Source entries are removed only after copying succeeds.
   Moving an entry onto itself raises an error before calling `copy`.
+  A trailing separator on a source symlink is ignored: the link itself is moved.
+  Filesystem roots and final `.` or `..` components are rejected before any changes.
   Existing child directories are not merged recursively, as in `file-copytree`.
   A failed copy can leave a partial destination; the source remains until copying succeeds.
   Return `#t` for a renamed file or moved directory, unspecified values for a copied file.
@@ -2541,6 +2552,7 @@
   #|proc:file-removetree
   Remove a directory, recursively.
   Path string `path` must name a directory, not a symlink, even with trailing separators.
+  Filesystem roots and final `.` or `..` components are rejected before removing any contents.
 
   If `error?`, an error condition is raised when the procedure fails to remove
   a file or directory.
@@ -2582,15 +2594,14 @@
                         entries)))
                    (attempt (lambda () (delete-directory directory #t)))))
                ;; A trailing slash makes lstat follow the final symlink on POSIX.
-               ;; Remove only the directory marker; preserve explicit dot components.
-               (let ([path (path-render
-                            (path-with-trailing-directory (path-parse 'unix path) #f))])
-                 (if (file-exists? path #f)
-                     (if (and (file-directory? path #f)
-                              (not (file-symbolic-link? path)))
-                         (begin (remove-tree path) complete?)
-                         (if err? ($err-file-not-directory who path) #f))
-                     (if err? ($err-file-not-found who path) #f))))]))
+               (let ([entry ($removable-entry-path path)])
+                 (cond [(not entry)
+                        (if err? (errorf who "path must name a removable directory: ~a" path) #f)]
+                       [(not (file-exists? entry #f))
+                        (if err? ($err-file-not-found who entry) #f)]
+                       [(or (not (file-directory? entry #f)) (file-symbolic-link? entry))
+                        (if err? ($err-file-not-directory who entry) #f)]
+                       [else (remove-tree entry) complete?])))]))
 
 
   #|proc:mkdirs
