@@ -629,8 +629,14 @@
                                             result)
                                           (loop)))]
                                    [(not (car cs))
-                                    (open-scan p cs ancestors separator)
-                                    (set! stack (cons (vector 'node p (cdr cs) ancestors separator) stack))
+                                    ;; A recursive ancestor revisit must not consume zero
+                                    ;; components and then enter a literal suffix either.
+                                    (unless (and follow-link? (file-directory? name #t)
+                                                 (member (identity name) ancestors))
+                                      (open-scan p cs ancestors separator)
+                                      (set! stack
+                                            (cons (vector 'node p (cdr cs) ancestors separator)
+                                                  stack)))
                                     (loop)]
                                    [(member (component-literal (car cs)) '("." ".."))
                                     (let* ([component (component-literal (car cs))]

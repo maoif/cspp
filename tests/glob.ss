@@ -582,6 +582,28 @@
      (glob-match? (make-glob "[a\\-z]") "-")
      (not (glob-match? (make-glob "[a\\-z]") "m")))
 
+(mat glob-recursive-cycle-literal-suffix
+     (let ([root (format "glob-cycle-suffix-~a" (get-process-id))])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (mkdir (path-build root "a"))
+           (file-touch (path-build root "x"))
+           (file-symlink ".." (path-build root "a/back")))
+         (lambda ()
+           (for-all
+            (lambda (flavor)
+              (and (for-all
+                    (lambda (suffix)
+                      (null? (glob* flavor (string-append root "/a/**/" suffix)
+                                    #t #f 'empty)))
+                    '("x" "[x]" "?"))
+                   ;; Explicit finite traversal through a link remains allowed.
+                   (equal? (list (string-append root "/a/back/x"))
+                           (glob* flavor (string-append root "/a/back/x") #t #f 'empty))))
+            '(unix windows)))
+         (lambda () (file-removetree root #t)))))
+
 (mat glob-traversal-symlinks
      ($with-glob-tree
        (lambda (root)
