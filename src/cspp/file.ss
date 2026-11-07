@@ -2588,14 +2588,23 @@
         ($file-touch who dest (file-stat-access-time stat) (file-stat-modification-time stat)
                      (not link?) #f))))
 
-  (define $copy-for-move
+  (define $copy-tree-file
+    (lambda (src dest)
+      ;; Tree traversal supplies an exact entry name, never another container.
+      (when (file-directory? dest) ($err-directory-exists 'file-copytree dest))
+      (file-copy src dest #f)))
+
+  (define $copy-tree-for-move
     (lambda (src dest)
       ;; Snapshot before reading the file can update its access time.
-      (let ([stat (file-stat src #f)]
-            [target (if (file-directory? dest)
-                        (path-build dest (path-last src)) dest)])
-        (file-copy src dest #f)
-        ($apply-copy-metadata 'file-move target stat))))
+      (let ([stat (file-stat src #f)])
+        ($copy-tree-file src dest)
+        ($apply-copy-metadata 'file-move dest stat))))
+
+  (define $copy-for-move
+    (lambda (src dest)
+      ($copy-tree-for-move src (if (file-directory? dest)
+                                  (path-build dest (path-last src)) dest))))
 
   (define $make-move-directory
     (let ([access (foreign-procedure "cspp_file_directory_access" (string) scheme-object)])
@@ -2662,7 +2671,7 @@
   (define-who file-copytree
     (case-lambda
       [(src dest)
-       (file-copytree src dest (lambda (src dest) (file-copy src dest #f)))]
+       (file-copytree src dest $copy-tree-file)]
       [(src dest copy) ($file-copytree who src dest copy #f) (void)]))
 
   (define $try-rename-file
@@ -2679,7 +2688,7 @@
         (and basename (not (member basename '("." ".."))) (path-render parsed)))))
 
   (define $file-move
-    (lambda (who src dest copy)
+    (lambda (who src dest copy copy-tree)
        (pcheck ([$filename? src dest] [procedure? copy])
                (let ([src (or ($removable-entry-path src)
                               (errorf who "source must name a removable entry: ~a" src))]
@@ -2694,7 +2703,7 @@
                         ($err-file who dest "source and destination are the same file")]
                        [(and (not (file-exists? dest #f)) ($try-rename-file src dest)) #t]
                        [(and (file-directory? src #f) (not (file-symbolic-link? src)))
-                        (let ([metadata ($file-copytree who src dest copy #t)])
+                        (let ([metadata ($file-copytree who src dest copy-tree #t)])
                           ;; Only new directories receive source metadata. Existing merge
                           ;; roots stay usable, including when they contain the source.
                           (for-each (lambda (entry)
@@ -2731,8 +2740,8 @@
   |#
   (define-who file-move
     (case-lambda
-      [(src dest) ($file-move who src dest $copy-for-move)]
-      [(src dest copy) ($file-move who src dest copy)]))
+      [(src dest) ($file-move who src dest $copy-for-move $copy-tree-for-move)]
+      [(src dest copy) ($file-move who src dest copy copy)]))
 
 
   #|proc:file-removetree

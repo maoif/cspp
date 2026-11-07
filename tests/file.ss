@@ -2704,6 +2704,59 @@
      )
 
 
+(mat file-tree-exact-child-destinations
+     (for-all
+      (lambda (move?)
+        (for-all
+         (lambda (source-link?)
+           (for-all
+            (lambda (destination-link?)
+              ($with-fs-fixture
+               (lambda (root)
+                 (let ([source (path-build root "source")]
+                       [destination (path-build root "destination")]
+                       [outside (path-build root "outside")])
+                   (mkdir source)
+                   (mkdir destination)
+                   (mkdir outside)
+                   (if source-link?
+                       (file-symlink "missing" (path-build source "a"))
+                       (write-string (path-build source "a") "payload"))
+                   (if destination-link?
+                       (file-symlink "../outside" (path-build destination "a"))
+                       (mkdir (path-build destination "a")))
+                   ;; Error case: an exact child destination must not become a container.
+                   (and (guard (failure [(error? failure) #t])
+                          ((if move? file-move file-copytree) source destination)
+                          #f)
+                        (file-exists? (path-build source "a") #f)
+                        (not (file-exists? (path-build destination "a/a") #f))
+                        (null? (directory-list outside)))))))
+            '(#f #t)))
+         '(#f #t)))
+      '(#f #t))
+
+     ;; A custom copier may deliberately handle an existing directory collision.
+     (for-all
+      (lambda (operation)
+        ($with-fs-fixture
+         (lambda (root)
+           (let ([source (path-build root "source")]
+                 [destination (path-build root "destination")]
+                 [calls 0])
+             (mkdir source)
+             (mkdir destination)
+             (mkdir (path-build destination "a"))
+             (write-string (path-build source "a") "payload")
+             (operation source destination
+                        (lambda (from to)
+                          (set! calls (+ calls 1))
+                          (delete-directory to)
+                          (file-copy from to)))
+             (and (= calls 1)
+                  (string=? "payload" (read-string (path-build destination "a"))))))))
+      (list file-copytree file-move)))
+
 (mat file-copytree
 
      ;; A basename and a basename with a directory marker both have the current parent.
