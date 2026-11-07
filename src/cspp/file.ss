@@ -3104,7 +3104,8 @@
             (immutable paths) (mutable pending)))
 
   (define $fswatcher-timeout?
-    (lambda (timeout) (and (natural? timeout) (<= timeout #x7fffffff))))
+    (lambda (timeout)
+      (and (integer? timeout) (exact? timeout) (<= 0 timeout #x7fffffff))))
 
   #|proc:make-fswatcher
   The `make-fswatcher` procedure returns a new filesystem watcher.
@@ -3201,7 +3202,7 @@
   `FSW_ignored` is delivered with the recorded path and retires the watch.
   An event with an undecodable UTF-8 name is consumed and raises a watcher error.
   Subsequent calls continue with the remaining events, including valid events from the same read.
-  The optional `timeout` is an integer from 0 through 2147483647, in milliseconds.
+  The optional `timeout` is an exact integer from 0 through 2147483647, in milliseconds.
   Zero polls immediately; a positive timeout waits at most that long for an event, regardless
   of the watcher's blocking setting. Without `timeout`, the watcher's setting is used.
   The procedure returns `#f` when no event is available before the wait ends.

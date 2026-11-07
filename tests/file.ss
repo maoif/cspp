@@ -3355,6 +3355,25 @@
         ($fswatcher-event? (fswatcher-next! watcher 1000) root
                            (fswatcher-mask FSW_create) "ready"))))
 
+(mat fswatcher-timeout-exact-integers
+     ;; Error cases: invalid timeouts must be rejected before consuming a queued event.
+     (for-all
+      (lambda (timeout)
+        ($with-fswatcher-fixture
+         (lambda (root watcher)
+           (fswatcher-add! watcher root (fswatcher-mask FSW_create))
+           (file-touch (path-build root "first"))
+           (file-touch (path-build root "second"))
+           (and ($fswatcher-event? (fswatcher-next! watcher 0) root
+                                  (fswatcher-mask FSW_create) "first")
+                (guard (failure
+                        [else (and (who-condition? failure)
+                                   (eq? (condition-who failure) 'pcheck))])
+                  (fswatcher-next! watcher timeout) #f)
+                ($fswatcher-event? (fswatcher-next! watcher #x7fffffff) root
+                                   (fswatcher-mask FSW_create) "second")))))
+      '(0.0 1.0 2147483647.0 1/2 -1 #x80000000 +inf.0 +nan.0)))
+
 (mat fswatcher-errors
      ;; Error case: unknown paths cannot be removed.
      ($with-fswatcher-fixture
