@@ -1959,7 +1959,9 @@
   ;; Some procedures only need the presence of the symlink per se, not its target.
   (define file-exists?-no-follow (lambda (path) (file-exists? path #f)))
   (define $touch-empty-file
-    (lambda (path) ($with-port (open-file-output-port path) (lambda (port) (void)))))
+    (lambda (path)
+      ($with-port (open-file-output-port path (file-options no-fail no-truncate))
+        (lambda (port) (void)))))
 
   (define $readlink
     (let ([ffi (let ([ffi-readlink (foreign-procedure "cspp_readlink" (string) scheme-object)])
@@ -2606,8 +2608,10 @@
 
   #|proc:mkdirs
   Create directory path string `path` and any missing intermediate directories.
-  Integer `mode` supplies permission bits from 0 through #o7777; the default is #o777.
-  Existing directories are left unchanged. Return unspecified values.
+  Integer `mode` supplies the leaf directory's permission bits from 0 through #o7777;
+  the default is #o777. Missing parents use #o777. All creation modes are subject to umask.
+  Existing directories are left unchanged, including ones created by a concurrent call.
+  Return unspecified values.
   |#
   (define-who mkdirs
     (case-lambda
@@ -2622,7 +2626,9 @@
                               (if (file-exists? first)
                                   (unless (file-directory? first)
                                     ($err-file-not-directory who first))
-                                  (mkdir first mode))
+                                  (guard (failure [(and (error? failure) (file-directory? first))
+                                                   (void)])
+                                    (mkdir first (if (string=? rest "") mode #o777))))
                               (unless (string=? "" rest)
                                 (loop (path-build first (path-first rest)) (path-rest rest)))))))]))
 

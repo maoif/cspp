@@ -124,6 +124,47 @@
                     (file-exists? (path-build root "sub/nested.txt"))))))))
       '(#f #t)))
 
+(define $concurrent-create
+  (lambda (operation path)
+    (let* ([mutex (make-mutex)] [condition (make-condition)] [ready 0]
+           [worker
+            (lambda ()
+              (mutex-acquire mutex)
+              (set! ready (fx1+ ready))
+              (if (= ready 8) (condition-broadcast condition)
+                  (let loop ()
+                    (unless (= ready 8) (condition-wait condition mutex) (loop))))
+              (mutex-release mutex)
+              (operation path)
+              #t)])
+      (for-all (lambda (result) (eq? result #t))
+               (vector->list (apply run-threads 0 (make-list 8 worker)))))))
+
+(mat file-concurrent-idempotent-creation
+     ($with-fs-fixture
+      (lambda (root)
+        (for-all
+         (lambda (index)
+           (let ([file (path-build root (format "touch-~a" index))]
+                 [directory (path-build root (format "mkdir-~a/sub" index))])
+             (and ($concurrent-create file-touch file)
+                  (file-regular? file)
+                  ($concurrent-create mkdirs directory)
+                  (file-directory? directory))))
+         (iota 24)))))
+
+(mat mkdirs-leaf-mode
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([path (path-build root "parent/leaf")])
+          (dynamic-wind
+            void
+            (lambda ()
+              (mkdirs path #o400)
+              (and (= #o400 (file-mode path))
+                   (not (zero? (logand #o100 (file-mode (path-build root "parent")))))))
+            (lambda () (when (file-directory? path) (chmod path #o700))))))))
+
 (mat file-writer-preserves-entry
      ($with-fs-fixture
       (lambda (root)
