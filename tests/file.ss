@@ -2929,6 +2929,83 @@
      (file-removetree dir1))
 
 
+(mat file-move-renames-into-existing-containers
+     (for-all
+      (lambda (source-kind)
+        (for-all
+         (lambda (destination-link?)
+           ($with-fs-fixture
+            (lambda (root)
+              (let* ([source (path-build root "source")]
+                     [directory (path-build root "destination")]
+                     [destination (if destination-link? (path-build root "alias") directory)]
+                     [target (path-build directory "source")]
+                     [calls 0])
+                (mkdir directory)
+                (when destination-link? (file-symlink "destination" destination))
+                (case source-kind
+                  [(file) (write-string source "payload")]
+                  [(link) (file-symlink "sub" source)]
+                  [(dangling) (file-symlink "missing" source)])
+                (let ([inode (file-inode source #f)])
+                  (file-move source destination
+                             (lambda (from to)
+                               (set! calls (+ calls 1))
+                               (file-copy from to #f)))
+                  (and (= calls 0)
+                       (= inode (file-inode target #f))
+                       (not (file-exists? source #f))
+                       (if (eq? source-kind 'file)
+                           (string=? "payload" (read-string target))
+                           (string=? (if (eq? source-kind 'link) "sub" "missing")
+                                     (readlink target)))
+                       ;; The default copier also takes this rename path.
+                       (begin
+                         (file-move target source)
+                         (file-move source destination)
+                         (and (= inode (file-inode target #f))
+                              (not (file-exists? source #f))))))))))
+         '(#f #t)))
+      '(file link dangling)))
+
+(mat file-move-container-cross-device-fallback
+     ($with-fs-fixture
+      (lambda (root)
+        (if (or (not (file-directory? "/dev/shm"))
+                (and (= (file-dev-major root) (file-dev-major "/dev/shm"))
+                     (= (file-dev-minor root) (file-dev-minor "/dev/shm"))))
+            #t
+            (for-all
+             (lambda (custom?)
+               (let* ([source (path-build root "source")]
+                      [destination (path-build "/dev/shm" ($random-file))]
+                      [target (path-build destination "source")]
+                      [calls 0]
+                      [stamp (make-time 'time-utc 123000000 1000000000)])
+                 (dynamic-wind
+                   (lambda ()
+                     (mkdir destination)
+                     (write-string source "payload")
+                     (file-chmod source #o640)
+                     (file-touch source stamp))
+                   (lambda ()
+                     (if custom?
+                         (file-move source destination
+                                    (lambda (from to)
+                                      (unless (and (string=? from source)
+                                                   (string=? to destination))
+                                        (error 'move-test "wrong callback arguments"))
+                                      (set! calls (+ calls 1))
+                                      (file-copy from to)))
+                         (file-move source destination))
+                     (and (= calls (if custom? 1 0))
+                          (not (file-exists? source #f))
+                          (or custom? (and (= #o640 (file-mode target))
+                                           (time=? stamp (file-modification-time target))))
+                          (string=? "payload" (read-string target))))
+                   (lambda () (file-removetree destination #t)))))
+             '(#f #t))))))
+
 (mat file-move
 
      ;; Existing merge roots keep their mode even when the source is read-only.

@@ -2712,17 +2712,21 @@
                           (file-removetree src #t)
                           #t)]
                        [else
-                        (let ([target (if (file-directory? dest)
-                                          (path-build dest (path-last src)) dest)])
+                        (let* ([container? (file-directory? dest)]
+                               [target (if container? (path-build dest (path-last src)) dest)])
                           (when (and (file-exists? target #f) ($same-file-entry? src target))
                             ($err-file who target "source and destination are the same file"))
-                          (copy src dest)
-                          (delete-file src))])))))
+                          (if (and container? (not (file-exists? target #f))
+                                   ($try-rename-file src target))
+                              #t
+                              (begin (copy src dest)
+                                     (delete-file src))))])))))
 
   #|proc:file-move
-  Move filesystem path string `src` to `dest`, renaming when `dest` is absent and the
-  filesystem permits it. An existing directory receives a file under its source basename,
-  or the contents of a source directory. Nested directory symlinks are copied as links.
+  Move filesystem path string `src` to `dest`, renaming when the target entry is absent and
+  the filesystem permits it. An existing directory receives a file under its source basename,
+  or the contents of a source directory. For files and symlinks, the target is resolved inside
+  that directory before attempting rename. Nested directory symlinks are copied as links.
   When copying is necessary, the default preserves permission bits and access/modification
   times, but not ownership, hard-link relationships, or extended attributes.
   Source directory metadata is applied only to newly created destination directories, before
