@@ -11,6 +11,7 @@
   values; it must publish newly transferred resources inside its own cleanup scope.
   Native steps must bound blocking waits and permit GC without accessing Scheme objects.
   Pending Scheme events run between steps. Resource publication runs with interrupts disabled.
+  Critical entry and exit prevent handlers from bypassing scope registration or disposal.
   Leaving the scope disposes its state; replaying a continuation after disposal raises an error.
   A continuation may not enter the native operation from a different Scheme thread.
   Process operations must not run inside fibers: scheduler suspension leaves this scope,
@@ -20,7 +21,9 @@
     (lambda (who create prepare step result dispose consume)
       (pcheck-who who ([procedure? create prepare step result dispose consume])
         (let ([handle 0] [closed? #f] [owner (get-thread-id)])
-          (dynamic-wind
+          ;; Disable interrupts before unregistering cleanup, so an escaping handler
+          ;; cannot run between removal of this winder and entry into its exit thunk.
+          (dynamic-wind #t
             (lambda ()
               (unless (= owner (get-thread-id))
                 (errorf who "cannot enter a native operation from another thread"))

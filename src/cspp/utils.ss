@@ -785,6 +785,7 @@
   The `name` and each `flag` must be identifiers. Flag names must be distinct;
   duplicate or nonidentifier names raise a syntax error.
   The generated decoder takes a fixnum and returns overlapping flag symbols in definition order.
+  The decoder uses `name`'s lexical context, including when a wrapper macro supplies that name.
   Any shared bit includes a flag, including composite masks and aliases; zero masks never appear.
   The definition's return value is unspecified.
   |#
@@ -811,7 +812,7 @@
                                              (mask-environment
                                               (datum (flag ...))
                                               (datum (mask ...))))]
-                         [->symbols ($construct-name #'_k #'name "->symbols")])
+                         [->symbols ($construct-name #'name #'name "->symbols")])
              #'(begin
                  (define-syntax name
                    (lambda (x)

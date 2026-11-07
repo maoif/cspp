@@ -419,3 +419,33 @@
 
      (and (flag-any-set? 3 1) (not (flag-all-set? 3 1))
           (= 3 (flag-set 2 1)) (= 1 (flag-reset 2 3))))
+
+(mat flag-wrapper-hygiene
+
+     ;; Error case: a wrapper must expose the decoder using the caller-supplied name's context.
+     (guard (failure [else #f])
+       (eval
+         '(let ()
+            (define-syntax make-flags
+              (syntax-rules ()
+                [(_ name)
+                 (define-flags name (read 1) (write 2) (both (or read write)))]))
+            (make-flags permissions)
+            (and (= 1 (permissions read))
+                 (= 3 (permissions both))
+                 (equal? '(read write both) (permissions->symbols 3))))
+         (environment '(cspp chez) '(cspp utils))))
+
+     ;; Error case: nested wrappers must bind a decoder that shadows the surrounding identifier.
+     (guard (failure [else #f])
+       (eval
+         '(let ([permissions->symbols 'outer])
+            (let ()
+              (define-syntax make-flags
+                (syntax-rules () [(_ name) (define-flags name (read 1) (write 2))]))
+              (define-syntax make-permissions
+                (syntax-rules () [(_ name) (make-flags name)]))
+              (make-permissions permissions)
+              (and (= 3 (permissions read write))
+                   (equal? '(read write) (permissions->symbols 3)))))
+         (environment '(cspp chez) '(cspp utils)))))

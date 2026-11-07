@@ -769,3 +769,10 @@
            (and (process-exit-success? (process-result-status r))
                 (string=? "out" (process-result-stdout r))
                 (string=? "err" (process-result-stderr r)))))))
+
+(mat process-native-cleanup-interrupts
+
+     ;; Error case: final native disposal must survive exceptions and continuation escapes.
+     (= 0 (system (if (file-exists? "system-native-cleanup.ss")
+                      "../cspp --script=system-native-cleanup.ss"
+                      "./cspp --script=tests/system-native-cleanup.ss"))))
