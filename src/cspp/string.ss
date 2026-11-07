@@ -31,281 +31,99 @@
     (lambda (index strings)
       (map (lambda (str) (string-ref str index)) strings)))
 
+  ;; Expand the traversal choices at compile time: small arities never build
+  ;; character argument lists, and index/result positions remain loop bindings.
+  (define-syntax $define-string-traversal
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ name mapping? indexed? reverse?)
+         (let ([mapping? (syntax->datum #'mapping?)]
+               [indexed? (syntax->datum #'indexed?)]
+               [reverse? (syntax->datum #'reverse?)])
+           (define clause
+             (lambda (sources rest?)
+               (let* ([arguments (if indexed? (list #'index) '())]
+                      [invoke (if rest?
+                                  #`(apply proc #,@arguments
+                                           (string-chars-at index all-strings))
+                                  #`(proc #,@arguments
+                                          #,@(map (lambda (source) #`(string-ref #,source index))
+                                                  sources)))]
+                      [done (if reverse? #'(fx= index -1) #'(fx= index len))]
+                      [next (if reverse? #'(fx1- index) #'(fx1+ index))]
+                      [result-index (if reverse? #'result-index #'index)]
+                      [advance (if (and mapping? reverse?)
+                                   #`(loop #,next (fx1+ result-index)) #`(loop #,next))]
+                      [body (if mapping?
+                                #`(if #,done result
+                                      (let ([char #,invoke])
+                                        (pcheck ([char? char])
+                                                (string-set! result #,result-index char)
+                                                #,advance)))
+                                #`(unless #,done #,invoke #,advance))])
+                 #`[#,(if rest? #'(proc str0 . strings) #`(proc #,@sources))
+                    (pcheck ([procedure? proc] [string? #,@sources]
+                             #,@(if rest? (list #'[all-strings? strings]) '()))
+                            #,@(cond [rest? (list #'(apply check-length who str0 strings))]
+                                     [(pair? (cdr sources))
+                                      (list #`(check-length who #,@sources))]
+                                     [else '()])
+                            (let* (#,@(if rest? (list #'[all-strings (cons str0 strings)]) '())
+                                   [len (string-length #,(car sources))]
+                                   #,@(if mapping? (list #'[result (make-string len)]) '()))
+                              (let loop ([index #,(if reverse? #'(fx1- len) #'0)]
+                                         #,@(if (and mapping? reverse?)
+                                                (list #'[result-index 0]) '()))
+                                #,body))
+                            #,@(if mapping? '() (list #'(void))))])))
+           #`(define-who name
+               (case-lambda
+                 #,(clause (list #'str0) #f)
+                 #,(clause (list #'str0 #'str1) #f)
+                 #,(clause (list #'str0 #'str1 #'str2) #f)
+                 #,(clause (list #'str0) #t))))])))
+
   #|proc:string-for-each
   Call `(proc char0 char1 ...)` with corresponding characters from input strings `str0`, ...
   Visit characters from left to right. Ignore callback results.
   All strings must have equal length. Return the result of `(void)`.
   |#
-  (define-who string-for-each
-    (case-lambda
-      [(proc str0)
-       (pcheck ([procedure? proc] [string? str0])
-               (let ([len (string-length str0)])
-                 (let loop ([index 0])
-                   (unless (fx= index len)
-                     (proc (string-ref str0 index))
-                     (loop (fx1+ index)))))
-               (void))]
-      [(proc str0 str1)
-       (pcheck ([procedure? proc] [string? str0 str1])
-               (check-length who str0 str1)
-               (let ([len (string-length str0)])
-                 (let loop ([index 0])
-                   (unless (fx= index len)
-                     (proc (string-ref str0 index) (string-ref str1 index))
-                     (loop (fx1+ index)))))
-               (void))]
-      [(proc str0 str1 str2)
-       (pcheck ([procedure? proc] [string? str0 str1 str2])
-               (check-length who str0 str1 str2)
-               (let ([len (string-length str0)])
-                 (let loop ([index 0])
-                   (unless (fx= index len)
-                     (proc (string-ref str0 index) (string-ref str1 index)
-                           (string-ref str2 index))
-                     (loop (fx1+ index)))))
-               (void))]
-      [(proc str0 . strings)
-       (pcheck ([procedure? proc] [string? str0] [all-strings? strings])
-               (apply check-length who str0 strings)
-               (let ([all-strings (cons str0 strings)] [len (string-length str0)])
-                 (let loop ([index 0])
-                   (unless (fx= index len)
-                     (apply proc (string-chars-at index all-strings))
-                     (loop (fx1+ index)))))
-               (void))]))
+  ($define-string-traversal string-for-each #f #f #f)
 
   #|proc:string-for-each/i
   Call `(proc index char0 char1 ...)` with the zero-based index and characters from `str0`, ...
   Visit characters from left to right. Ignore callback results.
   All strings must have equal length. Return the result of `(void)`.
   |#
-  (define-who string-for-each/i
-    (case-lambda
-      [(proc str0)
-       (pcheck ([procedure? proc] [string? str0])
-               (let ([len (string-length str0)])
-                 (let loop ([index 0])
-                   (unless (fx= index len)
-                     (proc index (string-ref str0 index))
-                     (loop (fx1+ index)))))
-               (void))]
-      [(proc str0 str1)
-       (pcheck ([procedure? proc] [string? str0 str1])
-               (check-length who str0 str1)
-               (let ([len (string-length str0)])
-                 (let loop ([index 0])
-                   (unless (fx= index len)
-                     (proc index (string-ref str0 index) (string-ref str1 index))
-                     (loop (fx1+ index)))))
-               (void))]
-      [(proc str0 str1 str2)
-       (pcheck ([procedure? proc] [string? str0 str1 str2])
-               (check-length who str0 str1 str2)
-               (let ([len (string-length str0)])
-                 (let loop ([index 0])
-                   (unless (fx= index len)
-                     (proc index (string-ref str0 index) (string-ref str1 index)
-                           (string-ref str2 index))
-                     (loop (fx1+ index)))))
-               (void))]
-      [(proc str0 . strings)
-       (pcheck ([procedure? proc] [string? str0] [all-strings? strings])
-               (apply check-length who str0 strings)
-               (let ([all-strings (cons str0 strings)] [len (string-length str0)])
-                 (let loop ([index 0])
-                   (unless (fx= index len)
-                     (apply proc index (string-chars-at index all-strings))
-                     (loop (fx1+ index)))))
-               (void))]))
+  ($define-string-traversal string-for-each/i #f #t #f)
 
   #|proc:string-map
   Call `(proc char0 char1 ...)` on corresponding characters from input strings `str0`, ...
   All strings must have equal length. Visit characters from left to right.
   Each callback result must be a character. Return a newly allocated string.
   |#
-  (define-who string-map
-    (case-lambda
-      [(proc str0)
-       (pcheck ([procedure? proc] [string? str0])
-               (let* ([len (string-length str0)] [result (make-string len)])
-                 (let loop ([index 0])
-                   (if (fx= index len)
-                       result
-                       (let ([char (proc (string-ref str0 index))])
-                         (pcheck ([char? char])
-                                 (string-set! result index char)
-                                 (loop (fx1+ index))))))))]
-      [(proc str0 str1)
-       (pcheck ([procedure? proc] [string? str0 str1])
-               (check-length who str0 str1)
-               (let* ([len (string-length str0)] [result (make-string len)])
-                 (let loop ([index 0])
-                   (if (fx= index len)
-                       result
-                       (let ([char (proc (string-ref str0 index) (string-ref str1 index))])
-                         (pcheck ([char? char])
-                                 (string-set! result index char)
-                                 (loop (fx1+ index))))))))]
-      [(proc str0 str1 str2)
-       (pcheck ([procedure? proc] [string? str0 str1 str2])
-               (check-length who str0 str1 str2)
-               (let* ([len (string-length str0)] [result (make-string len)])
-                 (let loop ([index 0])
-                   (if (fx= index len)
-                       result
-                       (let ([char (proc (string-ref str0 index) (string-ref str1 index)
-                                         (string-ref str2 index))])
-                         (pcheck ([char? char])
-                                 (string-set! result index char)
-                                 (loop (fx1+ index))))))))]
-      [(proc str0 . strings)
-       (pcheck ([procedure? proc] [string? str0] [all-strings? strings])
-               (apply check-length who str0 strings)
-               (let* ([all-strings (cons str0 strings)]
-                      [len (string-length str0)] [result (make-string len)])
-                 (let loop ([index 0])
-                   (if (fx= index len)
-                       result
-                       (let ([char (apply proc (string-chars-at index all-strings))])
-                         (pcheck ([char? char])
-                                 (string-set! result index char)
-                                 (loop (fx1+ index))))))))]))
+  ($define-string-traversal string-map #t #f #f)
 
   #|proc:string-map/i
   Call `(proc index char0 char1 ...)` with the zero-based index and characters from `str0`, ...
   All strings must have equal length. Visit characters from left to right.
   Each callback result must be a character. Return a newly allocated string.
   |#
-  (define-who string-map/i
-    (case-lambda
-      [(proc str0)
-       (pcheck ([procedure? proc] [string? str0])
-               (let* ([len (string-length str0)] [result (make-string len)])
-                 (let loop ([index 0])
-                   (if (fx= index len)
-                       result
-                       (let ([char (proc index (string-ref str0 index))])
-                         (pcheck ([char? char])
-                                 (string-set! result index char)
-                                 (loop (fx1+ index))))))))]
-      [(proc str0 str1)
-       (pcheck ([procedure? proc] [string? str0 str1])
-               (check-length who str0 str1)
-               (let* ([len (string-length str0)] [result (make-string len)])
-                 (let loop ([index 0])
-                   (if (fx= index len)
-                       result
-                       (let ([char (proc index (string-ref str0 index) (string-ref str1 index))])
-                         (pcheck ([char? char])
-                                 (string-set! result index char)
-                                 (loop (fx1+ index))))))))]
-      [(proc str0 str1 str2)
-       (pcheck ([procedure? proc] [string? str0 str1 str2])
-               (check-length who str0 str1 str2)
-               (let* ([len (string-length str0)] [result (make-string len)])
-                 (let loop ([index 0])
-                   (if (fx= index len)
-                       result
-                       (let ([char (proc index (string-ref str0 index) (string-ref str1 index)
-                                         (string-ref str2 index))])
-                         (pcheck ([char? char])
-                                 (string-set! result index char)
-                                 (loop (fx1+ index))))))))]
-      [(proc str0 . strings)
-       (pcheck ([procedure? proc] [string? str0] [all-strings? strings])
-               (apply check-length who str0 strings)
-               (let* ([all-strings (cons str0 strings)]
-                      [len (string-length str0)] [result (make-string len)])
-                 (let loop ([index 0])
-                   (if (fx= index len)
-                       result
-                       (let ([char (apply proc index (string-chars-at index all-strings))])
-                         (pcheck ([char? char])
-                                 (string-set! result index char)
-                                 (loop (fx1+ index))))))))]))
+  ($define-string-traversal string-map/i #t #t #f)
 
   #|proc:string-for-each-rev
   Call `(proc char0 char1 ...)` with corresponding characters from input strings `str0`, ...
   Visit characters from right to left. Ignore callback results.
   All strings must have equal length. Return the result of `(void)`.
   |#
-  (define-who string-for-each-rev
-    (case-lambda
-      [(proc str0)
-       (pcheck ([procedure? proc] [string? str0])
-               (let loop ([index (fx1- (string-length str0))])
-                 (unless (fx= index -1)
-                   (proc (string-ref str0 index))
-                   (loop (fx1- index))))
-               (void))]
-      [(proc str0 str1)
-       (pcheck ([procedure? proc] [string? str0 str1])
-               (check-length who str0 str1)
-               (let loop ([index (fx1- (string-length str0))])
-                 (unless (fx= index -1)
-                   (proc (string-ref str0 index) (string-ref str1 index))
-                   (loop (fx1- index))))
-               (void))]
-      [(proc str0 str1 str2)
-       (pcheck ([procedure? proc] [string? str0 str1 str2])
-               (check-length who str0 str1 str2)
-               (let loop ([index (fx1- (string-length str0))])
-                 (unless (fx= index -1)
-                   (proc (string-ref str0 index) (string-ref str1 index)
-                         (string-ref str2 index))
-                   (loop (fx1- index))))
-               (void))]
-      [(proc str0 . strings)
-       (pcheck ([procedure? proc] [string? str0] [all-strings? strings])
-               (apply check-length who str0 strings)
-               (let ([all-strings (cons str0 strings)])
-                 (let loop ([index (fx1- (string-length str0))])
-                   (unless (fx= index -1)
-                     (apply proc (string-chars-at index all-strings))
-                     (loop (fx1- index)))))
-               (void))]))
+  ($define-string-traversal string-for-each-rev #f #f #t)
 
   #|proc:string-for-each/i-rev
   Call `(proc index char0 char1 ...)` with the source index and characters from `str0`, ...
   Visit characters from right to left; `index` decreases from length minus one to zero.
   Ignore callback results. All strings must have equal length. Return the result of `(void)`.
   |#
-  (define-who string-for-each/i-rev
-    (case-lambda
-      [(proc str0)
-       (pcheck ([procedure? proc] [string? str0])
-               (let loop ([index (fx1- (string-length str0))])
-                 (unless (fx= index -1)
-                   (proc index (string-ref str0 index))
-                   (loop (fx1- index))))
-               (void))]
-      [(proc str0 str1)
-       (pcheck ([procedure? proc] [string? str0 str1])
-               (check-length who str0 str1)
-               (let loop ([index (fx1- (string-length str0))])
-                 (unless (fx= index -1)
-                   (proc index (string-ref str0 index) (string-ref str1 index))
-                   (loop (fx1- index))))
-               (void))]
-      [(proc str0 str1 str2)
-       (pcheck ([procedure? proc] [string? str0 str1 str2])
-               (check-length who str0 str1 str2)
-               (let loop ([index (fx1- (string-length str0))])
-                 (unless (fx= index -1)
-                   (proc index (string-ref str0 index) (string-ref str1 index)
-                         (string-ref str2 index))
-                   (loop (fx1- index))))
-               (void))]
-      [(proc str0 . strings)
-       (pcheck ([procedure? proc] [string? str0] [all-strings? strings])
-               (apply check-length who str0 strings)
-               (let ([all-strings (cons str0 strings)])
-                 (let loop ([index (fx1- (string-length str0))])
-                   (unless (fx= index -1)
-                     (apply proc index (string-chars-at index all-strings))
-                     (loop (fx1- index)))))
-               (void))]))
+  ($define-string-traversal string-for-each/i-rev #f #t #t)
 
   #|proc:string-map-rev
   Call `(proc char0 char1 ...)` on corresponding characters from input strings `str0`, ...
@@ -313,53 +131,7 @@
   Each callback result must be a character. Return a new string in traversal order.
   For example, `(string-map-rev char-upcase "abc")` returns `"CBA"`.
   |#
-  (define-who string-map-rev
-    (case-lambda
-      [(proc str0)
-       (pcheck ([procedure? proc] [string? str0])
-               (let* ([len (string-length str0)] [result (make-string len)])
-                 (let loop ([index (fx1- len)] [result-index 0])
-                   (if (fx= index -1)
-                       result
-                       (let ([char (proc (string-ref str0 index))])
-                         (pcheck ([char? char])
-                                 (string-set! result result-index char)
-                                 (loop (fx1- index) (fx1+ result-index))))))))]
-      [(proc str0 str1)
-       (pcheck ([procedure? proc] [string? str0 str1])
-               (check-length who str0 str1)
-               (let* ([len (string-length str0)] [result (make-string len)])
-                 (let loop ([index (fx1- len)] [result-index 0])
-                   (if (fx= index -1)
-                       result
-                       (let ([char (proc (string-ref str0 index) (string-ref str1 index))])
-                         (pcheck ([char? char])
-                                 (string-set! result result-index char)
-                                 (loop (fx1- index) (fx1+ result-index))))))))]
-      [(proc str0 str1 str2)
-       (pcheck ([procedure? proc] [string? str0 str1 str2])
-               (check-length who str0 str1 str2)
-               (let* ([len (string-length str0)] [result (make-string len)])
-                 (let loop ([index (fx1- len)] [result-index 0])
-                   (if (fx= index -1)
-                       result
-                       (let ([char (proc (string-ref str0 index) (string-ref str1 index)
-                                         (string-ref str2 index))])
-                         (pcheck ([char? char])
-                                 (string-set! result result-index char)
-                                 (loop (fx1- index) (fx1+ result-index))))))))]
-      [(proc str0 . strings)
-       (pcheck ([procedure? proc] [string? str0] [all-strings? strings])
-               (apply check-length who str0 strings)
-               (let* ([all-strings (cons str0 strings)]
-                      [len (string-length str0)] [result (make-string len)])
-                 (let loop ([index (fx1- len)] [result-index 0])
-                   (if (fx= index -1)
-                       result
-                       (let ([char (apply proc (string-chars-at index all-strings))])
-                         (pcheck ([char? char])
-                                 (string-set! result result-index char)
-                                 (loop (fx1- index) (fx1+ result-index))))))))]))
+  ($define-string-traversal string-map-rev #t #f #t)
 
   #|proc:string-map/i-rev
   Call `(proc index char0 char1 ...)` with the source index and characters from `str0`, ...
@@ -367,53 +139,7 @@
   All strings must have equal length. Each callback result must be a character.
   Return a new string in traversal order, matching `string-map-rev`.
   |#
-  (define-who string-map/i-rev
-    (case-lambda
-      [(proc str0)
-       (pcheck ([procedure? proc] [string? str0])
-               (let* ([len (string-length str0)] [result (make-string len)])
-                 (let loop ([index (fx1- len)] [result-index 0])
-                   (if (fx= index -1)
-                       result
-                       (let ([char (proc index (string-ref str0 index))])
-                         (pcheck ([char? char])
-                                 (string-set! result result-index char)
-                                 (loop (fx1- index) (fx1+ result-index))))))))]
-      [(proc str0 str1)
-       (pcheck ([procedure? proc] [string? str0 str1])
-               (check-length who str0 str1)
-               (let* ([len (string-length str0)] [result (make-string len)])
-                 (let loop ([index (fx1- len)] [result-index 0])
-                   (if (fx= index -1)
-                       result
-                       (let ([char (proc index (string-ref str0 index) (string-ref str1 index))])
-                         (pcheck ([char? char])
-                                 (string-set! result result-index char)
-                                 (loop (fx1- index) (fx1+ result-index))))))))]
-      [(proc str0 str1 str2)
-       (pcheck ([procedure? proc] [string? str0 str1 str2])
-               (check-length who str0 str1 str2)
-               (let* ([len (string-length str0)] [result (make-string len)])
-                 (let loop ([index (fx1- len)] [result-index 0])
-                   (if (fx= index -1)
-                       result
-                       (let ([char (proc index (string-ref str0 index) (string-ref str1 index)
-                                         (string-ref str2 index))])
-                         (pcheck ([char? char])
-                                 (string-set! result result-index char)
-                                 (loop (fx1- index) (fx1+ result-index))))))))]
-      [(proc str0 . strings)
-       (pcheck ([procedure? proc] [string? str0] [all-strings? strings])
-               (apply check-length who str0 strings)
-               (let* ([all-strings (cons str0 strings)]
-                      [len (string-length str0)] [result (make-string len)])
-                 (let loop ([index (fx1- len)] [result-index 0])
-                   (if (fx= index -1)
-                       result
-                       (let ([char (apply proc index (string-chars-at index all-strings))])
-                         (pcheck ([char? char])
-                                 (string-set! result result-index char)
-                                 (loop (fx1- index) (fx1+ result-index))))))))]))
+  ($define-string-traversal string-map/i-rev #t #t #t)
 
   #|proc:string-slice
   Return a string slice selected by `start`, exclusive `end`, and nonzero `step`.
