@@ -80,15 +80,13 @@
     make-i/o-file-not-directory-error i/o-file-not-directory-error?)
 
   (define $err-file
-    (case-lambda
-      [(who msg)
-       (raise (condition (make-who-condition who) (make-message-condition msg)))]
-      [(who x msg)
-       (cond [(condition? x)
-              (raise (condition (make-who-condition who) x (make-message-condition msg)))]
-             [(string? x)
-              (raise (condition (make-who-condition who) (make-i/o-filename-error x) (make-message-condition msg)))]
-             [else (assert-unreachable)])]))
+    (lambda (who x msg)
+      (cond [(condition? x)
+             (raise (condition (make-who-condition who) x (make-message-condition msg)))]
+            [(string? x)
+             (raise (condition (make-who-condition who) (make-i/o-filename-error x)
+                               (make-message-condition msg)))]
+            [else (assert-unreachable)])))
 
   (define $err-file-not-regular
     (lambda (who p)
@@ -2252,7 +2250,7 @@
                        (lambda (src dest)
                          (let ([x (ffi src dest)])
                            (when (string? x)
-                             ($err-file who x)))))]
+                             ($err-file who dest x)))))]
               [link ($link/copy-helper who $link overwrite?)])
          (link src dest name-src src))]))
 
@@ -2263,6 +2261,7 @@
   Symlinks are followed recursively if `follow-link?` is #t.
   If destination string `dest` names a directory or a symlink to one, create the link
   inside it using `src`'s basename. Otherwise `dest` names the new entry. Return unspecified values.
+  Native creation failures raise I/O errors identifying the attempted destination pathname.
   |#
   (define-who file-link
     (case-lambda [(src dest) (file-link src dest #t)]
@@ -2300,7 +2299,7 @@
                          (lambda (src dest)
                            (let ([x (ffi src dest)])
                              (when (string? x)
-                               ($err-file who x)))))]
+                               ($err-file who dest x)))))]
              [link ($link/copy-helper who $symlink overwrite?)])
         (link src dest src #f))))
 
@@ -2311,6 +2310,7 @@
   If destination string `dest` names a directory or a symlink to one, create the link inside it
   using `src`'s basename after ignoring trailing separators. A root target has no such basename
   and requires an explicit destination entry name. Return unspecified values.
+  Native creation failures raise I/O errors identifying the attempted destination pathname.
   |#
   (define-who file-symlink
     (lambda (src dest)

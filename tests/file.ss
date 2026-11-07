@@ -32,6 +32,23 @@
     (let loop ([paths paths] [index 0])
       (if (string=? (car paths) path) index (loop (cdr paths) (+ index 1))))))
 
+(mat file-link-native-error-conditions
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([source (path-build root "top.txt")]
+              [destination (path-build root "missing-parent/link")])
+          ;; Error cases: native creation failures must be catchable as ordinary I/O errors.
+          (for-all
+           (lambda (link)
+             (guard (failure
+                     [(and (error? failure) (i/o-error? failure)
+                           (i/o-filename-error? failure))
+                      (string=? destination (i/o-error-filename failure))]
+                     [else #f])
+               (link source destination)
+               #f))
+           (list file-link file-link! file-symlink file-symlink!))))))
+
 (mat make-path-native-fragments
      (for-all
       (lambda (parts expected) (string=? expected (apply make-path parts)))
