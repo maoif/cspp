@@ -267,6 +267,33 @@ ptr cspp_symlink(const char *src, const char *dest) {
   return Strue;
 }
 
+/* Reserve a private sibling directory for preparing a replacement entry.
+ * A directory avoids leaving a guessable, unreserved temporary pathname. */
+ptr cspp_file_staging_directory(const char *parent) {
+  char *expanded = expand_pathname(parent);
+  if (expanded == NULL) { errno = ENOMEM; return errno_str_vector(); }
+  const char suffix[] = "/.cspp-replace-XXXXXX";
+  size_t length = strlen(expanded);
+  char *name = malloc(length + sizeof(suffix));
+  if (name == NULL) {
+    free(expanded);
+    errno = ENOMEM;
+    return errno_str_vector();
+  }
+  memcpy(name, expanded, length);
+  memcpy(name + length, suffix, sizeof(suffix));
+  free(expanded);
+  if (mkdtemp(name) == NULL) {
+    int code = errno;
+    free(name);
+    errno = code;
+    return errno_str_vector();
+  }
+  ptr result = Sstring_utf8(name, (iptr)strlen(name));
+  free(name);
+  return result;
+}
+
 ptr cspp_touch(const char *path, ptr atime, ptr mtime, int follow_link) {
   /* Decode all Scheme objects before a tilde lookup can deactivate this thread. */
   struct timespec ts[2];

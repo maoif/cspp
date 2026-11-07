@@ -52,6 +52,39 @@
       (write-string>> ($interleaved-append-path datum) "inner"))
     (put-string port "outer")))
 
+(mat file-overwrite-preserves-destination-on-failure
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([source (path-build root "top.txt")]
+              [destination (path-build root "destination")])
+          (write-string destination "keep")
+          (dynamic-wind
+            (lambda () (chmod source #o000))
+            (lambda ()
+              ;; Error case: an unreadable source must not remove an existing destination.
+              (or (= 0 (geteuid))
+                  (and (guard (failure [(error? failure) #t])
+                         (file-copy! source destination) #f)
+                       (string=? "keep" (read-string destination)))))
+            (lambda () (chmod source #o600))))))
+
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([destination (path-build root "top.txt")])
+          (write-string! destination "keep")
+          ;; Error cases: invalid hard-link sources and empty symlink targets preserve dest.
+          (and (guard (failure [(error? failure) #t]) (file-link! root destination) #f)
+               (string=? "keep" (read-string destination))
+               (guard (failure [(error? failure) #t]) (file-symlink! "" destination) #f)
+               (string=? "keep" (read-string destination)))))))
+
+(mat file-copy-rejects-nonregular-source
+     ($with-fs-fixture
+      (lambda (root)
+        ;; Error case: copying a directory must report the public nonregular-file condition.
+        (guard (failure [(i/o-file-not-regular-error? failure) #t] [else #f])
+          (file-copy root (path-build root "copy")) #f))))
+
 (mat file-writer-preserves-entry
      ($with-fs-fixture
       (lambda (root)

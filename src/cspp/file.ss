@@ -2034,6 +2034,25 @@
         (and (equal? (path-basename left) (path-basename right))
              (same-file? ($parent-directory-name left) ($parent-directory-name right))))))
 
+  (define $replace-file-entry
+    (let ([stage (foreign-procedure "cspp_file_staging_directory" (string) scheme-object)])
+      (lambda (who destination create)
+        (let ([directory (stage ($parent-directory-name (path-parse 'unix destination)))])
+          (when (vector? directory) ($err-file who destination (vector-ref directory 0)))
+          (let ([temporary (path-build directory "entry")])
+            (dynamic-wind
+              void
+              (lambda ()
+                (create temporary)
+                (rename-file temporary destination))
+              (lambda ()
+                ;; Creation may have failed after writing part of the replacement.
+                (dynamic-wind
+                  void
+                  (lambda ()
+                    (when (file-exists? temporary #f) (delete-file temporary #t)))
+                  (lambda () (delete-directory directory #t))))))))))
+
   (define $link/copy-helper
     (lambda (who link/copy-what overwrite?)
       (case-lambda
@@ -2051,9 +2070,9 @@
                                            (or ($same-file-entry? source-path dest)
                                                ($same-file-entry? name-src dest)))
                                   ($err-file who dest "source and destination are the same file"))
-                                ;; Replace the destination symlink itself, matching `ln` semantics.
-                                (delete-file dest)
-                                (link/copy-what src dest))
+                                ;; Commit only a complete replacement; do not follow dest links.
+                                ($replace-file-entry who dest
+                                  (lambda (temporary) (link/copy-what src temporary))))
                               ($err-file-exists who dest))
                           (link/copy-what src dest)))])
                (if (file-directory? dest #t)
@@ -2097,6 +2116,8 @@
 
   #|proc:file-link!
   Similar to `file-link`, but if `dest` already exists, it is overwritten.
+  Prepare the replacement before renaming it over the destination entry. Failures before
+  that rename leave the destination intact. Other hard links keep their old contents.
   |#
   (define-who file-link!
     (case-lambda [(src dest) (file-link! src dest #t)]
@@ -2133,6 +2154,7 @@
 
   #|proc:file-symlink!
   Similar to `file-symlink`, but if `dest` already exists, it is overwritten.
+  Create the new link before replacing the destination entry; a creation failure preserves it.
   |#
   (define-who file-symlink!
     (lambda (src dest)
@@ -2329,7 +2351,7 @@
              (copy-link ln dest name-src src))]
           [(file-regular? src #f)
            (copy-file src dest name-src src)]
-          [else (unreachable! who)]))]))
+          [else ($err-file-not-regular who src)]))]))
 
 
   #|proc:file-copy
@@ -2352,6 +2374,9 @@
 
   #|proc:file-copy!
   Similar to `file-copy`, but overwrites `dest` if it exists.
+  Finish copying before renaming the replacement over the destination entry. Copy failures
+  preserve an existing destination. Destination symlinks are replaced; other hard links retain
+  their previous contents. Metadata is not copied, as with `file-copy`.
   |#
   (define-who file-copy!
     (case-lambda
