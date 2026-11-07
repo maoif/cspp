@@ -263,17 +263,20 @@
     (lambda (components sep)
       (if (null? components)
           ""
-          (let ([op (open-output-string)])
-            (dynamic-wind
-              void
-              (lambda ()
-                (let loop ([components components] [first? #t])
-                  (unless (null? components)
-                    (unless first? (write-char sep op))
-                    (put-string op (car components))
-                    (loop (cdr components) #f)))
-                (get-output-string op))
-              (lambda () (close-output-port op)))))))
+          (let* ([length
+                  ;; The sum need not fit a fixnum until make-string accepts the size.
+                  (let loop ([remaining components] [length -1])
+                    (if (null? remaining) length
+                        (loop (cdr remaining) (+ length 1 (string-length (car remaining))))))]
+                 [result (make-string length)])
+            (let loop ([remaining components] [index 0])
+              (let* ([component (car remaining)] [length (string-length component)]
+                     [end (fx+ index length)])
+                (string-copy! component 0 result index length)
+                (if (null? (cdr remaining)) result
+                    (begin
+                      (string-set! result end sep)
+                      (loop (cdr remaining) (fx1+ end))))))))))
 
   (define $render-unix
     (lambda (p sep)
