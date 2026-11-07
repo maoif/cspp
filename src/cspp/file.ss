@@ -2816,10 +2816,29 @@
                        [else (remove-tree entry) complete?])))]))
 
 
+  ;; Remove only terminal dot components. Keep their preceding separator so drive and
+  ;; filesystem roots retain their meaning; parents after symlinks must not be normalized.
+  (define $mkdirs-target
+    (lambda (path)
+      (let loop ([end (string-length path)] [cut #f])
+        (let ([end (let skip-separators ([index end])
+                     (if (and (fx> index 0)
+                              (directory-separator? (string-ref path (fx1- index))))
+                         (skip-separators (fx1- index))
+                         index))])
+          (if (and (fx> end 0) (char=? (string-ref path (fx1- end)) #\.)
+                   (or (fx= end 1)
+                       (directory-separator? (string-ref path (fx- end 2)))))
+              (loop (fx1- end) (fx1- end))
+              (if cut
+                  (if (fxzero? cut) "." (substring path 0 cut))
+                  path))))))
+
   #|proc:mkdirs
   Create directory path string `path` and any missing intermediate directories.
   Integer `mode` supplies the leaf directory's permission bits from 0 through #o7777;
   the default is #o777. Missing parents use #o777. All creation modes are subject to umask.
+  Terminal `.` components do not change which newly created directory receives `mode`.
   Existing directories are left unchanged, including ones created by a concurrent call.
   Return unspecified values.
   |#
@@ -2828,19 +2847,19 @@
       [(path) (mkdirs path #o777)]
       [(path mode)
        (pcheck ([$filename? path] [$mode-num? mode])
-                      (if (file-exists? path)
-                          (unless (file-directory? path)
-                            ($err-file-exists who path))
-                          (let ([path (string-append path (string (directory-separator)))])
-                            (let loop ([first (path-first path)] [rest (path-rest path)])
-                              (if (file-exists? first)
-                                  (unless (file-directory? first)
-                                    ($err-file-not-directory who first))
-                                  (guard (failure [(and (error? failure) (file-directory? first))
-                                                   (void)])
-                                    (mkdir first (if (string=? rest "") mode #o777))))
-                              (unless (string=? "" rest)
-                                (loop (path-build first (path-first rest)) (path-rest rest)))))))]))
+         (let ([path ($mkdirs-target path)])
+           (if (file-exists? path)
+               (unless (file-directory? path)
+                 ($err-file-exists who path))
+               (let ([path (string-append path (string (directory-separator)))])
+                 (let loop ([first (path-first path)] [rest (path-rest path)])
+                   (if (file-exists? first)
+                       (unless (file-directory? first)
+                         ($err-file-not-directory who first))
+                       (guard (failure [(and (error? failure) (file-directory? first)) (void)])
+                         (mkdir first (if (string=? rest "") mode #o777))))
+                   (unless (string=? "" rest)
+                     (loop (path-build first (path-first rest)) (path-rest rest))))))))]))
 
 
 

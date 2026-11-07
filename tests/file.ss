@@ -285,6 +285,52 @@
                    (not (zero? (logand #o100 (file-mode (path-build root "parent")))))))
             (lambda () (when (file-directory? path) (chmod path #o700))))))))
 
+(mat mkdirs-terminal-dots-leaf-mode
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([umask (foreign-procedure "umask" (unsigned-32) unsigned-32)]
+              [directory (path-build root "created")])
+          (for-all
+           (lambda (suffix)
+             (for-all
+              (lambda (mode)
+                (for-all
+                 (lambda (mask)
+                   (let ([saved #f])
+                     (dynamic-wind
+                       (lambda () (set! saved (umask mask)))
+                       (lambda ()
+                         (mkdirs (string-append directory suffix) mode)
+                         (= (logand mode (lognot mask)) (file-mode directory)))
+                       (lambda ()
+                         (umask saved)
+                         (when (file-directory? directory)
+                           (chmod directory #o700)
+                           (delete-directory directory))))))
+                 '(0 #o027)))
+              '(#o000 #o400 #o700 #o777)))
+           '("" "/" "//" "/." "/./" "/./." "/.///./"))))))
+
+(mat mkdirs-terminal-dots-existing-directory
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([directory (path-build root "sub")])
+          (chmod directory #o755)
+          (for-all
+           (lambda (suffix)
+             (mkdirs (string-append directory suffix) #o700)
+             (= #o755 (file-mode directory)))
+           '("" "/" "/." "/./."))))))
+
+(mat mkdirs-terminal-dots-physical-parent
+     ($with-fs-fixture
+      (lambda (root)
+        (mkdirs (path-build root "elsewhere/sub"))
+        (file-symlink "elsewhere/sub" (path-build root "alias"))
+        (mkdirs (path-build root "alias/../created/./.") #o700)
+        (and (= #o700 (file-mode (path-build root "elsewhere/created")))
+             (not (file-exists? (path-build root "created")))))))
+
 (mat file-move-rejects-regular-directory-marker
      ($with-fs-fixture
       (lambda (root)
