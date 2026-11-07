@@ -377,6 +377,101 @@
                 (when (char=? (string-ref out i) #\\)
                   (string-set! out i #\/))))))))
 
+  ;; Source has already had Windows separators converted to slashes. In a whole-path
+  ;; union, its outer comma/closing brace ends a root-only alternative. Balanced braces
+  ;; within a root name, including Volume{...}, belong to that literal name.
+  (define $windows-root-end
+    (lambda (source start enclosed?)
+      (let ([length (string-length source)])
+        (define skip-separators
+          (lambda (index)
+            (if (and (fx< index length) (char=? (string-ref source index) #\/))
+                (skip-separators (fx1+ index)) index)))
+        (define name-end
+          (lambda (start)
+            (let loop ([index start] [braces 0])
+              (cond [(fx= index length) index]
+                    [(char=? (string-ref source index) #\/) index]
+                    [(and enclosed? (fxzero? braces)
+                          (memv (string-ref source index) '(#\, #\}))) index]
+                    [(char=? (string-ref source index) #\{)
+                     (loop (fx1+ index) (fx1+ braces))]
+                    [(and (fx> braces 0) (char=? (string-ref source index) #\}))
+                     (loop (fx1+ index) (fx1- braces))]
+                    [else (loop (fx1+ index) braces)]))))
+        (define parts-end
+          (lambda (index remaining)
+            (let* ([start (skip-separators index)] [end (name-end start)])
+              (if (or (fx= remaining 1) (fx= start end)) end
+                  (parts-end end (fx1- remaining))))))
+        (and (fx>= (fx- length start) 2)
+             (char=? (string-ref source start) #\/)
+             (char=? (string-ref source (fx1+ start)) #\/)
+             (if (and (fx>= (fx- length start) 4)
+                      (memv (string-ref source (fx+ start 2)) '(#\? #\.))
+                      (char=? (string-ref source (fx+ start 3)) #\/))
+                 (let* ([first (skip-separators (fx+ start 4))] [end (name-end first)])
+                   (if (string-ci=? (substring source first end) "UNC")
+                       (parts-end end 2) end))
+                 (parts-end (fx+ start 2) 2))))))
+
+  ;; Insert private escape pairs only in literal UNC/device roots. All original Windows
+  ;; backslashes are now separators, so these pairs can be removed after brace expansion.
+  ;; Track empty branch prefixes to recognize roots in nested whole-path alternatives.
+  (define $quote-windows-roots
+    (lambda (source)
+      (if (not (string-search source "//")) source
+          (let ([length (string-length source)] [out #f] [used 0])
+            (define emit-span
+              (lambda (start end)
+                (let ([count (fx- end start)])
+                  (when out (string-copy! source start out used count))
+                  (set! used (fx+ used count)))))
+            (define emit-root
+              (lambda (start end)
+                (do ([index start (fx1+ index)]) ((fx= index end))
+                  (when (memv (string-ref source index) '(#\[ #\] #\{ #\} #\,))
+                    (unless out
+                      (set! out (make-string (* 2 length)))
+                      (string-copy! source 0 out 0 index))
+                    (string-set! out used #\\)
+                    (set! used (fx1+ used)))
+                  (emit-span index (fx1+ index)))))
+            (let loop ([index 0] [at-start? #t] [prefixes '()])
+              (if (fx= index length)
+                  (if out (substring out 0 used) source)
+                  (let ([root-end (and at-start?
+                                       ($windows-root-end source index (pair? prefixes)))]
+                        [char (string-ref source index)])
+                    (cond [root-end
+                           (emit-root index root-end)
+                           (loop root-end #f prefixes)]
+                          [(char=? char #\[)
+                           (let ([end ($class-end source index)])
+                             (emit-span index end) (loop end #f prefixes))]
+                          [else
+                           (emit-span index (fx1+ index))
+                           (cond [(char=? char #\{)
+                                  (loop (fx1+ index) at-start? (cons at-start? prefixes))]
+                                 [(char=? char #\,)
+                                  (loop (fx1+ index) (and (pair? prefixes) (car prefixes))
+                                        prefixes)]
+                                 [(char=? char #\})
+                                  (loop (fx1+ index) #f
+                                        (if (pair? prefixes) (cdr prefixes) '()))]
+                                 [else (loop (fx1+ index) #f prefixes)])]))))))))
+
+  (define $unquote-windows-roots
+    (lambda (source)
+      (if (not (string-search source #\\)) source
+          (let* ([length (string-length source)] [out (make-string length)])
+            (let loop ([index 0] [used 0])
+              (if (fx= index length) (substring out 0 used)
+                  (let ([index (if (char=? (string-ref source index) #\\)
+                                   (fx1+ index) index)])
+                    (string-set! out used (string-ref source index))
+                    (loop (fx1+ index) (fx1+ used)))))))))
+
   (define $compile
     (lambda (flavor s separator)
       (let* ([source (if (eq? flavor 'windows) s ($normalize-unix-slashes s))]
@@ -471,8 +566,12 @@
   `[[:alpha:]]`. Classes can be mixed with literals, ranges, and other named classes.
   Backslash escapes characters
   in Unix patterns; escaped `/` remains a separator. Windows treats both slash forms as
-  separators, so bracket classes quote wildcard characters such as `[*]`. Windows component
-  matching uses Unicode simple case folding for literals, classes, and ranges, as in path equality.
+  separators, so bracket classes quote wildcard characters such as `[*]` in components.
+  Explicit Windows UNC and device root names are literal, including braces and brackets.
+  Choose roots with whole-path unions such as `{//server/shareA,//server/shareB}/*.txt`;
+  brace syntax inside an explicit root does not expand. Enclosing union delimiters still apply.
+  Windows components use Unicode simple case folding for literals, classes, and ranges,
+  as in path equality.
   `*` and `?` match within one component; `**` matches zero or more directory levels.
   Dotfiles are eligible, and explicit `.` and `..` components retain their lexical meaning.
   Malformed syntax raises an error.
@@ -486,9 +585,14 @@
                                         (string-search pattern #\/))
                                     #\/ #\\)]
                      [source (if (eq? flavor 'windows)
-                                 ($normalize-windows-slashes pattern) pattern)])
+                                 ($quote-windows-roots ($normalize-windows-slashes pattern))
+                                 pattern)])
                  (%make-glob flavor
-                             (map (lambda (s) ($compile flavor s separator))
+                             (map (lambda (s)
+                                    ($compile flavor
+                                              (if (eq? flavor 'windows)
+                                                  ($unquote-windows-roots s) s)
+                                              separator))
                                   ($expand-braces source)))))]))
 
   #|proc:glob?

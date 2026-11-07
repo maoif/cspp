@@ -1,5 +1,68 @@
 (import (cspp) (cspp glob))
 
+(mat glob-windows-literal-roots
+     (for-all
+      (lambda (root)
+        (let ([pattern (string-append root "/file{1..2}.[t][x][t]")])
+          (and (glob-match? 'windows pattern (string-append root "/file1.txt"))
+               (glob-match? 'windows pattern (string-append root "/file2.txt"))
+               (not (glob-match? 'windows pattern (string-append root "/file3.txt")))
+               (not (glob-match? 'windows pattern (string-append root "x/file1.txt")))
+               (glob-match? 'windows root root)
+               (glob-match? 'windows (string-append root "/") (string-append root "/"))
+               (glob-match? 'windows
+                            (string-map (lambda (char) (if (char=? char #\/) #\\ char)) pattern)
+                            (string-append root "/file1.txt")))))
+      '("//?/Volume{01234567-89ab-cdef-0123-456789abcdef}"
+        "//server/share{one}" "//server/share{one,two}" "//server/share{1..3}"
+        "//server/share[" "//server/share]" "//server/share[1]"
+        "//ser[ver]/share{" "//server/share}" "//server/share,one"
+        "//./Device{one,two}" "//?/UNC/ser{ver}/share[")))
+
+(mat glob-windows-root-unions
+     (glob-match? 'windows "{//server/shareA,//server/shareB}/*.txt"
+                  "//server/shareA/file.txt")
+
+     (glob-match? 'windows "{//server/shareA,//server/shareB}/*.txt"
+                  "//server/shareB/file.txt")
+
+     (not (glob-match? 'windows "{//server/shareA,//server/shareB}/*.txt"
+                       "//server/shareC/file.txt"))
+
+     (glob-match? 'windows
+                  "{{//server/share{one},//server/share[},//?/Volume{abc}}/file{1..2}.txt"
+                  "//server/share[/file2.txt")
+
+     (glob-match? 'windows
+                  "{{//server/share{one},//server/share[},//?/Volume{abc}}/file{1..2}.txt"
+                  "//?/Volume{abc}/file1.txt")
+
+     (glob-match? 'windows "//server/{shareA,shareB}/*.txt"
+                  "//server/{shareA,shareB}/file.txt")
+
+     (not (glob-match? 'windows "//server/{shareA,shareB}/*.txt"
+                       "//server/shareA/file.txt"))
+
+     (glob-match? 'windows "{C:/a,//?/Volume{abc}/a}/*.txt" "C:/a/file.txt")
+
+     (glob-match? 'windows "{C:/a,//?/Volume{abc}/a}/*.txt"
+                  "//?/Volume{abc}/a/file.txt"))
+
+(mat glob-windows-literal-root-expansion
+     (let ([root (format "//tmp/cspp-glob-root-~a-{one,two}[" (get-process-id))])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (write-string (path-build root "file1.txt") "one")
+           (write-string (path-build root "file2.txt") "two"))
+         (lambda ()
+           (let* ([pattern (string-append root "/file{1..2}.txt")]
+                  [expected (list (path-build root "file1.txt") (path-build root "file2.txt"))])
+             (and (equal? expected (glob 'windows pattern))
+                  (equal? expected (sort string<? (iter->list (glob->iter 'windows pattern))))
+                  (equal? '("one" "two") (map read-string (glob 'windows pattern))))))
+         (lambda () (file-removetree root #t)))))
+
 (mat glob-unmatched-result-ownership
      (let* ([pattern (string-copy "__cspp_absent_owned_glob__")]
             [result (glob* pattern #f #f 'literal)])
