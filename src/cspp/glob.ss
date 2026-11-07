@@ -575,17 +575,18 @@
         (define open-scan
           (lambda (path cs ancestors separator)
             (let ([name ($physical path)])
-              (when (file-directory? name follow-link?)
+              (if (not (file-directory? name follow-link?)) #t
                 (let ([id (and follow-link? (identity name))]
                       [literal? (and (car cs) (component-literal (car cs)))])
                   ;; A finite literal prefix may explicitly revisit a directory.
                   ;; Its ancestors still constrain any later wildcard descent.
-                  (unless (and id (not literal?) (member id ancestors))
+                  (if (and id (not literal?) (member id ancestors)) #f
                     (let ([directory (fs-open-directory name)])
                       (set! stack
                             (cons (vector 'scan path cs
                                           (if id (cons id ancestors) ancestors)
-                                          directory separator) stack)))))))))
+                                          directory separator) stack))
+                      #t)))))))
         (define eligible?
           (lambda (name)
             (and (file-exists? name #f)
@@ -631,9 +632,7 @@
                                    [(not (car cs))
                                     ;; A recursive ancestor revisit must not consume zero
                                     ;; components and then enter a literal suffix either.
-                                    (unless (and follow-link? (file-directory? name #t)
-                                                 (member (identity name) ancestors))
-                                      (open-scan p cs ancestors separator)
+                                    (when (open-scan p cs ancestors separator)
                                       (set! stack
                                             (cons (vector 'node p (cdr cs) ancestors separator)
                                                   stack)))
