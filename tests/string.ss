@@ -16,6 +16,22 @@
             (equal? '("") (string-split "" "::")))))
 
 
+(mat string-edit-distance-common-edges
+     (for-all
+      (lambda (fixture)
+        (let ([left (car fixture)] [right (cadr fixture)] [expected (caddr fixture)])
+          (and (= expected (edit-distance left right))
+               (= expected (edit-distance right left)))))
+      '(("abc" "abc" 0) ("abXcd" "abYcd" 1) ("abcd" "abXYZcd" 3)
+        ("prefixabcTAIL" "prefixxyzTAIL" 3) ("same" "sameextra" 5)))
+
+     (let ([left (make-string 4096 #\a)] [right (make-string 4096 #\a)])
+       (collect)
+       (let* ([before (statistics)] [distance (edit-distance left right)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         ;; Equal strings need no dynamic-programming row, even when separately allocated.
+         (and (= 0 distance) (< allocated 1024)))))
+
 (mat string-edit-distance
      (= 0 (edit-distance "" ""))
 

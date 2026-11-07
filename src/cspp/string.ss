@@ -738,16 +738,29 @@
   Return the Levenshtein distance between strings `left` and `right`.
   The distance counts single-character insertion, deletion, and replacement operations.
   If either operand is empty, return the other string's length without scanning its characters.
+  Common prefixes and suffixes are excluded from the dynamic-programming work.
   |#
   (define edit-distance
     (lambda (left right)
       (pcheck ([string? left right])
-        (let-values ([(rows columns)
-                      (if (fx>= (string-length left) (string-length right))
-                          (values left right)
-                          (values right left))])
-          (let* ([row-count (string-length rows)]
-                 [column-count (string-length columns)])
+        (if (eq? left right) 0
+        (let* ([left-length (string-length left)] [right-length (string-length right)]
+               [limit (fxmin left-length right-length)]
+               [start (let loop ([index 0])
+                        (if (and (fx< index limit)
+                                 (char=? (string-ref left index) (string-ref right index)))
+                            (loop (fx1+ index)) index))])
+          (let-values ([(left-end right-end)
+                        (let loop ([left-end left-length] [right-end right-length])
+                          (if (and (fx> left-end start) (fx> right-end start)
+                                   (char=? (string-ref left (fx1- left-end))
+                                           (string-ref right (fx1- right-end))))
+                              (loop (fx1- left-end) (fx1- right-end))
+                              (values left-end right-end)))])
+          (let-values ([(rows columns row-count column-count)
+                        (if (fx>= left-end right-end)
+                            (values left right (fx- left-end start) (fx- right-end start))
+                            (values right left (fx- right-end start) (fx- left-end start)))])
             (if (fxzero? column-count)
                 row-count
                 (let ([distances (make-fxvector (fx1+ column-count))])
@@ -758,7 +771,7 @@
                   (let row-loop ([row 1])
                     (if (fx> row row-count)
                         (fxvector-ref distances column-count)
-                        (let ([row-char (string-ref rows (fx1- row))]
+                        (let ([row-char (string-ref rows (fx+ start (fx1- row)))]
                               [previous-diagonal (fx1- row)])
                           (fxvector-set! distances 0 row)
                           (let column-loop ([column 1]
@@ -771,13 +784,13 @@
                                        [replacement
                                         (fx+ previous-diagonal
                                              (if (char=? row-char
-                                                         (string-ref columns (fx1- column)))
+                                                         (string-ref columns (fx+ start (fx1- column))))
                                                  0
                                                  1))]
                                        [distance (min (fx1+ above)
                                                       (fx1+ left-distance)
                                                       replacement)])
                                   (fxvector-set! distances column distance)
-                                  (column-loop (fx1+ column) above))))))))))))))
+                                  (column-loop (fx1+ column) above))))))))))))))))
 
   )
