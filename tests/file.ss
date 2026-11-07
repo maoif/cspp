@@ -165,6 +165,36 @@
                    (not (zero? (logand #o100 (file-mode (path-build root "parent")))))))
             (lambda () (when (file-directory? path) (chmod path #o700))))))))
 
+(mat file-move-rejects-regular-directory-marker
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([source (path-build root "top.txt")]
+              [destination (path-build root "destination")])
+          ;; Error case: ignoring a symlink marker must not accept a slash after regular files.
+          (and (guard (failure [(error? failure) #t])
+                 (file-move (string-append source "/") destination) #f)
+               (file-exists? source) (not (file-exists? destination)))))))
+
+(mat file-overwrite-staging-permissions
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([source (path-build root "top.txt")]
+               [destination (path-build root "destination")]
+               [umask (foreign-procedure "umask" (unsigned-32) unsigned-32)]
+               [saved #f])
+          (write-string destination "old")
+          (dynamic-wind
+            (lambda () (set! saved (umask #o700)))
+            (lambda ()
+              (file-copy! source destination)
+              (and (= #o066 (file-mode destination))
+                   (begin (file-link! source destination) #t)
+                   (same-file? source destination)
+                   (begin (file-symlink! "top.txt" destination) #t)
+                   (string=? "top.txt" (readlink destination))
+                   (= 3 (length (directory-list root)))))
+            (lambda () (umask saved)))))))
+
 (mat file-writer-preserves-entry
      ($with-fs-fixture
       (lambda (root)

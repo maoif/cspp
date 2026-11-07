@@ -289,6 +289,15 @@ ptr cspp_file_staging_directory(const char *parent) {
     errno = code;
     return errno_str_vector();
   }
+  /* mkdtemp applies umask. Internal staging still needs owner search/write
+   * permission when the caller deliberately masks owner bits on new files. */
+  if (chmod(name, 0700) == -1) {
+    int code = errno;
+    rmdir(name);
+    free(name);
+    errno = code;
+    return errno_str_vector();
+  }
   ptr result = Sstring_utf8(name, (iptr)strlen(name));
   free(name);
   return result;

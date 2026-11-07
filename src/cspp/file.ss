@@ -2507,8 +2507,14 @@
     (lambda (who src dest copy)
        (pcheck ([$filename? src dest] [procedure? copy])
                (let ([src (or ($removable-entry-path src)
-                              (errorf who "source must name a removable entry: ~a" src))])
+                              (errorf who "source must name a removable entry: ~a" src))]
+                     [directory-marked? (and (fx> (string-length src) 0)
+                                             (char=? #\/ (string-ref src
+                                                          (fx1- (string-length src)))))])
                (unless (file-exists? src #f) ($err-file-not-found who src))
+               (when (and directory-marked? (not (file-symbolic-link? src))
+                          (not (file-directory? src)))
+                 ($err-file-not-directory who src))
                (cond [(and (file-exists? dest #f) ($same-file-entry? src dest))
                       ($err-file who dest "source and destination are the same file")]
                      [(and (not (file-exists? dest #f)) ($try-rename-file src dest)) #t]
