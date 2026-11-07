@@ -142,6 +142,51 @@
        (let ([value #f]) (pcase value [number? 'number]))
        #f))
 
+(mat pcase-alternative-evaluation
+
+     ;; Error case: unused alternative expressions must not raise after an earlier match.
+     (guard (failure [else #f])
+       (let ([value 1])
+         (eq? 'number
+           (pcase value
+             [(number? (error 'unused-predicate "must not be evaluated")) 'number]
+             [else 'fallback]))))
+
+     ;; Construct and call each reached predicate once, in order; preserve the body's values.
+     (let ([value 1] [events '()])
+       (let ([make-predicate
+               (lambda (name result)
+                 (set! events (cons (list 'build name) events))
+                 (lambda (object)
+                   (set! events (cons (list 'call name object) events))
+                   result))])
+         (and
+           (equal? '(one two)
+             (call-with-values
+               (lambda ()
+                 (pcase value
+                   [((make-predicate 'first #f) (make-predicate 'second 'accepted)
+                     (make-predicate 'unused #t))
+                    (values 'one 'two)]
+                   [else 'fallback]))
+               list))
+           (equal? '((build first) (call first 1) (build second) (call second 1))
+                   (reverse events)))))
+
+     (let ([value #f])
+       (eq? 'fallback
+         (pcase value [(number? string?) 'unexpected] [else 'fallback])))
+
+     ;; Error case: an exception from a reached alternative expression must propagate.
+     (guard (failure
+              [else (and (who-condition? failure)
+                         (eq? 'reached-predicate (condition-who failure)))])
+       (let ([value #f])
+         (pcase value
+           [(number? (error 'reached-predicate "expected failure")) 'unexpected]
+           [else 'fallback]))
+       #f))
+
 (mat mutation-macro-argument-safety
 
      ;; Error case: release arithmetic must reject nonfixnum operands before changing the target.

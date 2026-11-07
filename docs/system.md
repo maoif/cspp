@@ -30,7 +30,10 @@ CPU-time quotas are not converted into CPU counts.
 `sleep`, `milisleep`, and `nanosleep` accept exact nonnegative durations in their respective
 units. The whole-second component must fit the native `time_t` range; larger durations raise
 an argument error. The `sleep-seconds`, `sleep-milliseconds`, and `sleep-nanoseconds` aliases
-have the same limits.
+have the same limits. These helpers preserve Chez Scheme's sleep behavior: a signal may
+interrupt the pause and cause an early return, even if its handler returns normally.
+Interrupted sleeps are not retried. For a minimum elapsed duration, callers should check a
+monotonic deadline and sleep for the remaining time after an early return.
 
 `linux-system-uptime`, `linux-memory-info`, and `linux-load-average` read their requested procfs
 files directly on each call. They do not enumerate mounts or cache mount-namespace state.

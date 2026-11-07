@@ -17,6 +17,8 @@
   #|proc:sleep
   The `sleep` procedure pauses the current thread for `seconds` seconds.
   `seconds` is an exact nonnegative integer within the native `time_t` range.
+  As with Chez Scheme's sleep, a signal may interrupt the pause and cause an early return.
+  Interrupted sleeps are not retried.
   Larger durations raise an argument error. The return value is unspecified.
   |#
   (define-who sleep
@@ -27,6 +29,8 @@
   #|proc:milisleep
   The `milisleep` procedure pauses the current thread for `milliseconds` milliseconds.
   `milliseconds` is an exact nonnegative integer whose whole seconds fit native `time_t`.
+  As with Chez Scheme's sleep, a signal may interrupt the pause and cause an early return.
+  Interrupted sleeps are not retried.
   Larger durations raise an argument error. The return value is unspecified.
   |#
   (define-who milisleep
@@ -39,6 +43,8 @@
   #|proc:nanosleep
   The `nanosleep` procedure pauses the current thread for `nanoseconds` nanoseconds.
   `nanoseconds` is an exact nonnegative integer whose whole seconds fit native `time_t`.
+  As with Chez Scheme's sleep, a signal may interrupt the pause and cause an early return.
+  Interrupted sleeps are not retried.
   Larger durations raise an argument error. The return value is unspecified.
   |#
   (define-who nanosleep
@@ -52,6 +58,7 @@
   The `sleep-seconds` procedure pauses the current thread for `seconds` seconds.
   The `seconds` parameter is a natural number of seconds.
   It is an alias of `sleep`; the return value is unspecified.
+  A signal may interrupt the pause and cause an early return; interrupted sleeps are not retried.
   |#
   (define sleep-seconds sleep)
 
@@ -59,6 +66,7 @@
   The `sleep-milliseconds` procedure pauses the current thread for `milliseconds` milliseconds.
   The `milliseconds` parameter is a natural number of milliseconds.
   It is an alias of `milisleep`; the return value is unspecified.
+  A signal may interrupt the pause and cause an early return; interrupted sleeps are not retried.
   |#
   (define sleep-milliseconds milisleep)
 
@@ -66,6 +74,7 @@
   The `sleep-nanoseconds` procedure pauses the current thread for `nanoseconds` nanoseconds.
   The `nanoseconds` parameter is a natural number of nanoseconds.
   It is an alias of `nanosleep`; the return value is unspecified.
+  A signal may interrupt the pause and cause an early return; interrupted sleeps are not retried.
   |#
   (define sleep-nanoseconds nanosleep)
 

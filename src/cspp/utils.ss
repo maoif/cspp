@@ -57,6 +57,7 @@
   #|macro:pcase
   The `pcase` macro tests the object bound to `id` against clause predicates in order.
   Each predicate has signature `object -> object`; any nonfalse result selects the clause.
+  Predicate expressions are evaluated once, left to right, only when their test is reached.
   A clause may list alternative predicates. The selected body's values are returned.
   Use [(predicate ...) body ...] for alternatives. Wrap a computed predicate in a singleton list:
   [((p/not number?)) body ...] or [((lambda (object) (number? object))) body ...].
@@ -73,10 +74,10 @@
                (syntax-case (car cl*) ()
                  [((pred preds ...) e e* ...)
                   (with-syntax ([(p pds ...) (generate-temporaries #'(pred preds ...))])
-                    #`(let ([p pred] [pds preds] ...)
-                        (if (or (p id) (pds id) ...)
-                            (begin e e* ...)
-                            #,(loop (cdr cl*)))))]
+                    #`(if (or (let ([p pred]) (p id))
+                              (let ([pds preds]) (pds id)) ...)
+                          (begin e e* ...)
+                          #,(loop (cdr cl*))))]
                  [(pred e e* ...)
                   (with-syntax ([(p) (generate-temporaries '(p))])
                     #`(let ([p pred])

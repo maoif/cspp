@@ -80,6 +80,9 @@ returns a boolean. Empty `p/and` is true; empty `p/or` is false.
 `pcase` tests a bound identifier against unary predicates in clause order. Use
 `[number? body ...]` for one named predicate or `[(number? string?) body ...]` for alternatives.
 The first successful clause returns its body's values; `else` supplies the fallback.
+Predicate expressions are evaluated once, left to right, only when their test is reached;
+each is called before the next expression is evaluated. A match skips remaining alternatives
+and clauses, including their predicate expressions.
 Wrap a computed predicate in a singleton list so its expression is not parsed as alternatives:
 `[((p/not number?)) body ...]` or `[((lambda (object) (number? object))) body ...]`.
 
