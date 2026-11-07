@@ -918,6 +918,9 @@
   exhausted. Streams open on advancement and close on exhaustion, reset,
   finalization, or error. `iter-reset!` begins a new pass over the current tree;
   `iter-finalize!` releases active streams without collecting the remaining tree.
+  If any branch is relative, keep the process current directory unchanged from the first
+  advance until exhaustion or finalization. Reset closes the current pass; the next pass uses
+  the current directory at its first advance.
   |#
   (define glob->iter
     (case-lambda

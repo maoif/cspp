@@ -1276,6 +1276,9 @@
   Distinct directory aliases are traversed separately; only ancestor cycles are skipped.
   A root symlink is followed even when `follow-link?` is `#f`; that flag controls descendants.
   Input and yielded path strings do not share storage with the iterator's traversal state.
+  For a relative `path`, keep the process current directory unchanged from the first advance
+  until exhaustion or finalization. Reset closes the current pass; the next pass uses the
+  current directory at its first advance.
   |#
   (define fs->iter
     (case-lambda
