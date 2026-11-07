@@ -2114,6 +2114,12 @@
           target
           (path-build parent target))))
 
+  (define $readlink-target-link?
+    (let ([inspect (foreign-procedure "cspp_file_symbolic_link" (string) scheme-object)])
+      (lambda (who path)
+        (let ([result (inspect path)])
+          (if (string? result) ($err-file who path result) result)))))
+
   (define $readlink
     (let ([ffi (let ([ffi-readlink (foreign-procedure "cspp_readlink" (string) scheme-object)])
                  (lambda (who path)
@@ -2139,7 +2145,7 @@
                       (errorf who "symlink cycle detected at: ~a" path))
                     (hashtable-set! seen identity #t)
                     (let* ([ln (ffi who path)] [target ($link-target-path parent ln)])
-                      (if (file-symbolic-link? target)
+                      (if ($readlink-target-link? who target)
                           (loop target)
                           (values ln parent)))))))))))
 
@@ -2150,6 +2156,8 @@
   If `recursive?`, then the dereference continues until a non-symlink target is met,
   and both the target text and the final link's parent directory are returned.
   A bare link uses `.` as its parent, so joining preserves literal leading tildes.
+  Missing targets terminate resolution. Inspection failures, including intermediate cycles
+  and inaccessible directories, raise an I/O error.
 
   Otherwise the first symlink content is returned.
   |#
@@ -2161,7 +2169,8 @@
   Return the symlink text at path string `path` when boolean `recursive?` is false or omitted.
   When true, resolve the link chain and return the final target pathname. Absolute targets
   retain their root; relative targets use the final link's parent directory without lexical
-  normalization or home expansion. A cycle raises an error.
+  normalization or home expansion. Missing targets terminate resolution. A cycle or a target
+  inspection failure raises an error.
   |#
   (define-who readlink2
     (case-lambda [(path) ($readlink who path #f)]

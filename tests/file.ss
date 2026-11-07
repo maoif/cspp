@@ -2310,6 +2310,55 @@
 
 
 
+(mat readlink-recursive-intermediate-cycle
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([link (path-build root "loop")])
+          (file-symlink "loop/file" link)
+          ;; Error case: an intermediate cycle must not look like a resolved dangling target.
+          (for-all
+           (lambda (resolve)
+             (guard (failure [(i/o-error? failure) #t] [else #f])
+               (call-with-values (lambda () (resolve link #t)) list)
+               #f))
+           (list readlink readlink2))))))
+
+(mat readlink-recursive-inaccessible-target
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([directory (path-build root "blocked")]
+              [link (path-build root "blocked-link")])
+          (mkdir directory)
+          (file-symlink "../top.txt" (path-build directory "inner"))
+          (file-symlink "blocked/inner" link)
+          (dynamic-wind
+            (lambda () (chmod directory 0))
+            (lambda ()
+              ;; Error case: lack of directory search permission must not terminate resolution.
+              (if (= 0 ((foreign-procedure "geteuid" () unsigned-32))) #t
+                  (for-all
+                   (lambda (resolve)
+                     (guard (failure [(i/o-error? failure) #t] [else #f])
+                       (call-with-values (lambda () (resolve link #t)) list)
+                       #f))
+                   (list readlink readlink2))))
+            (lambda () (chmod directory #o700)))))))
+
+(mat readlink-recursive-dangling-targets
+     ($with-fs-fixture
+      (lambda (root)
+        (for-all
+         (lambda (target)
+           (let ([link (path-build root "dangling")])
+             (dynamic-wind
+               (lambda () (file-symlink target link))
+               (lambda ()
+                 (and (string=? (path-build root target) (readlink2 link #t))
+                      (let-values ([(text parent) (readlink link #t)])
+                        (and (string=? target text) (string=? root parent)))))
+               (lambda () (delete-file link)))))
+         '("missing" "missing/child" "top.txt/child")))))
+
 (mat readlink-absolute-targets
      ($with-fs-fixture
       (lambda (root)

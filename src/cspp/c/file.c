@@ -18,6 +18,7 @@
 
 ptr cspp_statx(const char *path, int follow_link);
 ptr cspp_readlink(const char *path);
+ptr cspp_file_symbolic_link(const char *path);
 ptr cspp_realpath(const char *path);
 ptr cspp_link(const char *src, const char *dest);
 ptr cspp_symlink(const char *src, const char *dest);
@@ -183,6 +184,20 @@ ptr cspp_realpath(const char *path) {
                  : Smake_vector(1, filesystem_utf8_error());
   free(resolved);
   return result;
+}
+
+/* A missing target is allowed during recursive readlink; failed inspection is not. */
+ptr cspp_file_symbolic_link(const char *path) {
+  char *expanded = expand_pathname(path);
+  if (expanded == NULL) { errno = ENOMEM; return errno_str(); }
+  struct stat metadata;
+  int result = lstat(expanded, &metadata);
+  int code = errno;
+  free(expanded);
+  if (result == 0) return Sboolean(S_ISLNK(metadata.st_mode));
+  if (code == ENOENT || code == ENOTDIR) return Sfalse;
+  errno = code;
+  return errno_str();
 }
 
 ptr cspp_readlink(const char *path) {
