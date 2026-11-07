@@ -1,5 +1,18 @@
 (import (cspp))
 
+(mat system-preexec-signal-dispositions
+
+  ;; Error case: a child must not enter Chez's inherited handlers while preparing exec.
+  (if (= 0 (system "strace -qq -o /dev/null true >/dev/null 2>&1"))
+      (let* ([root (if (file-exists? "system-native-faults.ss") ".." ".")]
+             [launcher (string-append root "/cspp")]
+             [script (string-append "--script=" root "/tests/system-native-faults.ss")])
+        (process-exit-success?
+          (process-run strace "-f" "-qq" "-e" "trace=close_range"
+            "-e" "inject=close_range:delay_enter=800ms:when=1" "-o" "/dev/null"
+            (begin launcher) (begin script) "preexec-signal" :timeout 5000)))
+      #t))
+
 (mat system-live-wait-notification
 
   ;; Error case: wait notification must preserve timeout, concurrent reaping, and GC contracts.

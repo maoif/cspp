@@ -3,6 +3,23 @@
 ;; This driver runs under strace syscall injection, separately from the test runner.
 (define mode (string->symbol (cadr (command-line))))
 (case mode
+  [(preexec-signal)
+   ;; Error case: a signal during delayed child setup must use exec's default disposition.
+   (let* ([children-path (format "/proc/self/task/~a/children" (getpid))]
+          [sent-to #f])
+     (fork-thread
+       (lambda ()
+         (milisleep 150)
+         (let ([children (call-with-input-file children-path get-line)])
+           (let ([pid (string->number (car (string-split children #\space)))])
+             (set! sent-to pid)
+             ((foreign-procedure "kill" (int int) int) pid 2)))))
+     (let* ([child (process-spawn "/bin/true" '() '())] [status (process-wait child)])
+       (unless (and (eqv? sent-to (process-pid child))
+                    (eq? 'signal (process-exit-status-kind status))
+                    (= 2 (process-exit-status-code status)))
+         (error 'system-native-faults "child swallowed a pre-exec interrupt"))))]
+
   [(live-wait)
    (unless (process-exit-success? (process-wait (process-spawn "/bin/sleep" '("1") '())))
      (error 'system-native-faults "live wait lost the exit status"))]
