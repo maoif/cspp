@@ -634,6 +634,17 @@
     (lambda (who end)
       (unless (memq end '(big little)) ($bad-endianness who end))))
 
+  (define $get-integer64
+    (lambda (who port end expected signed?)
+      ($valid-endianness who end)
+      ;; Keep storage local so a custom port can reenter integer reads safely.
+      (let ([bytes (get-bytevector-n port 8)])
+        (unless (and (bytevector? bytes) (fx= 8 (bytevector-length bytes)))
+          ($no-enough-data who expected))
+        (if signed?
+            (bytevector-s64-ref bytes 0 end)
+            (bytevector-u64-ref bytes 0 end)))))
+
   (define $get-unsigned
     (lambda (who p count end expected)
       ($valid-endianness who end)
@@ -730,7 +741,7 @@
     (case-lambda
       [(p) (get-u64 p 'little)]
       [(p end)
-       (pcheck-input-binary-port (p) ($get-unsigned who p 8 end 'u64))]))
+       (pcheck-input-binary-port (p) ($get-integer64 who p end 'u64 #f))]))
 
   #|proc:get-s16
   The `get-s16` procedure reads a signed 16-bit integer from binary input port `p`.
@@ -761,7 +772,7 @@
     (case-lambda
       [(p) (get-s64 p 'little)]
       [(p end)
-       (pcheck-input-binary-port (p) ($get-signed who p 8 end 's64))]))
+       (pcheck-input-binary-port (p) ($get-integer64 who p end 's64 #t))]))
 
   #|proc:put-u16
   The `put-u16` procedure writes unsigned 16-bit integer `n` to binary output port `p`.

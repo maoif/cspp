@@ -1535,6 +1535,84 @@
     [(_ rseed iota put get)
      (test-put/get rseed iota put 'little get 'little)]))
 
+(mat get-integer64-boundaries
+     (for-all
+      (lambda (reader setter values)
+        (for-all
+         (lambda (end)
+           (for-all
+            (lambda (value)
+              (let ([bytes (make-bytevector 9 #x5a)])
+                (setter bytes 0 value end)
+                (call-with-port (open-bytevector-input-port bytes)
+                  (lambda (port)
+                    (and (= value (reader port end))
+                         (= #x5a (get-u8 port))
+                         (port-eof? port))))))
+            values))
+         '(little big)))
+      (list get-u64 get-s64)
+      (list bytevector-u64-set! bytevector-s64-set!)
+      '((0 1 #x8000000000000000 #xffffffffffffffff)
+        (-9223372036854775808 -1 0 1 9223372036854775807))))
+
+(mat get-integer64-short-reads
+     ;; Error cases: EOF after zero through seven bytes must consume those bytes and raise.
+     (for-all
+      (lambda (reader who)
+        (for-all
+         (lambda (end)
+           (for-all
+            (lambda (length)
+              (call-with-port (open-bytevector-input-port (make-bytevector length #xff))
+                (lambda (port)
+                  (and (guard (failure
+                               [else (and (who-condition? failure)
+                                          (eq? (condition-who failure) who))])
+                         (reader port end) #f)
+                       (port-eof? port)))))
+            (iota 8)))
+         '(little big)))
+      (list get-u64 get-s64) '(get-u64 get-s64))
+
+     ;; Error case: an invalid byte order must be rejected before consuming input.
+     (for-all
+      (lambda (reader)
+        (call-with-port (open-bytevector-input-port #vu8(1 2 3 4 5 6 7 8))
+          (lambda (port)
+            (and (guard (failure [(error? failure) #t]) (reader port 'unknown) #f)
+                 (= 1 (get-u8 port))))))
+      (list get-u64 get-s64))
+
+     ;; Custom ports may deliver a single byte per callback before the integer is complete.
+     (for-all
+      (lambda (reader expected)
+        (let* ([index 0]
+               [port (make-custom-binary-input-port
+                       "one-byte-integer-read"
+                       (lambda (bytes start count)
+                         (if (or (fxzero? count) (fx= index 8)) 0
+                             (begin (bytevector-u8-set! bytes start #xff)
+                                    (set! index (fx1+ index)) 1)))
+                       #f #f void)])
+          (call-with-port port
+            (lambda (port) (and (= expected (reader port)) (port-eof? port))))))
+      (list get-u64 get-s64) '(#xffffffffffffffff -1)))
+
+(mat get-integer64-allocation
+     (for-all
+      (lambda (reader expected limit)
+        (let ([count 4096])
+          (call-with-port (open-bytevector-input-port (make-bytevector (* count 8) #xff))
+            (lambda (port)
+              (collect)
+              (let ([before (statistics)])
+                (do ([index 0 (fx1+ index)]) ((fx= index count))
+                  (unless (= expected (reader port)) (error 'integer-read "wrong value")))
+                ;; Bound intermediate allocation; timing is intentionally not asserted.
+                (< (sstats-bytes (sstats-difference (statistics) before)) (* count limit)))))))
+      (list get-u64 get-s64) '(#xffffffffffffffff -1) '(48 64)))
+
 (mat gets&puts
 
      (test-put/get (ash 1 16) (iota 4096) put-u16 get-u16)
