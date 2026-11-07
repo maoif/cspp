@@ -238,8 +238,8 @@
                                 0)]
                      [righti (if right?
                                  (let lp ([i (sub1 len)])
-                                   ;; ditto
-                                   (if (fx>= i 0)
+                                   ;; The left scan may already have consumed the whole string.
+                                   (if (fx>= i lefti)
                                        (if (char=? c (string-ref str i))
                                            (lp (sub1 i))
                                            (add1 i))
