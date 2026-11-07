@@ -1202,6 +1202,7 @@
 
   ;; Use the checked native stream for every traversal, including eager walkers.
   ;; Chez directory-list replaces invalid UTF-8 and strips a leading UTF-8 BOM.
+  ;; Preserve each fresh entry pair as (full-path . type) for callers that classify entries.
   (define $directory-entries
     (case-lambda
       [(path) ($directory-entries path #f)]
@@ -1220,10 +1221,21 @@
                (if entry
                    (begin
                      (unless (member (car entry) '("." ".."))
-                       (entries (path-build path (car entry))))
+                       (set-car! entry (path-build path (car entry)))
+                       (entries entry))
                      (loop (next-entry)))
                    (entries))))
            (lambda () (fs-close-directory directory))))]))
+
+  (define $directory-children
+    (lambda (path follow-link?)
+      (let ([directories (make-list-builder)] [files (make-list-builder)])
+        (for-each
+         (lambda (entry)
+           ((if ($fs-entry-directory? (car entry) (cdr entry) follow-link?) directories files)
+            (car entry)))
+         ($directory-entries path))
+        (values (directories) (files)))))
 
   (define $file-identity
     (lambda (path follow-link?)
@@ -1910,6 +1922,7 @@
 
   In top-down mode, one can set entries in 2 to #f to disable visits of those entries.
   In bottom-up mode, this behavior has no effect.
+  Pathname strings passed to `proc` are read-only and may be shared between callback calls.
   |#
   (define-who walk-files
     (case-lambda
@@ -1922,20 +1935,17 @@
                (unless (file-directory? path)
                  ($err-file-not-directory who path))
                (let ()
-                 (define dir? (lambda (candidate) (file-directory? candidate follow-link?)))
                  (define directory-ancestors
                    (lambda (directory ancestors)
                      (if (not follow-link?)
-                         ancestors
-                         (let* ([stat (file-stat directory)]
-                                [identity (list (file-stat-dev-major stat)
-                                                (file-stat-dev-minor stat)
-                                                (file-stat-inode stat))])
+                         ;; A callback may replace a listed directory with a link.
+                         (and (not (file-symbolic-link? directory)) ancestors)
+                         (let ([identity ($file-identity directory #t)])
                            (and (not (member identity ancestors))
                                 (cons identity ancestors))))))
                  (define walk-top-down
                    (lambda (directory ancestors)
-                     (let-values ([(dirs files) (partition dir? ($directory-entries directory))])
+                     (let-values ([(dirs files) ($directory-children directory follow-link?)])
                        (if (proc directory dirs files)
                            (let visit ([remaining dirs])
                              (cond
@@ -1951,7 +1961,7 @@
                            #f))))
                  (define walk-bottom-up
                    (lambda (directory ancestors)
-                     (let-values ([(dirs files) (partition dir? ($directory-entries directory))])
+                     (let-values ([(dirs files) ($directory-children directory follow-link?)])
                        (let visit ([remaining dirs])
                          (cond
                           [(null? remaining) (proc directory dirs files)]
@@ -1962,7 +1972,8 @@
                                    [(walk-bottom-up (car remaining) child-ancestors)
                                     (visit (cdr remaining))]
                                    [else #f]))])))))
-                 (let ([ancestors (directory-ancestors path '())])
+                 ;; The supplied root is followed even when descendant links are disabled.
+                 (let ([ancestors (if follow-link? (list ($file-identity path #t)) '())])
                    (if top-down?
                        (walk-top-down path ancestors)
                        (walk-bottom-up path ancestors)))))]))
@@ -2741,9 +2752,10 @@
                         (lambda (entry)
                           (attempt
                            (lambda ()
-                             (if (file-directory? entry #f)
-                                 (remove-tree entry)
-                                 (delete-file entry #t)))))
+                             (let ([child (car entry)])
+                               (if (file-directory? child #f)
+                                   (remove-tree child)
+                                   (delete-file child #t))))))
                         entries)))
                    (attempt (lambda () (delete-directory directory #t)))))
                ;; A trailing slash makes lstat follow the final symlink on POSIX.

@@ -986,6 +986,20 @@
                (fs-close-directory directory)
                (fs-read-directory directory))))
 
+(mat walk-files-does-not-follow-replaced-directory
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([visited (make-list-builder)] [child (path-build root "sub")])
+          (walk-files
+           (lambda (directory directories files)
+             (visited directory)
+             (when (string=? directory root)
+               (rename-file child (path-build root "saved"))
+               (file-symlink "saved" child))
+             #t)
+           root #f)
+          (equal? (list root) (visited))))))
+
 (mat walk-files-cycle
      (let ([root ($random-file)] [visits 0])
        (dynamic-wind
