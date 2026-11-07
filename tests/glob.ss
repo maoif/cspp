@@ -640,6 +640,36 @@
             '(unix windows)))
          (lambda () (file-removetree root #t)))))
 
+(mat glob-terminal-globstar-cycle-links
+     (let* ([root (format "glob-terminal-cycle-~a" (get-process-id))]
+            [directory (path-build root "a")]
+            [link (path-build directory "back")])
+       (dynamic-wind
+         (lambda ()
+           (mkdir root)
+           (mkdir directory)
+           (file-symlink ".." link))
+         (lambda ()
+           (for-all
+            (lambda (flavor)
+              (for-all
+               (lambda (directories?)
+                 (for-all
+                  (lambda (marker)
+                    (let ([expected
+                           (map (lambda (name) (string-append name marker))
+                                (if directories? (list root directory link) (list link)))])
+                      (and (equal? expected
+                                   (glob* flavor (string-append root "/**" marker)
+                                          #t directories? 'empty))
+                           (equal? (list (string-append link marker))
+                                   (glob* flavor (string-append link "/**" marker)
+                                          #t directories? 'empty)))))
+                  '("" "/")))
+               '(#f #t)))
+            '(unix windows)))
+         (lambda () (file-removetree root #t)))))
+
 (mat glob-traversal-symlinks
      ($with-glob-tree
        (lambda (root)

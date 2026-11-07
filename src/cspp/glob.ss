@@ -633,9 +633,10 @@
                                             result)
                                           (loop)))]
                                    [(not (car cs))
-                                    ;; A recursive ancestor revisit must not consume zero
-                                    ;; components and then enter a literal suffix either.
-                                    (when (open-scan p cs ancestors separator)
+                                    ;; A cycle may match a terminal globstar without descent,
+                                    ;; but must not enter another suffix through that revisit.
+                                    (when (or (open-scan p cs ancestors separator)
+                                              (null? (cdr cs)))
                                       (set! stack
                                             (cons (vector 'node p (cdr cs) ancestors separator)
                                                   stack)))
@@ -761,7 +762,8 @@
   elsewhere.
   Boolean `follow-link?` permits descending into symlinked directories with
   cycle detection that counts literal and wildcard directory ancestors. An explicit
-  parent component starts a new descent chain. Boolean `include-directories?` includes directories;
+  parent component starts a new descent chain. A terminal `**` may match a cycle symlink itself
+  without traversing it. Boolean `include-directories?` includes directories;
   files and symlinks are always eligible. `unmatched` is `'empty` to return `()`
   when nothing matches, or `'literal` to return a list containing a fresh copy of the pattern.
   An empty pattern has no filesystem matches; the `unmatched` policy still applies.
