@@ -32,6 +32,25 @@
     (let loop ([paths paths] [index 0])
       (if (string=? (car paths) path) index (loop (cdr paths) (+ index 1))))))
 
+(mat make-path-native-fragments
+     (for-all
+      (lambda (parts expected) (string=? expected (apply make-path parts)))
+      '(("" "" "") ("a" "" "b") ("a" "/b" "c")
+        ("a/" "" "" "b/") ("" "//" "/x") ("a" "b/c" ".."))
+      '("" "a/b" "a//b/c" "a/b/" "///x" "a/b/c/..")))
+
+(mat make-path-linear-allocation
+     (let ([allocated
+            (lambda (count)
+              (let* ([parts (make-list count "x")]
+                     [collected (collect)] [before (statistics)]
+                     [result (apply make-path parts)])
+                (unless (= (string-length result) (- (* count 2) 1))
+                  (error 'make-path-test "wrong joined length"))
+                (sstats-bytes (sstats-difference (statistics) before))))])
+       ;; Stay above Chez's initial apply-stack growth boundary for both measurements.
+       (< (allocated 8192) (* 6 (allocated 2048)))))
+
 (mat file-touch-validates-seconds-before-creation
      ($with-fs-fixture
       (lambda (root)

@@ -920,13 +920,40 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
   #|proc:make-path
-  Join path strings `p` and the remaining `p*` strings with Chez `path-build` rules.
-  Return the resulting path string; a rooted later part replaces the preceding path.
+  Combine string `first-path` and the remaining string `paths` with Chez `path-build` rules.
+  Insert the host directory separator after a nonempty prefix that does not end in a separator.
+  Fragments, including rooted strings, are appended as written; no normalization is performed.
+  Return the resulting string. Use `path-join` on path objects for root-aware joining.
   |#
   (define make-path
-    (lambda (p . p*)
-      (pcheck ([$filename? p] [(lambda (x) (andmap $filename? x)) p*])
-              (fold-left path-build p p*))))
+    (lambda (first-path . paths)
+      (pcheck ([$filename? first-path] [(lambda (values) (andmap $filename? values)) paths])
+        (cond [(null? paths) first-path]
+              [(null? (cdr paths)) (path-build first-path (car paths))]
+              [else
+               (let* ([separator (directory-separator)] [parts (cons first-path paths)]
+                      [length
+                       (let loop ([parts parts] [total 0] [last #f])
+                         (if (null? parts) total
+                             (let* ([part (car parts)] [length (string-length part)]
+                                    [separate? (and last (not (directory-separator? last)))])
+                               (loop (cdr parts) (+ total length (if separate? 1 0))
+                                     (cond [(fx> length 0) (string-ref part (fx1- length))]
+                                           [separate? separator]
+                                           [else last])))))]
+                      [result (make-string length)])
+                 ;; Keep native separator decisions and fill one preallocated result.
+                 (let loop ([parts parts] [index 0])
+                   (if (null? parts) result
+                       (let* ([index
+                               (if (and (fx> index 0)
+                                        (not (directory-separator?
+                                              (string-ref result (fx1- index)))))
+                                   (begin (string-set! result index separator) (fx1+ index))
+                                   index)]
+                              [part (car parts)] [length (string-length part)])
+                         (string-copy! part 0 result index length)
+                         (loop (cdr parts) (fx+ index length))))))]))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
