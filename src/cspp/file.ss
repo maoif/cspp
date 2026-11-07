@@ -2084,6 +2084,13 @@
       ($with-port (open-file-output-port path (file-options no-fail no-truncate))
         (lambda (port) (void)))))
 
+  (define $link-target-path
+    (lambda (parent target)
+      ;; Chez path-build appends even absolute fragments. Link text is never home-expanded.
+      (if (and (fx> (string-length target) 0) (char=? (string-ref target 0) #\/))
+          target
+          (path-build parent target))))
+
   (define $readlink
     (let ([ffi (let ([ffi-readlink (foreign-procedure "cspp_readlink" (string) scheme-object)])
                  (lambda (who path)
@@ -2108,7 +2115,7 @@
                     (when (hashtable-contains? seen identity)
                       (errorf who "symlink cycle detected at: ~a" path))
                     (hashtable-set! seen identity #t)
-                    (let* ([ln (ffi who path)] [target (path-build parent ln)])
+                    (let* ([ln (ffi who path)] [target ($link-target-path parent ln)])
                       (if (file-symbolic-link? target)
                           (loop target)
                           (values ln parent)))))))))))
@@ -2128,8 +2135,10 @@
                  [(path recursive?) ($readlink who path recursive?)]))
 
   #|proc:readlink2
-  Similar to `readlink`, with the difference being if `recursive?`,
-  the return value is the path built with link's parent directory and the symlink content.
+  Return the symlink text at path string `path` when boolean `recursive?` is false or omitted.
+  When true, resolve the link chain and return the final target pathname. Absolute targets
+  retain their root; relative targets use the final link's parent directory without lexical
+  normalization or home expansion. A cycle raises an error.
   |#
   (define-who readlink2
     (case-lambda [(path) ($readlink who path #f)]
@@ -2137,7 +2146,7 @@
                   (pcheck ([$filename? path] [boolean? recursive?])
                           (if recursive?
                               (let-values ([(ln pdir) ($readlink who path #t)])
-                                (path-build pdir ln))
+                                ($link-target-path pdir ln))
                               ($readlink who path #f)))]))
 
 

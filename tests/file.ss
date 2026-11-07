@@ -2038,6 +2038,54 @@
 
 
 
+(mat readlink-absolute-targets
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([absolute-root (path-build (current-directory) root)]
+               [target (path-build absolute-root "top.txt")]
+               [link (path-build root "absolute-link")]
+               [chain (path-build root "chain-link")])
+          (file-symlink target link)
+          (file-symlink (path-build absolute-root "absolute-link") chain)
+          (and (string=? target (readlink2 link #t))
+               (string=? target (readlink2 chain #t))
+               (let-values ([(text parent) (readlink chain #t)])
+                 (and (string=? target text)
+                      (same-file? root parent)))))))
+
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([target (make-path (current-directory) root "top.txt")]
+               [link (path-build root "absolute-link")]
+               [time (make-time 'time-utc 0 1000000000)])
+          (write-string! target "absolute target")
+          (file-symlink target link)
+          (and (for-all
+                (lambda (copy name)
+                  (let ([destination (path-build root name)])
+                    (copy link destination)
+                    (string=? "absolute target" (read-string destination))))
+                (list file-copy file-copy! file-link file-link!)
+                '("copy" "copy!" "hard-link" "hard-link!"))
+               (begin (file-touch link time #t #f)
+                      (time=? time (file-modification-time target)))
+               (string=? target (readlink link))))))
+
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([target (make-path (current-directory) root "missing")]
+               [link (path-build root "dangling")])
+          (file-symlink target link)
+          (file-touch link)
+          (file-regular? target))))
+
+     ;; Error case: absolute symlink cycles must be detected during recursive resolution.
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([link (path-build root "cycle")])
+          (file-symlink (make-path (current-directory) root "cycle") link)
+          (guard (failure [(error? failure) #t]) (readlink2 link #t) #f)))))
+
 (mat readlink
 
      ;; Link text beginning with tilde stays relative to the link, not the user's home.
