@@ -507,6 +507,44 @@
               [else ($path-append-components base ($path-components part)
                                              ($path-trailing? part))]))))
 
+  ;; Accumulate private component segments, copying their list cells only once.
+  ;; Root decisions still use the same rebasing rules as path-absolute.
+  (define $combine-paths
+    (lambda (who base parts join?)
+      (let ([flavor ($path-flavor base)])
+        (let loop ([root ($make-path-object flavor ($path-root-kind base) ($path-root base) '() #f)]
+                   [segments (list ($path-components base))]
+                   [trailing? ($path-trailing? base)] [parts parts])
+          (if (null? parts)
+              ($make-path-object flavor ($path-root-kind root) ($path-root root)
+                                 (apply append (reverse segments)) trailing?)
+              (let ([part (car parts)])
+                (let ([part
+                       (cond [(path? part) ($same-flavor who base part) part]
+                             [(and join? (string? part))
+                              (let ([parsed (path-parse flavor part)])
+                                (unless (path-rooted-path? parsed)
+                                  ($check-component who flavor part))
+                                parsed)]
+                             [else ($err who "invalid path part: ~s" part)])])
+                  (when (and (not join?) (path-rooted-path? part))
+                    ($err who "cannot append rooted path: ~a" (path-render part)))
+                  (case ($path-root-kind part)
+                    [(relative)
+                     (loop root (cons ($path-components part) segments)
+                           ($path-trailing? part) (cdr parts))]
+                    [(drive-relative)
+                     ;; Validate the drive without copying the accumulated components.
+                     ($path-rebase who root part)
+                     (loop root (cons ($path-components part) segments)
+                           ($path-trailing? part) (cdr parts))]
+                    [else
+                     (let ([rebased ($path-rebase who root part)])
+                       (loop ($make-path-object flavor ($path-root-kind rebased)
+                                                ($path-root rebased) '() #f)
+                             (list ($path-components part)) ($path-trailing? part)
+                             (cdr parts)))]))))))))
+
   #|proc:path-join
   The `path-join` procedure appends path parts. Absolute path parts of the same
   flavor replace the accumulated base. A Windows root-relative part uses the current
@@ -519,20 +557,7 @@
   (define path-join
     (lambda (base . parts)
       (pcheck ([path? base])
-              (let loop ([acc base] [parts parts])
-                (if (null? parts)
-                    acc
-                    (let ([part (car parts)])
-                      (cond [(path? part)
-                             ($same-flavor 'path-join acc part)
-                             (loop ($path-rebase 'path-join acc part) (cdr parts))]
-                            [(string? part)
-                             (let ([parsed (path-parse ($path-flavor acc) part)])
-                               ;; Unrooted strings remain single components, not path fragments.
-                               (unless (path-rooted-path? parsed)
-                                 ($check-component 'path-join ($path-flavor acc) part))
-                               (loop ($path-rebase 'path-join acc parsed) (cdr parts)))]
-                            [else ($err 'path-join "invalid path part: ~s" part)])))))))
+              (if (null? parts) base ($combine-paths 'path-join base parts #t)))))
 
   #|proc:path-append
   The `path-append` procedure strictly appends path objects with compatible
@@ -545,16 +570,7 @@
        (pcheck ([path? p]) p)]
       [(p . paths)
        (pcheck ([path? p])
-               (let loop ([acc p] [paths paths])
-                 (if (null? paths)
-                     acc
-                     (let ([part (car paths)])
-                       (pcheck ([path? part])
-                               ($same-flavor 'path-append acc part)
-                               (when (path-rooted-path? part)
-                                 ($err 'path-append "cannot append rooted path: ~a" (path-render part)))
-                               (loop ($path-append-components acc ($path-components part) ($path-trailing? part))
-                                     (cdr paths)))))))]))
+               ($combine-paths 'path-append p paths #f))]))
 
   #|proc:path-add-component
   The `path-add-component` procedure returns a new path with `component` added

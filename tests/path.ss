@@ -20,6 +20,30 @@
                (equal? '("leaf") (path-components again)))))
       '("//?/UNC/server/share" "//?/C:/" "//./COM1")))
 
+(mat path-bulk-construction
+     (let ([small (make-list 128 "x")] [large (make-list 1024 "x")])
+       (for-all
+        (lambda (build)
+          (let ([allocation
+                 (lambda (parts)
+                   (collect)
+                   (let* ([before (statistics)] [result (build parts)]
+                          [bytes (sstats-bytes (sstats-difference (statistics) before))])
+                     (and (= (length parts) (length (path-components result))) bytes)))])
+            (let ([short (allocation small)] [long (allocation large)])
+              ;; Eight times as many parts should stay well below quadratic allocation.
+              (and short long (< long (* 12 short))))))
+        (list (lambda (parts) (apply path-join (path 'unix) parts))
+              (lambda (parts)
+                (apply path-append (path 'unix)
+                       (map (lambda (part) (path 'unix part)) parts))))))
+
+     (let ([base (path-parse 'windows "//?/C:/base")])
+       (and (same-path? (path-join base "old" "D:/new" "d:child") "D:\\new\\child")
+            (same-path? (path-join base "old" "/new" "c:child") "\\\\?\\C:\\new\\child")
+            (same-path? (path-join base (path-parse 'windows "leaf/"))
+                        "\\\\?\\C:\\base\\leaf\\"))))
+
 (mat path-join-string-component-contract
      (for-all
       (lambda (base)
