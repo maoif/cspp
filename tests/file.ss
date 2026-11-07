@@ -150,6 +150,18 @@
                        (lambda () (umask saved)))))
                  '(0 #o700))))))))
 
+(mat file-symlink-directory-target-basename
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([directory (path-build root "sub")]
+              [link (path-build root "sub/target")])
+          (file-symlink "target///" directory)
+          (and (string=? "target///" (readlink link))
+               (begin (file-symlink! "target/" directory) #t)
+               (string=? "target/" (readlink link))
+               ;; Error case: a root target has no basename to infer inside a container.
+               (guard (failure [(error? failure) #t]) (file-symlink "/" directory) #f))))))
+
 (mat file-copy-rejects-nonregular-source
      ($with-fs-fixture
       (lambda (root)

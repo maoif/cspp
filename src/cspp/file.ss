@@ -2161,7 +2161,10 @@
                               ($err-file-exists who dest))
                           (link/copy-what src dest)))])
                (if (file-directory? dest #t)
-                   (let ([newd (path-build dest (path-last name-src))])
+                   (let* ([basename (or (path-basename (path-parse 'unix name-src))
+                                        (errorf who "source has no basename for a directory destination: ~a"
+                                                name-src))]
+                          [newd (path-build dest basename)])
                      (if (file-directory? newd #t)
                          ($err-directory-exists who newd)
                          (overwrite/error newd)))
@@ -2186,6 +2189,8 @@
   Create a hard link from `src` to `dest`.
 
   Symlinks are followed recursively if `follow-link?` is #t.
+  If destination string `dest` names a directory or a symlink to one, create the link
+  inside it using `src`'s basename. Otherwise `dest` names the new entry. Return unspecified values.
   |#
   (define-who file-link
     (case-lambda [(src dest) (file-link src dest #t)]
@@ -2203,6 +2208,7 @@
   Similar to `file-link`, but if `dest` already exists, it is overwritten.
   Prepare the replacement before renaming it over the destination entry. Failures before
   that rename leave the destination intact. Other hard links keep their old contents.
+  Directory destinations, including directory symlinks, are resolved as containers first.
   |#
   (define-who file-link!
     (case-lambda [(src dest) (file-link! src dest #t)]
@@ -2230,6 +2236,9 @@
   #|proc:file-symlink
   Create a symbolic link from `src` to `dest`.
   `src` must be a string and is written as is to `dest` as the symlink content.
+  If destination string `dest` names a directory or a symlink to one, create the link inside it
+  using `src`'s basename after ignoring trailing separators. A root target has no such basename
+  and requires an explicit destination entry name. Return unspecified values.
   |#
   (define-who file-symlink
     (lambda (src dest)
@@ -2240,6 +2249,7 @@
   #|proc:file-symlink!
   Similar to `file-symlink`, but if `dest` already exists, it is overwritten.
   Create the new link before replacing the destination entry; a creation failure preserves it.
+  Directory destinations, including directory symlinks, are resolved as containers first.
   |#
   (define-who file-symlink!
     (lambda (src dest)
@@ -2453,6 +2463,9 @@
   Copy a single regular file from `src` to `dest`.
 
   `follow-link?`: copy the symlink per se or copy the file it points to (default: #t).
+  If destination string `dest` names a directory or a symlink to one, copy inside it using
+  `src`'s basename. Otherwise `dest` names the new entry. Metadata is not copied.
+  Return unspecified values.
   |#
   (define-who file-copy
     (case-lambda
@@ -2470,7 +2483,8 @@
   #|proc:file-copy!
   Similar to `file-copy`, but overwrites `dest` if it exists.
   Finish copying before renaming the replacement over the destination entry. Copy failures
-  preserve an existing destination. Destination symlinks are replaced; other hard links retain
+  preserve an existing destination. Directory destinations, including directory symlinks, are
+  resolved as containers first. A final destination symlink is replaced; other hard links retain
   their previous contents. Metadata is not copied, as with `file-copy`.
   |#
   (define-who file-copy!
