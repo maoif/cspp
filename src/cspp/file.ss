@@ -2854,6 +2854,7 @@
   A final directory first created as an intermediate directory in this call also receives
   the leaf mode, subject to the permissions allowed at creation. Parent traversal is physical.
   Existing directories are left unchanged, including ones created by a concurrent call.
+  If applying the leaf mode cannot preserve inherited set-group-ID, an I/O error is raised.
   Return unspecified values.
   |#
   (define-who mkdirs
@@ -2874,22 +2875,33 @@
                        (begin
                          (unless (file-directory? first)
                            ($err-file-not-directory who first))
-                         (when (and created (string=? rest "")
-                                    (hashtable-contains? created ($file-identity first #t)))
-                           ;; Intermediate #o777 creation records the effective permissions,
-                           ;; including umask/default ACL restrictions. Linux mkdir ignores
-                           ;; requested set-ID bits, preserves inherited SGID, and sets sticky.
-                           (chmod first
-                                  (fxlogior (fxlogand (get-mode first)
-                                                     (fxlogior (fxlogand mode #o777) #o2000))
-                                            (fxlogand mode #o1000)))))
+                         (let ([target (and created (string=? rest "")
+                                            (hashtable-ref created ($file-identity first #t) #f))])
+                           (when target
+                             ;; Intermediate #o777 creation records effective permissions,
+                             ;; including umask/default ACL restrictions. Linux mkdir ignores
+                             ;; requested set-ID bits, preserves inherited SGID, and sets sticky.
+                             (let* ([actual (get-mode target)]
+                                    [desired (fxlogior
+                                              (fxlogand actual
+                                                        (fxlogior (fxlogand mode #o777) #o2000))
+                                              (fxlogand mode #o1000))])
+                               ;; Redundant chmod can clear SGID outside the caller's groups.
+                               (unless (fx= actual desired)
+                                 ;; The creation path does not traverse this directory itself,
+                                 ;; so inspection works after removing its search permission.
+                                 (chmod target desired)
+                                 (when (and (not (fxzero? (fxlogand desired #o2000)))
+                                            (fxzero? (fxlogand (get-mode target) #o2000)))
+                                   ($err-file who first
+                                              "cannot preserve inherited set-group-ID bit")))))))
                        (let ([made?
                               (guard (failure
                                       [(and (error? failure) (file-directory? first)) #f])
                                 (mkdir first (if (string=? rest "") mode #o777))
                                 #t)])
                          (when (and made? created (not (string=? rest "")))
-                           (hashtable-set! created ($file-identity first #t) #t))))
+                           (hashtable-set! created ($file-identity first #t) first))))
                    (unless (string=? "" rest)
                      (loop (path-build first (path-first rest)) (path-rest rest))))))))]))
 

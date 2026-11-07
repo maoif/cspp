@@ -399,6 +399,26 @@
           (and (= (file-mode direct) (file-mode revisited))
                (= (file-group direct) (file-group revisited)))))))
 
+(mat mkdirs-revisited-inherited-group-readonly-mode
+     ($with-fs-fixture
+      (lambda (root)
+        (chmod root #o2775)
+        (for-all
+         (lambda (mode)
+           (let ([direct (path-build root "direct")]
+                 [revisited (path-build root "revisited")])
+             (dynamic-wind
+               void
+               (lambda ()
+                 (mkdir direct mode)
+                 (mkdirs (string-append revisited "/sub/..") mode)
+                 (= (file-mode direct) (file-mode revisited)))
+               (lambda ()
+                 (when (file-directory? direct) (chmod direct #o700) (delete-directory direct))
+                 (when (file-directory? revisited)
+                   (chmod revisited #o700) (file-removetree revisited #t))))))
+         '(#o000 #o400)))))
+
 (mat mkdirs-revisited-existing-leaf
      ($with-fs-fixture
       (lambda (root)
