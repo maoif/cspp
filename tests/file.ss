@@ -1323,6 +1323,20 @@
      )
 
 
+(mat file-stat-native-identities
+     ;; This also runs with large IDs when the suite is launched in a user namespace.
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([path (path-build root "top.txt")]
+              [native-statx (foreign-procedure "statx" (int string int unsigned-32 u8*) int)]
+              [buffer (make-bytevector 256 0)])
+          (unless (= 0 (native-statx -100 path 0 #x7ff buffer))
+            (error 'file-stat-fixture "native statx failed"))
+          (let ([stat (file-stat path)])
+            (and (= (bytevector-u32-native-ref buffer 16) (file-stat-nlinks stat))
+                 (= (bytevector-u32-native-ref buffer 20) (file-stat-owner stat))
+                 (= (bytevector-u32-native-ref buffer 24) (file-stat-group stat))))))))
+
 (mat file-stat
 
      (let ([stat (file-stat "file.ss")])

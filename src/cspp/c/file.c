@@ -123,13 +123,13 @@ ptr cspp_statx(const char *path, int follow_link) {
     Svector_set(v, 1, Sfixnum(res.stx_mode & ~S_IFMT));
   }
   if (mask & STATX_NLINK) {
-    Svector_set(v, 2, Sfixnum(res.stx_nlink));
+    Svector_set(v, 2, Sunsigned32(res.stx_nlink));
   }
   if (mask & STATX_UID) {
-    Svector_set(v, 3, Sfixnum(res.stx_uid));
+    Svector_set(v, 3, Sunsigned32(res.stx_uid));
   }
   if (mask & STATX_GID) {
-    Svector_set(v, 4, Sfixnum(res.stx_gid));
+    Svector_set(v, 4, Sunsigned32(res.stx_gid));
   }
   if (mask & STATX_ATIME) {
     struct statx_timestamp t = res.stx_atime;
