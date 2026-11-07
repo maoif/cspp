@@ -21,6 +21,7 @@ ptr cspp_readlink(const char *path);
 ptr cspp_realpath(const char *path);
 ptr cspp_link(const char *src, const char *dest);
 ptr cspp_symlink(const char *src, const char *dest);
+ptr cspp_file_directory_access(const char *path);
 int cspp_file_time_bits(void);
 ptr cspp_touch(const char *path, ptr atime, ptr mtime, int follow_link);
 
@@ -268,6 +269,32 @@ ptr cspp_symlink(const char *src, const char *dest) {
   return Strue;
 }
 
+/* Newly created private directories need owner access even under a restrictive
+ * umask. Preserve inherited SGID for the group of entries created inside. */
+static int ensure_directory_owner_access(const char *path) {
+  struct stat metadata;
+  if (stat(path, &metadata) == -1) return -1;
+  if ((metadata.st_mode & 0700) != 0700) {
+    mode_t mode = 0700 | (metadata.st_mode & S_ISGID);
+    if (chmod(path, mode) == -1) return -1;
+    if (mode & S_ISGID) {
+      if (stat(path, &metadata) == -1) return -1;
+      if (!(metadata.st_mode & S_ISGID)) { errno = EPERM; return -1; }
+    }
+  }
+  return 0;
+}
+
+ptr cspp_file_directory_access(const char *path) {
+  char *expanded = expand_pathname(path);
+  if (expanded == NULL) { errno = ENOMEM; return errno_str(); }
+  int result = ensure_directory_owner_access(expanded);
+  int code = errno;
+  free(expanded);
+  errno = code;
+  return result == 0 ? Strue : errno_str();
+}
+
 /* Reserve a private sibling directory for preparing a replacement entry.
  * A directory avoids leaving a guessable, unreserved temporary pathname. */
 ptr cspp_file_staging_directory(const char *parent) {
@@ -290,19 +317,7 @@ ptr cspp_file_staging_directory(const char *parent) {
     errno = code;
     return errno_str_vector();
   }
-  /* Keep inherited SGID: children must inherit the destination parent's group.
-   * Avoid chmod when possible, since it may clear SGID for a nonmember owner. */
-  struct stat metadata;
-  if (stat(name, &metadata) == -1) goto staging_error;
-  if ((metadata.st_mode & 0700) != 0700) {
-    mode_t mode = 0700 | (metadata.st_mode & S_ISGID);
-    if (chmod(name, mode) == -1) goto staging_error;
-    if (mode & S_ISGID) {
-      if (stat(name, &metadata) == -1) goto staging_error;
-      /* Refuse a replacement rather than silently changing its inherited group. */
-      if (!(metadata.st_mode & S_ISGID)) { errno = EPERM; goto staging_error; }
-    }
-  }
+  if (ensure_directory_owner_access(name) == -1) goto staging_error;
   ptr result = Sstring_utf8(name, (iptr)strlen(name));
   free(name);
   return result;

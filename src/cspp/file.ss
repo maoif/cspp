@@ -2523,6 +2523,13 @@
         (file-copy src dest #f)
         ($apply-copy-metadata 'file-move target stat))))
 
+  (define $make-move-directory
+    (let ([access (foreign-procedure "cspp_file_directory_access" (string) scheme-object)])
+      (lambda (who path)
+        (mkdir path #o700)
+        (let ([result (access path)])
+          (when (string? result) ($err-file who path result))))))
+
   (define $file-copytree
     (lambda (who src dest copy preserve-metadata?)
        (pcheck ([$filename? src dest] [file-directory? src] [procedure? copy])
@@ -2536,7 +2543,9 @@
                        (lambda (source target)
                          (remember-directory source target)
                          ;; A new move destination stays private until copying finishes.
-                         (mkdir target (if preserve-metadata? #o700 #o777)))]
+                         (if preserve-metadata?
+                             ($make-move-directory who target)
+                             (mkdir target #o777)))]
                       [relativize (lambda (path)
                                     (path-render
                                      (path-relative-to source-path
@@ -2555,8 +2564,7 @@
                                                  src #f #t))])
                  (when ($copytree-destination-inside-source? who src dest)
                    (errorf who "destination cannot be inside the source directory"))
-                 (if (file-directory? dest #t)
-                     (remember-directory src dest)
+                 (unless (file-directory? dest #t)
                      (let ([parent ($parent-directory-name (path-parse 'unix dest))])
                        (if (file-directory? parent #t)
                            (make-directory src dest)
@@ -2613,12 +2621,12 @@
                        [(and (not (file-exists? dest #f)) ($try-rename-file src dest)) #t]
                        [(and (file-directory? src #f) (not (file-symbolic-link? src)))
                         (let ([metadata ($file-copytree who src dest copy #t)])
-                          ;; Removal may change the destination if it contains the source.
-                          ;; Keep it writable until removal, then restore children first.
-                          (file-removetree src #t)
+                          ;; Only new directories receive source metadata. Existing merge
+                          ;; roots stay usable, including when they contain the source.
                           (for-each (lambda (entry)
                                       ($apply-copy-metadata who (car entry) (cdr entry)))
                                     metadata)
+                          (file-removetree src #t)
                           #t)]
                        [else
                         (let ([target (if (file-directory? dest)
@@ -2634,6 +2642,9 @@
   or the contents of a source directory. Nested directory symlinks are copied as links.
   When copying is necessary, the default preserves permission bits and access/modification
   times, but not ownership, hard-link relationships, or extended attributes.
+  Source directory metadata is applied only to newly created destination directories, before
+  source removal. Existing merge roots keep their permissions and do not receive source
+  timestamps; ordinary filesystem activity may update their timestamps.
   Optional `copy` has signature `(lambda (source-path destination-path) ...)` and controls
   copying individual files and symlinks, including their metadata; return values are ignored.
   A successful rename bypasses `copy`. Source entries are removed only after copying succeeds.

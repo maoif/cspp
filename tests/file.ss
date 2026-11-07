@@ -2707,6 +2707,57 @@
 
 (mat file-move
 
+     ;; Existing merge roots keep their mode even when the source is read-only.
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([source (path-build root "empty-source")]
+              [destination (path-build root "existing-root")])
+          (mkdir source #o555)
+          (mkdir destination #o700)
+          (file-move source destination)
+          (and (not (file-exists? source #f)) (= #o700 (file-mode destination))))))
+
+     ;; Internal move directories need owner access independently of the process umask.
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([source (path-build root "sub")]
+              [destination (path-build root "existing-root")]
+              [umask (foreign-procedure "umask" (unsigned-32) unsigned-32)]
+              [saved #f])
+          (mkdir destination)
+          (mkdir (path-build source "nested"))
+          (write-string (path-build source "nested/data") "copied")
+          (dynamic-wind
+            (lambda () (set! saved (umask #o700)))
+            (lambda ()
+              (file-move source destination)
+              (and (not (file-exists? source #f))
+                   (string=? "copied" (read-string (path-build destination "nested/data")))))
+            (lambda ()
+              (umask saved)
+              (when (file-directory? (path-build destination "nested"))
+                (chmod (path-build destination "nested") #o700)))))))
+
+     ;; Error case: a copied subtree disappearing must fail before source removal.
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([source (path-build root "sub")]
+              [destination (path-build root "existing-root")])
+          (mkdir destination)
+          (mkdir (path-build source "disappearing"))
+          (write-string (path-build source "disappearing/data") "original")
+          (and (guard (failure [(error? failure) #t])
+                 (file-move
+                  source destination
+                  (lambda (from to)
+                    (file-copy from to)
+                    (when (string=? (path-last from) "data")
+                      (delete-file to)
+                      (delete-directory (path-parent to)))))
+                 #f)
+               (file-exists? (path-build source "nested.txt"))
+               (file-exists? (path-build source "disappearing/data"))))))
+
      ;; Error cases: a directory-target symlink must not become its own destination container.
      ($with-fs-fixture
       (lambda (root)
@@ -2741,6 +2792,7 @@
               [dest (path-build root "merged")]
               [stamp (make-time 'time-utc 123000000 1000000000)])
           (mkdir dest)
+          (file-chmod dest #o710)
           (write-string (path-build dest "keep") "keep")
           (mkdir (path-build source "private"))
           (file-chmod (path-build source "private") #o700)
@@ -2752,10 +2804,10 @@
           (file-touch (path-build source "private") stamp)
           (file-touch source stamp)
           (file-move source dest)
-          (and (= #o750 (file-mode dest))
+          (and (= #o710 (file-mode dest))
                (= #o700 (file-mode (path-build dest "private")))
                (= #o600 (file-mode (path-build dest "nested.txt")))
-               (time=? stamp (file-modification-time dest))
+               (not (time=? stamp (file-modification-time dest)))
                (time=? stamp (file-modification-time (path-build dest "private")))
                (time=? stamp (file-modification-time (path-build dest "nested.txt")))
                (time=? stamp (file-access-time (path-build dest "nested.txt")))
@@ -2764,7 +2816,7 @@
                (string=? "keep" (read-string (path-build dest "keep")))
                (not (file-exists? source #f))))))
 
-     ;; Removing the source entry from a parent destination must precede its final timestamps.
+     ;; An existing parent destination does not receive the source root's timestamps.
      ($with-fs-fixture
       (lambda (root)
         (let ([source (path-build root "sub")]
@@ -2773,9 +2825,9 @@
           (file-move source root)
           (and (not (file-exists? source #f))
                (file-exists? (path-build root "nested.txt"))
-               (time=? stamp (file-modification-time root))))))
+               (not (time=? stamp (file-modification-time root)))))))
 
-     ;; A directory alias receives directory metadata on its target, preserving the link.
+     ;; A directory alias keeps its target's metadata policy and the link itself.
      ($with-fs-fixture
       (lambda (root)
         (let ([source (path-build root "sub")]
@@ -2788,22 +2840,22 @@
           (file-touch alias link-stamp #f #f)
           (file-touch source stamp)
           (file-move source alias)
-          (and (time=? stamp (file-modification-time target))
+          (and (not (time=? stamp (file-modification-time target)))
                (time=? link-stamp (file-modification-time alias #f))
                (file-symbolic-link? alias)
                (file-exists? (path-build target "nested.txt"))))))
 
-     ;; Restoring a read-only mode on the parent must not prevent removal of the source entry.
+     ;; A read-only source must not change its existing destination parent's mode.
      ($with-fs-fixture
       (lambda (root)
-        (let ([source (path-build root "readonly")])
+        (let ([source (path-build root "readonly")] [mode (file-mode root)])
           (mkdir source)
           (file-chmod source #o555)
           (dynamic-wind
             void
             (lambda ()
               (file-move source root)
-              (and (not (file-exists? source #f)) (= #o555 (file-mode root))))
+              (and (not (file-exists? source #f)) (= mode (file-mode root))))
             (lambda () (file-chmod root #o700))))))
 
      ;; A custom fallback copier controls the content and metadata of individual files.
