@@ -21,6 +21,7 @@ ptr cspp_readlink(const char *path);
 ptr cspp_realpath(const char *path);
 ptr cspp_link(const char *src, const char *dest);
 ptr cspp_symlink(const char *src, const char *dest);
+int cspp_file_time_bits(void);
 ptr cspp_touch(const char *path, ptr atime, ptr mtime, int follow_link);
 
 ptr cspp_fswatcher_init(int block);
@@ -133,22 +134,22 @@ ptr cspp_statx(const char *path, int follow_link) {
   }
   if (mask & STATX_ATIME) {
     struct statx_timestamp t = res.stx_atime;
-    Svector_set(v, 5, Sinteger(t.tv_sec));
+    Svector_set(v, 5, Sinteger64(t.tv_sec));
     Svector_set(v, 6, Sinteger(t.tv_nsec));
   }
   if (mask & STATX_CTIME) {
     struct statx_timestamp t = res.stx_ctime;
-    Svector_set(v, 7, Sinteger(t.tv_sec));
+    Svector_set(v, 7, Sinteger64(t.tv_sec));
     Svector_set(v, 8, Sinteger(t.tv_nsec));
   }
   if (mask & STATX_MTIME) {
     struct statx_timestamp t = res.stx_mtime;
-    Svector_set(v, 9, Sinteger(t.tv_sec));
+    Svector_set(v, 9, Sinteger64(t.tv_sec));
     Svector_set(v, 10, Sinteger(t.tv_nsec));
   }
   if (mask & STATX_BTIME) {
     struct statx_timestamp t = res.stx_btime;
-    Svector_set(v, 11, Sinteger(t.tv_sec));
+    Svector_set(v, 11, Sinteger64(t.tv_sec));
     Svector_set(v, 12, Sinteger(t.tv_nsec));
   }
   if (mask & STATX_INO) {
@@ -303,6 +304,10 @@ ptr cspp_file_staging_directory(const char *parent) {
   return result;
 }
 
+int cspp_file_time_bits(void) {
+  return sizeof(time_t) * CHAR_BIT;
+}
+
 ptr cspp_touch(const char *path, ptr atime, ptr mtime, int follow_link) {
   /* Decode all Scheme objects before a tilde lookup can deactivate this thread. */
   struct timespec ts[2];
@@ -312,14 +317,14 @@ ptr cspp_touch(const char *path, ptr atime, ptr mtime, int follow_link) {
     ts[0].tv_nsec = UTIME_OMIT;
   } else {
     ts[0].tv_nsec = Sinteger_value(Svector_ref(atime, 0));
-    ts[0].tv_sec = Sinteger_value(Svector_ref(atime, 1));
+    ts[0].tv_sec = Sinteger64_value(Svector_ref(atime, 1));
   }
 
   if (mtime == Sfalse) {
     ts[1].tv_nsec = UTIME_OMIT;
   } else {
     ts[1].tv_nsec = Sinteger_value(Svector_ref(mtime, 0));
-    ts[1].tv_sec = Sinteger_value(Svector_ref(mtime, 1));
+    ts[1].tv_sec = Sinteger64_value(Svector_ref(mtime, 1));
   }
 
   char *p = expand_pathname(path);
@@ -365,7 +370,7 @@ ptr cspp_fswatcher_add(int fsw, const char *path, uint32_t mask) {
 
   free(p);
 
-  return Sfixnum(fid);
+  return Sinteger32(fid);
 }
 
 ptr cspp_fswatcher_remove(int fsw, int fid) {
@@ -444,7 +449,7 @@ ptr cspp_fswatcher_next(int fsw, int timeout_ms) {
   for (size_t offset = 0; offset < (size_t)len;) {
     const struct inotify_event *event = (const struct inotify_event *)(buf + offset);
     ptr value = Smake_vector(3, Sfalse);
-    Svector_set(value, 0, Sfixnum(event->wd));
+    Svector_set(value, 0, Sinteger32(event->wd));
     Svector_set(value, 1, Sunsigned32(event->mask));
     if (event->len > 0) {
       size_t length = strlen(event->name);

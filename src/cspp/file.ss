@@ -2255,16 +2255,24 @@
         (when (string? result) ($err-file who path result))
         result)))
   (define $time->vec (lambda (t) (vector (time-nanosecond t) (time-second t))))
+  (define $check-file-time
+    (let* ([bits ((foreign-procedure "cspp_file_time_bits" () int))]
+           [limit (expt 2 (fx1- bits))])
+      (lambda (who time)
+        (when time
+          (unless (eq? 'time-utc (time-type time))
+            (errorf who "invalid time type ~a (should be 'time-utc)" (time-type time)))
+          ;; Chez integer conversions also accept unsigned positive values.
+          (unless (<= (- limit) (time-second time) (- limit 1))
+            (errorf who "UTC seconds are outside the native timestamp range: ~a"
+                    (time-second time)))))))
+
   (define $file-touch
     (lambda (who path atime mtime follow-link? force?)
       (pcheck ([$filename? path]
                [(lambda (x) (or (not x) (time? x))) atime mtime]
                [boolean? follow-link? force?])
-              (define (check-time t)
-                (when t
-                  (unless (eq? 'time-utc (time-type t))
-                    (errorf who "invalid time type ~a of ~a (should be 'time-utc)" (time-type t) t))))
-              (check-time atime) (check-time mtime)
+              ($check-file-time who atime) ($check-file-time who mtime)
 
               (let* ([atime (if atime ($time->vec atime) #f)] [mtime (if mtime ($time->vec mtime) #f)]
                      [force-or-not (lambda (dest)
@@ -2290,6 +2298,8 @@
   Change the last access and modification times of a file to `time`.
   `time` is the UTC time type ('time-utc) as can be made by `make-time`.
   By default, it is the current time as returned by `(current-time)`.
+  Seconds must fit the platform's signed native timestamp range; invalid times are rejected
+  before creating a missing file. The filesystem may further limit representable dates.
 
   If `force?`, then if the file does not exist, an empty file with the same name is created.
   Otherwise, it is an error if the file does not exist.

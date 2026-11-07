@@ -32,6 +32,44 @@
     (let loop ([paths paths] [index 0])
       (if (string=? (car paths) path) index (loop (cdr paths) (+ index 1))))))
 
+(mat file-touch-validates-seconds-before-creation
+     ($with-fs-fixture
+      (lambda (root)
+        (for-all
+         (lambda (touch)
+           (for-all
+            (lambda (seconds)
+              (let ([missing (path-build root "invalid-time")])
+                ;; Error case: unrepresentable UTC seconds must not wrap or create a file.
+                (and (guard (failure [(error? failure) #t])
+                       (touch missing (make-time 'time-utc 0 seconds)) #f)
+                     (not (file-exists? missing #f)))))
+            '(18446744073709551615 18446744073709551616 -18446744073709551616)))
+         (list file-touch file-touch-atime file-touch-mtime)))))
+
+(mat fswatcher-native-large-watch-ids
+     (let ([pipe (foreign-procedure "pipe" (u8*) int)]
+           [write (foreign-procedure "write" (int u8* uptr) iptr)]
+           [close (foreign-procedure "close" (int) int)]
+           [next (foreign-procedure "cspp_fswatcher_next" (int int) scheme-object)]
+           [descriptors (make-bytevector 8 0)])
+       (unless (= 0 (pipe descriptors)) (error 'fixture "cannot create event pipe"))
+       (let ([input (bytevector-s32-native-ref descriptors 0)]
+             [output (bytevector-s32-native-ref descriptors 4)])
+         (dynamic-wind
+           void
+           (lambda ()
+             (for-all
+              (lambda (watch-id)
+                ;; A synthetic kernel-format event checks conversion without ID churn.
+                (let ([event (make-bytevector 16 0)])
+                  (bytevector-s32-native-set! event 0 watch-id)
+                  (bytevector-u32-native-set! event 4 1)
+                  (and (= 16 (write output event 16))
+                       (= watch-id (vector-ref (vector-ref (next input 0) 0) 0)))))
+              '(268435455 268435456 536870911 536870912 536870913 2147483647 -1)))
+           (lambda () (close input) (close output))))))
+
 (define-record-type $escaped-file-datum
   (fields))
 
