@@ -614,6 +614,18 @@
 
   (define $physical (lambda (p) ($filesystem-spelling p #\/ #f)))
 
+  (define $result-spelling
+    (lambda (p separator branch)
+      (let ([result ($filesystem-spelling p separator (branch-directory? branch))])
+        ;; UNC/device roots render canonically with an optional final separator.
+        ;; Keep canonical spelling for filesystem calls, but preserve the result marker.
+        (if (and (not (branch-directory? branch)) (eq? p (branch-root branch))
+                 (eq? (path-flavor p) 'windows)
+                 (memq (cadr (path-root-info p)) '(unc special))
+                 ($trailing-separator? 'windows result))
+            (substring result 0 (fx1- (string-length result)))
+            result))))
+
   #|proc:$expansion-iterator
   Build the lazy traversal iterator shared by `glob`, `glob*`, and `glob->iter`.
   `compiled` supplies expanded branches; `follow-link?` controls symlink descent;
@@ -737,8 +749,7 @@
                                  [type (task-type task)])
                              (cond [(repeated-state? p cs ancestors separator) (loop)]
                                    [(null? cs)
-                                    (let ([result ($filesystem-spelling
-                                                   p separator (branch-directory? active-branch))])
+                                    (let ([result ($result-spelling p separator active-branch)])
                                       (if (and (eligible? name type)
                                                (or (not (branch-directory? active-branch))
                                                    (directory? name type))
@@ -862,8 +873,10 @@
   so returned paths can be passed to filesystem APIs without home expansion.
   Optional `flavor` follows the host OS:
   `'windows` on Windows, `'unix` elsewhere. Unix literals use direct lookups; Windows
-  components scan case-insensitively. Root spelling is preserved. Symlinked directories
-  are not descended into; matching directories are excluded. An unmatched pattern returns `()`.
+  components scan case-insensitively. Root spelling is preserved.
+  UNC/device root results preserve optional trailing markers.
+  Symlinked directories are not descended into; matching directories are excluded.
+  An unmatched pattern returns `()`.
   Windows expansion skips Unix entries containing backslash, which is a Windows separator.
   An empty pattern has no filesystem matches.
   |#

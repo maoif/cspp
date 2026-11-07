@@ -63,6 +63,27 @@
                   (equal? '("one" "two") (map read-string (glob 'windows pattern))))))
          (lambda () (file-removetree root #t)))))
 
+(mat glob-windows-root-result-markers
+     (let ([root (format "//tmp/cspp-glob-marker-~a-{one}[" (get-process-id))])
+       (dynamic-wind
+         (lambda () (mkdir root))
+         (lambda ()
+           (for-all
+            (lambda (separator)
+              (let ([spelled (string-map (lambda (char) (if (char=? char #\/) separator char))
+                                        root)]
+                    [slash (string separator)])
+                (for-all
+                 (lambda (suffix result-suffix)
+                   (let* ([pattern (string-append spelled suffix)]
+                          [results (glob* 'windows pattern #f #t 'empty)])
+                     (and (equal? results (list (string-append spelled result-suffix)))
+                          (glob-match? 'windows pattern (car results)))))
+                 (list "" slash (string-append slash "**") (string-append slash "**" slash))
+                 (list "" slash "" slash))))
+            '(#\/ #\\)))
+         (lambda () (file-removetree root #t)))))
+
 (mat glob-unmatched-result-ownership
      (let* ([pattern (string-copy "__cspp_absent_owned_glob__")]
             [result (glob* pattern #f #f 'literal)])
