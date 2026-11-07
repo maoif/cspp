@@ -131,6 +131,17 @@
     (lambda (pid command arguments stdin stdout stderr status)
       (%make-process pid command arguments stdin stdout stderr status (make-mutex))))
 
+  ;; Register release atomically with acquisition, and disable interrupts before unregistering it.
+  ;; Ordinary with-mutex can strand the lock if a handler escapes before its exit thunk starts.
+  (define-syntax $with-process-lock
+    (syntax-rules ()
+      [(_ process expression ...)
+       (let ([mutex (process-mutex process)])
+         (dynamic-wind #t
+           (lambda () (mutex-acquire mutex))
+           (lambda () expression ...)
+           (lambda () (mutex-release mutex))))]))
+
   ;; Return the first close error, but finish releasing the port after a failed flush.
   (define $close-port/cleanup
     (lambda (port)
@@ -153,7 +164,7 @@
   (define-who process-status
     (lambda (process)
       (pcheck-who who ([process? process])
-        (with-mutex (process-mutex process) ($process-status process)))))
+        ($with-process-lock process ($process-status process)))))
 
   (define $prepare-spawn-ffi
     (foreign-procedure "cspp_process_prepare_spawn" (uptr ptr ptr utf-8 int int int) void))
@@ -286,7 +297,7 @@
   (define-who process-wait/no-hang
     (lambda (process)
       (pcheck-who who ([process? process])
-        (with-mutex (process-mutex process)
+        ($with-process-lock process
           (or ($process-status process)
               (let ([status ($wait-vector->status
                               (ffi-result-ref ($waitpid-ffi (process-pid process) 1)))])
@@ -325,7 +336,7 @@
             ;; Critical entry installs the exit thunk before reenabling interrupts.
             ;; A handler may then escape through a continuation as well as raise.
             ;; Reentry obtains a fresh notification descriptor.
-            (with-mutex (process-mutex process)
+            ($with-process-lock process
               (unless ($process-status process)
                 (set! descriptor ($wait-open-ffi ($process-pid process))))))
           (lambda ()
@@ -388,7 +399,7 @@
     (lambda (process signal-number)
       (pcheck-who who ([process? process]
                [(lambda (value) (and (fixnum? value) (<= 1 value #x7fffffff))) signal-number])
-        (with-mutex (process-mutex process)
+        ($with-process-lock process
           ;; A reaped PID may be reused. Never signal it through a completed process object.
           (unless ($process-status process)
             (let ([status ($wait-vector->status

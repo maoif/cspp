@@ -201,6 +201,8 @@ exit notification or its deadline, then reaps under the process mutex. Concurren
 the cached result while owning separate notification descriptors. Descriptors are closed on
 return or error; no background waiter is created. Unsupported or unavailable pidfds fall back
 to short nonblocking polls and sleeps outside the mutex.
+Acquiring and releasing the process mutex is protected from Scheme interrupt escapes, so an
+escaping handler cannot strand the lock and block other status readers, waiters, or signal senders.
 Native polls are bounded to 20 ms so both new and already-pending Scheme interrupts are serviced.
 Timeout ticks do not trigger another `waitpid` call unless exit readiness is reported.
 Interrupted waits resume against the original monotonic deadline.

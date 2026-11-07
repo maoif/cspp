@@ -119,7 +119,8 @@ system-runtime-suite.so: system-runtime.ss system-runtime-runner.ss system-looku
 system-lookup-fixture.so: ../src/cspp/c/system_lookup_fixture.c
 	$(CC) $(CPPFLAGS) -Wall -Wextra -O2 -fPIC -shared $< -o $@ $(LDFLAGS) -ldl
 
-system-process.so: system-process-cleanup-probe.ss system-process-handoff.ss system-native-cleanup.ss
+system-process.so: system-process-cleanup-probe.ss system-process-handoff.ss system-native-cleanup.ss \
+                   system-process-mutex.ss
 
 system-user.so: system-user-thread.ss
 

@@ -88,6 +88,76 @@
      )
 
 
+(mat compose1-chain-contract
+
+     (for-all
+       (lambda (count)
+         (let ([events '()])
+           (let ([composed
+                   (apply compose1
+                     (append
+                       (list (lambda (value)
+                               (set! events (cons 'left events))
+                               (values value 'done)))
+                       (make-list (- count 2)
+                         (lambda (value)
+                           (set! events (cons 'middle events))
+                           (+ value 1)))
+                       (list (lambda (first second)
+                               (set! events (cons 'right events))
+                               (+ first second)))))])
+             (and (equal? (list (+ count 3) 'done)
+                          (call-with-values (lambda () (composed 2 3)) list))
+                  (equal? (append '(right) (make-list (- count 2) 'middle) '(left))
+                          (reverse events))))))
+       '(2 3 10))
+
+     (for-all
+       (lambda (count)
+         (null? (call-with-values
+                  (lambda ()
+                    ((apply compose1
+                       (append (list (lambda (value) (values)))
+                               (make-list (- count 2) add1)
+                               (list (lambda () 0))))))
+                  list)))
+       '(2 3 10)))
+
+(mat compose1-continuation-replay
+
+     ;; call/cc intentionally replays a callback continuation after the composition returned.
+     (for-all
+       (lambda (count)
+         (let ([saved #f] [replayed? #f] [middle-calls 0])
+           (let ([composed
+                   (apply compose1
+                     (append
+                       (list (lambda (value) (values value middle-calls)))
+                       (make-list (- count 2)
+                         (lambda (value)
+                           (set! middle-calls (+ middle-calls 1))
+                           (+ value 1)))
+                       (list (lambda (first second)
+                               (call/cc
+                                 (lambda (continuation)
+                                   (set! saved continuation)
+                                   (+ first second)))))))])
+             (let-values ([(value calls) (composed 2 3)])
+               (if replayed?
+                   (and (= value (+ count 8)) (= calls (* 2 (- count 2))))
+                   (begin (set! replayed? #t) (saved 10)))))))
+       '(2 3 10)))
+
+(mat compose1-deep-chain-space
+
+     ;; Error case: deep compositions must not allocate a continuation stack per callback.
+     (let ([composed (apply compose1 (make-list 100000 add1))])
+       (collect)
+       (let* ([before (statistics)]
+              [result (composed 0)]
+              [bytes (sstats-bytes (sstats-difference (statistics) before))])
+         (and (= result 100000) (< bytes 262144)))))
+
 (mat >>>
 
      (error? (>>> 1))

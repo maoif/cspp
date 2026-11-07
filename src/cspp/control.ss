@@ -61,19 +61,25 @@
   The rightmost callback accepts the returned procedure's arguments. Every callback except the
   leftmost returns one value; every callback except the rightmost accepts one value. The leftmost
   callback may return multiple values. A single callback is returned unchanged.
+  Callback order is prepared once; invocation uses constant composition traversal space.
   Callers synchronize shared mutable callback state when using the composition across threads.
   |#
   (define-who compose1
     (lambda (proc . proc*)
       (pcheck-who who ([procedure? proc] [$procedures? proc*])
-        (if (null? proc*)
-            proc
-            (let ([procedures (cons proc proc*)])
-              (lambda args
-                (let loop ([procedures procedures])
-                  (if (null? (cdr procedures))
-                      (apply (car procedures) args)
-                      ((car procedures) (loop (cdr procedures)))))))))))
+        (cond
+          [(null? proc*) proc]
+          ;; Avoid traversal overhead for the common two-procedure composition.
+          [(null? (cdr proc*))
+           (let ([right (car proc*)])
+             (lambda args (proc (apply right args))))]
+          [else
+           (let ([ordered (reverse proc*)])
+             (lambda args
+               (let loop ([remaining (cdr ordered)] [result (apply (car ordered) args)])
+                 (if (null? remaining)
+                     (proc result)
+                     (loop (cdr remaining) ((car remaining) result))))))]))))
 
 
   #|proc:>>>

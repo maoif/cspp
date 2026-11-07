@@ -25,6 +25,8 @@ Each form requires at least one callback and checks every callback before invoki
 The rightmost callback in a composition accepts the returned procedure's arguments; the first
 callback in `>>>`/`>>>1` accepts one value. Final callbacks may return multiple values.
 Composing just one procedure returns that procedure unchanged.
+`compose1` prepares callback order at construction and traverses it in constant space when called;
+callbacks may use additional space themselves. Two-callback compositions use a direct call path.
 
 ```scheme
 (import (cspp))

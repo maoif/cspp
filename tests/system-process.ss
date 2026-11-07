@@ -776,3 +776,12 @@
      (= 0 (system (if (file-exists? "system-native-cleanup.ss")
                       "../cspp --script=system-native-cleanup.ss"
                       "./cspp --script=tests/system-native-cleanup.ss"))))
+
+(mat process-mutex-interrupts
+
+     ;; Error case: an interrupted process operation must not block subsequent readers forever.
+     (let* ([root (if (file-exists? "system-process-mutex.ss") ".." ".")]
+            [launcher (string-append root "/cspp")]
+            [script (string-append "--script=" root "/tests/system-process-mutex.ss")])
+       (process-exit-success?
+         (process-run (begin launcher) (begin script) :timeout 20000))))
