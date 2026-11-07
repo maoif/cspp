@@ -290,18 +290,30 @@ ptr cspp_file_staging_directory(const char *parent) {
     errno = code;
     return errno_str_vector();
   }
-  /* mkdtemp applies umask. Internal staging still needs owner search/write
-   * permission when the caller deliberately masks owner bits on new files. */
-  if (chmod(name, 0700) == -1) {
+  /* Keep inherited SGID: children must inherit the destination parent's group.
+   * Avoid chmod when possible, since it may clear SGID for a nonmember owner. */
+  struct stat metadata;
+  if (stat(name, &metadata) == -1) goto staging_error;
+  if ((metadata.st_mode & 0700) != 0700) {
+    mode_t mode = 0700 | (metadata.st_mode & S_ISGID);
+    if (chmod(name, mode) == -1) goto staging_error;
+    if (mode & S_ISGID) {
+      if (stat(name, &metadata) == -1) goto staging_error;
+      /* Refuse a replacement rather than silently changing its inherited group. */
+      if (!(metadata.st_mode & S_ISGID)) { errno = EPERM; goto staging_error; }
+    }
+  }
+  ptr result = Sstring_utf8(name, (iptr)strlen(name));
+  free(name);
+  return result;
+
+staging_error: {
     int code = errno;
     rmdir(name);
     free(name);
     errno = code;
     return errno_str_vector();
   }
-  ptr result = Sstring_utf8(name, (iptr)strlen(name));
-  free(name);
-  return result;
 }
 
 int cspp_file_time_bits(void) {

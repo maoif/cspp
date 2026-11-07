@@ -116,6 +116,40 @@
                (guard (failure [(error? failure) #t]) (file-symlink! "" destination) #f)
                (string=? "keep" (read-string destination)))))))
 
+(mat file-overwrite-inherits-parent-group
+     (let* ([getgroups (foreign-procedure "getgroups" (int u8*) int)]
+            [chown (foreign-procedure "chown" (string int unsigned-32) int)]
+            [umask (foreign-procedure "umask" (unsigned-32) unsigned-32)]
+            [count (getgroups 0 (make-bytevector 0))]
+            [groups (make-bytevector (* 4 count))])
+       (unless (= count (getgroups count groups)) (error 'fixture "cannot read groups"))
+       (let ([group (let loop ([index 0])
+                      (and (< index count)
+                           (let ([group (bytevector-u32-native-ref groups (* 4 index))])
+                             (if (= group (getegid)) (loop (+ index 1)) group))))])
+         ;; A distinct supplementary group exposes lost setgid inheritance.
+         (or (not group)
+             ($with-fs-fixture
+              (lambda (root)
+                (unless (= 0 (chown root -1 group)) (error 'fixture "cannot change group"))
+                (chmod root #o2700)
+                (for-all
+                 (lambda (mask)
+                   (let ([destination (path-build root "replacement")]
+                         [link (path-build root "replacement-link")]
+                         [saved #f])
+                     (write-string! destination "old")
+                     (file-symlink! "old-target" link)
+                     (dynamic-wind
+                       (lambda () (set! saved (umask mask)))
+                       (lambda ()
+                         (file-copy! (path-build root "top.txt") destination)
+                         (file-symlink! "new-target" link)
+                         (and (= group (file-group destination))
+                              (= group (file-group link #f))))
+                       (lambda () (umask saved)))))
+                 '(0 #o700))))))))
+
 (mat file-copy-rejects-nonregular-source
      ($with-fs-fixture
       (lambda (root)
