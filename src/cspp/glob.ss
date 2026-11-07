@@ -516,11 +516,12 @@
   `include-directories?` controls whether matching directories are yielded.
 
   The iterator's `stack` contains task vectors. A `node` task is
-  `(kind path remaining-components ancestors separator)`: `path` uses the actual
+  `(kind path remaining-components ancestors separator entry-type)`: `path` uses the actual
   entry names for both results and filesystem calls, `remaining-components` is the
   matcher suffix, `ancestors` records followed directory identities, and
-  `separator` preserves the branch's slash style. A `scan` task inserts an open
-  directory stream before the separator and reads one entry per advance.
+  `separator` preserves the branch's slash style, and `entry-type` retains readdir's type
+  or `FT_unknown` for direct lookups. A `scan` task replaces the last two fields with an open
+  directory stream and separator and reads one entry per advance.
   Tasks are pushed and popped depth-first, so no complete subtree is collected.
   |#
   (define $expansion-iterator
@@ -537,13 +538,14 @@
                                     [else (unless failure (set! failure condition))])
                               (fs-close-directory (scan-directory task))))) tasks)
               (when failure (raise failure)))))
-        ;; Tasks are five/six-slot vectors kept private to this iterator. These
+        ;; Tasks are six-slot vectors kept private to this iterator. These
         ;; accessors make the two task layouts explicit at their use sites.
         (define task-kind (lambda (task) (vector-ref task 0)))
         (define task-path (lambda (task) (vector-ref task 1)))
         (define task-components (lambda (task) (vector-ref task 2)))
         (define task-ancestors (lambda (task) (vector-ref task 3)))
         (define task-separator (lambda (task) (vector-ref task 4)))
+        (define task-type (lambda (task) (vector-ref task 5)))
         (define scan-directory (lambda (task) (vector-ref task 4)))
         (define scan-separator (lambda (task) (vector-ref task 5)))
         (define begin-branch
@@ -558,7 +560,7 @@
             (let ([root (branch-root branch)] [components (branch-components branch)])
               (set! stack (if (and (null? components) (path-relative-path? root)) '()
                               (list (vector 'node root components '()
-                                            (branch-separator branch))))))))
+                                            (branch-separator branch) 'FT_unknown)))))))
         (define repeated-state?
           (lambda (path cs ancestors separator)
             (and states
@@ -579,9 +581,9 @@
               (list (file-stat-dev-major stat) (file-stat-dev-minor stat)
                     (file-stat-inode stat)))))
         (define open-scan
-          (lambda (path cs ancestors separator)
+          (lambda (path cs ancestors separator type)
             (let ([name ($physical path)])
-              (if (not (file-directory? name follow-link?)) #t
+              (if (not (directory? name type)) #t
                 (let ([id (and follow-link? (identity name))]
                       [literal? (and (car cs) (component-literal (car cs)))])
                   ;; A finite literal prefix may explicitly revisit a directory.
@@ -593,11 +595,20 @@
                                           (if id (cons id ancestors) ancestors)
                                           directory separator) stack))
                       #t)))))))
+        (define directory?
+          (lambda (name type)
+            (case type
+              [(FT_dir) #t]
+              [(FT_unknown) (file-directory? name follow-link?)]
+              [(FT_symlink) (and follow-link? (file-directory? name #t))]
+              [else #f])))
         (define eligible?
-          (lambda (name)
-            (and (file-exists? name #f)
-                 (or include-directories? (file-symbolic-link? name)
-                     (not (file-directory? name #f))))))
+          (lambda (name type)
+            (if (eq? type 'FT_unknown)
+                (and (file-exists? name #f)
+                     (or include-directories? (file-symbolic-link? name)
+                         (not (file-directory? name #f))))
+                (or include-directories? (not (eq? type 'FT_dir))))))
         (make-iter
          (lambda ()
            (guard (condition
@@ -618,14 +629,15 @@
                         (case kind
                           [(node)
                            (set! stack (cdr stack))
-                           (let ([separator (task-separator task)] [name ($physical p)])
+                           (let ([separator (task-separator task)] [name ($physical p)]
+                                 [type (task-type task)])
                              (cond [(repeated-state? p cs ancestors separator) (loop)]
                                    [(null? cs)
                                     (let ([result ($filesystem-spelling
                                                    p separator (branch-directory? active-branch))])
-                                      (if (and (eligible? name)
+                                      (if (and (eligible? name type)
                                                (or (not (branch-directory? active-branch))
-                                                   (file-directory? name follow-link?))
+                                                   (directory? name type))
                                                (not (hashtable-contains? seen result)))
                                           (begin
                                             ;; Caller-owned results may be mutated after yielding.
@@ -635,10 +647,10 @@
                                    [(not (car cs))
                                     ;; A cycle may match a terminal globstar without descent,
                                     ;; but must not enter another suffix through that revisit.
-                                    (when (or (open-scan p cs ancestors separator)
+                                    (when (or (open-scan p cs ancestors separator type)
                                               (null? (cdr cs)))
                                       (set! stack
-                                            (cons (vector 'node p (cdr cs) ancestors separator)
+                                            (cons (vector 'node p (cdr cs) ancestors separator type)
                                                   stack)))
                                     (loop)]
                                    [(member (component-literal (car cs)) '("." ".."))
@@ -646,7 +658,7 @@
                                            [child (path-add-component p component)]
                                            [next (cdr cs)])
                                       ;; Dot traversal still descends through the parent.
-                                      (when (and (file-directory? name follow-link?)
+                                      (when (and (directory? name type)
                                                  (or (null? next)
                                                      (file-directory? ($physical child)
                                                                       follow-link?)))
@@ -656,12 +668,12 @@
                                         (set! stack (cons (vector 'node child
                                                                    next (if (string=? component "..")
                                                                             '() ancestors)
-                                                                   separator) stack))))
+                                                                   separator 'FT_unknown) stack))))
                                     (loop)]
                                    [(and (eq? (glob-flavor compiled) 'unix)
                                          (component-literal (car cs)))
                                     ;; Unix literals need search permission, but no directory scan.
-                                    (when (file-directory? name follow-link?)
+                                    (when (directory? name type)
                                       (get-mode (string-append name "/."))
                                       (let* ([child (path-add-component p (component-literal (car cs)))]
                                              [next (cdr cs)])
@@ -673,10 +685,10 @@
                                                                      (if (and follow-link? (pair? next))
                                                                          (cons (identity name) ancestors)
                                                                          ancestors)
-                                                                     separator) stack)))))
+                                                                     separator 'FT_unknown) stack)))))
                                     (loop)]
                                    ;; Windows literals scan too: all case-equivalent names are eligible.
-                                   [else (open-scan p cs ancestors separator) (loop)]))]
+                                   [else (open-scan p cs ancestors separator type) (loop)]))]
                           [(scan)
                            (let* ([cs (task-components task)]
                                   [directory (scan-directory task)]
@@ -693,7 +705,8 @@
                                         ($component-matches? (car cs) (car entry)))
                                     (set! stack
                                           (cons (vector 'node (path-add-component p (car entry))
-                                                        (if (car cs) (cdr cs) cs) ancestors separator) stack))
+                                                        (if (car cs) (cdr cs) cs) ancestors separator
+                                                        (cdr entry)) stack))
                                     (loop)]
                                    [else (loop)]))]))]))))
          (lambda ()
