@@ -2800,7 +2800,7 @@
                           (attempt
                            (lambda ()
                              (let ([child (car entry)])
-                               (if (file-directory? child #f)
+                               (if ($fs-entry-directory? child (cdr entry) #f)
                                    (remove-tree child)
                                    (delete-file child #t))))))
                         entries)))
