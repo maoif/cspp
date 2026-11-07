@@ -501,6 +501,36 @@
               (not (glob-match? 'unix "a/" "a"))
               (not (glob-match? 'unix "a" "a/"))))))
 
+(mat glob-current-directory-marker
+     ($with-glob-tree
+      (lambda (root)
+        (let ([original (current-directory)])
+          (dynamic-wind
+            (lambda () (current-directory root))
+            (lambda ()
+              (for-all
+               (lambda (flavor pattern expected)
+                 (let ([matches (glob* flavor pattern #f #t 'empty)])
+                   (and (equal? matches expected)
+                        (for-all (lambda (name) (glob-match? flavor pattern name)) matches))))
+               '(unix windows windows)
+               '("**/" "**/" "**\\")
+               '(("./" "a/" "a/deep/" "unrelated/")
+                 ("./" "a/" "a/deep/" "unrelated/")
+                 (".\\" "a\\" "a\\deep\\" "unrelated\\"))))
+            (lambda () (current-directory original)))))))
+
+(mat glob-empty-expansion
+     (for-all
+      (lambda (flavor)
+        (and (null? (glob flavor ""))
+             (null? (glob* flavor "" #f #t 'empty))
+             (null? (glob* flavor "" #t #t 'empty))
+             (null? (iter->list (glob->iter flavor "")))
+             (equal? '("") (glob* flavor "" #f #t 'literal))
+             (glob-match? flavor "" "")))
+      '(unix windows)))
+
 (mat glob-windows-root-case-matches-components
      (not (glob-match? 'windows "\\\\straße\\share\\x"
                        "\\\\STRASSE\\share\\x")))

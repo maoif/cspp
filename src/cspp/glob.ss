@@ -497,15 +497,18 @@
   (define glob? (lambda (object) (%glob? object)))
 
   (define $filesystem-spelling
-    (lambda (p separator)
-      (let ([s (path-render p separator)])
+    (lambda (p separator directory?)
+      (let* ([s (path-render p separator)]
+             [name (cond [(string=? s "") "."]
+                         [(char=? (string-ref s 0) #\~)
+                          (string-append "." (string separator) s)]
+                         [else s])])
         ;; Chez pathname expansion treats a leading `~` specially. A literal
         ;; escaped tilde must be made explicitly relative for filesystem calls.
-        (cond [(string=? s "") "."]
-              [(char=? (string-ref s 0) #\~) (string-append "." (string separator) s)]
-              [else s]))))
+        (if (and directory? (not ($trailing-separator? (path-flavor p) name)))
+            (string-append name (string separator)) name))))
 
-  (define $physical (lambda (p) ($filesystem-spelling p #\/)))
+  (define $physical (lambda (p) ($filesystem-spelling p #\/ #f)))
 
   #|proc:$expansion-iterator
   Build the lazy traversal iterator shared by `glob`, `glob*`, and `glob->iter`.
@@ -550,9 +553,12 @@
             ;; the same spelling many times. A single globstar cannot do so.
             (set! states (and (fx> (length (filter not (branch-components branch))) 1)
                                (make-eq-hashtable)))
-            (set! stack (list (vector 'node (branch-root branch)
-                                      (branch-components branch) '()
-                                      (branch-separator branch))))))
+            ;; An empty pattern has no filesystem matches; its lexical matcher
+            ;; still accepts an empty candidate, and unmatched policy stays separate.
+            (let ([root (branch-root branch)] [components (branch-components branch)])
+              (set! stack (if (and (null? components) (path-relative-path? root)) '()
+                              (list (vector 'node root components '()
+                                            (branch-separator branch))))))))
         (define repeated-state?
           (lambda (path cs ancestors separator)
             (and states
@@ -615,11 +621,8 @@
                            (let ([separator (task-separator task)] [name ($physical p)])
                              (cond [(repeated-state? p cs ancestors separator) (loop)]
                                    [(null? cs)
-                                    (let* ([result-path
-                                            (if (and (branch-directory? active-branch)
-                                                     (pair? (path-components p)))
-                                                (path-with-trailing-directory p #t) p)]
-                                           [result ($filesystem-spelling result-path separator)])
+                                    (let ([result ($filesystem-spelling
+                                                   p separator (branch-directory? active-branch))])
                                       (if (and (eligible? name)
                                                (or (not (branch-directory? active-branch))
                                                    (file-directory? name follow-link?))
@@ -742,6 +745,7 @@
   components scan case-insensitively. Root spelling is preserved. Symlinked directories
   are not descended into; matching directories are excluded. An unmatched pattern returns `()`.
   Windows expansion skips Unix entries containing backslash, which is a Windows separator.
+  An empty pattern has no filesystem matches.
   |#
   (define glob
     (case-lambda
@@ -760,6 +764,7 @@
   parent component starts a new descent chain. Boolean `include-directories?` includes directories;
   files and symlinks are always eligible. `unmatched` is `'empty` to return `()`
   when nothing matches, or `'literal` to return a list containing a fresh copy of the pattern.
+  An empty pattern has no filesystem matches; the `unmatched` policy still applies.
   |#
   (define glob*
     (case-lambda
