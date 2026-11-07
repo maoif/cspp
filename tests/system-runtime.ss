@@ -30,6 +30,134 @@
       (unless (null? failures) (raise (car failures))))))
 
 (case (string->symbol (cadr (command-line)))
+  [(native-interrupts)
+   ;; Error case: native steps must service Scheme handlers before long operations complete.
+   (let* ([thread ((foreign-procedure "pthread_self" () uptr))]
+          [send (foreign-procedure "pthread_kill" (uptr int) int)]
+          [milliseconds
+            (lambda ()
+              (let ([now (current-time 'time-monotonic)])
+                (+ (* 1000 (time-second now)) (quotient (time-nanosecond now) 1000000))))])
+     (for-each
+       (lambda (operation)
+         (let ([start (milliseconds)] [handled #f])
+           (parameterize ([keyboard-interrupt-handler
+                            (lambda () (set! handled (- (milliseconds) start)))])
+             (fork-thread (lambda () (milisleep 50) (send thread 2)))
+             (operation)
+             (with-interrupts-disabled (void))
+             (check (and handled (< handled 200))))))
+       (list (lambda () (process-run /bin/sleep "0.4"))
+             (lambda () (process-capture /bin/sleep "0.4"))
+             (lambda () (process-run-pipeline '(("/bin/sleep" "0.4"))))
+             (lambda () (process-capture-pipeline '(("/bin/sleep" "0.4"))))))
+     ;; Error case: abandoning a capture or pipeline must reap every unreturned immediate child.
+     (for-each
+       (lambda (operation)
+         (let ([sentinel (list 'abandon-operation)] [start (milliseconds)] [fds #f])
+           (set! fds (length (directory-list "/proc/self/fd")))
+           (parameterize ([keyboard-interrupt-handler (lambda () (raise sentinel))])
+             (fork-thread (lambda () (milisleep 50) (send thread 2)))
+             (check (guard (failure [else (eq? failure sentinel)]) (operation) #f)))
+           (check (< (- (milliseconds) start) 500))
+           (check (= fds (length (directory-list "/proc/self/fd"))))
+           (let ([status (make-bytevector 4 0)])
+             (check (< ((foreign-procedure "waitpid" (int u8* int) int) -1 status 1) 0)))))
+       (list (lambda () (process-capture /bin/sleep "3"))
+             (lambda ()
+               (process-capture-pipeline '(("/bin/sleep" "3") ("/bin/sleep" "3"))))))
+     ;; Error case: an unrelated SIGINT must interrupt a wait for an already-blocked USR1.
+     (let ([mask (signal-mask)] [handled #f] [start (milliseconds)])
+       (dynamic-wind
+         (lambda () (signal-block! '(usr1)))
+         (lambda ()
+           (parameterize ([keyboard-interrupt-handler
+                            (lambda () (set! handled (- (milliseconds) start)))])
+             (fork-thread
+               (lambda () (milisleep 50) (send thread 2) (milisleep 350) (send thread 10)))
+             (check (eq? 'usr1 (signal-name (wait-signal '(usr1)))))
+             (with-interrupts-disabled (void))
+             (check (and handled (< handled 200)))))
+         (lambda () (signal-mask-set! mask))))
+     ;; Error case: checkpoints must preserve an enclosing interrupt-disable count.
+     (let ([handled? #f])
+       (parameterize ([keyboard-interrupt-handler (lambda () (set! handled? #t))])
+         (with-interrupts-disabled
+           (fork-thread (lambda () (milisleep 50) (send thread 2)))
+           (process-run /bin/sleep "0.15")
+           (check (not handled?)))
+         (check handled?)))
+     ;; Error case: abandoning a synchronous signal wait must leave its caller's mask intact.
+     (let ([mask (signal-mask)] [sentinel (list 'abort-signal-wait)])
+       (dynamic-wind
+         (lambda () (signal-block! '(usr1)))
+         (lambda ()
+           (parameterize ([keyboard-interrupt-handler (lambda () (raise sentinel))])
+             (fork-thread (lambda () (milisleep 50) (send thread 2)))
+             (check (guard (failure [else (eq? failure sentinel)])
+                      (wait-signal '(usr1)) #f)))
+           (check (exists (lambda (sig) (eq? 'usr1 (signal-name sig))) (signal-mask))))
+         (lambda () (signal-mask-set! mask)))))]
+
+  [(native-continuation-lifetime)
+   ;; Error case: leaving an operation frees its context; replay must reject that freed state.
+   (let ([resume #f] [replaying? #f]
+         [fds (length (directory-list "/proc/self/fd"))])
+     (let ([result
+             (guard (failure [else failure])
+               (let/1cc leave
+                 (parameterize
+                   ([keyboard-interrupt-handler
+                      (lambda ()
+                        ;; call/cc captures a reusable continuation only to test lifetime rejection.
+                        (call/cc (lambda (continuation) (set! resume continuation) (leave 'left))))])
+                   (let ([thread ((foreign-procedure "pthread_self" () uptr))])
+                     (fork-thread
+                       (lambda () (milisleep 50)
+                         ((foreign-procedure "pthread_kill" (uptr int) int) thread 2)))
+                     (process-capture /bin/sleep "3")))))])
+       (if replaying?
+           (check (and (error? result)
+                       (string=? "cannot resume a disposed native operation"
+                                 (condition-message result))))
+           (begin
+             (check (eq? result 'left))
+             (check (= fds (length (directory-list "/proc/self/fd"))))
+             (set! replaying? #t)
+             (resume)))))]
+
+  [(timeout-grace)
+   ;; Error case: making capture resumable must preserve TERM cleanup before forced termination.
+   (let ([path (format "/tmp/cspp-timeout-grace-~a" (getpid))])
+     (dynamic-wind
+       void
+       (lambda ()
+         (let ([command (format "trap 'printf stopped > ~a; exit 0' TERM; while :; do :; done" path)])
+           (check (guard (failure [(system-timeout-error? failure) #t])
+                    (process-run /bin/sh "-c" (begin command) :timeout 100) #f)))
+         (check (string=? "stopped" (call-with-input-file path get-string-all))))
+       (lambda () (when (file-exists? path) (delete-file path)))))]
+
+  [(pending-wait-interrupt)
+   ;; Error case: SIGINT already delivered before poll must not wait for the child's exit.
+   (let* ([child (process-spawn "/bin/sleep" '("0.4") '())]
+          [thread ((foreign-procedure "pthread_self" () uptr))]
+          [send (foreign-procedure "pthread_kill" (uptr int) int)]
+          [start (current-time 'time-monotonic)] [handled #f])
+     (dynamic-wind
+       void
+       (lambda ()
+         (parameterize ([keyboard-interrupt-handler
+                          (lambda ()
+                            (set! handled (time-difference (current-time 'time-monotonic) start)))])
+           (with-interrupts-disabled (void))
+           (send thread 2)
+           (process-wait child)
+           (with-interrupts-disabled (void))
+           (check (and handled (= 0 (time-second handled))
+                       (< (time-nanosecond handled) 200000000)))))
+       (lambda () (process-kill child 9) (process-wait child))))]
+
   [(ownership-interrupts)
    ;; Error case: handlers escaping resource acquisition must not leak descriptors or children.
    (let ([fds (lambda () (length (directory-list "/proc/self/fd")))]

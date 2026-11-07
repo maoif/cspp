@@ -3,6 +3,24 @@
 ;; This driver runs under strace syscall injection, separately from the test runner.
 (define mode (string->symbol (cadr (command-line))))
 (case mode
+  [(spawn-interrupt)
+   ;; Error case: a delayed exec handshake must service handlers before child setup completes.
+   (let* ([thread ((foreign-procedure "pthread_self" () uptr))]
+          [send (foreign-procedure "pthread_kill" (uptr int) int)]
+          [start (current-time 'time-monotonic)] [handled #f] [child #f]
+          [fds (length (directory-list "/proc/self/fd"))])
+     (parameterize
+       ([keyboard-interrupt-handler
+          (lambda ()
+            (set! handled (time-difference (current-time 'time-monotonic) start)))])
+       (fork-thread (lambda () (milisleep 50) (send thread 2)))
+       (set! child (process-spawn "/bin/true" '() '())))
+     (process-wait child)
+     (unless (and handled (= 0 (time-second handled))
+                  (< (time-nanosecond handled) 250000000)
+                  (= fds (length (directory-list "/proc/self/fd"))))
+       (error 'system-native-faults "spawn deferred its handler or leaked descriptors")))]
+
   [(preexec-signal)
    ;; Error case: a signal during delayed child setup must use exec's default disposition.
    (let* ([children-path (format "/proc/self/task/~a/children" (getpid))]

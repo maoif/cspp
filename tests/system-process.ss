@@ -501,21 +501,32 @@
             (not (process-stdout p))
             (not (process-stderr p)))))
 
-;; Error case: a missing executable should return an errno tagged result.
+(define raw-process-capture
+  (lambda (arguments)
+    (let ([handle ((foreign-procedure "cspp_process_operation_create" () uptr))]
+          [prepare (foreign-procedure "cspp_process_prepare_capture"
+                     (uptr ptr ptr utf-8 ptr int int int int int int) void)]
+          [step (foreign-procedure __collect_safe "cspp_process_operation_step" (uptr) int)]
+          [result (foreign-procedure "cspp_process_operation_result" (uptr) ptr)]
+          [dispose (foreign-procedure __collect_safe "cspp_process_operation_dispose" (uptr) void)])
+      (when (= handle 0) (error 'raw-process-capture "native allocation failed"))
+      (dynamic-wind
+        void
+        (lambda ()
+          (prepare handle arguments #f "" #f 0 0 0 0 0 -1)
+          (let loop ()
+            (if (= 0 (step handle)) (loop) (result handle))))
+        (lambda () (dispose handle))))))
+
 (mat process-ffi-result-tags
 
-     (let ([raw ((foreign-procedure "cspp_spawn_capture"
-                                    (ptr ptr string ptr int int int int int int)
-                                    ptr)
-                 (list "sh" "-c" "true") #f "" #f 0 0 0 0 0 -1)])
+     (let ([raw (raw-process-capture (list "sh" "-c" "true"))])
        (and (vector? raw)
             (eq? 'ok (vector-ref raw 0))))
 
-     (let ([spawn (foreign-procedure "cspp_spawn_capture"
-                                     (ptr ptr string ptr int int int int int int)
-                                     ptr)])
-       (let ([missing (spawn (list "definitely-not-a-cspp-test-command")
-                             #f "" #f 0 0 0 0 0 -1)])
+     ;; Error case: missing executables return errno tags without losing the path error code.
+     (let ([spawn raw-process-capture])
+       (let ([missing (spawn (list "definitely-not-a-cspp-test-command"))])
          (and (vector? missing)
               (eq? 'errno (vector-ref missing 0))
               (positive? (vector-ref missing 2))
@@ -525,8 +536,7 @@
                      [raw #f])
                 (put-string port "not-a-directory")
                 (close-output-port port)
-                (set! raw (spawn (list (string-append path "/child"))
-                                 #f "" #f 0 0 0 0 0 -1))
+                (set! raw (spawn (list (string-append path "/child"))))
                 (delete-file path)
                 (and (eq? 'errno (vector-ref raw 0))
                      (not (= (vector-ref missing 2) (vector-ref raw 2))))))))

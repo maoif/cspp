@@ -122,30 +122,67 @@ ptr cspp_signal_mask_update(ptr numbers, int action) {
 #endif
 }
 
-ptr cspp_wait_signal(ptr numbers) {
+typedef struct {
 #if defined(__linux__)
-  sigset_t current, requested;
-  int code = pthread_sigmask(SIG_BLOCK, NULL, &current);
-  if (code != 0) return signal_error("wait-signal", code);
-  code = read_signal_set(numbers, &requested, &current, 0);
-  if (code != 0) return signal_error("wait-signal", code);
-  if (Svector_length(numbers) == 0) return signal_error("wait-signal", EINVAL);
-  for (iptr index = 0; index < Svector_length(numbers); index += 1) {
-    if (sigismember(&current, (int)Sfixnum_value(Svector_ref(numbers, index))) != 1)
-      return signal_error("wait-signal", EINVAL);
+  sigset_t requested;
+#endif
+  int error, received;
+} signal_wait_operation;
+
+uptr cspp_signal_wait_create(void) {
+  return (uptr)calloc(1, sizeof(signal_wait_operation));
+}
+
+void cspp_signal_wait_prepare(uptr handle, ptr numbers) {
+  signal_wait_operation *op = (signal_wait_operation *)handle;
+#if defined(__linux__)
+  sigset_t current;
+  op->error = pthread_sigmask(SIG_BLOCK, NULL, &current);
+  if (op->error) return;
+  op->error = read_signal_set(numbers, &op->requested, &current, 0);
+  if (op->error) return;
+  if (Svector_length(numbers) == 0) { op->error = EINVAL; return; }
+  for (iptr index = 0; index < Svector_length(numbers); index++) {
+    if (sigismember(&current, (int)Sfixnum_value(Svector_ref(numbers, index))) != 1) {
+      op->error = EINVAL;
+      return;
+    }
   }
-  int received = 0;
-  /* sigwait can block indefinitely. Release Chez's GC coordination; requested
-   * and received are native stack storage, and numbers is not accessed again. */
-  Sdeactivate_thread();
-  do {
-    code = sigwait(&requested, &received);
-  } while (code == EINTR);
-  Sactivate_thread(); /* Resume before allocating a tagged result or condition. */
-  if (code != 0) return signal_error("wait-signal", code);
-  return cspp_ok(Sfixnum(received));
 #else
   (void)numbers;
+#endif
+}
+
+/* Bound with __collect_safe: Chez supplies Sdeactivate_thread/Sactivate_thread.
+ * The copied signal set is native-owned; no Scheme object is accessed here.
+ * sigtimedwait returns on unrelated signals or after 20ms so Scheme can service
+ * pending handlers, including signals delivered just before the native call. */
+int cspp_signal_wait_step(uptr handle) {
+  signal_wait_operation *op = (signal_wait_operation *)handle;
+#if defined(__linux__)
+  if (op->error) return 1;
+  struct timespec interval = {0, 20000000};
+  int received = sigtimedwait(&op->requested, NULL, &interval);
+  if (received > 0) { op->received = received; return 1; }
+  if (errno == EAGAIN || errno == EINTR) return 0;
+  op->error = errno;
+#else
+  (void)op;
+#endif
+  return 1;
+}
+
+ptr cspp_signal_wait_result(uptr handle) {
+  signal_wait_operation *op = (signal_wait_operation *)handle;
+#if defined(__linux__)
+  if (op->error) return signal_error("wait-signal", op->error);
+  return cspp_ok(Sfixnum(op->received));
+#else
+  (void)op;
   return cspp_unsupported_result("wait-signal");
 #endif
+}
+
+void cspp_signal_wait_dispose(uptr handle) {
+  free((signal_wait_operation *)handle);
 }

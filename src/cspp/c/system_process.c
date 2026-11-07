@@ -160,16 +160,6 @@ static char **env_from_alist(ptr env) {
   return out;
 }
 
-/* Preserve the first conversion failure; a subsequent successful allocation
- * or malformed environment must not replace its errno. Callers free both arrays. */
-static int copy_command(ptr argv, ptr env, char ***cargv, char ***cenv) {
-  *cenv = NULL;
-  *cargv = argv_from_list(argv);
-  if (!*cargv) return errno;
-  *cenv = env_from_alist(env);
-  return *cenv ? 0 : errno;
-}
-
 #if defined(__unix__) || defined(__APPLE__)
 static const char *environment_value(char **env, const char *name) {
   size_t name_len = strlen(name);
@@ -257,12 +247,6 @@ static int child_redirect(int source, int target) {
   return 0;
 }
 
-static void wait_child_after_exec_error(pid_t pid) {
-  int status;
-  while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
-  }
-}
-
 /* Keep only standard streams and the exec-error pipe. No allocation or locks
  * are permitted after fork; Linux's procfs fallback uses a native stack buffer. */
 static int child_close_descriptors(int preserve, long descriptor_limit) {
@@ -315,7 +299,7 @@ static int child_close_descriptors(int preserve, long descriptor_limit) {
 #endif
 }
 
-static int spawn_native(pid_t *pid, char *const argv[], char *const env[],
+static int spawn_begin(pid_t *pid, int *error_fd, char *const argv[], char *const env[],
                          char *const candidates[], const char *cwd,
                          int stdin_source, int stdout_source,
                          int stderr_source, int stderr_to_stdout) {
@@ -326,8 +310,8 @@ static int spawn_native(pid_t *pid, char *const argv[], char *const env[],
 #endif
   int error_pipe[2];
   if (make_pipe(error_pipe) != 0) return errno;
-  int flags = fcntl(error_pipe[1], F_GETFD, 0);
-  if (flags < 0 || fcntl(error_pipe[1], F_SETFD, flags | FD_CLOEXEC) < 0) {
+  int flags = fcntl(error_pipe[0], F_GETFL, 0);
+  if (flags < 0 || fcntl(error_pipe[0], F_SETFL, flags | O_NONBLOCK) < 0) {
     int error = errno;
     close(error_pipe[0]);
     close(error_pipe[1]);
@@ -403,47 +387,10 @@ static int spawn_native(pid_t *pid, char *const argv[], char *const env[],
   }
 
   close(error_pipe[1]);
-  int child_error = 0;
-  size_t received = 0;
-  while (received < sizeof(child_error)) {
-    ssize_t n = read(error_pipe[0], (unsigned char *)&child_error + received,
-                     sizeof(child_error) - received);
-    if (n > 0) received += (size_t)n;
-    else if (n == 0) break;
-    else if (errno == EINTR) continue;
-    else {
-      int error = errno;
-      close(error_pipe[0]);
-      kill(child, SIGKILL);
-      wait_child_after_exec_error(child);
-      return error;
-    }
-  }
-  close(error_pipe[0]);
-  if (received != 0) {
-    wait_child_after_exec_error(child);
-    return received == sizeof(child_error) ? child_error : EIO;
-  }
   *pid = child;
+  *error_fd = error_pipe[0];
   return 0;
 }
-/* Fork/exec setup and its error-pipe handshake may block. Deactivate to permit
- * concurrent GC; argv, env, candidates, and directory are all native-owned.
- * The calling Scheme thread remains responsible for reactivation afterward. */
-static int spawn_checked(pid_t *pid, char *const argv[], char *const env[],
-                         char *const candidates[], const char *cwd,
-                         int stdin_source, int stdout_source, int stderr_source,
-                         int stderr_to_stdout) {
-  char *directory = strdup(cwd ? cwd : "");
-  if (!directory) return ENOMEM;
-  Sdeactivate_thread();
-  int error = spawn_native(pid, argv, env, candidates, directory, stdin_source,
-                            stdout_source, stderr_source, stderr_to_stdout);
-  Sactivate_thread(); /* Resume Scheme access before returning to the caller. */
-  free(directory);
-  return error;
-}
-
 #endif
 
 static void close_fd(int *fd) {
@@ -491,323 +438,384 @@ static int64_t monotonic_ms(void) {
   return ((int64_t)ts.tv_sec * 1000) + ((int64_t)ts.tv_nsec / 1000000);
 }
 
-static void sleep_ms(int ms) {
-  struct timespec ts;
-  ts.tv_sec = ms / 1000;
-  ts.tv_nsec = (long)(ms % 1000) * 1000000L;
-  while (nanosleep(&ts, &ts) != 0 && errno == EINTR) {
+
+/* One native-owned operation per Scheme dynamic-wind scope. No Scheme object
+ * survives preparation. Steps and disposal use __collect_safe, so Chez supplies
+ * Sdeactivate_thread()/Sactivate_thread() around them; neither touches Scheme.
+ * A poll step sleeps at most 20ms and returns to Scheme for pending handlers. */
+typedef struct {
+  const char *operation;
+  int live, pipeline, capture, error, timed_out;
+  int count, launched, next, exec_fd, exec_error;
+  size_t exec_received;
+  char ***argvs, ***candidates, **env, *cwd;
+  pid_t *pids, final_pid;
+  int stdin_mode, stdout_mode, stderr_mode, stderr_to_stdout;
+  int live_fds[3], input_fd, output_fds[2], connection_fd, capture_pipe[2];
+  unsigned char *input;
+  size_t input_size, sent;
+  int retain[2], timeout_ms, status;
+  int64_t deadline;
+  byte_buffer buffers[2];
+} process_operation;
+
+uptr cspp_process_operation_create(void) {
+  process_operation *op = calloc(1, sizeof(*op));
+  if (!op) return 0;
+  op->exec_fd = op->input_fd = op->connection_fd = -1;
+  op->capture_pipe[0] = op->capture_pipe[1] = -1;
+  op->output_fds[0] = op->output_fds[1] = -1;
+  for (int i = 0; i < 3; i++) op->live_fds[i] = -1;
+  op->timeout_ms = -1;
+  return (uptr)op;
+}
+
+static int prepare_commands(process_operation *op, ptr specs, ptr env, const char *cwd) {
+  op->count = list_length(specs);
+  if (op->count <= 0) return EINVAL;
+  op->argvs = calloc((size_t)op->count, sizeof(*op->argvs));
+  op->candidates = calloc((size_t)op->count, sizeof(*op->candidates));
+  op->pids = calloc((size_t)op->count, sizeof(*op->pids));
+  op->cwd = strdup(cwd ? cwd : "");
+  if (!op->argvs || !op->candidates || !op->pids || !op->cwd) return ENOMEM;
+  op->env = env_from_alist(env);
+  if (!op->env) return errno;
+  ptr remaining = specs;
+  for (int i = 0; i < op->count; i++, remaining = Scdr(remaining)) {
+    op->argvs[i] = argv_from_list(Scar(remaining));
+    if (!op->argvs[i]) return errno;
+  }
+  return 0;
+}
+
+void cspp_process_prepare_spawn(uptr handle, ptr argv, ptr env, const char *cwd,
+                                int stdin_mode, int stdout_mode, int stderr_mode) {
+  process_operation *op = (process_operation *)handle;
+  op->operation = "process-spawn";
+  op->live = 1;
+  op->stdin_mode = stdin_mode;
+  op->stdout_mode = stdout_mode;
+  op->stderr_mode = stderr_mode;
+  op->stderr_to_stdout = stderr_mode == 3;
+  op->error = prepare_commands(op, Scons(argv, Snil), env, cwd);
+}
+
+void cspp_process_prepare_capture(uptr handle, ptr argv, ptr env, const char *cwd,
+                                  ptr input, int stdout_mode, int stderr_mode,
+                                  int stdout_null, int stderr_null, int stderr_to_stdout,
+                                  int timeout_ms) {
+  process_operation *op = (process_operation *)handle;
+  op->operation = "spawn-capture";
+  op->capture = 1;
+  op->timeout_ms = timeout_ms;
+  op->stdout_mode = stdout_mode ? 2 : stdout_null ? 1 : 0;
+  op->stderr_mode = stderr_mode ? 2 : stderr_null ? 1 : 0;
+  op->stderr_to_stdout = stderr_to_stdout;
+  op->retain[0] = stdout_mode == 1;
+  op->retain[1] = stderr_mode == 1;
+  op->stdin_mode = Sbytevectorp(input) ? 2 : Ssymbolp(input) ? 0 : 1;
+  op->error = prepare_commands(op, Scons(argv, Snil), env, cwd);
+  if (op->error) return;
+  if (Sbytevectorp(input)) {
+    op->input_size = (size_t)Sbytevector_length(input);
+    op->input = malloc(op->input_size ? op->input_size : 1);
+    if (!op->input) { op->error = ENOMEM; return; }
+    if (op->input_size) memcpy(op->input, Sbytevector_data(input), op->input_size);
   }
 }
 
-static ptr pid_context(pid_t pid) {
-  return Scons(Scons(Sstring("pid"), Sinteger((iptr)pid)), Snil);
+/* mode: 0 live pipeline, 1 captured stdout, 2 discarded stdout. */
+void cspp_process_prepare_pipeline(uptr handle, ptr specs, int mode) {
+  process_operation *op = (process_operation *)handle;
+  op->operation = "spawn-pipeline";
+  op->pipeline = 1;
+  op->live = mode == 0;
+  op->capture = mode == 1;
+  op->retain[0] = mode == 1;
+  op->stdout_mode = mode == 0 ? 0 : mode == 1 ? 2 : 1;
+  op->error = prepare_commands(op, specs, Sfalse, "");
 }
 
-static int wait_pid_block(pid_t pid, int *status) {
-  for (;;) {
-    pid_t r = waitpid(pid, status, 0);
-    if (r == pid) return 0;
-    if (r < 0 && errno == EINTR) continue;
-    return -1;
+#if defined(__unix__) || defined(__APPLE__)
+static int launch_stage(process_operation *op) {
+  int pipes[3][2] = {{-1, -1}, {-1, -1}, {-1, -1}};
+  int next_pipe[2] = {-1, -1};
+  int sources[3] = {-1, -1, -1};
+  int error = executable_candidates(op->argvs[op->next][0], op->env,
+                                     &op->candidates[op->next]);
+  if (error) return error;
+  if (op->pipeline) {
+    if (op->next < op->count - 1) {
+      if (make_pipe(next_pipe) < 0) return errno;
+      sources[1] = next_pipe[1];
+    } else if (op->capture) {
+      if (make_pipe(op->capture_pipe) < 0) return errno;
+      sources[1] = op->capture_pipe[1];
+    } else if (!op->live) sources[1] = -2;
+    sources[0] = op->connection_fd;
+  } else {
+    int modes[3] = {op->stdin_mode, op->stdout_mode, op->stderr_mode};
+    for (int i = 0; i < 3; i++) {
+      if (i == 2 && op->stderr_to_stdout) continue;
+      if (modes[i] == 2) {
+        if (make_pipe(pipes[i]) < 0) { error = errno; goto done; }
+        sources[i] = pipes[i][i == 0 ? 0 : 1];
+      } else sources[i] = modes[i] == 1 ? -2 : -1;
+    }
   }
-}
-
-/* Called with an active Scheme thread. Reaping may block, so deactivate for GC;
- * only the native PID array and stack status cross this region. The caller
- * retains its original error separately from cleanup's errno. */
-static void cleanup_pipeline_children(pid_t *pids, int count) {
-  if (count == 0) return;
-  Sdeactivate_thread();
-  for (int i = 0; i < count; i += 1) kill(pids[i], SIGKILL);
-  for (int i = 0; i < count; i += 1) {
-    int status;
-    (void)wait_pid_block(pids[i], &status);
+  error = spawn_begin(&op->pids[op->next], &op->exec_fd,
+                      op->argvs[op->next], op->env, op->candidates[op->next], op->cwd,
+                      sources[0], sources[1], sources[2], op->stderr_to_stdout);
+  if (error) goto done;
+  op->launched++;
+  op->final_pid = op->pids[op->next];
+  if (op->pipeline) {
+    close_fd(&op->connection_fd);
+    close_fd(&next_pipe[1]);
+    op->connection_fd = next_pipe[0];
+    next_pipe[0] = -1;
+    close_fd(&op->capture_pipe[1]);
+  } else {
+    for (int i = 0; i < 3; i++) {
+      int child_end = i == 0 ? 0 : 1;
+      close_fd(&pipes[i][child_end]);
+      int parent_end = pipes[i][1 - child_end];
+      pipes[i][1 - child_end] = -1;
+      if (op->live) op->live_fds[i] = parent_end;
+      else if (i == 0) op->input_fd = parent_end;
+      else op->output_fds[i - 1] = parent_end;
+    }
   }
-  Sactivate_thread(); /* Caller may now access/construct Scheme error results. */
+ done:
+  for (int i = 0; i < 3; i++) {
+    close_fd(&pipes[i][0]);
+    close_fd(&pipes[i][1]);
+  }
+  close_fd(&next_pipe[0]);
+  close_fd(&next_pipe[1]);
+  return error;
 }
 
-/* Only native-owned memory crosses poll/wait. A single bounded read per stream
- * per iteration keeps a busy producer from starving stdin or the deadline. */
-static int terminate_child(pid_t pid) {
+static int finish_exec_step(process_operation *op) {
+  struct pollfd event = {op->exec_fd, POLLIN, 0};
+  int ready = poll(&event, 1, 20);
+  if (ready < 0) return errno == EINTR ? 0 : -errno;
+  if (!ready) return 0;
+  ssize_t received = read(op->exec_fd, (unsigned char *)&op->exec_error + op->exec_received,
+                          sizeof(op->exec_error) - op->exec_received);
+  if (received < 0)
+    return errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK ? 0 : -errno;
+  if (received > 0) {
+    op->exec_received += (size_t)received;
+    return op->exec_received == sizeof(op->exec_error) ? -op->exec_error : 0;
+  }
+  close_fd(&op->exec_fd);
+  return op->exec_received ? -EIO : 1;
+}
+
+static int reap_step(process_operation *op, int index) {
+  if (!op->pids[index]) return 1;
   int status;
-  kill(pid, SIGTERM);
-  for (int i = 0; i < 20; i++) {
-    pid_t result = waitpid(pid, &status, WNOHANG);
-    if (result == pid || (result < 0 && errno == ECHILD)) return 0;
-    if (result < 0 && errno != EINTR) return -1;
-    sleep_ms(5);
+  pid_t pid = waitpid(op->pids[index], &status, WNOHANG);
+  if (pid > 0) {
+    op->pids[index] = 0; /* No cleanup path may signal this PID after reaping. */
+    if (index == op->count - 1) op->status = status;
+    return 1;
   }
-  kill(pid, SIGKILL);
-  return wait_pid_block(pid, &status);
+  return pid == 0 || errno == EINTR ? 0 : -errno;
 }
 
-static ptr capture_child(pid_t pid, int input_fd, const unsigned char *input,
-                         size_t input_size, int stdout_fd, int stderr_fd,
-                         int retain_stdout, int retain_stderr,
-                         int timeout_ms, const char *operation) {
-  byte_buffer buffers[2] = {{0}, {0}};
-  int output_fds[2] = {stdout_fd, stderr_fd};
-  int retain[2] = {retain_stdout, retain_stderr};
-  int status = 0, reaped = 0, error = 0, timed_out = 0, broken_pipe = 0;
-  size_t sent = 0;
-  int64_t start = monotonic_ms();
-  sigset_t pipe_signal, old_mask, pending;
-  sigemptyset(&pipe_signal);
-  sigaddset(&pipe_signal, SIGPIPE);
-  /* poll, I/O, reaping, and termination can block: release Chez's GC coordination.
-   * input and output buffers are native-owned; only native descriptors, signal
-   * sets, and stack values are accessed until Sactivate_thread below.
-   * Writes can race a child's close. Block only this thread's SIGPIPE, then
-   * consume only a newly generated pending instance before restoring its mask. */
-  Sdeactivate_thread();
-  int mask_error = pthread_sigmask(SIG_BLOCK, &pipe_signal, &old_mask);
-  int had_pipe = sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE);
-  if (mask_error) error = mask_error;
-  if (input_fd >= 0 && set_nonblock(input_fd) < 0) error = errno;
-  for (int i = 0; i < 2; i++)
-    if (output_fds[i] >= 0 && set_nonblock(output_fds[i]) < 0) error = errno;
-  if (!input_size) close_fd(&input_fd);
-
-  while (!error) {
-    if (!reaped) {
-      /* With no remaining I/O or deadline, block in waitpid instead of polling
-       * an empty descriptor set. The Scheme thread is already inactive. */
-      int wait_options = timeout_ms < 0 && input_fd < 0 &&
-                         output_fds[0] < 0 && output_fds[1] < 0 ? 0 : WNOHANG;
-      pid_t result = waitpid(pid, &status, wait_options);
-      if (result == pid) { reaped = 1; close_fd(&input_fd); }
-      else if (result < 0) {
-        if (errno == EINTR) continue;
-        error = errno;
-        break;
-      }
+/* Only one bounded read/write per descriptor per step, so an active producer
+ * cannot starve stdin, the deadline, or the Scheme event checkpoint. */
+static int capture_step(process_operation *op) {
+  int reaped = reap_step(op, op->count - 1);
+  if (reaped < 0) { op->error = -reaped; return 1; }
+  if (reaped) close_fd(&op->input_fd);
+  if (reaped && op->output_fds[0] < 0 && op->output_fds[1] < 0) {
+    int finished = 1;
+    for (int index = 0; index < op->count - 1; index++) {
+      int result = reap_step(op, index);
+      if (result < 0) { op->error = -result; return 1; }
+      if (!result) finished = 0;
     }
-    if (reaped && output_fds[0] < 0 && output_fds[1] < 0) break;
-    int64_t remaining = timeout_ms < 0 ? 20 : timeout_ms - (monotonic_ms() - start);
-    if (remaining <= 0) { timed_out = 1; break; }
-    struct pollfd fds[3] = {
-      {input_fd, POLLOUT, 0},
-      {output_fds[0], POLLIN, 0},
-      {output_fds[1], POLLIN, 0}
-    };
-    int ready = poll(fds, 3, remaining < 20 ? (int)remaining : 20);
-    if (ready < 0) { if (errno == EINTR) continue; error = errno; break; }
-    if (input_fd >= 0 && fds[0].revents) {
-      size_t chunk = input_size - sent;
-      if (chunk > 65536) chunk = 65536;
-      ssize_t written = write(input_fd, input + sent, chunk);
-      if (written > 0) {
-        sent += (size_t)written;
-        if (sent == input_size) close_fd(&input_fd);
-      } else if (written < 0 && errno == EPIPE) {
-        broken_pipe = 1;
-        close_fd(&input_fd); /* A child may intentionally ignore remaining input. */
-      } else if (written < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
-        error = errno;
-      }
-    }
-    for (int i = 0; i < 2 && !error; i++) {
-      if (output_fds[i] < 0 || !fds[i + 1].revents) continue;
-      char chunk[65536];
-      ssize_t length = read(output_fds[i], chunk, sizeof(chunk));
-      if (length > 0) {
-        if (retain[i] && !buffer_append(&buffers[i], chunk, (size_t)length)) error = ENOMEM;
-      } else if (!length) close_fd(&output_fds[i]);
-      else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) error = errno;
-    }
+    if (finished) return 1;
   }
-  close_fd(&input_fd);
-  close_fd(&output_fds[0]);
-  close_fd(&output_fds[1]);
-  if ((error || timed_out) && !reaped) (void)terminate_child(pid);
-  if (!mask_error) {
-    if (broken_pipe && !had_pipe) {
+  int64_t remaining = op->timeout_ms < 0 ? 20 : op->deadline - monotonic_ms();
+  if (remaining <= 0) { op->timed_out = 1; return 1; }
+  struct pollfd events[3] = {
+    {op->input_fd, POLLOUT, 0}, {op->output_fds[0], POLLIN, 0},
+    {op->output_fds[1], POLLIN, 0}
+  };
+  int ready = poll(events, 3, remaining < 20 ? (int)remaining : 20);
+  if (ready < 0) { if (errno != EINTR) op->error = errno; return op->error != 0; }
+  if (op->input_fd >= 0 && events[0].revents) {
+    /* Block SIGPIPE only around the write, preserving any instance that was
+     * already pending and restoring the thread's mask before returning to Scheme. */
+    sigset_t pipe_signal, previous, pending;
+    sigemptyset(&pipe_signal);
+    sigaddset(&pipe_signal, SIGPIPE);
+    int mask_error = pthread_sigmask(SIG_BLOCK, &pipe_signal, &previous);
+    if (mask_error) { op->error = mask_error; return 1; }
+    int had_pipe = sigpending(&pending) == 0 && sigismember(&pending, SIGPIPE);
+    size_t length = op->input_size - op->sent;
+    if (length > 65536) length = 65536;
+    ssize_t written = write(op->input_fd, op->input + op->sent, length);
+    int write_error = written < 0 ? errno : 0;
+    if (write_error == EPIPE && !had_pipe) {
       struct timespec immediate = {0, 0};
       while (sigtimedwait(&pipe_signal, NULL, &immediate) < 0 && errno == EINTR) {}
     }
-    (void)pthread_sigmask(SIG_SETMASK, &old_mask, NULL);
+    (void)pthread_sigmask(SIG_SETMASK, &previous, NULL);
+    if (written > 0) {
+      op->sent += (size_t)written;
+      if (op->sent == op->input_size) close_fd(&op->input_fd);
+    } else if (write_error == EPIPE) close_fd(&op->input_fd);
+    else if (write_error && write_error != EINTR && write_error != EAGAIN &&
+             write_error != EWOULDBLOCK) op->error = write_error;
   }
-  Sactivate_thread(); /* Resume before creating Scheme captures and tagged results. */
-  ptr result;
-  if (error) { errno = error; result = cspp_errno_result(operation, pid_context(pid)); }
-  else if (timed_out) result = cspp_timeout_result(operation, pid_context(pid));
-  else {
-    ptr value = Smake_vector(4, Sfalse);
-    Svector_set(value, 0, Sinteger((iptr)pid));
-    Svector_set(value, 1, Sinteger(status));
-    Svector_set(value, 2, buffer_to_bytes(&buffers[0]));
-    Svector_set(value, 3, buffer_to_bytes(&buffers[1]));
-    result = cspp_ok(value);
+  for (int i = 0; i < 2 && !op->error; i++) {
+    if (op->output_fds[i] < 0 || !events[i + 1].revents) continue;
+    char bytes[65536];
+    ssize_t count = read(op->output_fds[i], bytes, sizeof(bytes));
+    if (count > 0) {
+      if (op->retain[i] && !buffer_append(&op->buffers[i], bytes, (size_t)count))
+        op->error = ENOMEM;
+    } else if (!count) close_fd(&op->output_fds[i]);
+    else if (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK) op->error = errno;
   }
-  buffer_free(&buffers[0]);
-  buffer_free(&buffers[1]);
-  return result;
+  return op->error != 0;
 }
+#endif
 
-// Spawns argv directly, optionally feeds stdin, captures requested output, and
-// waits for completion. Shell parsing is intentionally left to Scheme wrappers.
-ptr cspp_spawn_capture(ptr argv, ptr env, const char *cwd,
-                         ptr stdin_payload, int capture_stdout, int capture_stderr,
-                         int stdout_null, int stderr_null, int stderr_to_stdout,
-                         int timeout_ms) {
+int cspp_process_operation_step(uptr handle) {
+  process_operation *op = (process_operation *)handle;
 #if defined(__unix__) || defined(__APPLE__)
-  char **cargv, **cenv;
-  int rc = copy_command(argv, env, &cargv, &cenv);
-  if (rc != 0) {
-    free_string_array(cargv);
-    free_string_array(cenv);
-    errno = rc;
-    return cspp_errno_result("spawn-capture", Snil);
-  }
-  char **candidates = NULL;
-  int resolve_error = executable_candidates(cargv[0], cenv, &candidates);
-  if (resolve_error != 0) {
-    free_string_array(cargv);
-    free_string_array(cenv);
-    errno = resolve_error;
-    return cspp_errno_result("spawn-capture", Snil);
-  }
-
-  int stdin_pipe[2] = {-1, -1};
-  int stdout_pipe[2] = {-1, -1};
-  int stderr_pipe[2] = {-1, -1};
-  if (Sbytevectorp(stdin_payload)) {
-    if (make_pipe(stdin_pipe) != 0) rc = errno;
-  }
-
-  if (rc == 0 && capture_stdout) {
-    if (make_pipe(stdout_pipe) != 0) rc = errno;
-  }
-
-  if (rc == 0 && !stderr_to_stdout && capture_stderr) {
-    if (make_pipe(stderr_pipe) != 0) rc = errno;
-  }
-
-  if (rc != 0) {
-    errno = rc;
-    close_fd(&stdin_pipe[0]);
-    close_fd(&stdin_pipe[1]);
-    close_fd(&stdout_pipe[0]);
-    close_fd(&stdout_pipe[1]);
-    close_fd(&stderr_pipe[0]);
-    close_fd(&stderr_pipe[1]);
-    free_string_array(candidates);
-    free_string_array(cargv);
-    free_string_array(cenv);
-    return cspp_errno_result("spawn-capture", Snil);
-  }
-
-  pid_t pid;
-  Slock_object(stdin_payload);
-  rc = spawn_checked(&pid, cargv, cenv, candidates, cwd,
-                     Sbytevectorp(stdin_payload) ? stdin_pipe[0] : (Ssymbolp(stdin_payload) ? -1 : -2),
-                     capture_stdout ? stdout_pipe[1] : (stdout_null ? -2 : -1),
-                     capture_stderr ? stderr_pipe[1] : (stderr_null ? -2 : -1),
-                     stderr_to_stdout);
-  free_string_array(candidates);
-  close_fd(&stdin_pipe[0]);
-  close_fd(&stdout_pipe[1]);
-  close_fd(&stderr_pipe[1]);
-  free_string_array(cargv);
-  free_string_array(cenv);
-
-  if (rc != 0) {
-    Sunlock_object(stdin_payload);
-    errno = rc;
-    close_fd(&stdin_pipe[1]);
-    close_fd(&stdout_pipe[0]);
-    close_fd(&stderr_pipe[0]);
-    return cspp_errno_result("spawn-capture", Snil);
-  }
-
-  unsigned char *input = NULL;
-  size_t input_size = 0;
-  if (stdin_payload != Sfalse && !Ssymbolp(stdin_payload)) {
-    if (!Sbytevectorp(stdin_payload)) {
-      close_fd(&stdin_pipe[1]); close_fd(&stdout_pipe[0]); close_fd(&stderr_pipe[0]);
-      /* Termination may block. Only pid crosses deactivation; stdin_payload
-       * remains locked and is not accessed until activation resumes. */
-      Sdeactivate_thread();
-      terminate_child(pid);
-      Sactivate_thread();
-      Sunlock_object(stdin_payload);
-      errno = EINVAL; return cspp_errno_result("spawn-capture", Snil);
+  if (op->error || op->timed_out) return 1;
+  if (op->next < op->count) {
+    if (op->exec_fd < 0) {
+      op->error = launch_stage(op);
+      if (op->error) return 1;
     }
-    input_size = (size_t)Sbytevector_length(stdin_payload);
-    input = malloc(input_size ? input_size : 1);
-    if (!input) {
-      close_fd(&stdin_pipe[1]); close_fd(&stdout_pipe[0]); close_fd(&stderr_pipe[0]);
-      /* Allow GC during cleanup using only the native pid; reactivate before
-       * unlocking stdin_payload or constructing the allocation error. */
-      Sdeactivate_thread();
-      terminate_child(pid);
-      Sactivate_thread();
-      Sunlock_object(stdin_payload);
-      errno = ENOMEM; return cspp_errno_result("spawn-capture", Snil);
+    int result = finish_exec_step(op);
+    if (result < 0) { op->error = -result; return 1; }
+    if (!result) return 0;
+    op->next++;
+    op->exec_received = 0;
+    op->exec_error = 0;
+    if (op->next < op->count) return 0;
+    if (op->live) return 1;
+    if (op->pipeline) {
+      op->output_fds[0] = op->capture_pipe[0];
+      op->capture_pipe[0] = -1;
     }
-    if (input_size) memcpy(input, Sbytevector_data(stdin_payload), input_size);
+    op->deadline = monotonic_ms() + op->timeout_ms;
+    if (!op->input_size) close_fd(&op->input_fd);
+    if (op->input_fd >= 0 && set_nonblock(op->input_fd) < 0) op->error = errno;
+    for (int i = 0; i < 2; i++)
+      if (op->output_fds[i] >= 0 && set_nonblock(op->output_fds[i]) < 0) op->error = errno;
+    return op->error != 0;
   }
-  Sunlock_object(stdin_payload);
-  ptr result = capture_child(pid, stdin_pipe[1], input, input_size,
-                             capture_stdout ? stdout_pipe[0] : -1,
-                             capture_stderr ? stderr_pipe[0] : -1,
-                             capture_stdout == 1, capture_stderr == 1,
-                             timeout_ms, "spawn-capture");
-  free(input);
-  return result;
+  return op->live ? 1 : capture_step(op);
 #else
-  (void)argv; (void)env; (void)cwd; (void)stdin_payload;
-  (void)capture_stdout; (void)capture_stderr; (void)stdout_null;
-  (void)stderr_null; (void)stderr_to_stdout; (void)timeout_ms;
-  return cspp_unsupported_result("spawn-capture");
+  return 1;
 #endif
 }
 
-// Spawns argv directly and returns the child pid without waiting. The process
-// object in Scheme owns waiting; this helper only configures null stdio modes.
-ptr cspp_spawn_process(ptr argv, ptr env, const char *cwd,
-                         int stdin_mode, int stdout_mode, int stderr_mode) {
+ptr cspp_process_operation_result(uptr handle) {
+  process_operation *op = (process_operation *)handle;
 #if defined(__unix__) || defined(__APPLE__)
-  const char *operation = "process-spawn";
-  char **cargv, **cenv;
-  char **candidates = NULL;
-  int pipes[3][2] = {{-1, -1}, {-1, -1}, {-1, -1}};
-  int modes[3] = {stdin_mode, stdout_mode, stderr_mode};
-  int sources[3], error = copy_command(argv, env, &cargv, &cenv);
-  pid_t pid = -1;
-  if (error) goto done;
-  error = executable_candidates(cargv[0], cenv, &candidates);
-  if (error) goto done;
-  for (int i = 0; i < 3; i++) {
-    if (modes[i] < 0 || modes[i] > (i == 2 ? 3 : 2)) { error = EINVAL; goto done; }
-    if (modes[i] == 2) {
-      if (make_pipe(pipes[i]) < 0) { error = errno; goto done; }
-      sources[i] = pipes[i][i == 0 ? 0 : 1];
-    } else sources[i] = modes[i] == 1 ? -2 : -1;
+  if (op->error) {
+    errno = op->error;
+    return cspp_errno_result(op->operation, Snil);
   }
-  error = spawn_checked(&pid, cargv, cenv, candidates, cwd,
-                         sources[0], sources[1], sources[2], stderr_mode == 3);
- done:
-  free_string_array(candidates);
-  free_string_array(cargv);
-  free_string_array(cenv);
-  if (error) {
-    for (int i = 0; i < 3; i++) { close_fd(&pipes[i][0]); close_fd(&pipes[i][1]); }
-    errno = error;
-    return cspp_errno_result(operation, Snil);
+  if (op->timed_out)
+    return cspp_timeout_result(op->operation,
+      Scons(Scons(Sstring("pid"), Sinteger(op->final_pid)), Snil));
+  ptr value;
+  if (op->live && op->pipeline) {
+    value = Smake_vector(op->count, Sfalse);
+    for (int i = 0; i < op->count; i++) Svector_set(value, i, Sinteger(op->pids[i]));
+  } else {
+    value = Smake_vector(4, Sfalse);
+    Svector_set(value, 0, Sinteger(op->final_pid));
+    if (op->live) {
+      for (int i = 0; i < 3; i++) Svector_set(value, i + 1, Sinteger(op->live_fds[i]));
+    } else {
+      Svector_set(value, 1, Sinteger(op->status));
+      Svector_set(value, 2, buffer_to_bytes(&op->buffers[0]));
+      Svector_set(value, 3, buffer_to_bytes(&op->buffers[1]));
+    }
   }
-  ptr value = Smake_vector(4, Sfalse);
-  Svector_set(value, 0, Sinteger((iptr)pid));
-  for (int i = 0; i < 3; i++) {
-    int child_end = i == 0 ? 0 : 1;
-    close_fd(&pipes[i][child_end]);
-    Svector_set(value, i + 1, Sinteger(pipes[i][1 - child_end]));
+  ptr result = cspp_ok(value);
+  if (op->live) {
+    /* The Scheme consumer receives this result with interrupts disabled and
+     * publishes it inside an already-installed cleanup guard. */
+    for (int i = 0; i < op->count; i++) op->pids[i] = 0;
+    for (int i = 0; i < 3; i++) op->live_fds[i] = -1;
   }
-  return cspp_ok(value);
+  return result;
 #else
-  (void)argv; (void)env; (void)cwd; (void)stdin_mode; (void)stdout_mode; (void)stderr_mode;
-  return cspp_unsupported_result("process-spawn");
+  return cspp_unsupported_result(op->operation);
 #endif
+}
+
+#if defined(__unix__) || defined(__APPLE__)
+/* Retain the existing command-timeout grace period. Disposal is collect-safe
+ * and may take longer than one normal step while terminating/reaping children. */
+static void terminate_timed_out_child(pid_t pid) {
+  kill(pid, SIGTERM);
+  for (int attempt = 0; attempt < 20; attempt++) {
+    int status;
+    pid_t result = waitpid(pid, &status, WNOHANG);
+    if (result == pid || (result < 0 && errno == ECHILD)) return;
+    struct timespec interval = {0, 5000000};
+    while (nanosleep(&interval, &interval) < 0 && errno == EINTR) {}
+  }
+  kill(pid, SIGKILL);
+  int status;
+  while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+}
+#endif
+
+void cspp_process_operation_dispose(uptr handle) {
+  process_operation *op = (process_operation *)handle;
+  close_fd(&op->exec_fd);
+  close_fd(&op->input_fd);
+  close_fd(&op->connection_fd);
+  for (int i = 0; i < 3; i++) close_fd(&op->live_fds[i]);
+  for (int i = 0; i < 2; i++) {
+    close_fd(&op->output_fds[i]);
+    close_fd(&op->capture_pipe[i]);
+    buffer_free(&op->buffers[i]);
+  }
+#if defined(__unix__) || defined(__APPLE__)
+  if (op->timed_out && op->pids[op->count - 1]) {
+    terminate_timed_out_child(op->pids[op->count - 1]);
+    op->pids[op->count - 1] = 0;
+  }
+  /* Only unreaped PIDs remain nonzero. Kill every owned child before waiting,
+   * including stages that never write to their now-closed pipeline connection. */
+  for (int i = 0; i < op->launched; i++) if (op->pids[i]) kill(op->pids[i], SIGKILL);
+  for (int i = 0; i < op->launched; i++) {
+    if (!op->pids[i]) continue;
+    int status;
+    while (waitpid(op->pids[i], &status, 0) < 0 && errno == EINTR) {}
+  }
+#endif
+  for (int i = 0; i < op->count; i++) {
+    if (op->argvs) free_string_array(op->argvs[i]);
+    if (op->candidates) free_string_array(op->candidates[i]);
+  }
+  free(op->argvs);
+  free(op->candidates);
+  free(op->pids);
+  free_string_array(op->env);
+  free(op->cwd);
+  free(op->input);
+  free(op);
+}
+static ptr pid_context(pid_t pid) {
+  return Scons(Scons(Sstring("pid"), Sinteger((iptr)pid)), Snil);
 }
 
 ptr cspp_waitpid(int pid, int nohang) {
@@ -882,169 +890,4 @@ ptr cspp_make_pipe() {
 #else
   return cspp_unsupported_result("make-pipe");
 #endif
-}
-
-#if defined(__unix__) || defined(__APPLE__)
-typedef enum {
-  PIPELINE_STDOUT_INHERIT,
-  PIPELINE_STDOUT_CAPTURE,
-  PIPELINE_STDOUT_DISCARD
-} pipeline_stdout_mode;
-
-typedef struct {
-  int count;
-  int spawned;
-  char **env;
-  char ***argvs;
-  pid_t *pids;
-  int input_fd;
-  int capture_pipe[2];
-} pipeline_launch;
-
-static void close_pipeline_connections(pipeline_launch *launch) {
-  close_fd(&launch->input_fd);
-  close_fd(&launch->capture_pipe[1]);
-}
-
-/* On failure, reap launched children before releasing their native-owned arguments.
- * A successful caller owns the final capture read end until capture_child closes it. */
-static void dispose_pipeline(pipeline_launch *launch, int terminate) {
-  if (terminate) cleanup_pipeline_children(launch->pids, launch->spawned);
-  close_pipeline_connections(launch);
-  close_fd(&launch->capture_pipe[0]);
-  if (launch->argvs != NULL) {
-    for (int i = 0; i < launch->count; i += 1) free_string_array(launch->argvs[i]);
-  }
-  free(launch->argvs);
-  free(launch->pids);
-  free_string_array(launch->env);
-}
-
-/* Prepare and launch both live and synchronous pipelines. All resources belong
- * to launch on success; failure disposes them and returns the original error. */
-static int start_pipeline(ptr specs, pipeline_stdout_mode stdout_mode,
-                          pipeline_launch *launch) {
-  memset(launch, 0, sizeof(*launch));
-  launch->input_fd = -1;
-  launch->capture_pipe[0] = -1;
-  launch->capture_pipe[1] = -1;
-  int error = 0;
-  launch->count = list_length(specs);
-  if (launch->count <= 0) return EINVAL;
-
-  launch->env = env_from_alist(Sfalse);
-  if (launch->env == NULL) { error = errno; goto failed; }
-  launch->argvs = calloc((size_t)launch->count, sizeof(*launch->argvs));
-  launch->pids = calloc((size_t)launch->count, sizeof(*launch->pids));
-  if (launch->argvs == NULL || launch->pids == NULL) { error = ENOMEM; goto failed; }
-
-  ptr remaining = specs;
-  for (int i = 0; i < launch->count; i += 1) {
-    launch->argvs[i] = argv_from_list(Scar(remaining));
-    if (launch->argvs[i] == NULL) { error = errno; goto failed; }
-    remaining = Scdr(remaining);
-  }
-  if (stdout_mode == PIPELINE_STDOUT_CAPTURE && make_pipe(launch->capture_pipe) != 0) {
-    error = errno;
-    goto failed;
-  }
-
-  for (int i = 0; i < launch->count; i += 1) {
-    /* Retain only the preceding reader and the next connection. Closing each
-     * writer after spawn also lets earlier stages observe EOF promptly. */
-    int next_pipe[2] = {-1, -1};
-    if (i < launch->count - 1 && make_pipe(next_pipe) != 0) { error = errno; goto failed; }
-    char **candidates = NULL;
-    error = executable_candidates(launch->argvs[i][0], launch->env, &candidates);
-    if (error == 0) {
-      error = spawn_checked(&launch->pids[i], launch->argvs[i], launch->env, candidates, "",
-                            launch->input_fd,
-                            i < launch->count - 1 ? next_pipe[1] :
-                            (stdout_mode == PIPELINE_STDOUT_CAPTURE ? launch->capture_pipe[1] :
-                             stdout_mode == PIPELINE_STDOUT_INHERIT ? -1 : -2),
-                            -1, 0);
-    }
-    free_string_array(candidates);
-    close_fd(&launch->input_fd);
-    close_fd(&next_pipe[1]);
-    if (error != 0) { close_fd(&next_pipe[0]); goto failed; }
-    launch->input_fd = next_pipe[0];
-    launch->spawned += 1;
-  }
-  return 0;
-
- failed:
-  dispose_pipeline(launch, 1);
-  return error;
-}
-#endif
-
-// Starts every process in a pipeline and connects adjacent stdout/stdin pipes.
-// The caller receives process ids and is responsible for waiting on them.
-ptr cspp_spawn_pipeline(ptr specs) {
-#if defined(__unix__) || defined(__APPLE__)
-  pipeline_launch launch;
-  int error = start_pipeline(specs, PIPELINE_STDOUT_INHERIT, &launch);
-  if (error != 0) {
-    errno = error;
-    return cspp_errno_result("spawn-pipeline", Snil);
-  }
-  ptr pids = Smake_vector(launch.count, Sfalse);
-  for (int i = 0; i < launch.count; i += 1)
-    Svector_set(pids, i, Sinteger((iptr)launch.pids[i]));
-  dispose_pipeline(&launch, 0);
-  return cspp_ok(pids);
-#else
-  (void)specs;
-  return cspp_unsupported_result("spawn-pipeline");
-#endif
-}
-
-// Runs a pipeline to completion, optionally capturing the final process stdout.
-// The returned status belongs to the final process, matching the Scheme API.
-static ptr run_pipeline(ptr specs, int timeout_ms, int capture_stdout) {
-#if defined(__unix__) || defined(__APPLE__)
-  pipeline_launch launch;
-  int error = start_pipeline(specs,
-                             capture_stdout ? PIPELINE_STDOUT_CAPTURE : PIPELINE_STDOUT_DISCARD,
-                             &launch);
-  if (error != 0) {
-    errno = error;
-    return cspp_errno_result("spawn-pipeline", Snil);
-  }
-  close_pipeline_connections(&launch);
-  int stdout_fd = launch.capture_pipe[0];
-  launch.capture_pipe[0] = -1; /* capture_child owns and closes the read end. */
-  ptr result = capture_child(launch.pids[launch.count - 1], -1, NULL, 0, stdout_fd, -1,
-                             capture_stdout, 0, timeout_ms, "spawn-pipeline");
-  Slock_object(result);
-  if (Svector_ref(result, 0) != Sstring_to_symbol("ok")) {
-    /* capture_child already cleaned up the final stage. Upstream stages may
-     * never write to their output, so closing pipes alone cannot stop them. */
-    cleanup_pipeline_children(launch.pids, launch.count - 1);
-  } else {
-    /* Earlier stages may still run. Release GC coordination while reaping;
-     * launch owns native PIDs and result stays locked without being accessed. */
-    Sdeactivate_thread();
-    for (int i = 0; i < launch.count - 1; i += 1) {
-      int status;
-      (void)wait_pid_block(launch.pids[i], &status);
-    }
-    Sactivate_thread(); /* Resume before unlocking and returning the Scheme result. */
-  }
-  Sunlock_object(result);
-  dispose_pipeline(&launch, 0);
-  return result;
-#else
-  (void)specs; (void)timeout_ms; (void)capture_stdout;
-  return cspp_unsupported_result("spawn-pipeline");
-#endif
-}
-
-ptr cspp_spawn_pipeline_capture(ptr specs, int timeout_ms) {
-  return run_pipeline(specs, timeout_ms, 1);
-}
-
-ptr cspp_run_pipeline(ptr specs) {
-  return run_pipeline(specs, -1, 0);
 }

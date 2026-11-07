@@ -2,6 +2,7 @@
   (export send-signal send-process-signal send-process-group-signal signal-mask
           signal-mask-set! signal-block! signal-unblock! wait-signal)
   (import (cspp chez) (cspp utils) (cspp system common) (cspp system private)
+          (cspp system native)
           (cspp system signal values) (cspp system process expert))
 
 ;;;;===----------------------------------------------------------------------===
@@ -62,8 +63,16 @@
   (define $mask-update-ffi
     (foreign-procedure "cspp_signal_mask_update" (ptr int) ptr))
 
-  (define $wait-signal-ffi
-    (foreign-procedure "cspp_wait_signal" (ptr) ptr))
+  (define $wait-create
+    (foreign-procedure "cspp_signal_wait_create" () uptr))
+  (define $wait-prepare
+    (foreign-procedure "cspp_signal_wait_prepare" (uptr ptr) void))
+  (define $wait-step
+    (foreign-procedure __collect_safe "cspp_signal_wait_step" (uptr) int))
+  (define $wait-result
+    (foreign-procedure "cspp_signal_wait_result" (uptr) ptr))
+  (define $wait-dispose
+    (foreign-procedure "cspp_signal_wait_dispose" (uptr) void))
 
   (define $signal-numbers
     (lambda (who signals)
@@ -124,13 +133,17 @@
   Every listed signal must already be blocked in the calling native thread.
   SIGKILL, SIGSTOP, SIGSEGV, SIGBUS, SIGILL, and SIGFPE are rejected.
   Waiting preserves the mask and permits other Scheme threads to run and collect.
+  Native wait steps are bounded to 20 ms, with Scheme event checks between them.
+  Reentry after leaving this native operation's scope or from another thread raises an error.
   A process-directed signal can reach any eligible thread: block it in every such thread
   before sending it, or arrange thread-directed delivery. No Scheme signal handlers are installed.
   |#
   (define-who wait-signal
     (lambda (signals)
       (pcheck-who who ([list? signals])
-              ($signal-ref who
-                           (ffi-result-ref ($wait-signal-ffi ($signal-numbers who signals)))))))
+        ($call-native-operation who $wait-create
+          (lambda (handle) ($wait-prepare handle ($signal-numbers who signals)))
+          $wait-step $wait-result $wait-dispose
+          (lambda (number) ($signal-ref who number))))))
 
   )

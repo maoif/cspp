@@ -7,7 +7,7 @@
 
           ;; implementation entry points for command macros
           %process-run %process-capture %process-run-shell %process-capture-shell)
-  (import (cspp chez) (cspp system common) (cspp system private)
+  (import (cspp chez) (cspp system common) (cspp system private) (cspp system native)
           (cspp system process status) (cspp system process private) (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
@@ -138,13 +138,12 @@
     (lambda (options)
       (eq? 'stdout ($option-ref options 'stderr 'inherit))))
 
-  (define $spawn-capture-ffi
-    (foreign-procedure "cspp_spawn_capture"
-                       (ptr ptr utf-8 ptr int int int int int int)
-                       ptr))
+  (define $prepare-capture-ffi
+    (foreign-procedure "cspp_process_prepare_capture"
+                       (uptr ptr ptr utf-8 ptr int int int int int int) void))
 
-  (define $spawn-pipeline-capture-ffi
-    (foreign-procedure "cspp_spawn_pipeline_capture" (ptr int) ptr))
+  (define $prepare-pipeline-ffi
+    (foreign-procedure "cspp_process_prepare_pipeline" (uptr ptr int) void))
 
   (define $decode-output
     (lambda (bytes options)
@@ -174,17 +173,15 @@
   (define $spawn-capture
     (lambda (who argv options capture-default)
       ($validate-process-options options #f who)
-      (ffi-result-ref
-       ($spawn-capture-ffi argv
-                           ($option-ref options 'env #f)
-                           ($cwd-option options)
-                           ($stdin-payload options)
-                           ($capture-mode options 'stdout capture-default)
-                           ($capture-mode options 'stderr capture-default)
-                           (if ($null-stdout? options) 1 0)
-                           (if ($null-stderr? options) 1 0)
-                           (if ($stderr-to-stdout? options) 1 0)
-                           ($timeout-option options)))))
+      ($call-process-operation who
+        (lambda (handle)
+          ($prepare-capture-ffi handle argv ($option-ref options 'env #f)
+            ($cwd-option options) ($stdin-payload options)
+            ($capture-mode options 'stdout capture-default)
+            ($capture-mode options 'stderr capture-default)
+            (if ($null-stdout? options) 1 0) (if ($null-stderr? options) 1 0)
+            (if ($stderr-to-stdout? options) 1 0) ($timeout-option options)))
+        (lambda (result) result))))
 
   (define $run-command
     (lambda (who command argv options check?)
@@ -255,7 +252,9 @@
   (define-who process-capture-pipeline
     (lambda (process-specs)
       (pcheck-who who ([$process-specs? process-specs])
-              (let ([result (ffi-result-ref ($spawn-pipeline-capture-ffi process-specs -1))])
+              (let ([result ($call-process-operation who
+                              (lambda (handle) ($prepare-pipeline-ffi handle process-specs 1))
+                              (lambda (result) result))])
                 ($capture-vector->result 'pipeline result '((stdout . capture) (stderr . inherit)) #f
                                         'process-capture-pipeline)))))
 

@@ -47,6 +47,7 @@
           (only (cspp system time) milisleep)
           (cspp system process status)
           (cspp system process private)
+          (cspp system native)
           (cspp system private)
           (cspp utils))
 
@@ -152,8 +153,8 @@
       (pcheck-who who ([process? process])
         (with-mutex (process-mutex process) ($process-status process)))))
 
-  (define $process-spawn-ffi
-    (foreign-procedure "cspp_spawn_process" (ptr ptr utf-8 int int int) ptr))
+  (define $prepare-spawn-ffi
+    (foreign-procedure "cspp_process_prepare_spawn" (uptr ptr ptr utf-8 int int int) void))
 
   (define $waitpid-ffi
     (foreign-procedure "cspp_waitpid" (int int) ptr))
@@ -173,11 +174,8 @@
   (define $make-pipe-ffi
     (foreign-procedure "cspp_make_pipe" () ptr))
 
-  (define $spawn-pipeline-ffi
-    (foreign-procedure "cspp_spawn_pipeline" (ptr) ptr))
-
-  (define $process-run-pipeline-ffi
-    (foreign-procedure "cspp_run_pipeline" (ptr) ptr))
+  (define $prepare-pipeline-ffi
+    (foreign-procedure "cspp_process_prepare_pipeline" (uptr ptr int) void))
 
   (define $stream-mode
     (lambda (options key)
@@ -218,26 +216,28 @@
                           (when (fx>= fd 0) (close-fd fd)))))
                     (when pid ($send-signal-ffi pid 9) ($waitpid-ffi pid 0))
                     (raise condition)])
-            (with-interrupts-disabled
-              (set! result
-                (ffi-result-ref
-                  ($process-spawn-ffi (cons program arguments) ($option-ref options 'env #f)
-                    ($cwd-option options) ($stream-mode options 'stdin)
-                    ($stream-mode options 'stdout) ($stream-mode options 'stderr))))
-              (set! pid (vector-ref result 0))
-              (let ([open-stream
-                    (lambda (index output?)
-                      (let ([fd (vector-ref result index)])
-                        (if (fx< fd 0) #f
-                            (let ([port (if output?
-                                            (open-fd-output-port fd 'block #f)
-                                            (open-fd-input-port fd 'block #f))])
-                              (vector-set! result index -1)
-                              (set! ports (cons port ports))
-                              port))))])
-              (let* ([stdin (open-stream 1 #t)] [stdout (open-stream 2 #f)]
-                     [stderr (open-stream 3 #f)])
-                (make-process pid program (list-copy arguments) stdin stdout stderr #f)))))))))
+            ($call-process-operation who
+              (lambda (handle)
+                ($prepare-spawn-ffi handle (cons program arguments) ($option-ref options 'env #f)
+                  ($cwd-option options) ($stream-mode options 'stdin)
+                  ($stream-mode options 'stdout) ($stream-mode options 'stderr)))
+              (lambda (native-result)
+                (set! result native-result)
+                (set! pid (vector-ref result 0))
+                (let ([open-stream
+                        (lambda (index output?)
+                          (let ([fd (vector-ref result index)])
+                            (if (fx< fd 0) #f
+                                (let ([port (if output?
+                                                (open-fd-output-port fd 'block #f)
+                                                (open-fd-input-port fd 'block #f))])
+                                  (vector-set! result index -1)
+                                  (set! ports (cons port ports))
+                                  port))))])
+                  (let* ([stdin (open-stream 1 #t)] [stdout (open-stream 2 #f)]
+                         [stderr (open-stream 3 #f)])
+                    (make-process pid program (list-copy arguments)
+                                  stdin stdout stderr #f))))))))))
 
   #|proc:process-spawn-shell
   The `process-spawn-shell` procedure starts `command` through the host shell.
@@ -273,8 +273,11 @@
   #|proc:process-wait
   The `process-wait` procedure waits for `process` and returns its cached exit status.
   The `process` argument is a process object. Waiting leaves its streams open for draining.
-  Linux pidfds provide exit notification without polling when available; otherwise short polls
-  are used. Waiting permits other Scheme threads to collect and does not hold the status mutex.
+  Linux pidfds provide readiness notification when available, avoiding repeated waitpid calls;
+  otherwise short waitpid polls are used. Waiting permits other Scheme threads to collect
+  and does not hold the status mutex.
+  Native polls sleep at most 20 ms between Scheme event checks. A captured wait continuation
+  may resume on its original Scheme thread; entering it from another thread raises an error.
   Drain live output concurrently with a running child; waiting first can deadlock on full pipes.
   |#
   (define-who process-wait
@@ -290,9 +293,11 @@
   (define $process-wait
     (lambda (who process milliseconds)
       (let ([deadline (and milliseconds (+ ($monotonic-milliseconds) milliseconds))]
-            [descriptor -1])
+            [descriptor -1] [owner (get-thread-id)])
         (dynamic-wind
           (lambda ()
+            (unless (= owner (get-thread-id))
+              (errorf who "cannot enter a process wait from another thread"))
             ;; Entry thunks need their own cleanup: the exit thunk does not run
             ;; if entry raises. Reentry obtains a fresh notification descriptor.
             (guard (failure
@@ -306,24 +311,28 @@
                   (unless ($process-status process)
                     (set! descriptor ($wait-open-ffi ($process-pid process))))))))
           (lambda ()
-            (let loop ()
-              (or (process-wait/no-hang process)
+            (let loop ([reap? #t])
+              ;; A signal delivered before poll does not produce EINTR. Check
+              ;; before every step and bound each sleep to close that race.
+              (with-interrupts-disabled (void))
+              (or (process-status process)
+                  (and reap? (process-wait/no-hang process))
                   (let ([remaining (and deadline (- deadline ($monotonic-milliseconds)))])
                     (when (and remaining (<= remaining 0))
-                      (raise (make-system-timeout-error who "process wait timed out"
-                               `((pid . ,($process-pid process)) (timeout . ,milliseconds)))))
+                      (unless (process-wait/no-hang process)
+                        (raise (make-system-timeout-error who "process wait timed out"
+                                 `((pid . ,($process-pid process)) (timeout . ,milliseconds))))))
                     (if (fx>= descriptor 0)
                         (let ([ready ($wait-ready-ffi descriptor
-                                       (if remaining (min #x7fffffff remaining) -1))])
-                          ;; Chez checks events when a balanced interrupt-disable scope ends.
-                          ;; Preserve the caller's disable count while servicing pending handlers
-                          ;; before another blocking call; ordinary FFI return is not a safe point.
-                          (when (fx= ready 2) (with-interrupts-disabled (void)))
+                                       (if remaining (max 0 (min 20 remaining)) 20))])
                           (when (fx< ready 0)
                             (raise (make-system-error who (- ready) "process wait failed"
-                                     `((pid . ,($process-pid process)))))))
-                        (milisleep (if remaining (min 5 remaining) 5)))
-                    (loop)))))
+                                     `((pid . ,($process-pid process))))))
+                          ;; Timeout ticks service events without repeatedly calling waitpid.
+                          (loop (fx= ready 1)))
+                        (begin
+                          (milisleep (if remaining (max 0 (min 5 remaining)) 5))
+                          (loop #t)))))))
           (lambda ()
             (with-interrupts-disabled
               (when (fx>= descriptor 0)
@@ -424,12 +433,12 @@
                         (when (fx>= fd 0) (close-fd fd)))))
                   (raise failure)])
           (with-interrupts-disabled
-          (set! fds (ffi-result-ref ($make-pipe-ffi)))
-          (set! input (open-fd-input-port (vector-ref fds 0) 'block #f))
-          (vector-set! fds 0 -1)
-          (set! output (open-fd-output-port (vector-ref fds 1) 'block #f))
-          (vector-set! fds 1 -1)
-          (values input output))))))
+            (set! fds (ffi-result-ref ($make-pipe-ffi)))
+            (set! input (open-fd-input-port (vector-ref fds 0) 'block #f))
+            (vector-set! fds 0 -1)
+            (set! output (open-fd-output-port (vector-ref fds 1) 'block #f))
+            (vector-set! fds 1 -1)
+            (values input output))))))
 
   #|proc:process-spawn-pipeline
   The `process-spawn-pipeline` procedure starts process specs as a live pipeline.
@@ -444,25 +453,24 @@
   (define-who process-spawn-pipeline
     (lambda (process-specs options)
       (pcheck-who who ([$process-specs? process-specs] [null? options])
-              (let ([pids #f])
-                (guard (failure
-                         [else
-                          (when pids
-                            (vector-for-each (lambda (pid) ($send-signal-ffi pid 9)) pids)
-                            (vector-for-each (lambda (pid) ($waitpid-ffi pid 0)) pids))
-                          (raise failure)])
-                  (with-interrupts-disabled
-                    (set! pids (ffi-result-ref ($spawn-pipeline-ffi process-specs)))
-                (let loop ([i 0] [specs process-specs] [out '()])
-                  (if (fx= i (vector-length pids))
+        (let ([pids #f])
+          (guard (failure
+                   [else
+                    (when pids
+                      (vector-for-each (lambda (pid) ($send-signal-ffi pid 9)) pids)
+                      (vector-for-each (lambda (pid) ($waitpid-ffi pid 0)) pids))
+                    (raise failure)])
+            ($call-process-operation who
+              (lambda (handle) ($prepare-pipeline-ffi handle process-specs 0))
+              (lambda (native-result)
+                (set! pids native-result)
+                (let loop ([index 0] [specs process-specs] [out '()])
+                  (if (fx= index (vector-length pids))
                       (reverse out)
-                      (loop (fx+ i 1)
-                            (cdr specs)
-                            (cons (make-process (vector-ref pids i)
-                                                (car (car specs))
-                                                (list-copy (cdr (car specs)))
-                                                #f #f #f #f)
-                                  out))))))))))
+                      (loop (fx+ index 1) (cdr specs)
+                        (cons (make-process (vector-ref pids index) (caar specs)
+                                (list-copy (cdar specs)) #f #f #f #f)
+                              out)))))))))))
 
   #|proc:process-run-pipeline
   The `process-run-pipeline` procedure runs process specs as a pipeline and waits.
@@ -475,7 +483,9 @@
   (define-who process-run-pipeline
     (lambda (process-specs)
       (pcheck-who who ([$process-specs? process-specs])
-              (let ([result (ffi-result-ref ($process-run-pipeline-ffi process-specs))])
+              (let ([result ($call-process-operation who
+                              (lambda (handle) ($prepare-pipeline-ffi handle process-specs 2))
+                              (lambda (result) result))])
                 (list ($wait-status->exit-status (vector-ref result 1)))))))
 
 ;;;;===----------------------------------------------------------------------===

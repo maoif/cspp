@@ -85,8 +85,9 @@ Only standard input, output, and error follow the stream options; parent descrip
 On Linux, this requires either the `close_range` syscall or readable `/proc/self/fd` enumeration.
 If neither is available, launch raises a system error with `ENOTSUP`. A resource-limit sweep
 cannot guarantee closure because limits can be lowered below descriptors that are already open.
-They also restore default `SIGPIPE` handling in the child, so commands terminate normally on broken
-pipes instead of inheriting Chez's ignored disposition. The parent's signal handling is unchanged.
+Caught signal dispositions are reset before child setup; signals are blocked across `fork` until
+that reset is complete. Explicitly ignored signals remain ignored, except `SIGPIPE`, which is
+restored to default so commands terminate normally on broken pipes. The parent's handling is unchanged.
 Children inherit the spawning native thread's signal mask; blocked signals remain blocked.
 
 The `/check` variants require exit code zero by default. Ordinary variants accept any status.
@@ -186,8 +187,9 @@ exit notification or its deadline, then reaps under the process mutex. Concurren
 the cached result while owning separate notification descriptors. Descriptors are closed on
 return or error; no background waiter is created. Unsupported or unavailable pidfds fall back
 to short nonblocking polls and sleeps outside the mutex.
-Interrupted waits return to Scheme to run pending signal handlers, then resume against the
-original monotonic deadline.
+Native polls are bounded to 20 ms so both new and already-pending Scheme interrupts are serviced.
+Timeout ticks do not trigger another `waitpid` call unless exit readiness is reported.
+Interrupted waits resume against the original monotonic deadline.
 
 `process-kill` takes a positive signed 32-bit signal number; `process-terminate` and
 `process-interrupt` send TERM and INT. `send-process-signal` also accepts signal names/records.
@@ -268,7 +270,8 @@ Masks belong to native threads, not fibers. Fibers can migrate, so configure mas
 synchronous waits from deliberately managed OS threads. A process-directed signal can reach any
 eligible native thread: block it in every eligible thread before delivery, often by arranging
 the mask before creating those threads. `wait-signal` releases the calling thread from Chez GC
-coordination while blocking; it does not install a Scheme callback or yield a fiber worker.
+coordination during each bounded native wait; Scheme handlers run between steps. It does not
+install a Scheme callback or yield a fiber worker.
 
 ## Accounts, filesystems, and errors
 
@@ -294,6 +297,7 @@ read them. An unknown operation has caller value `#f`.
 Native helpers use `ffi-result-ref` to decode `ok`, `errno`, `not-found`, `unsupported`, and `timeout`
 vectors. Permission errors specialize errno 1 and 13. Exit errors instead describe an
 unaccepted process status. Context keys may be symbols in Scheme or strings in native results.
+Native error messages are decoded using the calling thread's locale, including non-UTF-8 locales.
 
 CSPP `getenv`/`putenv`, native environment readers, and inherited process snapshots share a lock.
 Direct libc/Chez environment mutation outside these wrappers requires caller synchronization.
@@ -324,12 +328,24 @@ converts directory defaults. Live process objects own status caches and mutexes;
 backend owns completed result records. Account lookups use the same tagged FFI error decoder,
 without a second legacy error protocol.
 
-The shared native I/O loop is reused by each synchronous capture call. It feeds stdin while
-draining outputs and checking one monotonic deadline. It has no global reactor or background
-thread. Run forms use the same loop with retention disabled for discarded capture streams.
-Buffers and strings used while Chez's thread is inactive are native-owned; Scheme
-objects are constructed only after activation. With no streams or deadline left, it blocks in
-`waitpid` instead of polling. Live waits use pidfd notification where available; their scalar-only
-native poll helper uses `__collect_safe` so Chez deactivates the thread around the wait. Reaping
-and status publication occur under the per-process mutex afterward. These are OS-thread
-operations, not fiber-aware scheduling APIs.
+Each spawn, capture, or pipeline invocation owns one resumable native operation. Preparation
+copies Scheme inputs; steps use only native buffers, strings, descriptors, and child IDs.
+The shared state machine performs exec handshakes, feeds stdin, drains outputs, and reaps children.
+Run forms disable retention for discarded capture streams. Connections remain bounded as stages
+launch. There is no global reactor, extra thread, or native callback into Scheme.
+
+The private `(cspp system native)` wrapper owns each operation in a `dynamic-wind` scope.
+Steps poll for at most 20 ms and return for a Scheme event check; blocking OS setup calls and
+cleanup can take additional time. Signal waits use the same wrapper with `sigtimedwait` steps.
+Scalar-only step and disposal calls use `__collect_safe`, letting Chez deactivate/reactivate the
+thread while other threads collect. Scheme result allocation and resource publication happen
+only while active. A handler escape closes owned descriptors and kills/reaps unreturned immediate
+children; normal live spawning transfers ownership to the returned process objects.
+Once a native operation's scope has been left and disposed, replaying a continuation into it raises
+an error. Resuming live `process-wait` instead acquires a fresh notification descriptor.
+Continuations into either kind of operation must stay on their original Scheme thread; cross-thread
+entry raises an error so two threads cannot share or free one invocation's native state.
+
+Live waits use pidfds when available and reap under the per-process mutex after exit notification.
+Their polls also have the 20 ms bound, while reaping remains tied to readiness. These are native
+thread operations, not fiber-aware scheduling APIs.
