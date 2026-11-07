@@ -2848,6 +2848,8 @@
   Integer `mode` supplies the leaf directory's permission bits from 0 through #o7777;
   the default is #o777. Missing parents use #o777. All creation modes are subject to umask.
   Terminal `.` components do not change which newly created directory receives `mode`.
+  A final directory first created as an intermediate directory in this call also receives
+  the leaf mode, subject to the permissions allowed at creation. Parent traversal is physical.
   Existing directories are left unchanged, including ones created by a concurrent call.
   Return unspecified values.
   |#
@@ -2860,13 +2862,31 @@
            (if (file-exists? path)
                (unless (file-directory? path)
                  ($err-file-exists who path))
-               (let ([path (string-append path (string (directory-separator)))])
+               (let ([path (string-append path (string (directory-separator)))]
+                     ;; Only paths with parents can revisit an intermediate directory.
+                     [created (and (string-search path "..")
+                                   (make-hashtable equal-hash equal?))])
                  (let loop ([first (path-first path)] [rest (path-rest path)])
                    (if (file-exists? first)
-                       (unless (file-directory? first)
-                         ($err-file-not-directory who first))
-                       (guard (failure [(and (error? failure) (file-directory? first)) (void)])
-                         (mkdir first (if (string=? rest "") mode #o777))))
+                       (begin
+                         (unless (file-directory? first)
+                           ($err-file-not-directory who first))
+                         (when (and created (string=? rest "")
+                                    (hashtable-contains? created ($file-identity first #t)))
+                           ;; Intermediate #o777 creation records the effective permissions,
+                           ;; including umask/default ACL restrictions. Linux mkdir ignores
+                           ;; requested set-ID bits, preserves inherited SGID, and sets sticky.
+                           (chmod first
+                                  (fxlogior (fxlogand (get-mode first)
+                                                     (fxlogior (fxlogand mode #o777) #o2000))
+                                            (fxlogand mode #o1000)))))
+                       (let ([made?
+                              (guard (failure
+                                      [(and (error? failure) (file-directory? first)) #f])
+                                (mkdir first (if (string=? rest "") mode #o777))
+                                #t)])
+                         (when (and made? created (not (string=? rest "")))
+                           (hashtable-set! created ($file-identity first #t) #t))))
                    (unless (string=? "" rest)
                      (loop (path-build first (path-first rest)) (path-rest rest))))))))]))
 

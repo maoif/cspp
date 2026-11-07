@@ -364,6 +364,58 @@
               '(#o000 #o400 #o700 #o777)))
            '("" "/" "//" "/." "/./" "/./." "/.///./"))))))
 
+(mat mkdirs-revisited-leaf-mode
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([umask (foreign-procedure "umask" (unsigned-32) unsigned-32)]
+              [directory (path-build root "created")])
+          (for-all
+           (lambda (suffix)
+             (for-all
+              (lambda (mode expected)
+                (let ([saved #f])
+                  (dynamic-wind
+                    (lambda () (set! saved (umask #o027)))
+                    (lambda ()
+                      (mkdirs (string-append directory suffix) mode)
+                      (= expected (file-mode directory)))
+                    (lambda ()
+                      (umask saved)
+                      (when (file-directory? directory)
+                        (chmod directory #o700)
+                        (file-removetree directory #t))))))
+              '(#o000 #o400 #o700 #o1777 #o2777 #o4777 #o7777)
+              '(#o000 #o400 #o700 #o1750 #o750 #o750 #o1750)))
+           '("/../created" "/sub/.." "/../created/." "/sub/.././"))))))
+
+(mat mkdirs-revisited-inherited-group-mode
+     ($with-fs-fixture
+      (lambda (root)
+        (chmod root #o2775)
+        (let ([direct (path-build root "direct")]
+              [revisited (path-build root "revisited")])
+          (mkdir direct #o1750)
+          (mkdirs (string-append revisited "/../revisited") #o1750)
+          (and (= (file-mode direct) (file-mode revisited))
+               (= (file-group direct) (file-group revisited)))))))
+
+(mat mkdirs-revisited-existing-leaf
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([directory (path-build root "sub")])
+          (chmod directory #o755)
+          (mkdirs (path-build root "created/../sub") #o700)
+          (= #o755 (file-mode directory))))))
+
+(mat mkdirs-revisited-physical-leaf
+     ($with-fs-fixture
+      (lambda (root)
+        (mkdirs (path-build root "elsewhere/sub"))
+        (file-symlink "elsewhere/sub" (path-build root "alias"))
+        (mkdirs (path-build root "alias/../created/../created") #o700)
+        (and (= #o700 (file-mode (path-build root "elsewhere/created")))
+             (not (file-exists? (path-build root "created")))))))
+
 (mat mkdirs-terminal-dots-existing-directory
      ($with-fs-fixture
       (lambda (root)
