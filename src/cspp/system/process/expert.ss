@@ -206,23 +206,26 @@
     (lambda (who program arguments options)
       (pcheck-who who ([$os-string? program] [$os-string-list? arguments] [list? options])
         ($validate-process-options options #t who)
-        (let* ([argv (cons program arguments)]
-               [result (ffi-result-ref
-                         ($process-spawn-ffi argv ($option-ref options 'env #f) ($cwd-option options)
-                           ($stream-mode options 'stdin) ($stream-mode options 'stdout)
-                           ($stream-mode options 'stderr)))]
-               [pid (vector-ref result 0)] [ports '()])
+        (let ([result #f] [pid #f] [ports '()])
+          ;; Install cleanup before native acquisition. Publish each ownership
+          ;; transfer while interrupts are disabled; re-enabling stays inside guard.
           (guard (condition
                    [else
                     (for-each $close-port/cleanup ports)
                     (let ([close-fd (foreign-procedure "close" (int) int)])
-                      (do ([index 1 (fx+ index 1)]) ((fx= index 4))
+                      (do ([index 1 (fx+ index 1)]) ((or (not result) (fx= index 4)))
                         (let ([fd (vector-ref result index)])
                           (when (fx>= fd 0) (close-fd fd)))))
-                    ($send-signal-ffi pid 9)
-                    ($waitpid-ffi pid 0)
+                    (when pid ($send-signal-ffi pid 9) ($waitpid-ffi pid 0))
                     (raise condition)])
-            (let ([open-stream
+            (with-interrupts-disabled
+              (set! result
+                (ffi-result-ref
+                  ($process-spawn-ffi (cons program arguments) ($option-ref options 'env #f)
+                    ($cwd-option options) ($stream-mode options 'stdin)
+                    ($stream-mode options 'stdout) ($stream-mode options 'stderr))))
+              (set! pid (vector-ref result 0))
+              (let ([open-stream
                     (lambda (index output?)
                       (let ([fd (vector-ref result index)])
                         (if (fx< fd 0) #f
@@ -234,7 +237,7 @@
                               port))))])
               (let* ([stdin (open-stream 1 #t)] [stdout (open-stream 2 #f)]
                      [stderr (open-stream 3 #f)])
-                (make-process pid program (list-copy arguments) stdin stdout stderr #f))))))))
+                (make-process pid program (list-copy arguments) stdin stdout stderr #f)))))))))
 
   #|proc:process-spawn-shell
   The `process-spawn-shell` procedure starts `command` through the host shell.
@@ -290,11 +293,18 @@
             [descriptor -1])
         (dynamic-wind
           (lambda ()
-            ;; Open before any concurrent CSPP reaping can make the PID reusable.
-            ;; A resumed continuation obtains a fresh descriptor rather than reusing a closed one.
-            (with-mutex (process-mutex process)
-              (unless ($process-status process)
-                (set! descriptor ($wait-open-ffi ($process-pid process))))))
+            ;; Entry thunks need their own cleanup: the exit thunk does not run
+            ;; if entry raises. Reentry obtains a fresh notification descriptor.
+            (guard (failure
+                     [else
+                      (when (fx>= descriptor 0)
+                        ($close-fd-ffi descriptor)
+                        (set! descriptor -1))
+                      (raise failure)])
+              (with-interrupts-disabled
+                (with-mutex (process-mutex process)
+                  (unless ($process-status process)
+                    (set! descriptor ($wait-open-ffi ($process-pid process))))))))
           (lambda ()
             (let loop ()
               (or (process-wait/no-hang process)
@@ -315,9 +325,10 @@
                         (milisleep (if remaining (min 5 remaining) 5)))
                     (loop)))))
           (lambda ()
-            (when (fx>= descriptor 0)
-              ($close-fd-ffi descriptor)
-              (set! descriptor -1)))))))
+            (with-interrupts-disabled
+              (when (fx>= descriptor 0)
+                ($close-fd-ffi descriptor)
+                (set! descriptor -1))))))))
 
   #|proc:process-wait/timeout
   The `process-wait/timeout` procedure waits for `process` for at most `milliseconds`.
@@ -402,21 +413,23 @@
   |#
   (define make-pipe
     (lambda ()
-      (let ([fds (ffi-result-ref ($make-pipe-ffi))] [input #f] [output #f])
+      (let ([fds #f] [input #f] [output #f])
         (guard (failure
                  [else
                   ($close-port/cleanup input)
                   ($close-port/cleanup output)
                   (let ([close-fd (foreign-procedure "close" (int) int)])
-                    (do ([index 0 (fx+ index 1)]) ((fx= index 2))
+                    (do ([index 0 (fx+ index 1)]) ((or (not fds) (fx= index 2)))
                       (let ([fd (vector-ref fds index)])
                         (when (fx>= fd 0) (close-fd fd)))))
                   (raise failure)])
+          (with-interrupts-disabled
+          (set! fds (ffi-result-ref ($make-pipe-ffi)))
           (set! input (open-fd-input-port (vector-ref fds 0) 'block #f))
           (vector-set! fds 0 -1)
           (set! output (open-fd-output-port (vector-ref fds 1) 'block #f))
           (vector-set! fds 1 -1)
-          (values input output)))))
+          (values input output))))))
 
   #|proc:process-spawn-pipeline
   The `process-spawn-pipeline` procedure starts process specs as a live pipeline.
@@ -431,7 +444,15 @@
   (define-who process-spawn-pipeline
     (lambda (process-specs options)
       (pcheck-who who ([$process-specs? process-specs] [null? options])
-              (let ([pids (ffi-result-ref ($spawn-pipeline-ffi process-specs))])
+              (let ([pids #f])
+                (guard (failure
+                         [else
+                          (when pids
+                            (vector-for-each (lambda (pid) ($send-signal-ffi pid 9)) pids)
+                            (vector-for-each (lambda (pid) ($waitpid-ffi pid 0)) pids))
+                          (raise failure)])
+                  (with-interrupts-disabled
+                    (set! pids (ffi-result-ref ($spawn-pipeline-ffi process-specs)))
                 (let loop ([i 0] [specs process-specs] [out '()])
                   (if (fx= i (vector-length pids))
                       (reverse out)
@@ -441,7 +462,7 @@
                                                 (car (car specs))
                                                 (list-copy (cdr (car specs)))
                                                 #f #f #f #f)
-                                  out))))))))
+                                  out))))))))))
 
   #|proc:process-run-pipeline
   The `process-run-pipeline` procedure runs process specs as a pipeline and waits.

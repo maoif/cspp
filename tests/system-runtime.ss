@@ -30,6 +30,55 @@
       (unless (null? failures) (raise (car failures))))))
 
 (case (string->symbol (cadr (command-line)))
+  [(ownership-interrupts)
+   ;; Error case: handlers escaping resource acquisition must not leak descriptors or children.
+   (let ([fds (lambda () (length (directory-list "/proc/self/fd")))]
+         [previous (timer-interrupt-handler)] [sentinel (list 'ownership-interrupt)])
+     (for-each
+       (lambda (kind)
+         (let ([baseline (fds)] [armed? #t] [child #f] [ports '()] [children '()])
+           (dynamic-wind
+             void
+             (lambda ()
+               (when (eq? kind 'wait)
+                 (set! child (process-spawn "/bin/sleep" '("0.1") '())))
+               (timer-interrupt-handler
+                 (lambda ()
+                   (when armed?
+                     (if (or (> (fds) baseline)
+                             (and (eq? kind 'pipeline)
+                                  (call-with-input-file
+                                    (format "/proc/self/task/~a/children" (getpid))
+                                    (lambda (port) (not (eof-object? (get-line port)))))))
+                         (begin (set! armed? #f) (raise sentinel))
+                         (set-timer 1)))))
+               (guard (failure [else (check (eq? failure sentinel))])
+                 (set-timer 1)
+                 (case kind
+                   [(spawn) (set! child
+                              (process-spawn "/bin/sleep" '("0.1") '((stdout . pipe))))]
+                   [(pipe) (let-values ([(input output) (make-pipe)])
+                             (set! ports (list input output)))]
+                   [(wait) (process-wait child)]
+                   [(pipeline) (set! children
+                                 (process-spawn-pipeline
+                                   (make-list 3 '("/bin/sleep" "0.1")) '()))]))
+               (set! armed? #f)
+               (set-timer 0))
+             (lambda ()
+               (set! armed? #f)
+               (set-timer 0)
+               (timer-interrupt-handler previous)
+               (for-each close-port ports)
+               (when child (process-close-ports! child) (process-wait child))
+               (for-each process-wait children)))
+           (collect)
+           (check (= baseline (fds)))
+           (milisleep 150)
+           (let ([status (make-bytevector 4 0)])
+             (check (< ((foreign-procedure "waitpid" (int u8* int) int) -1 status 1) 0)))))
+       '(spawn pipe wait pipeline)))]
+
   [(wait-interrupt)
    ;; Error case: native exit notification must promptly return to Scheme for keyboard interrupts.
    (for-each

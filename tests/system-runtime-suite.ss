@@ -13,6 +13,13 @@
             (begin launcher) (begin script) "preexec-signal" :timeout 5000)))
       #t))
 
+(mat system-resource-acquisition-interrupts
+
+  ;; Error case: resource handoff needs isolation because the old implementation leaves children.
+  (= 0 (system (if (file-exists? "system-runtime-runner.ss")
+                   "../cspp --script=system-runtime-runner.ss ownership-interrupts"
+                   "./cspp --script=tests/system-runtime-runner.ss ownership-interrupts"))))
+
 (mat system-live-wait-notification
 
   ;; Error case: wait notification must preserve timeout, concurrent reaping, and GC contracts.
