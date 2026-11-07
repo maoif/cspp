@@ -48,8 +48,8 @@
 
   ;; Error case: native allocation and localized messages need isolation from the test runner.
   (= 0 (system (if (file-exists? "system-runtime-runner.ss")
-                   "../cspp --script=system-runtime-runner.ss native-allocation-errors localized-errors"
-                   "./cspp --script=tests/system-runtime-runner.ss native-allocation-errors localized-errors"))))
+                   "../cspp --script=system-runtime-runner.ss native-allocation-errors localized-errors legacy-localized-errors"
+                   "./cspp --script=tests/system-runtime-runner.ss native-allocation-errors localized-errors legacy-localized-errors"))))
 
 (mat system-pipeline-descriptor-limit
 

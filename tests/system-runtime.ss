@@ -115,6 +115,32 @@
                #f))))
        (lambda () (locale 6 original))))]
 
+  [(legacy-localized-errors)
+   ;; Error case: strerror follows the locale encoding, which need not be UTF-8.
+   ;; This subprocess alone changes the locale; every opened file is closed by its helper.
+   (let* ([locale (foreign-procedure "setlocale" (int utf-8) utf-8)]
+          [message (foreign-procedure "strerror" (int) uptr)]
+          [length (foreign-procedure "strlen" (uptr) size_t)]
+          [copy (foreign-procedure "memcpy" (u8* uptr size_t) uptr)]
+          [original (locale 6 #f)]
+          [path (format "/tmp/cspp-legacy-message-~a" (getpid))])
+     (dynamic-wind
+       void
+       (lambda ()
+         (when (locale 6 "fr_FR")
+           (call-with-output-file path (lambda (port) (put-string port "not executable")))
+           (let* ([pointer (message 13)] [bytes (make-bytevector (length pointer))])
+             (copy bytes pointer (bytevector-length bytes))
+             (let ([expected (bytevector->string bytes (make-transcoder (latin-1-codec)))])
+               (check
+                 (guard (failure [(system-permission-error? failure)
+                                  (string=? expected (system-error-message failure))])
+                   (process-capture (begin path))
+                   #f))))))
+       (lambda ()
+         (locale 6 original)
+         (when (file-exists? path) (delete-file path)))))]
+
   [(pipeline-low-descriptor-limit)
    ;; Error case: pipeline length must not require every connection open in the parent at once.
    ;; Only this isolated process lowers its descriptor limit.

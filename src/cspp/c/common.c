@@ -1,12 +1,53 @@
+#define _GNU_SOURCE
 #include "common.h"
+#include <locale.h>
+#include <wchar.h>
 
+/* strerror uses the current locale's multibyte encoding, not necessarily UTF-8.
+ * Snapshot the calling thread's locale and finish native conversion before any
+ * Scheme allocation. uselocale changes only this thread, and is restored first. */
+static ptr error_message(int code) {
+  if (code == 0) return Sstring("internal error");
+  locale_t locale = duplocale(uselocale((locale_t)0));
+  wchar_t *characters = NULL;
+  size_t count = (size_t)-1;
+  if (locale) {
+    locale_t previous = uselocale(locale);
+    const char *message = strerror_l(code, locale);
+    mbstate_t state = {0};
+    const char *source = message;
+    count = mbsrtowcs(NULL, &source, 0, &state);
+    if (count != (size_t)-1 && count <= SIZE_MAX / sizeof(*characters) - 1) {
+      characters = malloc((count + 1) * sizeof(*characters));
+      if (characters) {
+        memset(&state, 0, sizeof(state));
+        source = message;
+        if (mbsrtowcs(characters, &source, count + 1, &state) == (size_t)-1) {
+          free(characters);
+          characters = NULL;
+        }
+      }
+    }
+    uselocale(previous);
+    freelocale(locale);
+  }
+  if (!characters) {
+    /* Allocation/decoding failure must not replace the original error code or
+     * return malformed text. The C locale's message is an ASCII fallback. */
+    locale_t fallback = newlocale(LC_ALL_MASK, "C", (locale_t)0);
+    ptr result = fallback ? Sstring(strerror_l(code, fallback)) : Sstring("system error");
+    if (fallback) freelocale(fallback);
+    return result;
+  }
+  ptr result = Smake_string((iptr)count, 0);
+  for (size_t index = 0; index < count; index++)
+    Sstring_set(result, (iptr)index, (uint32_t)characters[index]);
+  free(characters);
+  return result;
+}
 
 ptr errno_str() {
-  if (errno == 0) {
-    // e.g., getpwnam("bad_user")
-    return Sstring("internal error");
-  }
-  return Sstring_utf8(strerror(errno), -1);
+  return error_message(errno);
 }
 
 ptr errno_str_vector() {
@@ -32,7 +73,7 @@ ptr cspp_errno_result(const char *operation, ptr context) {
   Svector_set(v, 0, Sstring_to_symbol("errno"));
   Svector_set(v, 1, symbol_or_false(operation));
   Svector_set(v, 2, Sfixnum(code));
-  Svector_set(v, 3, code == 0 ? Sstring("internal error") : Sstring_utf8(strerror(code), -1));
+  Svector_set(v, 3, error_message(code));
   Svector_set(v, 4, context);
   return v;
 }
