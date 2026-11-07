@@ -449,7 +449,8 @@ typedef struct {
   int count, launched, next, exec_fd, exec_error;
   size_t exec_received;
   char ***argvs, ***candidates, **env, *cwd;
-  pid_t *pids, final_pid;
+  pid_t *pids, final_pid, wait_pid;
+  int wait_fd;
   int stdin_mode, stdout_mode, stderr_mode, stderr_to_stdout;
   int live_fds[3], input_fd, output_fds[2], connection_fd, capture_pipe[2];
   unsigned char *input;
@@ -463,6 +464,7 @@ uptr cspp_process_operation_create(void) {
   process_operation *op = calloc(1, sizeof(*op));
   if (!op) return 0;
   op->exec_fd = op->input_fd = op->connection_fd = -1;
+  op->wait_fd = -1;
   op->capture_pipe[0] = op->capture_pipe[1] = -1;
   op->output_fds[0] = op->output_fds[1] = -1;
   for (int i = 0; i < 3; i++) op->live_fds[i] = -1;
@@ -619,6 +621,10 @@ static int reap_step(process_operation *op, int index) {
   pid_t pid = waitpid(op->pids[index], &status, WNOHANG);
   if (pid > 0) {
     op->pids[index] = 0; /* No cleanup path may signal this PID after reaping. */
+    if (pid == op->wait_pid) {
+      close_fd(&op->wait_fd);
+      op->wait_pid = 0;
+    }
     if (index == op->count - 1) op->status = status;
     return 1;
   }
@@ -642,11 +648,26 @@ static int capture_step(process_operation *op) {
   }
   int64_t remaining = op->timeout_ms < 0 ? 20 : op->deadline - monotonic_ms();
   if (remaining <= 0) { op->timed_out = 1; return 1; }
-  struct pollfd events[3] = {
+  /* Once I/O is finished, pipe readiness cannot wake us for child exit. Own
+   * one pidfd at a time, including earlier pipeline stages after the final
+   * stage exits. Unavailable pidfds use short polls without busy waiting. */
+  int no_io = op->input_fd < 0 && op->output_fds[0] < 0 && op->output_fds[1] < 0;
+  if (no_io && !op->wait_pid) {
+    /* Reaping checks the final stage first. Its notification must also be
+     * selected first: an exited upstream stage would otherwise stay readable. */
+    for (int index = op->count - 1; index >= 0; index--) {
+      if (!op->pids[index]) continue;
+      op->wait_pid = op->pids[index];
+      op->wait_fd = cspp_process_wait_open((int)op->wait_pid);
+      break;
+    }
+  }
+  int interval = no_io && op->wait_fd < 0 ? 5 : 20;
+  struct pollfd events[4] = {
     {op->input_fd, POLLOUT, 0}, {op->output_fds[0], POLLIN, 0},
-    {op->output_fds[1], POLLIN, 0}
+    {op->output_fds[1], POLLIN, 0}, {op->wait_fd, POLLIN, 0}
   };
-  int ready = poll(events, 3, remaining < 20 ? (int)remaining : 20);
+  int ready = poll(events, 4, remaining < interval ? (int)remaining : interval);
   if (ready < 0) { if (errno != EINTR) op->error = errno; return op->error != 0; }
   if (op->input_fd >= 0 && events[0].revents) {
     /* Block SIGPIPE only around the write, preserving any instance that was
@@ -779,6 +800,7 @@ static void terminate_timed_out_child(pid_t pid) {
 
 void cspp_process_operation_dispose(uptr handle) {
   process_operation *op = (process_operation *)handle;
+  close_fd(&op->wait_fd);
   close_fd(&op->exec_fd);
   close_fd(&op->input_fd);
   close_fd(&op->connection_fd);

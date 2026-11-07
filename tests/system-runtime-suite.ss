@@ -234,3 +234,32 @@
   (= 0 (system (if (file-exists? "system-runtime-runner.ss")
                    "../cspp --script=system-runtime-runner.ss loader-list-race"
                    "./cspp --script=tests/system-runtime-runner.ss loader-list-race"))))
+
+(mat system-command-exit-notification
+
+  ;; Error case: a status-only command must wake on exit instead of polling empty descriptors.
+  (let ([available?
+          (and (foreign-entry? "pidfd_open")
+               (let ([fd ((foreign-procedure "pidfd_open" (int unsigned) int) (getpid) 0)])
+                 (and (>= fd 0) (begin ((foreign-procedure "close" (int) int) fd) #t))))])
+    (if (and available? (= 0 (system "strace -qq -o /dev/null true >/dev/null 2>&1")))
+        (let* ([root (if (file-exists? "system-native-faults.ss") ".." ".")]
+               [launcher (string-append root "/cspp")]
+               [script (string-append "--script=" root "/tests/system-native-faults.ss")]
+               [trace (format "/tmp/cspp-command-wait-~a.trace" (getpid))])
+          (dynamic-wind
+            void
+            (lambda ()
+              (and
+                (process-exit-success?
+                  (process-run strace "-qq" "-e" "trace=pidfd_open,wait4" "-o" (begin trace)
+                    (begin launcher) (begin script) "command-wait" :timeout 5000))
+                (let ([lines (read-lines trace)])
+                  (and
+                    (>= (length (filter (lambda (line) (string-startswith? line "pidfd_open("))
+                                        lines)) 4)
+                    ;; Error case: an exited upstream stage must not cause busy waiting.
+                    (< (length (filter (lambda (line) (string-startswith? line "wait4("))
+                                       lines)) 100)))))
+            (lambda () (when (file-exists? trace) (delete-file trace)))))
+        #t)))

@@ -318,22 +318,16 @@
     (lambda (who process milliseconds)
       (let ([deadline (and milliseconds (+ ($monotonic-milliseconds) milliseconds))]
             [descriptor -1] [owner (get-thread-id)])
-        (dynamic-wind
+        (dynamic-wind #t
           (lambda ()
             (unless (= owner (get-thread-id))
               (errorf who "cannot enter a process wait from another thread"))
-            ;; Entry thunks need their own cleanup: the exit thunk does not run
-            ;; if entry raises. Reentry obtains a fresh notification descriptor.
-            (guard (failure
-                     [else
-                      (when (fx>= descriptor 0)
-                        ($close-fd-ffi descriptor)
-                        (set! descriptor -1))
-                      (raise failure)])
-              (with-interrupts-disabled
-                (with-mutex (process-mutex process)
-                  (unless ($process-status process)
-                    (set! descriptor ($wait-open-ffi ($process-pid process))))))))
+            ;; Critical entry installs the exit thunk before reenabling interrupts.
+            ;; A handler may then escape through a continuation as well as raise.
+            ;; Reentry obtains a fresh notification descriptor.
+            (with-mutex (process-mutex process)
+              (unless ($process-status process)
+                (set! descriptor ($wait-open-ffi ($process-pid process))))))
           (lambda ()
             (let loop ([reap? #t])
               ;; A signal delivered before poll does not produce EINTR. Check

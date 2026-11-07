@@ -27,6 +27,11 @@ system conditions with the operation and error code.
 When affinity information is unavailable, it uses the online CPU count, falling back to one.
 CPU-time quotas are not converted into CPU counts.
 
+`sleep`, `milisleep`, and `nanosleep` accept exact nonnegative durations in their respective
+units. The whole-second component must fit the native `time_t` range; larger durations raise
+an argument error. The `sleep-seconds`, `sleep-milliseconds`, and `sleep-nanoseconds` aliases
+have the same limits.
+
 `linux-system-uptime`, `linux-memory-info`, and `linux-load-average` read their requested procfs
 files directly on each call. They do not enumerate mounts or cache mount-namespace state.
 An absent file raises `system-unsupported-error?`. `linux-procfs-mounted?` remains the explicit
@@ -196,6 +201,8 @@ to short nonblocking polls and sleeps outside the mutex.
 Native polls are bounded to 20 ms so both new and already-pending Scheme interrupts are serviced.
 Timeout ticks do not trigger another `waitpid` call unless exit readiness is reported.
 Interrupted waits resume against the original monotonic deadline.
+Wait entry and exit run with interrupts disabled so a continuation escape during setup
+cannot bypass cleanup of the notification descriptor.
 
 `process-kill` takes a positive signed 32-bit signal number; `process-terminate` and
 `process-interrupt` send TERM and INT. `send-process-signal` also accepts signal names/records.
@@ -339,6 +346,8 @@ copies Scheme inputs; steps use only native buffers, strings, descriptors, and c
 The shared state machine performs exec handshakes, feeds stdin, drains outputs, and reaps children.
 Run forms disable retention for discarded capture streams. Connections remain bounded as stages
 launch. There is no global reactor, extra thread, or native callback into Scheme.
+After I/O finishes, completed commands use one transient pidfd at a time to wait for remaining
+children, including earlier pipeline stages. If pidfds are unavailable, short polls are used.
 
 The private `(cspp system native)` wrapper owns each operation in a `dynamic-wind` scope.
 Steps poll for at most 20 ms and return for a Scheme event check; blocking OS setup calls and

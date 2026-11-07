@@ -433,3 +433,20 @@
      (if (linux?)
          (list? (linux-os-release))
          #t))
+
+(mat system-sleep-native-range
+
+     ;; Error case: native time_t overflow must be rejected instead of returning immediately.
+     (for-all
+       (lambda (entry)
+         (guard (failure [else (and (who-condition? failure)
+                                   (eq? (car entry) (condition-who failure)))])
+           ((cadr entry) (caddr entry))
+           #f))
+       (let ([seconds (expt 2 63)])
+         (list (list 'sleep sleep seconds)
+               (list 'milisleep milisleep (* seconds 1000))
+               (list 'nanosleep nanosleep (* seconds 1000000000))
+               (list 'sleep sleep-seconds seconds)
+               (list 'milisleep sleep-milliseconds (* seconds 1000))
+               (list 'nanosleep sleep-nanoseconds (* seconds 1000000000))))))

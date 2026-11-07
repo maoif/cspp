@@ -3,6 +3,19 @@
 ;; This driver runs under strace syscall injection, separately from the test runner.
 (define mode (string->symbol (cadr (command-line))))
 (case mode
+  [(command-wait)
+   ;; Error case: exit readiness must cover unpiped commands and drained pipeline output.
+   (unless
+     (and (process-exit-success? (process-run /bin/sleep "0.1"))
+          (for-all process-exit-success?
+            (process-run-pipeline '(("/bin/sleep" "0.1") ("/bin/true"))))
+          (for-all process-exit-success?
+            (process-run-pipeline '(("/bin/true") ("/bin/sleep" "0.1"))))
+          (process-exit-success?
+            (process-result-status
+              (process-capture-shell "exec 1>&- 2>&-; exec /bin/sleep 0.1"))))
+     (error 'system-native-faults "command wait returned an incorrect status"))]
+
   [(spawn-interrupt)
    ;; Error case: a delayed exec handshake must service handlers before child setup completes.
    (let* ([thread ((foreign-procedure "pthread_self" () uptr))]

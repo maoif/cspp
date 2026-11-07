@@ -89,3 +89,51 @@
                '(#f #t)))
            '(consume return)))))
   scope)
+
+;; Error case: continuation escapes while wait entry reenables interrupts must close its descriptor.
+;; Deliver SIGINT to this thread after opening a real descriptor, before entry has finished.
+(eval
+  `(let ([opened -1] [escape #f] [inject? #t] [previous (keyboard-interrupt-handler)]
+         [thread ((foreign-procedure "pthread_self" () uptr))]
+         [send (foreign-procedure "pthread_kill" (uptr int) int)]
+         [close (foreign-procedure "close" (int) int)]
+         [duplicate (foreign-procedure "dup" (int) int)]
+         [descriptor-valid? (foreign-procedure "fcntl" (int int) int)])
+     (let ([$wait-open-ffi
+             (lambda (pid)
+               (if inject?
+                   (begin
+                     (set! opened (duplicate 1))
+                     (when (< opened 0) (error 'wait-entry "cannot open descriptor"))
+                     (send thread 2)
+                     opened)
+                   ((foreign-procedure "cspp_process_wait_open" (int) int) pid)))])
+       ,@(filter
+           (lambda (definition)
+             (not (and (pair? definition) (eq? (car definition) 'define)
+                       (eq? (cadr definition) '$wait-open-ffi))))
+           definitions)
+       (let ([child (process-spawn "/bin/sleep" '("10") '())])
+         (dynamic-wind
+           void
+           (lambda ()
+             (keyboard-interrupt-handler (lambda () (escape 'escaped)))
+             (do ([index 0 (+ index 1)]) ((= index 20))
+               (let ([result
+                       (call/1cc
+                         (lambda (leave)
+                           (set! escape leave)
+                           (if (even? index)
+                               (process-wait child)
+                               (process-wait/timeout child 1000))))])
+                 (unless (eq? result 'escaped) (error 'wait-entry "interrupt did not escape"))
+                 (let ([leaked? (>= (descriptor-valid? opened 1) 0)])
+                   ;; Close on failure so the diagnostic itself does not retain resources.
+                   (when leaked? (close opened))
+                   (when leaked? (error 'wait-entry "wait entry leaked a descriptor"))))))
+           (lambda ()
+             (set! inject? #f)
+             (keyboard-interrupt-handler previous)
+             (process-kill child 9)
+             (process-wait child))))))
+  scope)

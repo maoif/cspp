@@ -143,6 +143,13 @@ ptr cspp_send_signal(int pid, int sig) {
 //
 //=======================================================================
 
+/* Chez converts sleep seconds through uint64_t before assigning time_t. */
+Suint64_t cspp_sleep_max_seconds(void) {
+  _Static_assert(sizeof(time_t) <= sizeof(uint64_t), "time_t exceeds Chez sleep range");
+  unsigned int bits = sizeof(time_t) * CHAR_BIT;
+  return UINT64_MAX >> (64 - bits + ((time_t)-1 < (time_t)0));
+}
+
 
 ptr cspp_hostname() {
   struct utsname sysinfo;
