@@ -64,6 +64,8 @@
   File contents may contain NUL characters.
   Names and symbolic-link targets read from the filesystem must be valid UTF-8.
   Undecodable bytes raise an error; they are never replaced with another filename.
+  Concurrent filesystem operations on the same files have undefined behavior. Callers must
+  synchronize them.
   |#
   ;; Validate the original Scheme string before any C-string conversion or filesystem probe.
   ;; Empty names retain each operation's existing behavior; NUL is never a filename character.
@@ -3220,6 +3222,8 @@
   The `fswatcher-remove!` procedure stops watching the recorded path string `path` in
   `watcher` and returns an unspecified value. It also accepts watches already removed by
   the kernel whose `FSW_ignored` event has not yet been consumed.
+  If a pathname was reused for another file, remove all active registrations recorded under
+  that pathname, including registrations for an earlier file that was renamed or deleted.
   Events already queued, including `FSW_ignored`, remain available with their recorded path.
   An unknown path or a watch explicitly removed already raises a watcher error.
   |#
@@ -3228,15 +3232,18 @@
       (pcheck ([$fswatcher? watcher] [$fswatcher-open? watcher] [$filename? path])
               (let-values ([(ids entries) (hashtable-entries ($fswatcher-paths watcher))])
                 (let ([length (vector-length entries)])
-                  (let loop ([index 0])
+                  (let loop ([index 0] [removed? #f])
                     (if (fx= index length)
-                        ($err-fswatcher-error who (format "invalid path: ~a" path))
+                        (unless removed?
+                          ($err-fswatcher-error who (format "invalid path: ~a" path)))
                         (let ([entry (vector-ref entries index)])
                           (if (and (cdr entry) (string=? path (car entry)))
                               (begin
                                 ($fsw-remove! who ($fswatcher-id watcher) (vector-ref ids index))
-                                (set-cdr! entry #f))
-                              (loop (fx1+ index)))))))))))
+                                ;; Retain the entry for attribution of queued notifications.
+                                (set-cdr! entry #f)
+                                (loop (fx1+ index) #t))
+                              (loop (fx1+ index) removed?))))))))))
 
 
 

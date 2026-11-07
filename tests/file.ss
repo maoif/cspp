@@ -3266,6 +3266,47 @@
                  ($fswatcher-event? (car events) path (fswatcher-mask FSW_modify) #f)
                  ($fswatcher-event? (cadr events) path (fswatcher-mask FSW_ignored) #f)))))))
 
+(mat fswatcher-remove-recreated-path
+     ($with-fswatcher-fixture
+      (lambda (root watcher)
+        (let ([path (path-build root "top.txt")])
+          (fswatcher-add! watcher path (fswatcher-mask FSW_modify FSW_delete_self))
+          (delete-file path)
+          (file-touch path)
+          (fswatcher-add! watcher path (fswatcher-mask FSW_modify))
+          (fswatcher-remove! watcher path)
+          (write-string! path "unwatched")
+          (let ([events ($fswatcher-drain watcher)])
+            (and events (= 3 (length events))
+                 ($fswatcher-event? (car events) path (fswatcher-mask FSW_delete_self) #f)
+                 ($fswatcher-event? (cadr events) path (fswatcher-mask FSW_ignored) #f)
+                 ($fswatcher-event? (caddr events) path (fswatcher-mask FSW_ignored) #f))))))
+
+     ($with-fswatcher-fixture
+      (lambda (root watcher)
+        (let ([path (path-build root "top.txt")]
+              [renamed (path-build root "renamed")])
+          (fswatcher-add! watcher path (fswatcher-mask FSW_modify))
+          (rename-file path renamed)
+          (file-touch path)
+          (fswatcher-add! watcher path (fswatcher-mask FSW_modify))
+          (write-string! renamed "before removal")
+          (write-string! path "before removal")
+          (fswatcher-remove! watcher path)
+          (write-string! renamed "after removal")
+          (write-string! path "after removal")
+          ;; Error case: one removal retires all registrations of this recorded pathname.
+          (and (guard (failure [(fswatcher-error? failure) #t] [else #f])
+                 (fswatcher-remove! watcher path) #f)
+               (let ([events ($fswatcher-drain watcher)])
+                 (and events (= 4 (length events))
+                      (= 2 (length (filter (lambda (event)
+                                             ($fswatcher-event? event path
+                                               (fswatcher-mask FSW_modify) #f)) events)))
+                      (= 2 (length (filter (lambda (event)
+                                             ($fswatcher-event? event path
+                                               (fswatcher-mask FSW_ignored) #f)) events))))))))))
+
 (mat fswatcher-remove-pending
      ($with-fswatcher-fixture
       (lambda (root watcher)
