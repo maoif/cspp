@@ -8,11 +8,13 @@
   initializes that address; `step` takes it and returns zero while work remains, nonzero
   when done. `result` takes it and returns a tagged FFI result. `dispose` takes it and frees
   all remaining native resources. `consume` takes the decoded result and returns the final
-  values; it must publish newly transferred resources inside its own cleanup guard.
+  values; it must publish newly transferred resources inside its own cleanup scope.
   Native steps must bound blocking waits and permit GC without accessing Scheme objects.
   Pending Scheme events run between steps. Resource publication runs with interrupts disabled.
   Leaving the scope disposes its state; replaying a continuation after disposal raises an error.
   A continuation may not enter the native operation from a different Scheme thread.
+  Process operations must not run inside fibers: scheduler suspension leaves this scope,
+  disposes native state, and prevents later resumption even on the original thread.
   |#
   (define $call-native-operation
     (lambda (who create prepare step result dispose consume)
@@ -58,7 +60,7 @@
   The internal `$call-process-operation` procedure runs one resumable process operation.
   `who` is its caller symbol. `prepare` has signature `native-address -> unspecified` and
   initializes copied native inputs. `consume` receives the decoded result and returns its values,
-  publishing transferred live resources inside a previously installed cleanup guard.
+  publishing transferred live resources inside a previously installed cleanup scope.
   Process steps and cleanup share `$call-native-operation`'s lifetime and interrupt contract.
   |#
   (define $call-process-operation

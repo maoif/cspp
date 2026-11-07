@@ -3,6 +3,25 @@
   (import (cspp chez) (cspp utils) (cspp string) (cspp list)
           (cspp system private))
 
+  ;; Discard indentation and unescaped trailing whitespace before decoding.
+  ;; An odd run of backslashes quotes the final whitespace character.
+  (define $trim-line
+    (lambda (line)
+      (let ([length (string-length line)])
+        (let start ([first 0])
+          (if (and (fx< first length) (char-whitespace? (string-ref line first)))
+              (start (fx+ first 1))
+              (let end ([last length])
+                (if (and (fx> last first)
+                         (char-whitespace? (string-ref line (fx- last 1))))
+                    (let slashes ([index (fx- last 2)] [count 0])
+                      (if (and (fx>= index first) (char=? #\\ (string-ref line index)))
+                          (slashes (fx- index 1) (fx+ count 1))
+                          (if (fxodd? count)
+                              (substring line first last)
+                              (end (fx- last 1)))))
+                    (substring line first last))))))))
+
   ;; OS-release permits shell quoting and escaping, but forbids shell expansion.
   (define $decode-value
     (lambda (value)
@@ -37,6 +56,7 @@
   Blank and comment lines are ignored. Single quotes preserve literal contents; double quotes
   decode escapes for quotes, backslashes, dollar signs, and backticks. Unquoted escapes quote the
   following character. No variable expansion or command substitution is performed.
+  Indentation and unescaped trailing whitespace are ignored; escaped trailing whitespace is kept.
   |#
   (define-who $read-os-release
     (lambda (path)
@@ -48,7 +68,7 @@
                 (let ([line (get-line port)])
                   (if (eof-object? line)
                       (builder)
-                      (let ([line (string-trim line)])
+                      (let ([line ($trim-line line)])
                         (unless (or (string-empty? line) (char=? #\# (string-ref line 0)))
                           (let ([equals (string-search line #\=)])
                             (when equals

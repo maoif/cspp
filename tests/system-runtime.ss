@@ -30,6 +30,116 @@
       (unless (null? failures) (raise (car failures))))))
 
 (case (string->symbol (cadr (command-line)))
+  [(tilde-lookup-gc)
+   ;; Error case: tilde lookups must allow GC without losing other foreign-call arguments.
+   (load-shared-object (getenv "LD_PRELOAD"))
+   (let ([arm (foreign-procedure "cspp_lookup_fixture_arm" () void)]
+         [entered (foreign-procedure "cspp_lookup_fixture_entered" () int)]
+         [finished (foreign-procedure "cspp_lookup_fixture_finished" () int)]
+         [release (foreign-procedure "cspp_lookup_fixture_release" () void)]
+         [home (getenv "HOME")]
+         [unsetenv (foreign-procedure "unsetenv" (string) int)]
+         [link (foreign-procedure "cspp_link" (string string) ptr)]
+         [symlink (foreign-procedure "cspp_symlink" (string string) ptr)]
+         [touch (foreign-procedure "cspp_touch" (string ptr ptr int) ptr)]
+         [path (format "/tmp/cspp-tilde-gc-~a" (getpid))])
+     (dynamic-wind
+       (lambda ()
+         (check (= 0 (unsetenv "HOME")))
+         (call-with-output-file path (lambda (port) (put-string port "tilde GC"))))
+       (lambda ()
+         (for-each
+           (lambda (operation)
+             (let ([mutex (make-mutex)] [ready (make-condition)] [done? #f]
+                   [failure #f] [collected-during-lookup? #f])
+               (arm)
+               (fork-thread
+                 (lambda ()
+                   (guard (condition [else (set! failure condition)])
+                     (operation))
+                   (with-mutex mutex (set! done? #t) (condition-signal ready))))
+               (dynamic-wind
+                 void
+                 (lambda ()
+                   (let loop () (when (= 0 (entered)) (milisleep 1) (loop)))
+                   (collect)
+                   ;; Reuse nursery storage so dangling C arguments cannot rely on old contents.
+                   (do ([index 0 (+ index 1)]) ((= index 256))
+                     (make-vector 4096 #f))
+                   (set! collected-during-lookup? (= 0 (finished))))
+                 (lambda ()
+                   (release)
+                   (with-mutex mutex
+                     (let loop () (unless done? (condition-wait ready mutex) (loop))))))
+               (when failure (raise failure))
+               (check collected-during-lookup?)))
+           (list
+             (lambda ()
+               (let ([directory (fs-open-directory "~__cspp_tilde_gc__/tmp")])
+                 (fs-close-directory directory)))
+             (lambda ()
+               (let ([directory (fs-open-directory "~/tmp")])
+                 (fs-close-directory directory)))
+             ;; Error case: expanding src must not invalidate the still-unread dest argument.
+             (lambda ()
+               (check (eq? #t (link (string-append "~__cspp_tilde_gc__" path)
+                                   (string-append path "-hard"))))
+               (check (same-file? path (string-append path "-hard"))))
+             (lambda ()
+               (check (eq? #t (symlink (string-append "~__cspp_tilde_gc__" path)
+                                      (string-append path "-symbolic"))))
+               (check (same-file? path (string-append path "-symbolic"))))
+             ;; Error case: timestamp vectors must be decoded before path expansion allows GC.
+             (lambda ()
+               (check (eq? #t (touch (string-append "~__cspp_tilde_gc__" path)
+                                    (vector 123456789 1600000000)
+                                    (vector 987654321 1600000001) 1)))
+               (let ([accessed (file-access-time path)] [modified (file-modification-time path)])
+                 (check (and (= 1600000000 (time-second accessed))
+                             (= 123456789 (time-nanosecond accessed))
+                             (= 1600000001 (time-second modified))
+                             (= 987654321 (time-nanosecond modified)))))))))
+       (lambda ()
+         (when home (putenv "HOME" home))
+         (for-each
+           (lambda (suffix)
+             (let ([file (string-append path suffix)])
+               (when (file-exists? file #f) (delete-file file))))
+           '("" "-hard" "-symbolic")))))]
+
+  [(handoff-interrupt-depth)
+   ;; Error case: normal resource handoff must preserve every enclosing interrupt-disable count.
+   (let ([previous (timer-interrupt-handler)])
+     (dynamic-wind
+       void
+       (lambda ()
+         (for-each
+           (lambda (operation)
+             (let ([handled? #f])
+               (timer-interrupt-handler (lambda () (set! handled? #t)))
+               (with-interrupts-disabled
+                 (with-interrupts-disabled
+                   (set-timer 1)
+                   (operation)
+                   (check (not handled?)))
+                 (check (not handled?)))
+               (with-interrupts-disabled (void))
+               (check handled?)))
+           (list
+             (lambda ()
+               (let-values ([(input output) (make-pipe)])
+                 (close-port input)
+                 (close-port output)))
+             (lambda ()
+               (let ([child (process-spawn "/bin/true" '() '((stdout . pipe)))])
+                 (process-close-ports! child)
+                 (check (process-exit-success? (process-wait child)))))
+             (lambda ()
+               (for-each
+                 (lambda (child) (check (process-exit-success? (process-wait child))))
+                 (process-spawn-pipeline '(("/bin/true") ("/bin/true")) '()))))))
+       (lambda () (set-timer 0) (timer-interrupt-handler previous))))]
+
   [(native-interrupts)
    ;; Error case: native steps must service Scheme handlers before long operations complete.
    (let* ([thread ((foreign-procedure "pthread_self" () uptr))]

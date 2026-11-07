@@ -76,12 +76,14 @@ unsigned int cspp_getgid(void) { return getgid(); }
 unsigned int cspp_geteuid(void) { return geteuid(); }
 unsigned int cspp_getegid(void) { return getegid(); }
 
-/* Tilde expansion needs a native-owned directory without shared NSS storage. */
+/* Tilde expansion passes a native-owned name and needs a native-owned directory.
+ * As with ordinary account lookups, slow NSS services must not prevent GC. */
 char *cspp_user_home(const char *name) {
   size_t capacity = 1024;
   char *buffer = NULL, *home = NULL;
   struct passwd record, *result = NULL;
   int code;
+  Sdeactivate_thread();
   for (;;) {
     char *next = realloc(buffer, capacity);
     if (!next) break;
@@ -93,5 +95,6 @@ char *cspp_user_home(const char *name) {
     break;
   }
   free(buffer);
+  Sactivate_thread();
   return home;
 }

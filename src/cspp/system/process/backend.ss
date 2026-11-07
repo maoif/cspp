@@ -1,4 +1,6 @@
 (library (cspp system process backend)
+  ;; Process operations must run outside fibers. Native scope disposal treats scheduler
+  ;; suspension as an exit, and blocking calls occupy the fiber's worker.
   (export
           ;; completed command results
           process-result? process-result-status process-result-stdout process-result-stderr
@@ -244,6 +246,7 @@
 
   #|proc:process-capture-pipeline
   The `process-capture-pipeline` procedure runs string-list process specs as a pipeline.
+  Do not call this process operation inside a fiber; use a separate Scheme thread.
   The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
   Command strings must contain no NUL characters. Returns a process result with captured stdout.
   Stdin and stderr are inherited. The result's stderr field is `#f`, and its command is `pipeline`.

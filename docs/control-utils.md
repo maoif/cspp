@@ -77,6 +77,12 @@ zero. Lengths used by the random generators must additionally fit a fixnum.
 `p/and` preserves the final successful result, `p/or` the first nonfalse result, and `p/not`
 returns a boolean. Empty `p/and` is true; empty `p/or` is false.
 
+`pcase` tests a bound identifier against unary predicates in clause order. Use
+`[number? body ...]` for one named predicate or `[(number? string?) body ...]` for alternatives.
+The first successful clause returns its body's values; `else` supplies the fallback.
+Wrap a computed predicate in a singleton list so its expression is not parsed as alternatives:
+`[((p/not number?)) body ...]` or `[((lambda (object) (number? object))) body ...]`.
+
 `incr!`/`decr!` and aliases `add1!`/`sub1!` mutate numeric variables. `fx+!`, `fx-!`, `fx*!`, and
 `fx/!` require fixnum variables and operands. They evaluate operands once and preserve arithmetic
 checks even at optimization level 3; type errors, overflow, and division errors do not assign

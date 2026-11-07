@@ -40,12 +40,7 @@
   (lambda (phase)
     (eval
       `(let ([closed-fds '()] [closed-ports '()])
-         (let-syntax ([foreign-procedure
-                       (syntax-rules ()
-                         [(_ name (argument ...) result)
-                          (lambda (fd)
-                            (set! closed-fds (cons fd closed-fds))
-                            0)])])
+         (let ([$close-fd-ffi (lambda (fd) (set! closed-fds (cons fd closed-fds)) 0)])
            (let ([ffi-result-ref (lambda (value) value)]
                  [$make-pipe-ffi (lambda () (vector 10 11))]
                  [open-fd-input-port
@@ -59,6 +54,7 @@
                  [$close-port/cleanup
                    (lambda (port)
                      (when port (set! closed-ports (cons port closed-ports))))])
+             ,(definition '$call-with-process-handoff)
              ,(definition 'make-pipe)
              (guard (failure [else (list closed-ports closed-fds)])
                (make-pipe)

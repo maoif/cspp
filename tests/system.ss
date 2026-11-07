@@ -124,6 +124,31 @@
                    ($read-os-release path)))
          (lambda () (delete-file path)))))
 
+(mat linux-os-release-trailing-whitespace
+
+     ;; Error case: trimming assignments must preserve escaped or quoted trailing whitespace.
+     (let ([path (format "/tmp/cspp-os-release-whitespace-~a" (getpid))])
+       (dynamic-wind
+         (lambda ()
+           (call-with-output-file path
+             (lambda (port)
+               (put-string port
+                 (string-append
+                   "SPACE=hello\\ \n"
+                   "TAB=hello\\\t\n"
+                   "PADDED=hello\\   \n"
+                   "SLASH=hello\\\\ \n"
+                   "DOUBLE=\"hello \"  \n"
+                   "SINGLE='hello '  \n"
+                   "PLAIN=hello  \n"
+                   "  # padded comment  \n\t\n")))))
+         (lambda ()
+           (equal? '((SPACE . "hello ") (TAB . "hello\t") (PADDED . "hello ")
+                     (SLASH . "hello\\") (DOUBLE . "hello ") (SINGLE . "hello ")
+                     (PLAIN . "hello"))
+                   ($read-os-release path)))
+         (lambda () (delete-file path)))))
+
 (mat linux-os-release-repeated-keys
 
      ;; Error case: repeated assignments must return one entry per key with the latest value.

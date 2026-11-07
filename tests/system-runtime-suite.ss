@@ -1,5 +1,12 @@
 (import (cspp))
 
+(mat system-tilde-lookup-allows-collection
+
+  ;; Error case: slow account services used by tilde expansion must not stall other threads' GC.
+  (= 0 (system (if (file-exists? "system-runtime-runner.ss")
+                   "../cspp --script=system-runtime-runner.ss tilde-lookup-gc"
+                   "./cspp --script=tests/system-runtime-runner.ss tilde-lookup-gc"))))
+
 (mat system-preexec-signal-dispositions
 
   ;; Error case: a child must not enter Chez's inherited handlers while preparing exec.
@@ -30,8 +37,8 @@
 
   ;; Error case: resource handoff needs isolation because the old implementation leaves children.
   (= 0 (system (if (file-exists? "system-runtime-runner.ss")
-                   "../cspp --script=system-runtime-runner.ss ownership-interrupts"
-                   "./cspp --script=tests/system-runtime-runner.ss ownership-interrupts"))))
+                   "../cspp --script=system-runtime-runner.ss ownership-interrupts handoff-interrupt-depth"
+                   "./cspp --script=tests/system-runtime-runner.ss ownership-interrupts handoff-interrupt-depth"))))
 
 (mat system-live-wait-notification
 

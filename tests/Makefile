@@ -114,7 +114,12 @@ crypto-hardening.so: crypto-thread-process.py crypto-thread-process.ss
 crypto-hardening.so: crypto-continuation-process.py crypto-continuation-process.ss
 crypto-hardening.so: crypto-input-process.py crypto-input-process.ss
 
-system-runtime-suite.so: system-runtime.ss system-runtime-runner.ss
+system-runtime-suite.so: system-runtime.ss system-runtime-runner.ss system-lookup-fixture.so
+
+system-lookup-fixture.so: ../src/cspp/c/system_lookup_fixture.c
+	$(CC) $(CPPFLAGS) -Wall -Wextra -O2 -fPIC -shared $< -o $@ $(LDFLAGS) -ldl
+
+system-process.so: system-process-cleanup-probe.ss system-process-handoff.ss
 
 system-user.so: system-user-thread.ss
 

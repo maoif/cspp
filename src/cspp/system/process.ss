@@ -1,6 +1,8 @@
 (library (cspp system process)
   ;; Public facade: command macros and completed results are independent of live process state.
   ;; See docs/system.md for usage, defaults, and stream ownership.
+  ;; Do not use process operations inside fibers: suspension can dispose native state,
+  ;; and blocking calls occupy a scheduler worker. Use a separate Scheme thread instead.
   (export
           ;; exit status records
           process-exit-status?

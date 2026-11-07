@@ -168,6 +168,13 @@
                       "../cspp --script=system-process-cleanup-probe.ss"
                       "./cspp --script=tests/system-process-cleanup-probe.ss"))))
 
+(mat process-handoff-continuation-exits
+
+     ;; Error case: continuation escapes after native transfer must close ports and reap children.
+     (= 0 (system (if (file-exists? "system-process-handoff.ss")
+                      "../cspp --script=system-process-handoff.ss"
+                      "./cspp --script=tests/system-process-handoff.ss"))))
+
 (mat process-run-discarded-captures
 
      ;; Error case: status-only runs must drain capture pipes without retaining stream-sized data.

@@ -47,6 +47,8 @@ int cspp_process_wait_open(int pid);
 int cspp_process_wait_ready(int fd, int timeout_ms);
 ptr cspp_make_pipe();
 
+/* May permit GC during tilde lookup. Callers must snapshot other Scheme/FFI
+ * arguments before calling; the returned path is native-owned and must be freed. */
 char *expand_pathname(const char *inpath);
 
 char **cspp_copy_environment(void);

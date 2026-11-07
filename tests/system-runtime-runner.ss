@@ -21,7 +21,12 @@
 
 (define run-case
   (lambda (mode)
-    (let ([command (format "exec setsid ~a --script=~a ~a"
+    (let ([command (format "exec ~a setsid ~a --script=~a ~a"
+                           (if (string=? mode "tilde-lookup-gc")
+                               (string-append "env LD_PRELOAD="
+                                 (shell-quote
+                                   (path-build test-root "tests/system-lookup-fixture.so")))
+                               "")
                            (shell-quote (path-build test-root "cspp"))
                            (shell-quote (path-build test-root "tests/system-runtime.ss"))
                            (shell-quote mode))])

@@ -46,6 +46,12 @@ Repeated keys return only their final value, in order of each key's first appear
 
 ## Running commands
 
+Do not use process operations inside fibers. Process execution and control APIs are native-thread
+operations and are not integrated with the fiber scheduler. Fiber preemption can dispose an active
+native operation, so resuming the fiber can fail; blocking operations can also occupy its worker.
+Run process work on a separately managed Scheme thread outside the fiber scheduler. Disabling
+fiber preemption does not provide supported fiber integration.
+
 Process creation uses `process-<operation>[-<target>]` names:
 
 | Behavior | Executable and arguments | Shell command string | Pipeline specifications |
@@ -341,6 +347,10 @@ Scalar-only step and disposal calls use `__collect_safe`, letting Chez deactivat
 thread while other threads collect. Scheme result allocation and resource publication happen
 only while active. A handler escape closes owned descriptors and kills/reaps unreturned immediate
 children; normal live spawning transfers ownership to the returned process objects.
+Live spawns, live pipelines, and `make-pipe` retain Scheme cleanup across continuation exits
+during handoff. Once acquisition completes normally, callers own the resources. A caller whose
+interrupt handlers can escape must protect acquisition and storage of the result together with
+`with-interrupts-disabled`, and arrange cleanup for its own subsequent continuation exits.
 Once a native operation's scope has been left and disposed, replaying a continuation into it raises
 an error. Resuming live `process-wait` instead acquires a fresh notification descriptor.
 Continuations into either kind of operation must stay on their original Scheme thread; cross-thread
@@ -348,4 +358,5 @@ entry raises an error so two threads cannot share or free one invocation's nativ
 
 Live waits use pidfds when available and reap under the per-process mutex after exit notification.
 Their polls also have the 20 ms bound, while reaping remains tied to readiness. These are native
-thread operations, not fiber-aware scheduling APIs.
+thread operations. Do not use process operations inside fibers; the periodic event checks and GC
+cooperation do not make their native-resource lifetime compatible with fiber suspension.

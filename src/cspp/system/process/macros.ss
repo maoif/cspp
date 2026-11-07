@@ -1,4 +1,6 @@
 (library (cspp system process macros)
+  ;; Command forms must run outside fibers; periodic Scheme event checks do not make
+  ;; process operations compatible with scheduler suspension or worker migration.
   (export process-run process-run/check process-capture process-capture/check
           process-run-shell process-capture-shell)
   (import (cspp chez) (cspp system process backend))
@@ -110,6 +112,7 @@
 
   #|macro:process-run
   The `process-run` macro runs `program` with arguments and returns an exit status.
+  Do not use process operations inside fibers; run them on a separate Scheme thread.
   Bare identifiers in `program` and arguments are literal command words.
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
   The `:cwd` option accepts a nonempty working-directory string or `#f`.
@@ -136,6 +139,7 @@
 
   #|macro:process-run/check
   The `process-run/check` macro runs `program` and raises on an unacceptable exit.
+  Do not use process operations inside fibers; run them on a separate Scheme thread.
   Bare identifiers in `program` and arguments are literal command words.
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
   The `:cwd` option accepts a nonempty working-directory string or `#f`.
@@ -162,6 +166,7 @@
 
   #|macro:process-capture
   The `process-capture` macro runs `program` with arguments and returns a result.
+  Do not use process operations inside fibers; run them on a separate Scheme thread.
   Bare identifiers in `program` and arguments are literal command words.
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
   The `:cwd` option accepts a nonempty working-directory string or `#f`.
@@ -190,6 +195,7 @@
 
   #|macro:process-capture/check
   The `process-capture/check` macro runs `program` and raises on an unacceptable exit.
+  Do not use process operations inside fibers; run them on a separate Scheme thread.
   Bare identifiers in `program` and arguments are literal command words.
   Other forms are expressions; use `(begin argument)` to pass the value of a variable.
   The `:cwd` option accepts a nonempty working-directory string or `#f`.
@@ -218,6 +224,7 @@
 
   #|macro:process-run-shell
   The `process-run-shell` macro runs `command` through the host shell.
+  Do not use process operations inside fibers; run them on a separate Scheme thread.
   A bare `command` identifier is literal text; other forms evaluate to a command string.
   Use `(begin command)` for a variable, followed by optional keyword clauses.
   The `:cwd` option accepts a nonempty working-directory string or `#f`.
@@ -244,6 +251,7 @@
 
   #|macro:process-capture-shell
   The `process-capture-shell` macro runs `command` through the host shell.
+  Do not use process operations inside fibers; run them on a separate Scheme thread.
   A bare `command` identifier is literal text; other forms evaluate to a command string.
   Use `(begin command)` for a variable, followed by optional keyword clauses.
   The `:cwd` option accepts a nonempty working-directory string or `#f`.

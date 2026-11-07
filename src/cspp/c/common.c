@@ -109,9 +109,13 @@ char *expand_pathname(const char *inpath) {
   const char *ip;
 
   if (*inpath == '~') {
+    /* The account lookup permits GC. Retain no pointer into the FFI string,
+     * including the suffix appended after the lookup reactivates this thread. */
+    char *owned_path = strdup(inpath);
+    if (owned_path == NULL) return NULL;
     char *dir;
     size_t n1, n2;
-    if (*(ip = inpath + 1) == 0 || DIRMARKERP(*ip)) {
+    if (*(ip = owned_path + 1) == 0 || DIRMARKERP(*ip)) {
       dir = cspp_environment_copy("HOME");
       if (dir == NULL) dir = cspp_user_home(NULL);
     } else {
@@ -120,8 +124,10 @@ char *expand_pathname(const char *inpath) {
       do {
         ip += 1;
       } while (*ip != 0 && !DIRMARKERP(*ip));
-      if ((userbuf = malloc(ip - user_start + 1)) == NULL)
+      if ((userbuf = malloc(ip - user_start + 1)) == NULL) {
+        free(owned_path);
         return NULL;
+      }
       memcpy(userbuf, user_start, ip - user_start);
       userbuf[ip - user_start] = 0;
       dir = cspp_user_home(userbuf);
@@ -130,12 +136,18 @@ char *expand_pathname(const char *inpath) {
     if (dir != NULL) {
       n1 = strlen(dir);
       n2 = strlen(ip) + 1;
-      if ((outpath = malloc(n1 + n2)) == NULL) { free(dir); return NULL; }
+      if ((outpath = malloc(n1 + n2)) == NULL) {
+        free(dir);
+        free(owned_path);
+        return NULL;
+      }
       memcpy(outpath, dir, n1);
       memcpy(outpath + n1, ip, n2);
       free(dir);
+      free(owned_path);
       return outpath;
     }
+    return owned_path;
   }
 
   /* if no ~ or tilde dir can't be found, copy inpath */

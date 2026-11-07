@@ -1,4 +1,6 @@
 (library (cspp system process expert)
+  ;; Process operations must run outside fibers. Fiber suspension can dispose native state;
+  ;; native waiting and port I/O also occupy the current scheduler worker.
   (export
           ;; exit status records
           process-exit-status?
@@ -182,8 +184,31 @@
       (case ($option-ref options key 'inherit)
         [(inherit) 0] [(null) 1] [(pipe) 2] [(stdout) 3])))
 
+  ;; Keep rollback installed until acquisition returns normally. The final commit and
+  ;; removal of the cleanup winder are atomic with respect to Scheme interrupts.
+  ;; critical dynamic-wind adds its own interrupt-disable count around the exit thunk;
+  ;; successful acquisition adds one count here, balanced inside that protected thunk.
+  (define $call-with-process-handoff
+    (lambda (who acquire cleanup)
+      (let ([closed? #f] [returned? #f] [owner (get-thread-id)])
+        (dynamic-wind #t
+          (lambda ()
+            (unless (= owner (get-thread-id))
+              (errorf who "cannot enter a resource handoff from another thread"))
+            (when closed? (errorf who "cannot resume a completed resource handoff")))
+          (lambda ()
+            (call-with-values acquire
+              (lambda results
+                (disable-interrupts)
+                (set! returned? #t)
+                (apply values results))))
+          (lambda ()
+            (set! closed? #t)
+            (if returned? (enable-interrupts) (cleanup)))))))
+
   #|proc:process-spawn
   The `process-spawn` procedure starts executable string `program` with string-list `arguments`.
+  Do not call this process operation inside a fiber; use a separate Scheme thread.
   It returns a process object. `options` is an alist; `cwd` is a nonempty directory string or `#f`,
   and `env` is a string-pair alist or `#f` to inherit. An empty `env` clears the environment.
   Program, argument, directory, and environment strings must contain no NUL characters.
@@ -205,42 +230,40 @@
       (pcheck-who who ([$os-string? program] [$os-string-list? arguments] [list? options])
         ($validate-process-options options #t who)
         (let ([result #f] [pid #f] [ports '()])
-          ;; Install cleanup before native acquisition. Publish each ownership
-          ;; transfer while interrupts are disabled; re-enabling stays inside guard.
-          (guard (condition
-                   [else
-                    (for-each $close-port/cleanup ports)
-                    (let ([close-fd (foreign-procedure "close" (int) int)])
-                      (do ([index 1 (fx+ index 1)]) ((or (not result) (fx= index 4)))
-                        (let ([fd (vector-ref result index)])
-                          (when (fx>= fd 0) (close-fd fd)))))
-                    (when pid ($send-signal-ffi pid 9) ($waitpid-ffi pid 0))
-                    (raise condition)])
-            ($call-process-operation who
-              (lambda (handle)
-                ($prepare-spawn-ffi handle (cons program arguments) ($option-ref options 'env #f)
-                  ($cwd-option options) ($stream-mode options 'stdin)
-                  ($stream-mode options 'stdout) ($stream-mode options 'stderr)))
-              (lambda (native-result)
-                (set! result native-result)
-                (set! pid (vector-ref result 0))
-                (let ([open-stream
-                        (lambda (index output?)
-                          (let ([fd (vector-ref result index)])
-                            (if (fx< fd 0) #f
-                                (let ([port (if output?
-                                                (open-fd-output-port fd 'block #f)
-                                                (open-fd-input-port fd 'block #f))])
-                                  (vector-set! result index -1)
-                                  (set! ports (cons port ports))
-                                  port))))])
-                  (let* ([stdin (open-stream 1 #t)] [stdout (open-stream 2 #f)]
-                         [stderr (open-stream 3 #f)])
-                    (make-process pid program (list-copy arguments)
-                                  stdin stdout stderr #f))))))))))
+          ($call-with-process-handoff who
+            (lambda ()
+              ($call-process-operation who
+                (lambda (handle)
+                  ($prepare-spawn-ffi handle (cons program arguments) ($option-ref options 'env #f)
+                    ($cwd-option options) ($stream-mode options 'stdin)
+                    ($stream-mode options 'stdout) ($stream-mode options 'stderr)))
+                (lambda (native-result)
+                  (set! result native-result)
+                  (set! pid (vector-ref result 0))
+                  (let ([open-stream
+                          (lambda (index output?)
+                            (let ([fd (vector-ref result index)])
+                              (if (fx< fd 0) #f
+                                  (let ([port (if output?
+                                                  (open-fd-output-port fd 'block #f)
+                                                  (open-fd-input-port fd 'block #f))])
+                                    (vector-set! result index -1)
+                                    (set! ports (cons port ports))
+                                    port))))])
+                    (let* ([stdin (open-stream 1 #t)] [stdout (open-stream 2 #f)]
+                           [stderr (open-stream 3 #f)])
+                      (make-process pid program (list-copy arguments)
+                                    stdin stdout stderr #f))))))
+            (lambda ()
+              (for-each $close-port/cleanup ports)
+              (do ([index 1 (fx+ index 1)]) ((or (not result) (fx= index 4)))
+                (let ([fd (vector-ref result index)])
+                  (when (fx>= fd 0) ($close-fd-ffi fd))))
+              (when pid ($send-signal-ffi pid 9) ($waitpid-ffi pid 0))))))))
 
   #|proc:process-spawn-shell
   The `process-spawn-shell` procedure starts `command` through the host shell.
+  Do not call this process operation inside a fiber; use a separate Scheme thread.
   The `command` parameter is a NUL-free string interpreted by `sh -c`.
   The `options` parameter is an option alist accepted by `process-spawn`.
   Returns a live process object; callers own its pipe ports and must eventually reap the child.
@@ -272,6 +295,7 @@
 
   #|proc:process-wait
   The `process-wait` procedure waits for `process` and returns its cached exit status.
+  Do not call this process operation inside a fiber; use a separate Scheme thread.
   The `process` argument is a process object. Waiting leaves its streams open for draining.
   Linux pidfds provide readiness notification when available, avoiding repeated waitpid calls;
   otherwise short waitpid polls are used. Waiting permits other Scheme threads to collect
@@ -341,6 +365,7 @@
 
   #|proc:process-wait/timeout
   The `process-wait/timeout` procedure waits for `process` for at most `milliseconds`.
+  Do not call this process operation inside a fiber; use a separate Scheme thread.
   `process` is a process object; `milliseconds` is an exact nonnegative integer.
   It returns the cached exit status or raises a timeout condition, leaving the child running.
   |#
@@ -423,25 +448,25 @@
   (define make-pipe
     (lambda ()
       (let ([fds #f] [input #f] [output #f])
-        (guard (failure
-                 [else
-                  ($close-port/cleanup input)
-                  ($close-port/cleanup output)
-                  (let ([close-fd (foreign-procedure "close" (int) int)])
-                    (do ([index 0 (fx+ index 1)]) ((or (not fds) (fx= index 2)))
-                      (let ([fd (vector-ref fds index)])
-                        (when (fx>= fd 0) (close-fd fd)))))
-                  (raise failure)])
-          (with-interrupts-disabled
-            (set! fds (ffi-result-ref ($make-pipe-ffi)))
-            (set! input (open-fd-input-port (vector-ref fds 0) 'block #f))
-            (vector-set! fds 0 -1)
-            (set! output (open-fd-output-port (vector-ref fds 1) 'block #f))
-            (vector-set! fds 1 -1)
-            (values input output))))))
+        ($call-with-process-handoff 'make-pipe
+          (lambda ()
+            (with-interrupts-disabled
+              (set! fds (ffi-result-ref ($make-pipe-ffi)))
+              (set! input (open-fd-input-port (vector-ref fds 0) 'block #f))
+              (vector-set! fds 0 -1)
+              (set! output (open-fd-output-port (vector-ref fds 1) 'block #f))
+              (vector-set! fds 1 -1)
+              (values input output)))
+          (lambda ()
+            ($close-port/cleanup input)
+            ($close-port/cleanup output)
+            (do ([index 0 (fx+ index 1)]) ((or (not fds) (fx= index 2)))
+              (let ([fd (vector-ref fds index)])
+                (when (fx>= fd 0) ($close-fd-ffi fd)))))))))
 
   #|proc:process-spawn-pipeline
   The `process-spawn-pipeline` procedure starts process specs as a live pipeline.
+  Do not call this process operation inside a fiber; use a separate Scheme thread.
   The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
   Command strings must contain no NUL characters.
   The `options` parameter is reserved and should currently be the empty list.
@@ -454,26 +479,27 @@
     (lambda (process-specs options)
       (pcheck-who who ([$process-specs? process-specs] [null? options])
         (let ([pids #f])
-          (guard (failure
-                   [else
-                    (when pids
-                      (vector-for-each (lambda (pid) ($send-signal-ffi pid 9)) pids)
-                      (vector-for-each (lambda (pid) ($waitpid-ffi pid 0)) pids))
-                    (raise failure)])
-            ($call-process-operation who
-              (lambda (handle) ($prepare-pipeline-ffi handle process-specs 0))
-              (lambda (native-result)
-                (set! pids native-result)
-                (let loop ([index 0] [specs process-specs] [out '()])
-                  (if (fx= index (vector-length pids))
-                      (reverse out)
-                      (loop (fx+ index 1) (cdr specs)
-                        (cons (make-process (vector-ref pids index) (caar specs)
-                                (list-copy (cdar specs)) #f #f #f #f)
-                              out)))))))))))
+          ($call-with-process-handoff who
+            (lambda ()
+              ($call-process-operation who
+                (lambda (handle) ($prepare-pipeline-ffi handle process-specs 0))
+                (lambda (native-result)
+                  (set! pids native-result)
+                  (let loop ([index 0] [specs process-specs] [out '()])
+                    (if (fx= index (vector-length pids))
+                        (reverse out)
+                        (loop (fx+ index 1) (cdr specs)
+                          (cons (make-process (vector-ref pids index) (caar specs)
+                                  (list-copy (cdar specs)) #f #f #f #f)
+                                out)))))))
+            (lambda ()
+              (when pids
+                (vector-for-each (lambda (pid) ($send-signal-ffi pid 9)) pids)
+                (vector-for-each (lambda (pid) ($waitpid-ffi pid 0)) pids))))))))
 
   #|proc:process-run-pipeline
   The `process-run-pipeline` procedure runs process specs as a pipeline and waits.
+  Do not call this process operation inside a fiber; use a separate Scheme thread.
   The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
   Command strings must contain no NUL characters.
   Unlike `process-spawn-pipeline`, this procedure does not return live process objects.

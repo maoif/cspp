@@ -749,7 +749,7 @@ ptr cspp_process_operation_result(uptr handle) {
   ptr result = cspp_ok(value);
   if (op->live) {
     /* The Scheme consumer receives this result with interrupts disabled and
-     * publishes it inside an already-installed cleanup guard. */
+     * publishes it inside an already-installed continuation-aware cleanup scope. */
     for (int i = 0; i < op->count; i++) op->pids[i] = 0;
     for (int i = 0; i < 3; i++) op->live_fds[i] = -1;
   }
