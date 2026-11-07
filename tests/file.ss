@@ -1613,6 +1613,82 @@
                 (< (sstats-bytes (sstats-difference (statistics) before)) (* count limit)))))))
       (list get-u64 get-s64) '(#xffffffffffffffff -1) '(48 64)))
 
+(mat put-integer64-byte-encoding
+     (for-all
+      (lambda (writer setter values)
+        (for-all
+         (lambda (end)
+           (for-all
+            (lambda (value)
+              (let-values ([(port extract) (open-bytevector-output-port)])
+                (call-with-port port
+                  (lambda (port)
+                    (let ([expected (make-bytevector 8)])
+                      (setter expected 0 value end)
+                      (writer port value end)
+                      (bytevector=? expected (extract)))))))
+            values))
+         '(little big)))
+      (list put-u64 put-s64)
+      (list bytevector-u64-set! bytevector-s64-set!)
+      '((0 1 #x0123456789abcdef #x8000000000000000 #xffffffffffffffff)
+        (-9223372036854775808 -1 0 1 9223372036854775807)))
+
+     ;; Error cases: invalid integers and byte orders must not write even a prefix.
+     (for-all
+      (lambda (writer invalid-values)
+        (let-values ([(port extract) (open-bytevector-output-port)])
+          (call-with-port port
+            (lambda (port)
+              (and (for-all
+                    (lambda (value)
+                      (guard (failure [(error? failure) #t])
+                        (writer port value) #f))
+                    invalid-values)
+                   (guard (failure [(error? failure) #t])
+                     (writer port 0 'unknown) #f)
+                   (bytevector=? #vu8() (extract)))))))
+      (list put-u64 put-s64)
+      '((-1 18446744073709551616 0.0 1/2 #f)
+        (-9223372036854775809 9223372036854775808 0.0 1/2 #f))))
+
+(mat put-integer64-custom-ports
+     (for-all
+      (lambda (writer value setter)
+        (for-all
+         (lambda (end)
+           (let-values ([(nested extract-nested) (open-bytevector-output-port)])
+             (let* ([written (make-list-builder)]
+                    [port
+                     (make-custom-binary-output-port
+                      "partial-reentrant-integer64-write"
+                      (lambda (bytes start count)
+                        ;; Reenter the same codec before consuming the outer buffer.
+                        (writer nested 17 end)
+                        (if (zero? count) 0
+                            (begin (written (bytevector-u8-ref bytes start)) 1)))
+                      #f #f void)])
+               (dynamic-wind
+                 void
+                 (lambda ()
+                   (set-port-output-size! port 0)
+                   (writer port value end)
+                   (flush-output-port port)
+                   (let ([expected (make-bytevector 8)]
+                         [nested-bytes (extract-nested)])
+                     (setter expected 0 value end)
+                     (and (equal? (bytevector->u8-list expected) (written))
+                          (= 64 (bytevector-length nested-bytes))
+                          (for-all
+                           (lambda (index)
+                             (= 17 (bytevector-u64-ref nested-bytes (* index 8) end)))
+                           (iota 8)))))
+                 (lambda () (close-port port) (close-port nested))))))
+         '(little big)))
+      (list put-u64 put-s64)
+      '(#x0123456789abcdef -9223372036854775808)
+      (list bytevector-u64-set! bytevector-s64-set!)))
+
 (mat gets&puts
 
      (test-put/get (ash 1 16) (iota 4096) put-u16 get-u16)

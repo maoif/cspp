@@ -698,6 +698,16 @@
                 (put-u8 p byte)
                 (unless (fx= remaining 1) (emit rest (fx1- remaining)))))))))
 
+  (define $put-integer64
+    (lambda (who port value end signed?)
+      ($valid-endianness who end)
+      ;; A custom output callback may reenter this codec before consuming these bytes.
+      (let ([bytes (make-bytevector 8)])
+        (if signed?
+            (bytevector-s64-set! bytes 0 value end)
+            (bytevector-u64-set! bytes 0 value end))
+        (put-bytevector port bytes))))
+
   (define $put-value
     (lambda (who p value count end expected signed?)
       (let ([valid? (case count
@@ -705,11 +715,13 @@
                       [(4) (if signed? s32? u32?)]
                       [else (if signed? s64? u64?)])])
         (if (valid? value)
-            ($put-unsigned who p
-                           (if (and signed? (< value 0))
-                               (+ value (expt 2 (fx* count 8)))
-                               value)
-                           count end)
+            (if (fx= count 8)
+                ($put-integer64 who p value end signed?)
+                ($put-unsigned who p
+                               (if (and signed? (< value 0))
+                                   (+ value (expt 2 (fx* count 8)))
+                                   value)
+                               count end))
             ($invalid-value who value expected)))))
 
   #|proc:get-u16
