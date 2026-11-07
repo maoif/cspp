@@ -3075,11 +3075,22 @@
 ;;;; filesystem watcher
 ;;;;===----------------------------------------------------------------------===
 
-  (define-condition-type &fswatcher-error &i/o-filename make-fswatcher-error fswatcher-error?)
+  #|proc:fswatcher-error?
+  Return whether arbitrary `object` contains a filesystem-watcher I/O error condition.
+  A watcher error also contains an I/O filename condition when the affected path is known.
+  Pathless failures, such as descriptor exhaustion during initialization, omit that condition.
+  |#
+  (define-condition-type &fswatcher-error &i/o make-fswatcher-error fswatcher-error?)
 
   (define $err-fswatcher-error
-    (lambda (who x)
-      (raise (condition (make-who-condition who) (make-fswatcher-error x) (make-message-condition x)))))
+    (case-lambda
+      [(who message) ($err-fswatcher-error who #f message)]
+      [(who path message)
+       (raise (if path
+                  (condition (make-who-condition who) (make-fswatcher-error)
+                             (make-i/o-filename-error path) (make-message-condition message))
+                  (condition (make-who-condition who) (make-fswatcher-error)
+                             (make-message-condition message))))]))
 
   (define $fsw-init
     (let ([ffi (foreign-procedure "cspp_fswatcher_init" (boolean) ptr)])
@@ -3100,14 +3111,14 @@
       (lambda (who fswid path events)
         (let ([x (ffi fswid path events)])
           (if (string? x)
-              ($err-fswatcher-error who x)
+              ($err-fswatcher-error who path x)
               x)))))
   (define $fsw-remove!
     (let ([ffi (foreign-procedure "cspp_fswatcher_remove" (int int) ptr)])
-      (lambda (who fswid fid)
+      (lambda (who fswid fid path)
         (let ([x (ffi fswid fid)])
           (if (string? x)
-              ($err-fswatcher-error who x)
+              ($err-fswatcher-error who path x)
               x)))))
   (define $fsw-next!
     (let ([ffi (foreign-procedure "cspp_fswatcher_next" (int int) ptr)])
@@ -3200,6 +3211,7 @@
   The recorded path is copied, so later mutations of the input string do not change it.
   Adding that inode again replaces its event mask unless `FSW_mask_add` is supplied.
   `FSW_dont_follow` watches a symbolic link itself, including a dangling link.
+  Native addition failures include `path` in the I/O filename condition.
 
   The default mask for files is:
   `(fswatcher-mask FSW_access FSW_open FSW_modify FSW_close FSW_delete_self)`.
@@ -3246,7 +3258,8 @@
               (when (flag-any-set? (fswatcher-mask FSW_ignored) (vector-ref event 1))
                 (hashtable-delete! paths fid))
               (when (eqv? (vector-ref event 2) -1)
-                ($err-fswatcher-error who "filesystem event name is not valid UTF-8"))
+                ($err-fswatcher-error who (vector-ref event 0)
+                                     "filesystem event name is not valid UTF-8"))
               event)))))
 
   #|proc:fswatcher-next!
@@ -3258,6 +3271,7 @@
   events lost by the kernel cannot be recovered and callers should rescan their files.
   `FSW_ignored` is delivered with the recorded path and retires the watch.
   An event with an undecodable UTF-8 name is consumed and raises a watcher error.
+  That error identifies the watched path when it is still recorded.
   Subsequent calls continue with the remaining events, including valid events from the same read.
   The optional `timeout` is an exact integer from 0 through 2147483647, in milliseconds.
   Zero polls immediately; a positive timeout waits at most that long for an event, regardless
@@ -3281,6 +3295,7 @@
   that pathname, including registrations for an earlier file that was renamed or deleted.
   Events already queued, including `FSW_ignored`, remain available with their recorded path.
   An unknown path or a watch explicitly removed already raises a watcher error.
+  Removal errors include `path` in the I/O filename condition.
   |#
   (define-who fswatcher-remove!
     (lambda (watcher path)
@@ -3290,11 +3305,12 @@
                   (let loop ([index 0] [removed? #f])
                     (if (fx= index length)
                         (unless removed?
-                          ($err-fswatcher-error who (format "invalid path: ~a" path)))
+                          ($err-fswatcher-error who path (format "invalid path: ~a" path)))
                         (let ([entry (vector-ref entries index)])
                           (if (and (cdr entry) (string=? path (car entry)))
                               (begin
-                                ($fsw-remove! who ($fswatcher-id watcher) (vector-ref ids index))
+                                ($fsw-remove! who ($fswatcher-id watcher)
+                                              (vector-ref ids index) path)
                                 ;; Retain the entry for attribution of queued notifications.
                                 (set-cdr! entry #f)
                                 (loop (fx1+ index) #t))

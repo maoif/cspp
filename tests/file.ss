@@ -49,6 +49,59 @@
                #f))
            (list file-link file-link! file-symlink file-symlink!))))))
 
+(mat fswatcher-error-filenames
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([watcher (make-fswatcher #f)])
+          (dynamic-wind
+            void
+            (lambda ()
+              ;; Error cases: failed additions and unknown removals identify the requested path.
+              (for-all
+               (lambda (operation path)
+                 (guard (failure
+                         [(and (fswatcher-error? failure) (error? failure)
+                               (i/o-filename-error? failure))
+                          (string=? path (i/o-error-filename failure))]
+                         [else #f])
+                   (operation path)
+                   #f))
+               (list (lambda (path)
+                       (fswatcher-add! watcher path (fswatcher-mask FSW_modify)))
+                     (lambda (path)
+                       (fswatcher-add! watcher path (fswatcher-mask FSW_modify FSW_onlydir)))
+                     (lambda (path) (fswatcher-remove! watcher path)))
+               (list (path-build root "missing") (path-build root "top.txt")
+                     (path-build root "missing"))))
+            (lambda () (close-fswatcher watcher)))))))
+
+(mat fswatcher-pathless-error-condition
+     (let* ([getrlimit (foreign-procedure "getrlimit" (int u8*) int)]
+            [setrlimit (foreign-procedure "setrlimit" (int u8*) int)]
+            ;; Linux rlim_t is an unsigned long, matching the native pointer width.
+            [width (foreign-sizeof 'uptr)]
+            [saved (make-bytevector (* 2 width) 0)])
+       (unless (= 0 (getrlimit 7 saved)) (error 'fixture "cannot read descriptor limit"))
+       (let ([limited (bytevector-copy saved)])
+         (do ([index 0 (fx1+ index)]) ((fx= index width))
+           (bytevector-u8-set! limited index 0))
+         (dynamic-wind
+           (lambda ()
+             (unless (= 0 (setrlimit 7 limited))
+               (error 'fixture "cannot lower descriptor limit")))
+           (lambda ()
+             ;; Error case: initialization has no filename when descriptor allocation fails.
+             (guard (failure
+                     [(fswatcher-error? failure)
+                      (and (error? failure) (i/o-error? failure)
+                           (not (i/o-filename-error? failure)))]
+                     [else #f])
+               (close-fswatcher (make-fswatcher #f))
+               #f))
+           (lambda ()
+             (unless (= 0 (setrlimit 7 saved))
+               (error 'fixture "cannot restore descriptor limit")))))))
+
 (mat make-path-native-fragments
      (for-all
       (lambda (parts expected) (string=? expected (apply make-path parts)))
@@ -509,7 +562,9 @@
               (let ([first (fswatcher-next! watcher 1000)])
                 (and (vector? first) (equal? "before" (vector-ref first 2))
                      ;; Error case: the undecodable event raises once, between valid events.
-                     (guard (failure [(fswatcher-error? failure) #t])
+                     (guard (failure [(fswatcher-error? failure)
+                                      (and (i/o-filename-error? failure)
+                                           (string=? root (i/o-error-filename failure)))])
                        (fswatcher-next! watcher 0) #f)
                      (let ([last (fswatcher-next! watcher 0)])
                        (and (vector? last) (equal? "after" (vector-ref last 2)))))))
