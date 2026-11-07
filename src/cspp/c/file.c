@@ -427,9 +427,6 @@ ptr cspp_fswatcher_next(int fsw, int timeout_ms) {
   size_t count = 0;
   for (size_t offset = 0; offset < (size_t)len;) {
     const struct inotify_event *event = (const struct inotify_event *)(buf + offset);
-    if (event->len > 0 && !filesystem_utf8_valid(event->name, strlen(event->name))) {
-      return filesystem_utf8_error();
-    }
     offset += sizeof(*event) + event->len;
     count++;
   }
@@ -441,7 +438,11 @@ ptr cspp_fswatcher_next(int fsw, int timeout_ms) {
     Svector_set(value, 0, Sfixnum(event->wd));
     Svector_set(value, 1, Sunsigned32(event->mask));
     if (event->len > 0) {
-      Svector_set(value, 2, Sstring_utf8(event->name, (iptr)strlen(event->name)));
+      size_t length = strlen(event->name);
+      /* Keep an invalid event in order, without losing its valid neighbors.
+       * Scheme consumes this private marker and raises at that event only. */
+      Svector_set(value, 2, filesystem_utf8_valid(event->name, length)
+                            ? Sstring_utf8(event->name, (iptr)length) : Sfixnum(-1));
     }
     Svector_set(batch, (iptr)index++, value);
     offset += sizeof(*event) + event->len;

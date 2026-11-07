@@ -2996,6 +2996,8 @@
               ;; Keep the path for queued events, including the final ignored notification.
               (when (flag-any-set? (fswatcher-mask FSW_ignored) (vector-ref event 1))
                 (hashtable-delete! paths fid))
+              (when (eqv? (vector-ref event 2) -1)
+                ($err-fswatcher-error who "filesystem event name is not valid UTF-8"))
               event)))))
 
   #|proc:fswatcher-next!
@@ -3006,6 +3008,8 @@
   Queue overflow is reported with `FSW_overflow` and a `#f` path;
   events lost by the kernel cannot be recovered and callers should rescan their files.
   `FSW_ignored` is delivered with the recorded path and retires the watch.
+  An event with an undecodable UTF-8 name is consumed and raises a watcher error.
+  Subsequent calls continue with the remaining events, including valid events from the same read.
   The optional `timeout` is an integer from 0 through 2147483647, in milliseconds.
   Zero polls immediately; a positive timeout waits at most that long for an event, regardless
   of the watcher's blocking setting. Without `timeout`, the watcher's setting is used.

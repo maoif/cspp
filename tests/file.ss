@@ -210,6 +210,35 @@
              (not (file-exists? root #f))
              (eq? #f (file-removetree root #f))))))
 
+(mat fswatcher-invalid-name-preserves-other-events
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([watcher (make-fswatcher #f)]
+               [open (foreign-procedure "open" (u8* int int) int)]
+               [close (foreign-procedure "close" (int) int)]
+               [unlink (foreign-procedure "unlink" (u8*) int)]
+               [prefix (string->utf8 (string-append root "/"))]
+               [raw (make-bytevector (+ (bytevector-length prefix) 2) 0)])
+          (bytevector-copy! prefix 0 raw 0 (bytevector-length prefix))
+          (bytevector-u8-set! raw (bytevector-length prefix) 255)
+          (dynamic-wind
+            void
+            (lambda ()
+              (fswatcher-add! watcher root (fswatcher-mask FSW_create))
+              (file-touch (path-build root "before"))
+              (let ([descriptor (open raw #o101 #o600)])
+                (when (< descriptor 0) (error 'watcher-fixture "cannot create raw filename"))
+                (close descriptor))
+              (file-touch (path-build root "after"))
+              (let ([first (fswatcher-next! watcher 1000)])
+                (and (vector? first) (equal? "before" (vector-ref first 2))
+                     ;; Error case: the undecodable event raises once, between valid events.
+                     (guard (failure [(fswatcher-error? failure) #t])
+                       (fswatcher-next! watcher 0) #f)
+                     (let ([last (fswatcher-next! watcher 0)])
+                       (and (vector? last) (equal? "after" (vector-ref last 2)))))))
+            (lambda () (close-fswatcher watcher) (unlink raw)))))))
+
 (mat file-rejects-invalid-utf8-names
      (for-all
       (lambda (bytes)
