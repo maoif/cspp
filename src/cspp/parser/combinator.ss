@@ -268,7 +268,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
               (let-values ([(stt val inp/err)
                             (parser-call p
                                          (make-binary-input
-                                          (bytevector-length in) source 0 in)
+                                          (bytevector-length in) source 0 in 0)
                                          state 0)])
                 (if stt val (raise-parser-error who inp/err))))))
 
@@ -373,7 +373,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
     (lambda (d*)
       (pcheck ([list? d*])
               (fold-left (lambda (n d)
-                           (when (>= d r)
+                           (unless (and (integer? d) (exact? d) (<= 0 d) (< d r))
                              (errorf who "bad digit ~a for base ~a" d r))
                            (+ d (* n r))) 0 d*))))
   #|proc:bindigits->num
@@ -482,7 +482,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   (define-record-type binary-input
     (parent input)
     ;; bytevector
-    (fields (immutable data)))
+    (fields (immutable data) (immutable start)))
 
   (define save-input
     (lambda (inp)
@@ -500,7 +500,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
          (input-len inp)
          (input-source inp)
          (input-pos inp)
-         (binary-input-data inp))]
+         (binary-input-data inp)
+         (binary-input-start inp))]
        [else (assert-unreachable)])))
 
   ;; The index addresses the character being consumed in the original string. Looking
@@ -619,9 +620,19 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                                  (unique-append res (parser-failure-expected failure)))
                                '()
                                failure*)]
-                    [found (parser-failure-found first)])
+                    [found (parser-failure-found first)]
+                    [messages (fold-left
+                               (lambda (messages failure)
+                                 (let ([message (parser-failure-message failure)])
+                                   (if message (unique-cons message messages) messages)))
+                               '() failure*)])
                (make-parser-failure 'expected
-                                    #f
+                                    (and (pair? messages)
+                                         (apply string-append
+                                                (cons (car messages)
+                                                      (map (lambda (message)
+                                                             (string-append "; " message))
+                                                           (cdr messages)))))
                                     (parser-failure-position first)
                                     expected
                                     found
@@ -940,15 +951,16 @@ For simplicity, "PC" in the following documentation means "parser combinator".
       [(parser predicate message)
        (pcheck ([parser? parser] [procedure? predicate] [string? message])
                (define-parser satisfy-parser
-                 (let-values ([(status value next-input)
-                               (parser-call parser inp state lvl)])
-                   (if status
-                       (if (predicate value)
-                           (values #t value next-input)
-                           (values #f #f
-                                   (parser-failure-at inp 'predicate message
-                                                      '() value)))
-                       (values #f #f next-input))))
+                 (let ([start-input (save-input inp)])
+                   (let-values ([(status value next-input)
+                                 (parser-call parser inp state lvl)])
+                     (if status
+                         (if (predicate value)
+                             (values #t value next-input)
+                             (values #f #f
+                                     (parser-failure-at start-input 'predicate message
+                                                        '() value)))
+                         (values #f #f next-input)))))
                satisfy-parser)]))
 
 
@@ -968,12 +980,14 @@ For simplicity, "PC" in the following documentation means "parser combinator".
     (pcheck ([natural? position] [parser? parser])
             (define-parser pos-at-parser
               ;; TODO error report
-              (if (> position (input-len inp))
+              (if (or (> position (input-len inp))
+                      (and (binary-input? inp) (< position (binary-input-start inp))))
                   (values #f #f
                           (parser-failure-custom
                            inp
                            (format "invalid position ~a, should be between ~a and ~a"
-                                   position 0 (input-len inp))))
+                                   position (if (binary-input? inp) (binary-input-start inp) 0)
+                                   (input-len inp))))
                   (let ([new-inp (save-input inp)])
                 (set-input-position! new-inp position)
                 (let-values ([(stt val inp1)
@@ -986,8 +1000,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   #|proc:<bounded>
   The `<bounded>` procedure takes natural `count` and binary `parser`. It returns a parser that
-  runs `parser` over exactly the next `count` bytes. The returned parser fails if the range
-  exceeds the input, if `parser` fails, or if `parser` does not consume the complete range.
+  runs `parser` over exactly the next `count` bytes. Random access must stay within that range.
+  The returned parser fails if the range exceeds the input, if `parser` fails, or if `parser`
+  does not consume the complete range.
   |#
   (define-who (<bounded> count parser)
     (pcheck ([natural? count] [parser? parser])
@@ -1005,7 +1020,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                                         end
                                         (input-source inp)
                                         start
-                                        (binary-input-data inp))])
+                                        (binary-input-data inp) start)])
                           (let-values ([(status value next-input)
                                         (parser-call parser limited state (fx1+ lvl))])
                             (cond

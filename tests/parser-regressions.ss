@@ -276,3 +276,39 @@
        (null? errors))
 
      )
+
+(mat parser-combinator-review
+
+     ;; Error case: random access cannot escape a bounded byte range, including nested bounds.
+     (for-all
+      (lambda (parser)
+        (parser-error?
+         (parser-error-from (lambda () (run-binary-parser parser #vu8(42 7))))))
+      (list (<~1> <u8> (<bounded> 1 (<~ (<pos-at> 0 <u8>) <u8>)))
+            (<~1> <u8> (<bounded> 1 (<bounded> 1 (<pos-at> 0 <u8>))))))
+
+     ;; Error case: a predicate failure identifies the rejected character before consumption.
+     (let ([err (parser-error-from
+                 (lambda () (run-textual-parser (<one-of> "x") "\n")))])
+       (and (= 0 (parser-error-offset err))
+            (= 0 (parser-error-line err)) (= 0 (parser-error-column err))))
+
+     ;; Error case: custom failures survive equal-offset choice merging.
+     (let ([err (parser-error-from
+                 (lambda () (run-textual-parser
+                             (</> (<fail-with> "first error")
+                                  (<fail-with> "second error") (<char> #\x)) "")))])
+       (and (string-contains? (parser-error-message err) "first error")
+            (string-contains? (parser-error-message err) "second error")
+            (= 3 (length (parser-error-causes err)))))
+
+     ;; Error case: radix digits must be exact nonnegative integers below the base.
+     (error? (digits->num '(-1 2)))
+
+     ;; Error case: binary digits cannot be fractional.
+     (error? (bindigits->num '(1/2 1)))
+
+     ;; Error case: hexadecimal digits must be exact.
+     (error? (hexdigits->num '(1.0 2)))
+
+     )
