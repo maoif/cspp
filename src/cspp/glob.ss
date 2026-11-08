@@ -552,6 +552,21 @@
                    (char=? last #\/)
                    (or (char=? last #\/) (char=? last #\\))))))))
 
+  ;; Unlike path-expand-user, glob must retain dots in the home prefix: a parent
+  ;; after a symlink has physical meaning, just as it does in the pattern suffix.
+  (define $home-path
+    (lambda (flavor)
+      (let ([home (if (eq? flavor 'unix)
+                      (getenv "HOME")
+                      (or (getenv "USERPROFILE")
+                          (let ([drive (getenv "HOMEDRIVE")] [path (getenv "HOMEPATH")])
+                            (and drive path (string-append drive path)))))])
+        (unless home ($error "no usable home directory in environment"))
+        (let ([parsed (path-parse flavor home)])
+          (unless (path-absolute-path? parsed)
+            ($error "home path is not absolute: ~a" home))
+          parsed))))
+
   (define $tilde-home
     (lambda (flavor s)
       (let ([n (string-length s)])
@@ -559,7 +574,7 @@
                    (and (> n 1) (char=? (string-ref s 0) #\~)
                         (or (char=? (string-ref s 1) #\/)
                             (and (eq? flavor 'windows) (char=? (string-ref s 1) #\\)))))
-               (path-expand-user (path-parse flavor "~"))]
+               ($home-path flavor)]
               [(and (> n 0) (char=? (string-ref s 0) #\~))
                ($error "named-user tilde is unsupported")]
               [else #f]))))
@@ -569,6 +584,7 @@
   Optional `flavor` follows the host OS: `'windows` on Windows, `'unix`
   elsewhere. Brace alternatives form an ordered union; numeric ranges and a leading
   current-user tilde expand before component compilation. Home-directory names stay literal.
+  Dot and parent components in both the home prefix and pattern retain their physical meaning.
   Numeric ranges preserve zero padding when either endpoint has a leading zero. The width
   is the longer endpoint spelling, including any sign; nonnegative results omit `+`.
   Signed steps are supported and must move toward the endpoint.

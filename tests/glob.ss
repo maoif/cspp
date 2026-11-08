@@ -421,6 +421,23 @@
            (if old-profile (putenv "USERPROFILE" old-profile)
                ((foreign-procedure "unsetenv" (string) int) "USERPROFILE"))))))
 
+(mat glob-home-preserves-parent-components
+     (let ([old-home (getenv "HOME")] [old-profile (getenv "USERPROFILE")])
+       (dynamic-wind
+         (lambda ()
+           (putenv "HOME" "/tmp/home[abc]/../.")
+           (putenv "USERPROFILE" "C:/home[abc]/../."))
+         (lambda ()
+           (and (glob-match? 'unix "~/*.txt" "/tmp/home[abc]/.././file.txt")
+                (not (glob-match? 'unix "~/*.txt" "/tmp/file.txt"))
+                (glob-match? 'windows "~\\*.txt" "C:/home[abc]/.././file.txt")
+                (not (glob-match? 'windows "~\\*.txt" "C:/file.txt"))))
+         (lambda ()
+           (if old-home (putenv "HOME" old-home)
+               ((foreign-procedure "unsetenv" (string) int) "HOME"))
+           (if old-profile (putenv "USERPROFILE" old-profile)
+               ((foreign-procedure "unsetenv" (string) int) "USERPROFILE"))))))
+
 (mat glob-literal-descent
      (let ([root (format "glob-literal-descent-~a" (get-process-id))])
        (dynamic-wind
@@ -860,6 +877,27 @@
                 (equal? (glob* pattern #f #t 'empty)
                         (list (string-append root "/a/deep")
                               (string-append root "/a/one.txt"))))))))
+
+(mat glob-filesystem-home-physical-parents
+     ($with-glob-tree
+      (lambda (root)
+        (let* ([parent (path-build (current-directory) root)]
+               [saved-home (getenv "HOME")]
+               [home (path-build parent "home-alias/..")]
+               [expected (list (path-build home "expected.txt"))])
+          (mkdirs (path-build parent "physical/sub"))
+          (file-symlink "physical/sub" (path-build parent "home-alias"))
+          (write-string (path-build parent "physical/expected.txt") "expected")
+          (write-string (path-build parent "wrong.txt") "wrong")
+          (dynamic-wind
+            (lambda () (putenv "HOME" home))
+            (lambda ()
+              (let ([names (glob* "~/*.txt" #t #f 'empty)])
+                (and (equal? names expected)
+                     (equal? (map read-string names) '("expected")))))
+            (lambda ()
+              (if saved-home (putenv "HOME" saved-home)
+                  ((foreign-procedure "unsetenv" (string) int) "HOME"))))))))
 
 (mat glob-filesystem-tilde
      (let ([original-directory (current-directory)]
