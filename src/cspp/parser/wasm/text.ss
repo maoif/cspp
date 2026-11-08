@@ -58,8 +58,7 @@
   (declare-lazy-parser <wat-generic-item>)
 
   (define <wat-generic-parenthesized>
-    (<map> (lambda (instruction*) (car (reverse instruction*)))
-           <wat-folded-instruction>))
+    (<map> list->immutable-vector <wat-folded-instruction>))
 
   (define <wat-positioned-identifier>
     (<map> (lambda (value) (make-wat-index-reference (car value) (cadr value)))
@@ -197,14 +196,12 @@
   (define memory-use
     (wat-parenthesized "memory" <wat-index-reference>))
 
-  (define offset-clause
-    (<map> list->immutable-vector
-           (wat-parenthesized "offset" (<many> <wat-generic-item>))))
+  (define offset-clause (wat-parenthesized "offset" <wat-expression>))
 
-  (define direct-offset
-    (<map> (lambda (instruction)
-             (make-immutable-vector instruction))
-           <wat-generic-parenthesized>))
+  (define direct-offset <wat-generic-parenthesized>)
+
+  (define element-initializer
+    (</> (wat-parenthesized "item" <wat-expression>) <wat-generic-parenthesized>))
 
   (define segment-offset (</> offset-clause direct-offset))
 
@@ -215,7 +212,7 @@
     (<map> (lambda (value)
              (make-immutable-vector
               (car value) 'expressions (list->immutable-vector (cadr value))))
-           (<~> <wat-reference-type> (<many> <wat-generic-parenthesized>))))
+           (<~> <wat-reference-type> (<many> element-initializer))))
 
   (define indexed-element-items
     (<map> (lambda (value)
@@ -262,7 +259,7 @@
     (<map> (lambda (item*)
              (make-immutable-vector 'expressions
                                     (list->immutable-vector item*)))
-           (<some> <wat-generic-parenthesized>)))
+           (<some> element-initializer)))
 
   (define table-indexed-items
     (<map> (lambda (item*)
@@ -298,13 +295,18 @@
          (<bind> (if import <wat-table-type> (</> table-abbreviation <wat-table-type>))
                  (lambda (type-or-abbreviation)
                    (<map>
-                    (lambda (unused)
+                    (lambda (initializer)
                       (if (wat-inline-abbreviation? type-or-abbreviation)
-                          (field-result pos 'table id #f #f export*
-                                        type-or-abbreviation)
-                          (field-result pos 'table id type-or-abbreviation
-                                        import export* #f)))
-                    wat-close)))))))
+                          (field-result pos 'table id #f #f export* type-or-abbreviation)
+                          (field-result
+                           pos 'table id
+                           (if (zero? (vector-length initializer)) type-or-abbreviation
+                               (vector type-or-abbreviation initializer))
+                           import export* #f)))
+                    (<~0> (if (or import (wat-inline-abbreviation? type-or-abbreviation))
+                              (<result> '#())
+                              <wat-expression>)
+                          wat-close))))))))
 
   (define memory-abbreviation
     (<map> (lambda (value)

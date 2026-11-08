@@ -710,8 +710,7 @@
                   items)
                   (vector-map*
                    (lambda (expression)
-                     (normalize-expression state (vector expression)
-                                           (make-eq-hashtable) '()))
+                     (normalize-expression state expression (make-eq-hashtable) '()))
                    items))])
         (make-wasm-element mode reference-type table offset initializers))))
 
@@ -858,9 +857,14 @@
                                     (normalize-inline-table
                                      state field (wat-module-field-abbreviation field))])
                         (table-builder table) (element-builder element))
-                      (table-builder
-                       (make-wasm-table
-                        (normalize-table-type state (wat-module-field-data field)) #f)))]
+                      (let* ([data (wat-module-field-data field)]
+                             [initialized? (vector? data)])
+                        (table-builder
+                         (make-wasm-table
+                          (normalize-table-type state (if initialized? (vector-ref data 0) data))
+                          (and initialized?
+                               (normalize-expression state (vector-ref data 1)
+                                                     (make-eq-hashtable) '()))))))]
                  [(memory)
                   (if (wat-module-field-abbreviation field)
                       (let-values ([(memory data)

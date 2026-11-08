@@ -4,6 +4,7 @@
           <wat-f32> <wat-f64>)
   (import (cspp chez)
           (cspp parser combinator)
+          (cspp parser private)
           (cspp parser wasm types)
           (cspp string)
           (cspp utils))
@@ -56,6 +57,7 @@
 
   (declare-lazy-parser <wat-block-comment>)
   (declare-lazy-parser <wat-any-annotation>)
+  (declare-lazy-parser <wat-annotation-group>)
   (declare-lazy-parser <wat-ignored-annotation>)
 
   (define <wat-block-comment-character>
@@ -191,31 +193,41 @@
           (<char> wat-double-quote)))
 
   (define <wat-annotation-character>
-    (<~1> (<not-followed-by> (<result> #t)
-                             (</> (<string> "(@")
-                                  (<char> wat-close-parenthesis)
-                                  (<char> wat-double-quote)))
-          <item>))
+    (<satisfy-char>
+     (lambda (character)
+       (and (or (wat-whitespace-character? character)
+                (and (char>=? character #\space) (not (char=? character #\delete))))
+            (not (memv character (list #\( wat-close-parenthesis wat-double-quote)))))
+     "invalid annotation character"))
 
   (define <wat-annotation-content>
-    (</> <wat-any-annotation>
-         <wat-annotation-string>
-         <wat-block-comment>
-         <wat-line-comment>
+    (</> <wat-any-annotation> <wat-annotation-group>
+         <wat-annotation-string> <wat-block-comment> <wat-line-comment>
          <wat-annotation-character>))
+
+  (define <wat-annotation-id>
+    (</> (<bind> <wat-annotation-string>
+                 (lambda (fragments)
+                   (guard (condition [else (<fail-with> "invalid UTF-8 annotation name")])
+                     (<result> (strict-utf8->string (byte-fragments->bytevector fragments))))))
+         (<as-string> (<many> <wat-identifier-character>))))
 
   (define <wat-byte-string-raw>
     (begin
       (install-lazy-parser!
        <wat-any-annotation>
        (<~1> (<string> "(@")
-             (<some> <wat-identifier-character>)
+             <wat-annotation-id>
              (<many> <wat-annotation-content>)
              (<char> wat-close-parenthesis)))
       (install-lazy-parser!
+       <wat-annotation-group>
+       (<~1> (<not-followed-by> (<char> #\() (<one-of> ";@"))
+             (<many> <wat-annotation-content>) (<char> wat-close-parenthesis)))
+      (install-lazy-parser!
        <wat-ignored-annotation>
        (<~1> (<string> "(@")
-             (<bind> (<as-string> (<some> <wat-identifier-character>))
+             (<bind> <wat-annotation-id>
                      (lambda (identifier)
                        (if (string=? identifier "custom")
                            (<fail-with> "custom annotation is not trivia")
@@ -231,12 +243,7 @@
                     (<fail-with> "WebAssembly string is too long"))))))
 
   (define strict-utf8->string
-    (lambda (bytes)
-      (bytevector->string
-       bytes
-       (make-transcoder (utf-8-codec)
-                        (eol-style none)
-                        (error-handling-mode raise)))))
+    (lambda (bytes) (parser-decode-bytes bytes 'utf-8)))
 
   (define <wat-name-raw>
     (<bind> <wat-byte-string-raw>

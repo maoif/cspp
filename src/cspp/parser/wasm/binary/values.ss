@@ -3,6 +3,7 @@
           <wasm-f32> <wasm-f64> <wasm-byte-vector> <wasm-name> <wasm-vector>)
   (import (cspp chez)
           (cspp parser combinator)
+          (cspp parser private)
           (cspp parser wasm types)
           (cspp utils))
 
@@ -69,12 +70,7 @@
              (<u8vec> size))))
 
   (define strict-utf8->string
-    (lambda (bytes)
-      (bytevector->string
-       bytes
-       (make-transcoder (utf-8-codec)
-                        (eol-style none)
-                        (error-handling-mode raise)))))
+    (lambda (bytes) (parser-decode-bytes bytes 'utf-8)))
 
   #|proc:<wasm-u32>
   The `<wasm-u32>` parser reads a bounded unsigned 32-bit LEB128 integer.

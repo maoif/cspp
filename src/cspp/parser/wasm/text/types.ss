@@ -499,7 +499,7 @@
              (make-wat-recursive-type-syntax
               (car value) (list->immutable-vector (cadr value))))
            (<~0> (<~> (wat-head "rec")
-                      (<some> <wat-type-definition>))
+                      (<many> <wat-type-definition>))
                  wat-close)))
 
 ;;;;===----------------------------------------------------------------------===

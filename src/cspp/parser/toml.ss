@@ -793,23 +793,6 @@
       (pcheck ([string? text])
               (run-textual-parser parser-toml text))))
 
-  (define decode-toml-bytevector
-    (lambda (bytevector)
-      (let ([start (if (and (>= (bytevector-length bytevector) 3)
-                            (= #xef (bytevector-u8-ref bytevector 0))
-                            (= #xbb (bytevector-u8-ref bytevector 1))
-                            (= #xbf (bytevector-u8-ref bytevector 2)))
-                       3
-                       0)])
-        (let* ([length (- (bytevector-length bytevector) start)]
-               [content (make-bytevector length 0)])
-          (bytevector-copy! bytevector start content 0 length)
-          (bytevector->string
-           content
-           (make-transcoder (utf-8-codec)
-                            (eol-style none)
-                            (error-handling-mode raise)))))))
-
   #|proc:parse-toml-file
   The `parse-toml-file` procedure parses the regular UTF-8 TOML file at string `path` and returns
   a `toml-document`. Syntax failures raise `&parser-error` with `path` as the source. File and
@@ -819,6 +802,6 @@
     (lambda (path)
       (pcheck ([file-regular? path])
               (run-textual-parser/source
-               parser-toml (decode-toml-bytevector (read-u8vec path)) path))))
+               parser-toml (parser-read-text-file path) path))))
 
   )

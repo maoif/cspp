@@ -65,6 +65,7 @@
           (cspp vector)
           (cspp io)
           (cspp file)
+          (cspp parser private)
           (cspp utils))
 
 
@@ -336,8 +337,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:parse-textual-file
-  The `parse-textual-file` procedure runs textual `parser` over the regular text file at
-  string `path` and returns the parse value. Optional `state` is passed to state-aware
+  The `parse-textual-file` procedure runs textual `parser` over the regular UTF-8 file at
+  string `path` and returns the parse value. Malformed UTF-8 raises a decoding condition.
+  Optional `state` is passed to state-aware
   combinators and defaults to `#f`.
   If parsing fails, an error with condition type `&parser-error` is raised. Independent parses may
   share `parser` across threads. Fiber safety is not guaranteed; callback continuation resumption
@@ -348,7 +350,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
       [(parser path) (parse-textual-file parser path #f)]
       [(parser path state)
        (pcheck ([parser? parser] [file-regular? path])
-               (let ([input (read-string path)])
+               (let ([input (parser-read-text-file path)])
                  ($run-textual-parser who parser input path state)))]))
 
 

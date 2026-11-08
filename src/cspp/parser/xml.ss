@@ -507,24 +507,12 @@
                (values 'utf-16le 0)]
               [else (values 'utf-8 0)]))))
 
-  (define xml-transcoder
-    (lambda (encoding)
-      (make-transcoder
-       (case encoding
-         [(utf-8) (utf-8-codec)]
-         [(utf-16le) (utf-16-codec (endianness little))]
-         [(utf-16be) (utf-16-codec (endianness big))]
-         [else (assert-unreachable)])
-       (eol-style none)
-       (error-handling-mode raise))))
-
   (define decode-xml-bytevector
     (lambda (bytevector)
       (let-values ([(encoding signature-length)
                     (detect-xml-encoding bytevector)])
         (values
-         (bytevector->string (bytevector-slice bytevector signature-length)
-                             (xml-transcoder encoding))
+         (parser-decode-bytes (bytevector-slice bytevector signature-length) encoding)
          encoding))))
 
   (define encoding-declaration-compatible?

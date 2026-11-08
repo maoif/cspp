@@ -131,3 +131,69 @@
          <wat-f32> (string-append "1" (make-string 1000 #\0) "e-1000")))
 
      )
+
+(mat wasm-review-text-expressions
+
+     (let* ([module (parse-wasm-text-module
+                     "(module (memory 1)
+                        (data (i32.add (i32.const 1) (i32.const 2)) \"x\"))")]
+            [offset (wasm-data-offset (vector-ref (wasm-module-data module) 0))])
+       (equal? '(i32.const i32.const i32.add)
+               (map wasm-instruction-mnemonic (vector->list offset))))
+
+     (let* ([module (parse-wasm-text-module
+                     "(module (memory 1)
+                        (data (offset (i32.add (i32.const 1) (i32.const 2))) \"x\"))")]
+            [offset (wasm-data-offset (vector-ref (wasm-module-data module) 0))])
+       (equal? '(i32.const i32.const i32.add)
+               (map wasm-instruction-mnemonic (vector->list offset))))
+
+     (let* ([module (parse-wasm-text-module
+                     "(module (func $f)
+                        (elem funcref (item ref.func $f) (item (ref.null func))))")]
+            [items (wasm-element-initializers (vector-ref (wasm-module-elements module) 0))])
+       (and (= 2 (vector-length items))
+            (eq? 'ref.func (wasm-instruction-mnemonic (vector-ref (vector-ref items 0) 0)))
+            (eq? 'ref.null (wasm-instruction-mnemonic (vector-ref (vector-ref items 1) 0)))))
+
+     (let* ([module (parse-wasm-text-module
+                     "(module (table 1 (ref func) (ref.func 0)) (func))")]
+            [table (vector-ref (wasm-module-tables module) 0)]
+            [initializer (wasm-table-initializer table)])
+       (and (= 1 (vector-length initializer))
+            (eq? 'ref.func (wasm-instruction-mnemonic (vector-ref initializer 0)))))
+
+     (let* ([module (parse-wasm-text-module "(module (rec))")]
+            [groups (wasm-module-types module)])
+       (and (= 1 (vector-length groups))
+            (= 0 (vector-length (wasm-recursive-type-subtypes (vector-ref groups 0))))))
+
+     ;; Error case: an imported table cannot have an initializer expression.
+     (wasm-review-error?
+      (lambda () (parse-wasm-text-module
+                  "(module (table (import \"m\" \"t\") 1 funcref (ref.null func)))")))
+
+     )
+
+(mat wasm-review-annotations
+
+     (wasm-module? (parse-wasm-text-module "(module (@\"quoted tag\"))"))
+
+     (wasm-module? (parse-wasm-text-module "(module (@a (x) () (y (z))))"))
+
+     (wasm-module? (parse-wasm-text-module "(module (@a (@(@(@(@))))))"))
+
+     ;; Error case: ignoring an annotation must not accept raw forbidden control characters.
+     (wasm-review-error?
+      (lambda () (parse-wasm-text-module
+                  (string-append "(module (@a " (string #\nul) "))"))))
+
+     ;; Error case: ordinary parentheses inside annotations must also balance.
+     (wasm-review-error?
+      (lambda () (parse-wasm-text-module "(module (@a (x))")))
+
+     ;; Error case: a malformed nested comment must not be accepted as an ordinary group.
+     (wasm-review-error?
+      (lambda () (parse-wasm-text-module "(module (@a (; unterminated)))")))
+
+     )

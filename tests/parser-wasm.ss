@@ -672,7 +672,7 @@
                  (wat-element-segment-syntax-item-kind expression-items))
             (= 2 (vector-length (wat-element-segment-syntax-items expression-items)))
             (wat-instruction-syntax?
-             (vector-ref (wat-element-segment-syntax-items expression-items) 0))))
+             (vector-ref (vector-ref (wat-element-segment-syntax-items expression-items) 0) 0))))
 
      (let ([module
             (run-textual-parser parser-wat-module-syntax

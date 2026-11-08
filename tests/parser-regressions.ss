@@ -373,3 +373,39 @@
        (= 1000 (vector-length (xml-element-attributes root))))
 
      )
+
+(mat parser-file-decoding-review
+
+     ;; Error case: malformed UTF-8 cannot silently become replacement characters.
+     (for-all
+      (lambda (parser)
+        (with-parser-file #vu8(34 255 34)
+          (lambda (path) (guard (err [else #t]) (parser path) #f))))
+      (list parse-csv-file parse-json5-file parse-scheme-file))
+
+     ;; Error case: WAT strings cannot hide malformed UTF-8 in file input.
+     (with-parser-file
+      (parser-review-bytes (string->utf8 "(module (import \"") #vu8(255)
+                         (string->utf8 "\" \"f\" (func)))"))
+      (lambda (path) (guard (err [else #t]) (parse-wasm-text-module-file path) #f)))
+
+     ;; Error case: only the first BOM is a stream signature in XML/TOML files.
+     (for-all
+      (lambda (case)
+        (with-parser-file (parser-review-bytes #vu8(239 187 191 239 187 191)
+                                             (string->utf8 (cdr case)))
+          (lambda (path)
+            (parser-error? (parser-error-from (lambda () ((car case) path)))))))
+      (list (cons parse-xml-file "<a/>") (cons parse-toml-file "a=1")))
+
+     (with-parser-file (parser-review-bytes #vu8(239 187 191) (string->utf8 "a=1"))
+       (lambda (path)
+         (= 1 (toml-table-ref (toml-document-root (parse-toml-file path)) "a"))))
+
+     ;; BOM bytes are name content in WASM, including when there are two in a row.
+     (let* ([module (parse-wasm-text-module
+                     "(module (func) (export \"\\u{feff}A\" (func 0)))")]
+            [export (vector-ref (wasm-module-exports module) 0)])
+       (string=? "\xfeff;A" (wasm-export-name export)))
+
+     )
