@@ -364,37 +364,34 @@
   (define <wat-decimal-exponent> (exponent-parser "eE"))
   (define <wat-binary-exponent> (exponent-parser "pP"))
 
-  (define float-value
+  ;; Keep powers symbolic until the target format's bounds have been checked.
+  ;; Combining mantissa digits costs at most the size of the source literal.
+  (define float-source
     (lambda (integral fractional digit-radix exponent-radix exponent)
       (let* ([fractional-value (car fractional)]
              [fractional-count (cdr fractional)]
              [significand (+ (* integral (expt digit-radix fractional-count))
-                             fractional-value)])
-        (power-scale (/ significand (expt digit-radix fractional-count))
-                     exponent-radix exponent))))
+                             fractional-value)]
+             [fractional-bits (if (= digit-radix 16) (* 4 fractional-count)
+                                  fractional-count)])
+        (vector significand exponent-radix (- exponent fractional-bits)))))
 
   (define decimal-float-body-parser
     (lambda ()
       (let ([with-point
              (<map> (lambda (value)
-                      (float-value (car (car value))
-                                   (if (pair? (caddr value))
-                                       (caddr value)
-                                       '(0 . 0))
-                                   10
-                                   10
-                                   (if (integer? (cadddr value))
-                                       (cadddr value)
-                                       0)))
-                    (<~> <wat-decimal-digits>
-                         (<char> #\.)
+                      (float-source (car (car value))
+                                    (if (pair? (caddr value)) (caddr value) '(0 . 0))
+                                    10 10
+                                    (if (integer? (cadddr value)) (cadddr value) 0)))
+                    (<~> <wat-decimal-digits> (<char> #\.)
                          (<optional> <wat-decimal-digits>)
                          (<optional> <wat-decimal-exponent>)))]
             [with-exponent
-             (<map> (lambda (value)
-                      (power-scale (car (car value)) 10 (cadr value)))
+             (<map> (lambda (value) (vector (car (car value)) 10 (cadr value)))
                     (<~> <wat-decimal-digits> <wat-decimal-exponent>))]
-            [integer-value (<map> car <wat-decimal-digits>)])
+            [integer-value (<map> (lambda (source) (vector (car source) 10 0))
+                                  <wat-decimal-digits>)])
         (</> with-point with-exponent integer-value))))
 
   (define hexadecimal-float-body-parser
@@ -402,22 +399,18 @@
       (~> (<string> "0x")
           (let ([with-point
                  (<map> (lambda (value)
-                          (float-value (car (car value))
-                                       (if (pair? (caddr value))
-                                           (caddr value)
-                                           '(0 . 0))
-                                       16
-                                       2
-                                       (cadddr value)))
-                        (<~> <wat-hexadecimal-digits>
-                             (<char> #\.)
+                          (float-source (car (car value))
+                                        (if (pair? (caddr value)) (caddr value) '(0 . 0))
+                                        16 2
+                                        (if (integer? (cadddr value)) (cadddr value) 0)))
+                        (<~> <wat-hexadecimal-digits> (<char> #\.)
                              (<optional> <wat-hexadecimal-digits>)
-                             <wat-binary-exponent>))]
+                             (<optional> <wat-binary-exponent>)))]
                 [with-exponent
-                 (<map> (lambda (value)
-                          (power-scale (car (car value)) 2 (cadr value)))
+                 (<map> (lambda (value) (vector (car (car value)) 2 (cadr value)))
                         (<~> <wat-hexadecimal-digits> <wat-binary-exponent>))]
-                [integer-value (<map> car <wat-hexadecimal-digits>)])
+                [integer-value (<map> (lambda (source) (vector (car source) 2 0))
+                                      <wat-hexadecimal-digits>)])
             (</> with-point with-exponent integer-value)))))
 
   (define round-rational-to-even
@@ -500,6 +493,27 @@
                        bits)))
                (<~> <wat-sign> body)))))
 
+  (define bounded-float-value
+    (lambda (width source)
+      (let* ([significand (vector-ref source 0)]
+             [radix (vector-ref source 1)]
+             [exponent (vector-ref source 2)]
+             [bits (integer-length significand)]
+             [maximum-exponent (if (= width 32) 127 1023)]
+             [half-subnormal-exponent (if (= width 32) -150 -1075)]
+             ;; 2^(bits-1) <= significand < 2^bits, and 2^3 < 10 < 2^4.
+             ;; These conservative bounds leave every rounding boundary to exact arithmetic.
+             [lower-exponent (+ (- bits 1)
+                                (* exponent (if (= radix 2) 1
+                                                (if (negative? exponent) 4 3))))]
+             [upper-exponent (+ bits
+                                (* exponent (if (= radix 2) 1
+                                                (if (negative? exponent) 3 4))))])
+        (cond [(zero? significand) 0]
+              [(> lower-exponent (+ maximum-exponent 1)) #f]
+              [(<= upper-exponent half-subnormal-exponent) 0]
+              [else (power-scale significand radix exponent)]))))
+
   (define finite-float-parser
     (lambda (width)
       (<bind> (<~> <wat-sign>
@@ -508,10 +522,11 @@
               (lambda (source)
                 (let* ([sign (car source)]
                        [negative? (and (char? sign) (char=? sign #\-))]
-                       [value (signed-value sign (cadr source))]
-                       [bits
-                        (finite-float-bits width value
-                                           (and negative? (zero? value)))])
+                       [magnitude (bounded-float-value width (cadr source))]
+                       [bits (and magnitude
+                                  (finite-float-bits
+                                   width (if negative? (- magnitude) magnitude)
+                                   negative?))])
                   (if bits
                       (<result> bits)
                       (<fail-with> "finite float literal is out of range")))))))

@@ -921,8 +921,8 @@
      ;; error: commas are not legal identifier characters.
      (error? (parse-wat-lexeme <wat-identifier> "$bad,"))
 
-     ;; error: hexadecimal floats require an exponent.
-     (error? (parse-wat-lexeme <wat-f64> "0x1.5"))
+     (= #x3ff5000000000000
+        (wasm-float-bits (parse-wat-lexeme <wat-f64> "0x1.5")))
 
      ;; error: decimal exponents require digits.
      (error? (parse-wat-lexeme <wat-f64> "1e+"))

@@ -87,3 +87,47 @@
        (equal? '#(i32 i32 i64) (wasm-function-locals function)))
 
      )
+
+(define wasm-review-float-bits
+  (lambda (parser text)
+    (wasm-float-bits (run-textual-parser (<~ parser <eof>) text))))
+
+(mat wasm-review-float-spellings
+
+     (= #x3fc00000 (wasm-review-float-bits <wat-f32> "0x1.8"))
+
+     (= #x3f800000 (wasm-review-float-bits <wat-f32> "0x1."))
+
+     (= #x3ff8000000000000 (wasm-review-float-bits <wat-f64> "0x1.8"))
+
+     (= #x7f7fffff (wasm-review-float-bits <wat-f32> "0x1.fffffep127"))
+
+     ;; Error case: rounding at the upper finite limit overflows to infinity.
+     (wasm-review-error?
+      (lambda () (wasm-review-float-bits <wat-f32> "0x1.ffffffp127")))
+
+     (= 0 (wasm-review-float-bits <wat-f32> "0x1p-150"))
+
+     (= 1 (wasm-review-float-bits <wat-f32> "0x1.000002p-150"))
+
+     (= 0 (wasm-review-float-bits <wat-f64> "0x1p-1075"))
+
+     (= 1 (wasm-review-float-bits <wat-f64> "0x1.0000000000001p-1075"))
+
+     ;; Huge exponents describe bounded values without constructing enormous exact powers.
+     (let* ([before (statistics)]
+            [values (map (lambda (text) (wasm-review-float-bits <wat-f32> text))
+                         '("0e1000000" "-0e-1000000" "1e-1000000"))]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (equal? '(0 2147483648 0) values) (< allocated 1000000)))
+
+     ;; Error case: enormous positive exponents report overflow without allocating huge powers.
+     (wasm-review-error?
+      (lambda () (wasm-review-float-bits <wat-f64> "1e1000000")))
+
+     ;; A long mantissa may compensate for a large negative exponent and stay finite.
+     (= #x3f800000
+        (wasm-review-float-bits
+         <wat-f32> (string-append "1" (make-string 1000 #\0) "e-1000")))
+
+     )
