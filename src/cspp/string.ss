@@ -1,5 +1,7 @@
 (library (cspp string)
-  (export edit-distance string-for-each string-for-each/i string-map string-map/i
+  (export edit-distance
+          string-for-each string-for-each/i string-map string-map/i
+          string-for-each-rev string-for-each/i-rev string-map-rev string-map/i-rev
           string-slice string-startswith? string-endswith?
           string-search string-search-all string-contains? string-empty?
           string-split string-trim string-trim-left string-trim-right)
@@ -9,10 +11,17 @@
           (cspp list))
 
   (define check-length
-    (lambda (who . strs)
-      (unless (null? strs)
-        (unless (apply fx= (map string-length strs))
-          (errorf who "strings are not of the same length")))))
+    (case-lambda
+      [(who str0 str1)
+       (unless (fx= (string-length str0) (string-length str1))
+         (errorf who "strings are not of the same length"))]
+      [(who str0 str1 str2)
+       (unless (fx= (string-length str0) (string-length str1) (string-length str2))
+         (errorf who "strings are not of the same length"))]
+      [(who str0 . strings)
+       (let ([len (string-length str0)])
+         (unless (andmap (lambda (str) (fx= len (string-length str))) strings)
+           (errorf who "strings are not of the same length")))]))
 
   (define all-strings?
     (lambda (values)
@@ -22,70 +31,115 @@
     (lambda (index strings)
       (map (lambda (str) (string-ref str index)) strings)))
 
+  ;; Expand the traversal choices at compile time: small arities never build
+  ;; character argument lists, and index/result positions remain loop bindings.
+  (define-syntax $define-string-traversal
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ name mapping? indexed? reverse?)
+         (let ([mapping? (syntax->datum #'mapping?)]
+               [indexed? (syntax->datum #'indexed?)]
+               [reverse? (syntax->datum #'reverse?)])
+           (define clause
+             (lambda (sources rest?)
+               (let* ([arguments (if indexed? (list #'index) '())]
+                      [invoke (if rest?
+                                  #`(apply proc #,@arguments
+                                           (string-chars-at index all-strings))
+                                  #`(proc #,@arguments
+                                          #,@(map (lambda (source) #`(string-ref #,source index))
+                                                  sources)))]
+                      [done (if reverse? #'(fx= index -1) #'(fx= index len))]
+                      [next (if reverse? #'(fx1- index) #'(fx1+ index))]
+                      [result-index (if reverse? #'result-index #'index)]
+                      [advance (if (and mapping? reverse?)
+                                   #`(loop #,next (fx1+ result-index)) #`(loop #,next))]
+                      [body (if mapping?
+                                #`(if #,done result
+                                      (let ([char #,invoke])
+                                        (pcheck ([char? char])
+                                                (string-set! result #,result-index char)
+                                                #,advance)))
+                                #`(unless #,done #,invoke #,advance))])
+                 #`[#,(if rest? #'(proc str0 . strings) #`(proc #,@sources))
+                    (pcheck ([procedure? proc] [string? #,@sources]
+                             #,@(if rest? (list #'[all-strings? strings]) '()))
+                            #,@(cond [rest? (list #'(apply check-length who str0 strings))]
+                                     [(pair? (cdr sources))
+                                      (list #`(check-length who #,@sources))]
+                                     [else '()])
+                            (let* (#,@(if rest? (list #'[all-strings (cons str0 strings)]) '())
+                                   [len (string-length #,(car sources))]
+                                   #,@(if mapping? (list #'[result (make-string len)]) '()))
+                              (let loop ([index #,(if reverse? #'(fx1- len) #'0)]
+                                         #,@(if (and mapping? reverse?)
+                                                (list #'[result-index 0]) '()))
+                                #,body))
+                            #,@(if mapping? '() (list #'(void))))])))
+           #`(define-who name
+               (case-lambda
+                 #,(clause (list #'str0) #f)
+                 #,(clause (list #'str0 #'str1) #f)
+                 #,(clause (list #'str0 #'str1 #'str2) #f)
+                 #,(clause (list #'str0) #t))))])))
+
   #|proc:string-for-each
-  Call `proc` with corresponding characters from `str` and any additional strings.
+  Call `(proc char0 char1 ...)` with corresponding characters from input strings `str0`, ...
+  Visit characters from left to right. Ignore callback results.
   All strings must have equal length. Return the result of `(void)`.
   |#
-  (define-who string-for-each
-    (lambda (proc str . strings)
-      (pcheck ([procedure? proc] [string? str] [all-strings? strings])
-              (apply check-length who str strings)
-              (let ([all-strings (cons str strings)] [len (string-length str)])
-                (let loop ([index 0])
-                  (unless (fx= index len)
-                    (apply proc (string-chars-at index all-strings))
-                    (loop (fx1+ index))))
-              (void)))))
+  ($define-string-traversal string-for-each #f #f #f)
 
   #|proc:string-for-each/i
-  Call `proc` with each zero-based index followed by corresponding characters.
+  Call `(proc index char0 char1 ...)` with the zero-based index and characters from `str0`, ...
+  Visit characters from left to right. Ignore callback results.
   All strings must have equal length. Return the result of `(void)`.
   |#
-  (define-who string-for-each/i
-    (lambda (proc str . strings)
-      (pcheck ([procedure? proc] [string? str] [all-strings? strings])
-              (apply check-length who str strings)
-              (let ([all-strings (cons str strings)] [len (string-length str)])
-                (let loop ([index 0])
-                  (unless (fx= index len)
-                    (apply proc index (string-chars-at index all-strings))
-                    (loop (fx1+ index))))
-              (void)))))
-
-  (define map-strings
-    (lambda (who indexed? proc str strings)
-      (pcheck ([procedure? proc] [string? str] [all-strings? strings])
-              (apply check-length who str strings)
-              (let* ([all-strings (cons str strings)]
-                     [len (string-length str)]
-                     [result (make-string len)])
-                (let loop ([index 0])
-                  (if (fx= index len)
-                      result
-                      (let ([char (if indexed?
-                                      (apply proc index
-                                             (string-chars-at index all-strings))
-                                      (apply proc
-                                             (string-chars-at index all-strings)))])
-                        (pcheck ([char? char])
-                                (string-set! result index char)
-                                (loop (fx1+ index))))))))))
+  ($define-string-traversal string-for-each/i #f #t #f)
 
   #|proc:string-map
-  Map `proc` over corresponding characters from one or more equal-length strings.
+  Call `(proc char0 char1 ...)` on corresponding characters from input strings `str0`, ...
+  All strings must have equal length. Visit characters from left to right.
   Each callback result must be a character. Return a newly allocated string.
   |#
-  (define-who string-map
-    (lambda (proc str . strings)
-      (map-strings who #f proc str strings)))
+  ($define-string-traversal string-map #t #f #f)
 
   #|proc:string-map/i
-  Map `proc` over each zero-based index and corresponding characters.
+  Call `(proc index char0 char1 ...)` with the zero-based index and characters from `str0`, ...
+  All strings must have equal length. Visit characters from left to right.
   Each callback result must be a character. Return a newly allocated string.
   |#
-  (define-who string-map/i
-    (lambda (proc str . strings)
-      (map-strings who #t proc str strings)))
+  ($define-string-traversal string-map/i #t #t #f)
+
+  #|proc:string-for-each-rev
+  Call `(proc char0 char1 ...)` with corresponding characters from input strings `str0`, ...
+  Visit characters from right to left. Ignore callback results.
+  All strings must have equal length. Return the result of `(void)`.
+  |#
+  ($define-string-traversal string-for-each-rev #f #f #t)
+
+  #|proc:string-for-each/i-rev
+  Call `(proc index char0 char1 ...)` with the source index and characters from `str0`, ...
+  Visit characters from right to left; `index` decreases from length minus one to zero.
+  Ignore callback results. All strings must have equal length. Return the result of `(void)`.
+  |#
+  ($define-string-traversal string-for-each/i-rev #f #t #t)
+
+  #|proc:string-map-rev
+  Call `(proc char0 char1 ...)` on corresponding characters from input strings `str0`, ...
+  All strings must have equal length. Visit characters from right to left.
+  Each callback result must be a character. Return a new string in traversal order.
+  For example, `(string-map-rev char-upcase "abc")` returns `"CBA"`.
+  |#
+  ($define-string-traversal string-map-rev #t #f #t)
+
+  #|proc:string-map/i-rev
+  Call `(proc index char0 char1 ...)` with the source index and characters from `str0`, ...
+  Visit characters from right to left; `index` decreases from length minus one to zero.
+  All strings must have equal length. Each callback result must be a character.
+  Return a new string in traversal order, matching `string-map-rev`.
+  |#
+  ($define-string-traversal string-map/i-rev #t #t #t)
 
   #|proc:string-slice
   Return a string slice selected by `start`, exclusive `end`, and nonzero `step`.
@@ -99,44 +153,34 @@
        (pcheck ([string? str] [fixnum? start end step])
                (when (fx= step 0) (errorf who "step cannot be 0"))
                (let* ([len (string-length str)]
+                      [raw-start (if (fx>= start 0) start (fx+ len start))]
                       [normalized-start
-                       (let ([index (if (fx>= start 0) start (fx+ len start))])
-                         (cond [(fx< index 0) 0]
-                               [(fx> index len) (fx1- len)]
-                               [else index]))]
+                       (if (fx> step 0)
+                           (cond [(fx< raw-start 0) 0]
+                                 [(fx> raw-start len) len]
+                                 [else raw-start])
+                           (cond [(fx< raw-start 0) -1]
+                                 [(fx>= raw-start len) (fx1- len)]
+                                 [else raw-start]))]
                       [normalized-end
                        (let ([index (if (fx>= end 0) end (fx+ len end))])
                          (cond [(fx<= index -1) -1]
                                [(fx>= index len) len]
                                [else index]))])
-                 (if (fx= len 0)
-                     ""
-                     (cond
-                      [(and (fx< normalized-start normalized-end) (fx> step 0))
+                 (if (and (fx> len 0)
+                          (if (fx> step 0)
+                              (fx< normalized-start normalized-end)
+                              (fx> normalized-start normalized-end)))
                        (let ([result
                               (make-string
                                (ceiling (/ (fx- normalized-end normalized-start) step)))])
                          (let loop ([source-index normalized-start] [result-index 0])
-                           (if (fx>= source-index normalized-end)
+                           (string-set! result result-index (string-ref str source-index))
+                           ;; Do not add an arbitrary fixnum step after the final character.
+                           (if (fx= result-index (fx1- (string-length result)))
                                result
-                               (begin
-                                 (string-set! result result-index
-                                              (string-ref str source-index))
-                                 (loop (fx+ source-index step)
-                                       (fx1+ result-index))))))]
-                      [(and (fx> normalized-start normalized-end) (fx< step 0))
-                       (let ([result
-                              (make-string
-                               (ceiling (/ (fx- normalized-end normalized-start) step)))])
-                         (let loop ([source-index normalized-start] [result-index 0])
-                           (if (fx<= source-index normalized-end)
-                               result
-                               (begin
-                                 (string-set! result result-index
-                                              (string-ref str source-index))
-                                 (loop (fx+ source-index step)
-                                       (fx1+ result-index))))))]
-                      [else ""]))))]))
+                               (loop (fx+ source-index step) (fx1+ result-index)))))
+                     "")))]))
 
   #|proc:string-split
   Split a string into a list of substrings, using `delim` as delimiter.
@@ -150,23 +194,21 @@
          (errorf who "invalid delimiter: ~a" delim))
        (when (and (string? delim) (fx= 0 (string-length delim)))
          (errorf who "empty delimiter"))
-       (cond [(equal? str "") '("")]
+       (cond [(equal? str "") (list "")]
              [(string? delim)
               (let ([dlen (string-length delim)] [len (string-length str)])
-                (case dlen
-                  [1 (string-split str (string-ref delim 0))]
-                  [else (let ([i* (string-search-all str delim)])
-                          (if i*
-                              (let loop ([i* i*] [res '()] [lefti 0])
-                                (if (null? i*)
-                                    (if (fx= lefti len)
-                                        ;; align with delim being char case:
-                                        ;; add empty string when `delim` is on the side
-                                        (reverse (cons "" res))
-                                        (reverse (cons (substring str lefti len) res)))
-                                    (let ([i (car i*)])
-                                      (loop (cdr i*) (cons (substring str lefti i) res) (fx+ i dlen)))))
-                              (list str)))]))]
+                (if (fx= dlen 1)
+                    (string-split str (string-ref delim 0))
+                    (if (fx> dlen len) (list (string-copy str))
+                        (let ([next ($make-string-search str delim 0 #f)]
+                              [fields (make-list-builder)])
+                          (let loop ([lefti 0])
+                            (let ([i (next)])
+                              (if i
+                                  (begin (fields (substring str lefti i))
+                                         (loop (fx+ i dlen)))
+                                  (begin (fields (substring str lefti len))
+                                         (fields)))))))))]
              [(char? delim)
               (let ([lb (make-list-builder)] [len (string-length str)])
                 (let loop-next ([leftcur 0])
@@ -196,8 +238,8 @@
                                 0)]
                      [righti (if right?
                                  (let lp ([i (sub1 len)])
-                                   ;; ditto
-                                   (if (fx>= i 0)
+                                   ;; The left scan may already have consumed the whole string.
+                                   (if (fx>= i lefti)
                                        (if (char=? c (string-ref str i))
                                            (lp (sub1 i))
                                            (add1 i))
@@ -236,12 +278,8 @@
       [(str c) ($string-trim who str c #f #t)]))
 
 
-  ;; currently use brute force
-  ;; TODO: Knuth-Morris-Pratt or Boyer-Moore?
-  ;; Search for `target` from position `start` in `str`,
-  ;; return the index if there's a match, or #f.
-  ;; No error checking here.
-  (define $string-search
+  ;; Direct scanning avoids preprocessing and allocation for short needles.
+  (define $string-search/direct
     (lambda (str target start)
       (let ([slen (string-length str)] [tlen (string-length target)])
         (define str=?
@@ -250,15 +288,61 @@
               (or (fx= j tlen)
                   (and (char=? (string-ref str i) (string-ref target j))
                        (loop (add1 i) (add1 j)))))))
-        (cond [(fx> (fx+ start tlen) slen) #f]
-              [(fx= (fx+ start tlen) slen) (and (str=? start) start)]
-              [else (let ([end (fx- slen tlen)])
-                      (let loop ([i start])
-                        (if (fx> i end)
-                            #f
-                            (if (str=? i)
-                                i
-                                (loop (add1 i))))))]))))
+        (let ([end (fx- slen tlen)])
+          (let loop ([index start])
+            (cond [(fx> index end) #f]
+                  [(str=? index) index]
+                  [else (loop (fx1+ index))]))))))
+
+  (define $string-prefix-table
+    (lambda (target)
+      (let* ([length (string-length target)] [prefix (make-vector length 0)])
+        (do ([index 1 (fx1+ index)]) ((fx= index length) prefix)
+          (let loop ([matched (vector-ref prefix (fx1- index))])
+            (cond [(char=? (string-ref target index) (string-ref target matched))
+                   (vector-set! prefix index (fx1+ matched))]
+                  [(fx> matched 0) (loop (vector-ref prefix (fx1- matched)))]))))))
+
+  ;; Return a private next-match procedure for a nonempty target. Long needles use
+  ;; KMP; retain the scan position and prefix table across all matches or split fields.
+  (define $make-string-search
+    (lambda (str target start overlap?)
+      (let ([slen (string-length str)] [tlen (string-length target)])
+        (if (fx<= tlen 16)
+            (let ([cursor start])
+              (lambda ()
+                (and cursor
+                     (let ([match ($string-search/direct str target cursor)])
+                       (set! cursor (and match (fx+ match (if overlap? 1 tlen))))
+                       match))))
+            (let ([prefix #f] [cursor start] [previous 0])
+              (define fallback
+                (lambda (matched)
+                  ;; Exact, nonoverlapping matches need no prefix preprocessing.
+                  (unless prefix (set! prefix ($string-prefix-table target)))
+                  (vector-ref prefix (fx1- matched))))
+              (lambda ()
+                (and (fx< cursor slen)
+                     (let loop ([index cursor]
+                                [matched (if (fx= previous tlen)
+                                             (if overlap? (fallback previous) 0) previous)])
+                       (cond [(fx= index slen) (set! cursor slen) #f]
+                             [(char=? (string-ref str index) (string-ref target matched))
+                              (if (fx= (fx1+ matched) tlen)
+                                  (begin
+                                    (set! cursor (fx1+ index))
+                                    (set! previous tlen)
+                                    (fx- cursor tlen))
+                                  (loop (fx1+ index) (fx1+ matched)))]
+                             [(fx> matched 0) (loop index (fallback matched))]
+                             [else (loop (fx1+ index) 0)])))))))))
+
+  (define $string-search
+    (lambda (str target start)
+      (let ([tlen (string-length target)])
+        (if (or (fx<= tlen 16) (fx>= tlen (fx- (string-length str) start)))
+            ($string-search/direct str target start)
+            (($make-string-search str target start #t))))))
 
 
   #|proc:string-search
@@ -285,16 +369,16 @@
                                     [char? (string target)])]
                      [end (- (string-length str)
                              (string-length target))])
-                (cond [(string=? "" target) '(0)]
+                (cond [(string=? "" target) (list 0)]
                       [(< end 0) #f]
-                      [(= end 0) (and (string=? str target) '(0))]
-                      [else (let loop ([i 0] [res '()])
-                              (if (< end i)
-                                  (and (not (null? res)) (reverse res))
-                                  (let ([j ($string-search str target i)])
-                                    (if j
-                                        (loop (add1 j) (cons j res))
-                                        (and (not (null? res)) (reverse res))))))])))))
+                      [(= end 0) (and (string=? str target) (list 0))]
+                      [else (let ([next ($make-string-search str target 0 #t)]
+                                  [matches (make-list-builder)])
+                              (let loop ([index (next)])
+                                (if index
+                                    (begin (matches index) (loop (next)))
+                                    (let ([result (matches)])
+                                      (and (pair? result) result)))))])))))
 
   #|proc:string-empty?
   Return whether `str` has length zero.
@@ -375,46 +459,60 @@
   #|proc:edit-distance
   Return the Levenshtein distance between strings `left` and `right`.
   The distance counts single-character insertion, deletion, and replacement operations.
+  If either operand is empty, return the other string's length without scanning its characters.
+  Common prefixes and suffixes are excluded from the dynamic-programming work.
   |#
   (define edit-distance
     (lambda (left right)
       (pcheck ([string? left right])
-              (let-values ([(rows columns)
-                            (if (fx>= (string-length left) (string-length right))
-                                (values left right)
-                                (values right left))])
-                (let* ([row-count (string-length rows)]
-                       [column-count (string-length columns)]
-                       [distances (make-fxvector (fx1+ column-count))])
-                  (let initialize ([column 0])
-                    (unless (fx> column column-count)
-                      (fxvector-set! distances column column)
-                      (initialize (fx1+ column))))
-                  (let row-loop ([row 1])
-                    (if (fx> row row-count)
-                        (fxvector-ref distances column-count)
-                        (let ([row-char (string-ref rows (fx1- row))]
-                              [previous-diagonal (fx1- row)])
-                          (fxvector-set! distances 0 row)
-                          (let column-loop ([column 1]
-                                            [previous-diagonal previous-diagonal])
-                            (if (fx> column column-count)
-                                (row-loop (fx1+ row))
-                                (let* ([above (fxvector-ref distances column)]
-                                       [left-distance
-                                        (fxvector-ref distances (fx1- column))]
-                                       [replacement
-                                        (fx+ previous-diagonal
-                                             (if (char=? row-char
-                                                         (string-ref columns
-                                                                     (fx1- column)))
-                                                 0
-                                                 1))]
-                                       [distance
-                                        (min (fx1+ above)
-                                             (fx1+ left-distance)
-                                             replacement)])
-                                  (fxvector-set! distances column distance)
-                                  (column-loop (fx1+ column) above))))))))))))
+        (if (eq? left right) 0
+          (let* ([left-length (string-length left)] [right-length (string-length right)]
+                 [limit (fxmin left-length right-length)]
+                 [start (let loop ([index 0])
+                          (if (and (fx< index limit)
+                                   (char=? (string-ref left index) (string-ref right index)))
+                              (loop (fx1+ index)) index))])
+            (let-values ([(left-end right-end)
+                          (let loop ([left-end left-length] [right-end right-length])
+                            (if (and (fx> left-end start) (fx> right-end start)
+                                     (char=? (string-ref left (fx1- left-end))
+                                             (string-ref right (fx1- right-end))))
+                                (loop (fx1- left-end) (fx1- right-end))
+                                (values left-end right-end)))])
+              (let-values ([(rows columns row-count column-count)
+                            (if (fx>= left-end right-end)
+                                (values left right (fx- left-end start) (fx- right-end start))
+                                (values right left (fx- right-end start) (fx- left-end start)))])
+                (if (fxzero? column-count)
+                    row-count
+                    (let ([distances (make-fxvector (fx1+ column-count))])
+                      (let initialize ([column 0])
+                        (unless (fx> column column-count)
+                          (fxvector-set! distances column column)
+                          (initialize (fx1+ column))))
+                      (let row-loop ([row 1])
+                        (if (fx> row row-count)
+                            (fxvector-ref distances column-count)
+                            (let ([row-char (string-ref rows (fx+ start (fx1- row)))]
+                                  [previous-diagonal (fx1- row)])
+                              (fxvector-set! distances 0 row)
+                              (let column-loop ([column 1]
+                                                [previous-diagonal previous-diagonal])
+                                (if (fx> column column-count)
+                                    (row-loop (fx1+ row))
+                                    (let* ([above (fxvector-ref distances column)]
+                                           [left-distance
+                                            (fxvector-ref distances (fx1- column))]
+                                           [replacement
+                                            (fx+ previous-diagonal
+                                                 (if (char=? row-char
+                                                             (string-ref columns (fx+ start (fx1- column))))
+                                                     0
+                                                     1))]
+                                           [distance (min (fx1+ above)
+                                                          (fx1+ left-distance)
+                                                          replacement)])
+                                      (fxvector-set! distances column distance)
+                                      (column-loop (fx1+ column) above))))))))))))))))
 
   )

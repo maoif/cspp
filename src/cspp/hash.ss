@@ -79,6 +79,17 @@
       (unless (memq which *hashers*)
         (errorf who "valid hash algorithm is one of ~a" *hashers*))))
 
+  (define hash-index?
+    (lambda (index)
+      (and (fixnum? index) (fx>= index 0) (<= index #x7fffffff))))
+
+  (define check-hash-slice
+    (lambda (who length start stop)
+      (when (fx> start stop)
+        (errorf who "start index ~a is greater than stop index ~a" start stop))
+      (when (> stop length)
+        (errorf who "stop index ~a is greater than total length ~a" stop length))))
+
   (define ffi-xxhash-load-error
     (foreign-procedure "cspp_xxhash_load_error" () ptr))
 
@@ -315,13 +326,10 @@
            [(x salt start)
             (pcheck ([x? x]) (name x salt start (x-length x)))]
            [(x salt start stop)
-            (pcheck ([x? x] [natural? start stop] [fixnum? salt])
+            (pcheck ([x? x] [hash-index? start stop] [fixnum? salt])
                     (ensure-xxhash who)
                     (let ([len (x-length x)])
-                      (when (fx> start stop)
-                        (errorf who "start index ~a is greater than stop index ~a" start stop))
-                      (when (fx> stop len)
-                        (errorf who "stop index ~a is greater than total length ~a" stop len))
+                      (check-hash-slice who len start stop)
                       (ffi x start stop (fx+ salt tag))))]))]))
 
   (define-hasher-indexable xxhash32-string   ffi-xxh32-string string? string-length 4)
@@ -353,24 +361,26 @@
            [(path salt start)
             (pcheck ([file-regular? path]) (name path salt start (file-size path)))]
            [(path salt start stop)
-            (pcheck ([file-regular? path] [natural? start stop] [fixnum? salt])
-                    (let ([len (file-size path)])
-                      (when (fx> start stop)
-                        (errorf who "start index ~a is greater than stop index ~a" start stop))
-                      (when (fx> stop len)
-                        (errorf who "stop index ~a is greater than file length ~a" stop len))
-                      (let* ([hashsher (make-hasher 'which salt)]
-                             [port (open-file-input-port path)]
-                             [bv (make-bytevector 4096 0)])
+            (pcheck ([file-regular? path] [fixnum? salt]
+                     [(lambda (index) (and (fixnum? index) (fx>= index 0))) start stop])
+              (check-hash-slice who (file-size path) start stop)
+              (call-with-hasher 'which salt
+                (lambda (hasher)
+                  (let* ([buffer (make-bytevector 4096)]
+                         [port (open-file-input-port path)])
+                    (dynamic-wind
+                      void
+                      (lambda ()
                         (set-port-position! port start)
                         (let loop ([remaining (fx- stop start)])
-                          (if (fx= 0 remaining)
-                              (begin (close-port port)
-                                     (hasher-finalize! hashsher))
-                              (let ([x (get-bytevector-n! port bv 0
-                                                          (if (fx>= remaining 4096) 4096 remaining))])
-                                (hasher-update-bytevector! hashsher bv 0 x)
-                                (loop (fx- remaining x))))))))]))]))
+                          (unless (fx= remaining 0)
+                            (let ([count (get-bytevector-n! port buffer 0
+                                                          (fxmin remaining 4096))])
+                              (when (or (eof-object? count) (fx= count 0))
+                                (errorf who "unexpected end of file: ~s" path))
+                              (hasher-update-bytevector! hasher buffer 0 count)
+                              (loop (fx- remaining count))))))
+                      (lambda () (close-port port)))))))]))]))
 
 
   #|doc
@@ -929,7 +939,10 @@
         (errorf who "hasher is already finalized"))))
 
 
-  #|doc
+  #|proc:make-hasher
+  Create a native incremental hasher. Optional symbol `which` selects `xxhash32` (default),
+  `xxhash64`, or `xxhash3-64`; fixnum `salt` defaults to zero. Return the owned hasher.
+  Call `hasher-finalize!` to release it. A hasher must not be used concurrently.
   |#
   (define-who make-hasher
     (case-lambda
@@ -988,7 +1001,8 @@
                  [else (assert-unreachable)]))]))
 
 
-  #|doc
+  #|proc:hasher-get
+  Return the current unsigned hash of the live `hasher` without releasing its native state.
   |#
   (define-who hasher-get
     (lambda (hasher)
@@ -1038,13 +1052,10 @@
             (pcheck ([hasher? hasher] [x? x])
                     (name hasher x start (x-length x)))]
            [(hasher x start stop)
-            (check-finalized who hasher)
-            (pcheck ([hasher? hasher] [x? x] [natural? start stop])
+            (pcheck ([hasher? hasher] [x? x] [hash-index? start stop])
+                    (check-finalized who hasher)
                     (let ([len (x-length x)])
-                      (when (fx> start stop)
-                        (errorf who "start index ~a is greater than stop index ~a" start stop))
-                      (when (fx> stop len)
-                        (errorf who "stop index ~a is greater than total length ~a" stop len))
+                      (check-hash-slice who len start stop)
                       ((get-ffi hasher) (hasher-ffi-ctx hasher) x start stop tag)))]))]))
 
   (define-hasher-update-indexable hasher-update-string!   string?   hasher-ffi-string-update!   string-length 4)
@@ -1053,7 +1064,9 @@
   (define-hasher-update-indexable hasher-update-bytevector! bytevector? hasher-ffi-bytevector-update! bytevector-length 7)
 
 
-  #|doc
+  #|proc:hasher-finalize!
+  Return the final unsigned hash of the live `hasher` and release its native state.
+  Further operations on this hasher raise an error.
   |#
   (define-who hasher-finalize!
     (lambda (hasher)
@@ -1064,7 +1077,9 @@
                 res))))
 
 
-  #|doc
+  #|proc:hasher-reset!
+  Reset the live `hasher` to an empty input with optional fixnum `salt` (default zero).
+  Return unspecified values. A finalized hasher cannot be reset.
   |#
   (define-who hasher-reset!
     (case-lambda
@@ -1075,7 +1090,12 @@
                ((hasher-ffi-reset! hasher) (hasher-ffi-ctx hasher) salt))]))
 
 
-  #|doc
+  #|proc:call-with-hasher
+  Call `proc` with one live hasher and return its unsigned hash, ignoring callback results.
+  Optional symbol `which` selects the algorithm (default `xxhash32`); fixnum `salt` defaults
+  to zero. `proc` has signature `(lambda (hasher) ...)` and may update or reset its hasher.
+  The scope owns and finalizes the hasher on normal return, exception, or continuation exit.
+  The callback must not finalize it or use it outside the scope. Reentry raises an error.
   |#
   (define-who call-with-hasher
     (case-lambda
@@ -1084,14 +1104,14 @@
       [(which salt proc)
        (pcheck ([fixnum? salt] [procedure? proc])
                (check-hasher who which)
-               (let ([hasher #f])
-                 (dynamic-wind (lambda () (set! hasher (make-hasher which salt)))
+               (let ([hasher (make-hasher which salt)])
+                 (dynamic-wind (lambda () (check-finalized who hasher))
                                (lambda ()
                                  (proc hasher)
                                  (hasher-get hasher))
                                (lambda ()
-                                 (hasher-finalize! hasher)
-                                 (set! hasher #f)))))]))
+                                 (unless (hasher-finalized? hasher)
+                                   (hasher-finalize! hasher))))))]))
 
 
   )

@@ -4,8 +4,10 @@
   (import (cspp chez)
           (cspp path)
           (cspp file)
+          (cspp private file)
           (cspp iter)
           (cspp regex)
+          (only (cspp string) string-search string-map)
           (cspp utils)
           (cspp list)
           (cspp system platform))
@@ -19,35 +21,89 @@
     (fields (immutable flavor glob-flavor) (immutable patterns glob-patterns)))
 
   #|record:$component
-  An internal path-component matcher. `regex` matches one complete component;
-  `literal` is the original text when the component has no wildcard syntax.
+  An internal path-component matcher. `literal` holds original text without wildcard syntax;
+  otherwise `regex` matches one complete component. The unused field is `#f`.
   |#
   (define-record-type ($component %component component?)
-    (fields (immutable regex component-regex) (immutable literal component-literal)))
+    (fields (immutable regex component-regex) (immutable literal component-literal)
+            (immutable fold-case? component-fold-case?)))
 
   #|record:$branch
-  An internal expanded pattern branch. `path` stores its parsed root and
-  components; `components` stores matchers; `separator` preserves output spelling.
+  An internal expanded pattern branch. `root` is a path object without components;
+  `components` stores matchers; `separator` preserves output spelling.
   |#
   (define-record-type ($branch %branch branch?)
-    (fields (immutable path branch-path) (immutable components branch-components)
-            (immutable separator branch-separator)))
+    (fields (immutable root branch-root)
+            (immutable components branch-components)
+            (immutable separator branch-separator) (immutable directory? branch-directory?)))
 
   ;; Path syntax follows the host OS when callers omit an explicit flavor.
   (define $default-flavor
     (if (eq? (system-platform) 'windows) 'windows 'unix))
   (define $error (lambda (message . args) (apply errorf 'make-glob message args)))
-  (define $prefix?
-    (lambda (prefix s)
-      (let ([n (string-length prefix)])
-        (and (fx<= n (string-length s)) (string=? prefix (substring s 0 n))))))
+
+  ;; Fixed C/POSIX classes, independent of locale and Unicode category updates.
+  ;; Use the existing regex SRE compiler for unions, ranges, and negation.
+  (define $posix-classes
+    '(("alnum" or (/ #\a #\z) (/ #\A #\Z) (/ #\0 #\9))
+      ("alpha" or (/ #\a #\z) (/ #\A #\Z))
+      ("blank" or #\space #\tab)
+      ("cntrl" or (/ #\nul #\x1f) #\x7f)
+      ("digit" / #\0 #\9)
+      ("graph" / #\! #\~)
+      ("lower" / #\a #\z)
+      ("print" / #\space #\~)
+      ("punct" or (/ #\! #\/) (/ #\: #\@) (/ #\[ #\`) (/ #\{ #\~))
+      ("space" or #\space (/ #\tab #\return))
+      ("upper" / #\A #\Z)
+      ("xdigit" or (/ #\0 #\9) (/ #\a #\f) (/ #\A #\F))))
+
+  (define $named-class-start?
+    (lambda (s i)
+      (and (fx< (fx1+ i) (string-length s))
+           (char=? (string-ref s i) #\[)
+           (char=? (string-ref s (fx1+ i)) #\:))))
+
+  (define $named-class
+    (lambda (s open)
+      (let ([start (fx+ open 2)] [n (string-length s)])
+        (let loop ([i start])
+          (cond [(fx>= (fx1+ i) n) ($error "unterminated POSIX character class")]
+                [(and (char=? (string-ref s i) #\:)
+                      (char=? (string-ref s (fx1+ i)) #\]))
+                 (let ([entry (assoc (substring s start i) $posix-classes)])
+                   (unless entry ($error "unknown POSIX character class"))
+                   (values (fx+ i 2) (cdr entry)))]
+                [(char=? (string-ref s i) #\])
+                 ($error "unterminated POSIX character class")]
+                [else (loop (fx1+ i))])))))
+
+  ;; The first member may be a literal closing bracket, after optional negation.
+  ;; All brace scans share these class boundaries with the component grammar.
+  (define $class-end
+    (lambda (s open)
+      (let* ([n (string-length s)] [start (fx1+ open)]
+             [start (if (and (fx< start n) (memv (string-ref s start) '(#\! #\^)))
+                        (fx1+ start) start)])
+        (let loop ([i start])
+          (cond [(fx= i n) ($error "unterminated bracket class")]
+                [($named-class-start? s i)
+                 (let-values ([(next atom) ($named-class s i)]) (loop next))]
+                [(char=? (string-ref s i) #\\)
+                 (if (fx< (fx1+ i) n) (loop (fx+ i 2))
+                     ($error "trailing escape in class"))]
+                [(and (char=? (string-ref s i) #\]) (fx> i start)) (fx1+ i)]
+                [else (loop (fx1+ i))])))))
+
   (define $brace-open
     (lambda (s)
       (let ([n (string-length s)])
         (let loop ([i 0])
           (cond [(fx= i n) #f]
                 [(char=? (string-ref s i) #\\)
-                 (if (fx< (fx1+ i) n) (loop (fx+ i 2)) ($error "trailing escape"))]
+                 (if (fx< (fx1+ i) n) (loop (fx+ i 2))
+                     ($error "trailing escape"))]
+                [(char=? (string-ref s i) #\[) (loop ($class-end s i))]
                 [(char=? (string-ref s i) #\}) ($error "unmatched closing brace")]
                 [(char=? (string-ref s i) #\{) i]
                 [else (loop (fx1+ i))])))))
@@ -57,8 +113,11 @@
         (let loop ([i (fx1+ open)] [depth 1])
           (cond [(fx= i n) ($error "unmatched opening brace")]
                 [(char=? (string-ref s i) #\\)
-                 (if (fx< (fx1+ i) n) (loop (fx+ i 2) depth) ($error "trailing escape"))]
-                [(char=? (string-ref s i) #\{) (loop (fx1+ i) (fx1+ depth))]
+                 (if (fx< (fx1+ i) n) (loop (fx+ i 2) depth)
+                     ($error "trailing escape"))]
+                [(char=? (string-ref s i) #\[) (loop ($class-end s i) depth)]
+                [(char=? (string-ref s i) #\{)
+                 (loop (fx1+ i) (fx1+ depth))]
                 [(char=? (string-ref s i) #\})
                  (if (fx= depth 1) i (loop (fx1+ i) (fx1- depth)))]
                 [else (loop (fx1+ i) depth)])))))
@@ -70,8 +129,11 @@
                 [(char=? (string-ref s i) #\\)
                  (if (fx< (fx1+ i) n) (loop (fx+ i 2) start depth out)
                      ($error "trailing escape in brace"))]
-                [(char=? (string-ref s i) #\{) (loop (fx1+ i) start (fx1+ depth) out)]
-                [(char=? (string-ref s i) #\}) (loop (fx1+ i) start (fx1- depth) out)]
+                [(char=? (string-ref s i) #\[) (loop ($class-end s i) start depth out)]
+                [(char=? (string-ref s i) #\{)
+                 (loop (fx1+ i) start (fx1+ depth) out)]
+                [(char=? (string-ref s i) #\})
+                 (loop (fx1+ i) start (fx1- depth) out)]
                 [(and (char=? (string-ref s i) #\,) (fx= depth 0))
                  (loop (fx1+ i) (fx1+ i) depth (cons (substring s start i) out))]
                 [else (loop (fx1+ i) start depth out)])))))
@@ -92,6 +154,23 @@
              (or (and (char=? (string-ref s i) #\.)
                       (char=? (string-ref s (+ i 1)) #\.))
                  (loop (+ i 1)))))))
+
+  (define $zero-padded?
+    (lambda (text)
+      (let ([start (if (memv (string-ref text 0) '(#\+ #\-)) 1 0)])
+        (and (fx> (string-length text) (fx1+ start))
+             (char=? (string-ref text start) #\0)))))
+
+  (define $range-number
+    (lambda (value width)
+      (let* ([text (format "~a" value)] [length (string-length text)])
+        (if (fx>= length width) text
+            (let ([result (make-string width #\0)] [negative? (< value 0)])
+              (when negative? (string-set! result 0 #\-))
+              (let ([start (if negative? 1 0)])
+                (string-copy! text start result (fx+ (fx- width length) start)
+                              (fx- length start)))
+              result)))))
   (define $range
     (lambda (s)
       (let ([dots (let loop ([i 0] [out '()])
@@ -111,14 +190,16 @@
                             (substring s (fx+ b 2) (string-length s)))])
                (and ($integer? x) ($integer? y) (or (not z) ($integer? z))
                     (let* ([start (string->number x)] [end (string->number y)]
-                           [step (if z (string->number z) (if (<= start end) 1 -1))])
+                           [step (if z (string->number z) (if (<= start end) 1 -1))]
+                           [width (if (or ($zero-padded? x) ($zero-padded? y))
+                                      (fxmax (string-length x) (string-length y)) 0)])
                       (when (or (= step 0)
                                 (and (< start end) (< step 0))
                                 (and (> start end) (> step 0)))
                         ($error "invalid numeric range step"))
                       (let loop ([v start] [out '()])
                         (if (if (> step 0) (> v end) (< v end)) (reverse out)
-                            (loop (+ v step) (cons (format "~a" v) out)))))))))))
+                            (loop (+ v step) (cons ($range-number v width) out)))))))))))
   (define $expand-braces
     (lambda (s)
       (let ([open ($brace-open s)])
@@ -154,6 +235,9 @@
                        (if (and (pair? (cdr xs)) (pair? (cddr xs))
                                 (eqv? (cadr xs) #\-))
                            (begin
+                             (unless (and (or (char? (car xs)) (string? (car xs)))
+                                          (or (char? (caddr xs)) (string? (caddr xs))))
+                               ($error "POSIX character class cannot be a range endpoint"))
                              (when (char>? (if (char? (car xs)) (car xs) (string-ref (car xs) 0))
                                            (if (char? (caddr xs)) (caddr xs) (string-ref (caddr xs) 0)))
                                ($error "descending bracket range"))
@@ -161,6 +245,9 @@
                                      (cons (list '/ (if (char? (car xs)) (car xs) (string-ref (car xs) 0))
                                                       (if (char? (caddr xs)) (caddr xs) (string-ref (caddr xs) 0))) atoms)))
                            (ranges (cdr xs) (cons (car xs) atoms)))))]
+                [($named-class-start? s i)
+                 (let-values ([(next atom) ($named-class s i)])
+                   (scan next (cons atom members)))]
                 [(char=? (string-ref s i) #\\)
                  (if (< (+ i 1) n)
                      (scan (+ i 2) (cons (string (string-ref s (+ i 1))) members))
@@ -172,46 +259,246 @@
       (let ([out (make-list-builder)])
         (let loop ([atoms atoms] [run '()])
           (cond [(null? atoms)
-                 (unless (null? run) (out (apply string-append (reverse run))))
+                 (unless (null? run) (out (list->string (reverse run))))
                  (cons 'seq (out))]
-                [(string? (car atoms)) (loop (cdr atoms) (cons (car atoms) run))]
+                [(char? (car atoms)) (loop (cdr atoms) (cons (car atoms) run))]
                 [else
-                 (unless (null? run) (out (apply string-append (reverse run))))
+                 (unless (null? run) (out (list->string (reverse run))))
                  (out (car atoms)) (loop (cdr atoms) '())])))))
+
+  (define $fold-string (lambda (text) (string-map char-foldcase text)))
+
+  (define $fold-range
+    (lambda (first last)
+      ;; Folding a range's endpoints is insufficient: case mappings are not monotone.
+      ;; Compress consecutive folded values into ranges as we enumerate Unicode scalars.
+      (let ([out (make-list-builder)] [end (char->integer last)])
+        (define emit
+          (lambda (first last)
+            (when first (out (integer->char first)) (out (integer->char last)))))
+        (let loop ([index (char->integer first)] [first #f] [last #f])
+          (cond [(fx> index end)
+                 (emit first last)
+                 ;; Folding can produce overlapping, out-of-order ranges. Reuse
+                 ;; the regex charset union before passing ranges to its compiler.
+                 (let ([ranges (regex-sre->cset (cons '/ (out)))]
+                       [normalized (make-list-builder)])
+                   (vector-for-each (lambda (range)
+                                      (normalized (car range)) (normalized (cdr range))) ranges)
+                   (cons '/ (normalized)))]
+                [(fx<= #xd800 index #xdfff) (loop #xe000 first last)]
+                [else
+                 (let ([folded (char->integer (char-foldcase (integer->char index)))])
+                   (if (and last (fx= folded (fx1+ last)))
+                       (loop (fx1+ index) first folded)
+                       (begin (emit first last) (loop (fx1+ index) folded folded))))])))))
+
+  (define $fold-sre
+    (lambda (sre)
+      (cond [(string? sre) ($fold-string sre)]
+            [(char? sre) (char-foldcase sre)]
+            [(pair? sre)
+             (if (eq? (car sre) '/)
+                 ($fold-range (cadr sre) (caddr sre))
+                 (cons (car sre) (map $fold-sre (cdr sre))))]
+            [else sre])))
+
+  (define $make-component
+    (lambda (flavor sre literal)
+      (let ([fold? (eq? flavor 'windows)])
+        (%component (and (not literal) (sre->regex (if fold? ($fold-sre sre) sre)))
+                    literal fold?))))
+
+  (define $component-matches?
+    (lambda (component name)
+      (let ([literal (component-literal component)])
+        (if literal
+            (let ([length (string-length literal)]
+                  [same-char? (if (component-fold-case? component) char-ci=? char=?)])
+              (and (fx= length (string-length name))
+                   (let loop ([index 0])
+                     (or (fx= index length)
+                         (and (same-char? (string-ref literal index) (string-ref name index))
+                              (loop (fx1+ index)))))))
+            (regex-matches? (component-regex component)
+                            (if (component-fold-case? component) ($fold-string name) name))))))
 
   (define $component-compile
     (lambda (flavor s)
       (if (string=? s "**") #f
           (let ([n (string-length s)])
-            (let loop ([i 0] [atoms '()] [literal '()] [magic? #f])
+            (let loop ([i 0] [atoms '()] [magic? #f])
               (if (= i n)
-                  (%component (sre->regex ($component-sre (reverse atoms))
-                                         (if (eq? flavor 'windows) '(i) '()))
-                              (and (not magic?) (list->string (reverse literal))))
+                  (let ([atoms (reverse atoms)])
+                    (if magic?
+                        ($make-component flavor ($component-sre atoms) #f)
+                        ($make-component flavor #f (list->string atoms))))
                   (let ([c (string-ref s i)])
                     (cond [(char=? c #\\)
                            (when (= (+ i 1) n) ($error "trailing escape"))
                            (let ([next (string-ref s (+ i 1))])
-                             (loop (+ i 2) (cons (string next) atoms)
-                                   (cons next literal) magic?))]
+                             (loop (+ i 2) (cons next atoms) magic?))]
                           [(char=? c #\*)
-                           (loop (+ i 1) (cons '(* any) atoms) literal #t)]
+                           (loop (+ i 1) (cons '(* any) atoms) #t)]
                           [(char=? c #\?)
-                           (loop (+ i 1) (cons 'any atoms) literal #t)]
+                           (loop (+ i 1) (cons 'any atoms) #t)]
                           [(char=? c #\[)
                            (let-values ([(next atom) ($class s (+ i 1))])
-                             (loop next (cons atom atoms) literal #t))]
-                          [else (loop (+ i 1) (cons (string c) atoms)
-                                      (cons c literal) magic?)]))))))))
+                             (loop next (cons atom atoms) #t))]
+                          [else (loop (+ i 1) (cons c atoms) magic?)]))))))))
+
+  (define $normalize-unix-slashes
+    (lambda (s)
+      (if (not (string-search s "\\/")) s
+          (let* ([n (string-length s)] [out (make-string n)])
+            (let loop ([i 0] [j 0])
+              (cond [(fx= i n) (substring out 0 j)]
+                    [(and (char=? (string-ref s i) #\\)
+                          (fx< (fx1+ i) n)
+                          (char=? (string-ref s (fx1+ i)) #\/))
+                     (string-set! out j #\/)
+                     (loop (fx+ i 2) (fx1+ j))]
+                    [(and (char=? (string-ref s i) #\\) (fx< (fx1+ i) n))
+                     ;; Preserve an entire escape pair so its second backslash
+                     ;; cannot be mistaken for a slash escape on the next pass.
+                     (string-set! out j (string-ref s i))
+                     (string-set! out (fx1+ j) (string-ref s (fx1+ i)))
+                     (loop (fx+ i 2) (fx+ j 2))]
+                    [else
+                     (string-set! out j (string-ref s i))
+                     (loop (fx1+ i) (fx1+ j))]))))))
+
+  (define $normalize-windows-slashes
+    (lambda (s)
+      (let ([first (string-search s #\\)])
+        (if (not first) s
+            (let ([out (string-copy s)] [n (string-length s)])
+              (do ([i first (fx1+ i)])
+                  ((fx= i n) out)
+                (when (char=? (string-ref out i) #\\)
+                  (string-set! out i #\/))))))))
+
+  ;; Source has already had Windows separators converted to slashes. In a whole-path
+  ;; union, its outer comma/closing brace ends a root-only alternative. Balanced braces
+  ;; within a root name, including Volume{...}, belong to that literal name.
+  (define $windows-root-end
+    (lambda (source start enclosed?)
+      (let ([length (string-length source)])
+        (define skip-separators
+          (lambda (index)
+            (if (and (fx< index length) (char=? (string-ref source index) #\/))
+                (skip-separators (fx1+ index)) index)))
+        (define name-end
+          (lambda (start)
+            (let loop ([index start] [braces 0])
+              (cond [(fx= index length) index]
+                    [(char=? (string-ref source index) #\/) index]
+                    [(and enclosed? (fxzero? braces)
+                          (memv (string-ref source index) '(#\, #\}))) index]
+                    [(char=? (string-ref source index) #\{)
+                     (loop (fx1+ index) (fx1+ braces))]
+                    [(and (fx> braces 0) (char=? (string-ref source index) #\}))
+                     (loop (fx1+ index) (fx1- braces))]
+                    [else (loop (fx1+ index) braces)]))))
+        (define parts-end
+          (lambda (index remaining)
+            (let* ([start (skip-separators index)] [end (name-end start)])
+              (if (or (fx= remaining 1) (fx= start end)) end
+                  (parts-end end (fx1- remaining))))))
+        (and (fx>= (fx- length start) 2)
+             (char=? (string-ref source start) #\/)
+             (char=? (string-ref source (fx1+ start)) #\/)
+             (if (and (fx>= (fx- length start) 4)
+                      (memv (string-ref source (fx+ start 2)) '(#\? #\.))
+                      (char=? (string-ref source (fx+ start 3)) #\/))
+                 (let* ([first (skip-separators (fx+ start 4))] [end (name-end first)])
+                   (if (string-ci=? (substring source first end) "UNC")
+                       (parts-end end 2) end))
+                 (parts-end (fx+ start 2) 2))))))
+
+  ;; Insert private escape pairs only in literal UNC/device roots. All original Windows
+  ;; backslashes are now separators, so these pairs can be removed after brace expansion.
+  ;; Track empty branch prefixes to recognize roots in nested whole-path alternatives.
+  (define $quote-windows-roots
+    (lambda (source)
+      (if (not (string-search source "//")) source
+          (let ([length (string-length source)] [out #f] [used 0])
+            (define emit-span
+              (lambda (start end)
+                (let ([count (fx- end start)])
+                  (when out (string-copy! source start out used count))
+                  (set! used (fx+ used count)))))
+            (define emit-root
+              (lambda (start end)
+                (do ([index start (fx1+ index)]) ((fx= index end))
+                  (when (memv (string-ref source index) '(#\[ #\] #\{ #\} #\,))
+                    (unless out
+                      (set! out (make-string (* 2 length)))
+                      (string-copy! source 0 out 0 index))
+                    (string-set! out used #\\)
+                    (set! used (fx1+ used)))
+                  (emit-span index (fx1+ index)))))
+            (let loop ([index 0] [at-start? #t] [prefixes '()])
+              (if (fx= index length)
+                  (if out (substring out 0 used) source)
+                  (let ([root-end (and at-start?
+                                       ($windows-root-end source index (pair? prefixes)))]
+                        [char (string-ref source index)])
+                    (cond [root-end
+                           (emit-root index root-end)
+                           (loop root-end #f prefixes)]
+                          [(char=? char #\[)
+                           (let ([end ($class-end source index)])
+                             (emit-span index end) (loop end #f prefixes))]
+                          [else
+                           (emit-span index (fx1+ index))
+                           (cond [(char=? char #\{)
+                                  (loop (fx1+ index) at-start? (cons at-start? prefixes))]
+                                 [(char=? char #\,)
+                                  (loop (fx1+ index) (and (pair? prefixes) (car prefixes))
+                                        prefixes)]
+                                 [(char=? char #\})
+                                  (loop (fx1+ index) #f
+                                        (if (pair? prefixes) (cdr prefixes) '()))]
+                                 [else (loop (fx1+ index) #f prefixes)])]))))))))
+
+  (define $unquote-windows-roots
+    (lambda (source)
+      (if (not (string-search source #\\)) source
+          (let* ([length (string-length source)] [out (make-string length)])
+            (let loop ([index 0] [used 0])
+              (if (fx= index length) (substring out 0 used)
+                  (let ([index (if (char=? (string-ref source index) #\\)
+                                   (fx1+ index) index)])
+                    (string-set! out used (string-ref source index))
+                    (loop (fx1+ index) (fx1+ used)))))))))
 
   (define $compile
     (lambda (flavor s separator)
-      (let ([parsed (path-parse flavor s)])
-        (%branch parsed (map (lambda (c) ($component-compile flavor c))
-                             (path-components parsed))
-                 separator))))
+      (let* ([source (if (eq? flavor 'windows) s ($normalize-unix-slashes s))]
+             [home ($tilde-home flavor source)]
+             [expanded (if home
+                           (string-append (path-render home #\/)
+                                          (substring source 1 (string-length source)))
+                           source)]
+             [parsed (path-parse flavor expanded)]
+             [home-count (if home (length (path-components home)) 0)])
+        (%branch ($path-root parsed)
+                 (let loop ([components (path-components parsed)] [literal-count home-count])
+                   (if (null? components) '()
+                       (let ([component
+                              (if (fx> literal-count 0)
+                                  ($make-component flavor #f (car components))
+                                  ($component-compile flavor (car components)))]
+                             [rest (loop (cdr components) (fx1- literal-count))])
+                         ;; Adjacent globstars describe the same recursive search.
+                         (if (and (not component) (pair? rest) (not (car rest)))
+                             rest
+                             (cons component rest)))))
+                 separator
+                 ($trailing-separator? flavor expanded)))))
 
-  (define $match?
+  (define $match/recursive?
     (lambda (components names)
       (let* ([ps (list->vector components)] [vs (list->vector names)]
              [pn (vector-length ps)] [vn (vector-length vs)]
@@ -226,38 +513,93 @@
                                   (and (< j vn) (loop i (+ j 1))))]
                              [else
                               (and (< j vn)
-                                   (regex-matches? (component-regex (vector-ref ps i))
-                                                   (vector-ref vs j))
+                                   ($component-matches? (vector-ref ps i) (vector-ref vs j))
                                    (loop (+ i 1) (+ j 1)))])])
                   (hashtable-set! memo key answer)
                   answer)))))))
 
-  (define $expand-tilde
-    (lambda (flavor s)
-      (cond [(or (string=? s "~")
-                 (and (> (string-length s) 1) (char=? (string-ref s 0) #\~)
-                      (or (char=? (string-ref s 1) #\/)
-                          (and (eq? flavor 'windows) (char=? (string-ref s 1) #\\)))))
-             (path-render (path-expand-user (path-parse flavor s))
-                          (if (eq? flavor 'unix) #\/ #\\))]
-            [(and (> (string-length s) 0) (char=? (string-ref s 0) #\~))
-             ($error "named-user tilde is unsupported")]
-            [else s])))
+  (define $match?
+    (lambda (components names)
+      ;; Only recursive components can revisit states and need memoization.
+      (if (memq #f components)
+          ($match/recursive? components names)
+          (let loop ([components components] [names names])
+            (if (null? components) (null? names)
+                (and (pair? names)
+                     ($component-matches? (car components) (car names))
+                     (loop (cdr components) (cdr names))))))))
 
-  (define $root=?
-    (lambda (flavor a b)
-      (if (eq? flavor 'unix) (equal? a b)
-          (and (= (length a) (length b))
-               (for-all (lambda (x y)
-                          (if (and (string? x) (string? y)) (string-ci=? x y) (equal? x y)))
-                        a b)))))
+  (define $path-root
+    (lambda (parsed)
+      ;; Reconstruct only the root; dropping every basename would copy lists quadratically.
+      (let* ([root (path-root-info parsed)] [flavor (car root)])
+        (case (cadr root)
+          [(relative) (path flavor)]
+          [(absolute rooted) (path-rooted flavor)]
+          [(drive-relative) (path-drive (caddr root))]
+          [(drive-absolute) (path-drive-absolute (caddr root))]
+          [(unc) (path-unc (caddr root) (cadddr root))]
+          [(special) (path-parse flavor (caddr root))]))))
+
+  (define $trailing-separator?
+    (lambda (flavor path)
+      (let ([n (string-length path)])
+        (and (> n 0)
+             (let ([last (string-ref path (- n 1))])
+               (if (eq? flavor 'unix)
+                   (char=? last #\/)
+                   (or (char=? last #\/) (char=? last #\\))))))))
+
+  ;; Unlike path-expand-user, glob must retain dots in the home prefix: a parent
+  ;; after a symlink has physical meaning, just as it does in the pattern suffix.
+  (define $home-path
+    (lambda (flavor)
+      (let ([home (if (eq? flavor 'unix)
+                      (getenv "HOME")
+                      (or (getenv "USERPROFILE")
+                          (let ([drive (getenv "HOMEDRIVE")] [path (getenv "HOMEPATH")])
+                            (and drive path (string-append drive path)))))])
+        (unless home ($error "no usable home directory in environment"))
+        (let ([parsed (path-parse flavor home)])
+          (unless (path-absolute-path? parsed)
+            ($error "home path is not absolute: ~a" home))
+          parsed))))
+
+  (define $tilde-home
+    (lambda (flavor s)
+      (let ([n (string-length s)])
+        (cond [(or (string=? s "~")
+                   (and (> n 1) (char=? (string-ref s 0) #\~)
+                        (or (char=? (string-ref s 1) #\/)
+                            (and (eq? flavor 'windows) (char=? (string-ref s 1) #\\)))))
+               ($home-path flavor)]
+              [(and (> n 0) (char=? (string-ref s 0) #\~))
+               ($error "named-user tilde is unsupported")]
+              [else #f]))))
 
   #|proc:make-glob
   Compile string `pattern` and return an immutable, opaque glob object.
   Optional `flavor` follows the host OS: `'windows` on Windows, `'unix`
-  elsewhere. Brace alternatives
-  form an ordered union; numeric ranges and a leading current-user tilde expand
-  before component compilation. Malformed syntax raises an error.
+  elsewhere. Brace alternatives form an ordered union; numeric ranges and a leading
+  current-user tilde expand before component compilation. Home-directory names stay literal.
+  Dot and parent components in both the home prefix and pattern retain their physical meaning.
+  Numeric ranges preserve zero padding when either endpoint has a leading zero. The width
+  is the longer endpoint spelling, including any sign; nonnegative results omit `+`.
+  Signed steps are supported and must move toward the endpoint.
+  Bracket expressions support the C/POSIX ASCII classes `alnum`, `alpha`, `blank`, `cntrl`,
+  `digit`, `graph`, `lower`, `print`, `punct`, `space`, `upper`, and `xdigit`, as in
+  `[[:alpha:]]`. Classes can be mixed with literals, ranges, and other named classes.
+  Backslash escapes characters
+  in Unix patterns; escaped `/` remains a separator. Windows treats both slash forms as
+  separators, so bracket classes quote wildcard characters such as `[*]` in components.
+  Explicit Windows UNC and device root names are literal, including braces and brackets.
+  Choose roots with whole-path unions such as `{//server/shareA,//server/shareB}/*.txt`;
+  brace syntax inside an explicit root does not expand. Enclosing union delimiters still apply.
+  Windows components use Unicode simple case folding for literals, classes, and ranges,
+  as in path equality.
+  `*` and `?` match within one component; `**` matches zero or more directory levels.
+  Dotfiles are eligible, and explicit `.` and `..` components retain their lexical meaning.
+  Malformed syntax raises an error.
   |#
   (define make-glob
     (case-lambda
@@ -265,29 +607,49 @@
       [(flavor pattern)
        (pcheck ([path-flavor? flavor] [string? pattern])
                (let ([separator (if (or (eq? flavor 'unix)
-                                        (exists (lambda (c) (char=? c #\/)) (string->list pattern)))
+                                        (string-search pattern #\/))
                                     #\/ #\\)]
                      [source (if (eq? flavor 'windows)
-                                 (list->string (map (lambda (c) (if (char=? c #\\) #\/ c))
-                                                    (string->list pattern)))
+                                 ($quote-windows-roots ($normalize-windows-slashes pattern))
                                  pattern)])
                  (%make-glob flavor
-                             (map (lambda (s) ($compile flavor ($expand-tilde flavor s) separator))
+                             (map (lambda (s)
+                                    ($compile flavor
+                                              (if (eq? flavor 'windows)
+                                                  ($unquote-windows-roots s) s)
+                                              separator))
                                   ($expand-braces source)))))]))
 
   #|proc:glob?
   Return `#t` when arbitrary `object` is a compiled glob object, otherwise `#f`.
   |#
-  (define glob? (lambda (object) (pcheck ([(lambda (x) #t) object]) (%glob? object))))
+  (define glob? (lambda (object) (%glob? object)))
 
-  (define $physical
-    (lambda (p)
-      (let ([s (path-render p #\/)])
+  (define $filesystem-spelling
+    (lambda (p separator directory?)
+      (let* ([s (path-render p separator)]
+             [name (cond [(string=? s "") "."]
+                         [(char=? (string-ref s 0) #\~)
+                          (string-append "." (string separator) s)]
+                         [else s])])
         ;; Chez pathname expansion treats a leading `~` specially. A literal
         ;; escaped tilde must be made explicitly relative for filesystem calls.
-        (cond [(string=? s "") "."]
-              [(char=? (string-ref s 0) #\~) (string-append (current-directory) "/" s)]
-              [else s]))))
+        (if (and directory? (not ($trailing-separator? (path-flavor p) name)))
+            (string-append name (string separator)) name))))
+
+  (define $physical (lambda (p) ($filesystem-spelling p #\/ #f)))
+
+  (define $result-spelling
+    (lambda (p separator branch)
+      (let ([result ($filesystem-spelling p separator (branch-directory? branch))])
+        ;; UNC/device roots render canonically with an optional final separator.
+        ;; Keep canonical spelling for filesystem calls, but preserve the result marker.
+        (if (and (not (branch-directory? branch)) (eq? p (branch-root branch))
+                 (eq? (path-flavor p) 'windows)
+                 (memq (cadr (path-root-info p)) '(unc special))
+                 ($trailing-separator? 'windows result))
+            (substring result 0 (fx1- (string-length result)))
+            result))))
 
   #|proc:$expansion-iterator
   Build the lazy traversal iterator shared by `glob`, `glob*`, and `glob->iter`.
@@ -295,91 +657,99 @@
   `include-directories?` controls whether matching directories are yielded.
 
   The iterator's `stack` contains task vectors. A `node` task is
-  `(kind logical-path physical-path remaining-components ancestors separator)`:
-  `logical-path` is the spelling returned to the caller, `physical-path` is the
-  case-correct path used for filesystem calls, `remaining-components` is the
+  `(kind path remaining-components ancestors separator entry-type)`: `path` uses the actual
+  entry names for both results and filesystem calls, `remaining-components` is the
   matcher suffix, `ancestors` records followed directory identities, and
-  `separator` preserves the branch's slash style. A `scan` task replaces the
-  physical path with an open directory stream and reads one entry per advance.
+  `separator` preserves the branch's slash style, and `entry-type` retains readdir's type
+  or `FT_unknown` for direct lookups. A `scan` task replaces the last two fields with an open
+  directory stream and separator and reads one entry per advance.
   Tasks are pushed and popped depth-first, so no complete subtree is collected.
   |#
   (define $expansion-iterator
     (lambda (compiled follow-link? include-directories?)
-      (let ([branches (glob-patterns compiled)] [stack '()]
-            [seen (make-hashtable string-hash string=?)] [finished? #f])
+      (let ([branches (glob-patterns compiled)] [stack '()] [active-branch #f]
+            [seen (make-hashtable string-hash string=?)] [states #f] [finished? #f])
         (define close-all
           (lambda ()
             (let ([tasks stack] [failure #f])
               (set! stack '())
               (for-each (lambda (task)
-                            (when (eq? (task-kind task) 'scan)
+                          (when (eq? (task-kind task) 'scan)
                             (guard (condition
                                     [else (unless failure (set! failure condition))])
-                              (fs-close-directory (vector-ref task 5))))) tasks)
+                              (fs-close-directory (scan-directory task))))) tasks)
               (when failure (raise failure)))))
-        ;; Tasks are six/seven-slot vectors kept private to this iterator. These
+        ;; Tasks are six-slot vectors kept private to this iterator. These
         ;; accessors make the two task layouts explicit at their use sites.
         (define task-kind (lambda (task) (vector-ref task 0)))
-        (define task-logical (lambda (task) (vector-ref task 1)))
-        (define task-physical (lambda (task) (vector-ref task 2)))
-        (define task-components (lambda (task) (vector-ref task 3)))
-        (define task-ancestors (lambda (task) (vector-ref task 4)))
-        (define task-separator (lambda (task) (vector-ref task 5)))
-        (define scan-directory (lambda (task) (vector-ref task 5)))
-        (define scan-separator (lambda (task) (vector-ref task 6)))
+        (define task-path (lambda (task) (vector-ref task 1)))
+        (define task-components (lambda (task) (vector-ref task 2)))
+        (define task-ancestors (lambda (task) (vector-ref task 3)))
+        (define task-separator (lambda (task) (vector-ref task 4)))
+        (define task-type (lambda (task) (vector-ref task 5)))
+        (define scan-directory (lambda (task) (vector-ref task 4)))
+        (define scan-separator (lambda (task) (vector-ref task 5)))
         (define begin-branch
           (lambda (branch)
-            (let* ([parsed (branch-path branch)]
-                   [root (let loop ([p parsed] [cs (path-components parsed)])
-                           (if (null? cs) (path-with-trailing-directory p #f)
-                               (loop (path-drop-basename p) (cdr cs))))])
-              ;; Keep logical and physical spellings separate. Literal components
-              ;; are resolved lazily against the parent directory below.
-              (set! stack (list (vector 'node root root
-                                        (branch-components branch) '()
-                                        (branch-separator branch)))))))
-        (define $entry-match?
-          (lambda (flavor wanted actual)
-            (if (eq? flavor 'windows) (string-ci=? wanted actual)
-                (string=? wanted actual))))
-        (define find-literal-entry
-          (lambda (flavor parent wanted)
-            (let ([directory (fs-open-directory ($physical parent))]
-                  [found #f])
-              (dynamic-wind
-                void
-                (lambda ()
-                  (let loop ()
-                    (unless found
-                      (let ([entry (fs-read-directory directory)])
-                        (when entry
-                          (unless (member (car entry) '("." ".."))
-                            (when ($entry-match? flavor wanted (car entry))
-                              (set! found entry)))
-                          (unless found (loop)))))))
-                (lambda () (fs-close-directory directory)))
-              found)))
+            (set! active-branch branch)
+            ;; Multiple recursive components can reach the same matcher suffix at
+            ;; the same spelling many times. A single globstar cannot do so.
+            (set! states (and (fx> (length (filter not (branch-components branch))) 1)
+                               (make-eq-hashtable)))
+            ;; An empty pattern has no filesystem matches; its lexical matcher
+            ;; still accepts an empty candidate, and unmatched policy stays separate.
+            (let ([root (branch-root branch)] [components (branch-components branch)])
+              (set! stack (if (and (null? components) (path-relative-path? root)) '()
+                              (list (vector 'node root components '()
+                                            (branch-separator branch) 'FT_unknown)))))))
+        (define repeated-state?
+          (lambda (path cs ancestors separator)
+            (and states
+                 (let* ([paths (or (hashtable-ref states cs #f)
+                                   (let ([paths (make-hashtable string-hash string=?)])
+                                     (hashtable-set! states cs paths)
+                                     paths))]
+                        [name (path-render path separator)]
+                        [previous (hashtable-ref paths name '())]
+                        [context (and follow-link? ancestors)])
+                   ;; Preserve distinct spellings and cycle contexts; caching by
+                   ;; inode would lose directory aliases and explicit dot paths.
+                   (if (member context previous) #t
+                       (begin (hashtable-set! paths name (cons context previous)) #f))))))
         (define identity
           (lambda (name)
-            (list (file-dev-major name) (file-dev-minor name) (file-inode name))))
+            (let ([stat (file-stat name)])
+              ($file-view-key 'glob name
+                              (list (file-stat-dev-major stat) (file-stat-dev-minor stat)
+                                    (file-stat-inode stat))))))
         (define open-scan
-          (lambda (logical physical cs ancestors separator known-type)
-            (let ([name ($physical physical)])
-              (when (or (eq? known-type 'FT_dir)
-                        (and (eq? known-type 'FT_symlink) follow-link?)
-                        (and (not known-type) (file-directory? name follow-link?)))
-                (let ([id (and follow-link? (identity name))])
-                  (unless (and id (member id ancestors))
+          (lambda (path cs ancestors separator type)
+            (let ([name ($physical path)])
+              (if (not (directory? name type)) #t
+                (let ([id (and follow-link? (identity name))]
+                      [literal? (and (car cs) (component-literal (car cs)))])
+                  ;; A finite literal prefix may explicitly revisit a directory.
+                  ;; Its ancestors still constrain any later wildcard descent.
+                  (if (and id (not literal?) ($file-view-seen? 'glob name id ancestors)) #f
                     (let ([directory (fs-open-directory name)])
                       (set! stack
-                            (cons (vector 'scan logical physical cs
+                            (cons (vector 'scan path cs
                                           (if id (cons id ancestors) ancestors)
-                                          directory separator) stack)))))))))
+                                          directory separator) stack))
+                      #t)))))))
+        (define directory?
+          (lambda (name type)
+            (case type
+              [(FT_dir) #t]
+              [(FT_unknown) (eq? ($file-type 'glob name follow-link?) 'FT_dir)]
+              [(FT_symlink) (and follow-link? (eq? ($file-type 'glob name #t) 'FT_dir))]
+              [else #f])))
         (define eligible?
-          (lambda (name)
-            (and (file-exists? name #f)
-                 (or include-directories? (file-symbolic-link? name)
-                     (not (file-directory? name #f))))))
+          (lambda (name type)
+            (if (eq? type 'FT_unknown)
+                (let ([type ($file-type 'glob name #f)])
+                  (and type (or include-directories? (not (eq? type 'FT_dir)))))
+                (or include-directories? (not (eq? type 'FT_dir))))))
         (make-iter
          (lambda ()
            (guard (condition
@@ -394,46 +764,72 @@
                             (set! branches (cdr branches)) (begin-branch branch) (loop)))]
                      [else
                         (let* ([task (car stack)] [kind (task-kind task)]
-                               [p (task-logical task)] [physical (task-physical task)]
+                               [p (task-path task)]
                                [cs (task-components task)]
                                [ancestors (task-ancestors task)])
                         (case kind
                           [(node)
                            (set! stack (cdr stack))
-                           (let ([separator (task-separator task)] [name ($physical physical)])
-                             (cond [(null? cs)
-                                    (let* ([rendered (path-render p separator)]
-                                           [result (if (string=? rendered "") "." rendered)])
-                                      (if (and (eligible? name)
+                           (let ([separator (task-separator task)] [name ($physical p)]
+                                 [type (task-type task)])
+                             (cond [(repeated-state? p cs ancestors separator) (loop)]
+                                   [(null? cs)
+                                    (let ([result ($result-spelling p separator active-branch)])
+                                      (if (and (eligible? name type)
+                                               (or (not (branch-directory? active-branch))
+                                                   (directory? name type))
                                                (not (hashtable-contains? seen result)))
-                                          (begin (hashtable-set! seen result #t) result) (loop)))]
+                                          (begin
+                                            ;; Caller-owned results may be mutated after yielding.
+                                            (hashtable-set! seen (string-copy result) #t)
+                                            result)
+                                          (loop)))]
                                    [(not (car cs))
-                                    (open-scan p physical cs ancestors separator #f)
-                                    (set! stack (cons (vector 'node p physical (cdr cs) ancestors separator) stack))
+                                    ;; A cycle may match a terminal globstar without descent,
+                                    ;; but must not enter another suffix through that revisit.
+                                    (when (or (open-scan p cs ancestors separator type)
+                                              (null? (cdr cs)))
+                                      (set! stack
+                                            (cons (vector 'node p (cdr cs) ancestors separator type)
+                                                  stack)))
                                     (loop)]
-                                   [(component-literal (car cs))
-                                    (let ([entry (find-literal-entry (glob-flavor compiled)
-                                                                      physical
-                                                                      (component-literal (car cs)))])
-                                      (when entry
-                                        (let* ([actual (car entry)]
-                                               [logical-child (path-add-component p (component-literal (car cs)))]
-                                               [physical-child (path-add-component physical actual)]
-                                               [next (cdr cs)]
-                                               [child-name ($physical physical-child)])
-                                          (when (or (null? next)
-                                                    (or (eq? (cdr entry) 'FT_dir)
-                                                        (and (eq? (cdr entry) 'FT_symlink) follow-link?)))
-                                            (when (pair? next)
-                                              (let ([probe (fs-open-directory child-name)])
-                                                (fs-close-directory probe)))
-                                            (set! stack (cons (vector 'node logical-child physical-child
-                                                                       next ancestors separator) stack))))))
+                                   [(member (component-literal (car cs)) '("." ".."))
+                                    (let* ([component (component-literal (car cs))]
+                                           [child (path-add-component p component)]
+                                           [next (cdr cs)])
+                                      ;; Dot traversal still descends through the parent.
+                                      (when (and (directory? name type)
+                                                 (or (null? next)
+                                                     (directory? ($physical child) 'FT_unknown)))
+                                        ;; An explicit parent consumes a pattern component,
+                                        ;; so the old descent chain is no longer a cycle guard.
+                                        ;; Subsequent recursive scans build a fresh chain.
+                                        (set! stack (cons (vector 'node child
+                                                                   next (if (string=? component "..")
+                                                                            '() ancestors)
+                                                                   separator 'FT_unknown) stack))))
                                     (loop)]
-                                   [else (open-scan p physical cs ancestors separator #f) (loop)]))]
+                                   [(and (eq? (glob-flavor compiled) 'unix)
+                                         (component-literal (car cs)))
+                                    ;; Unix literals need search permission, but no directory scan.
+                                    (when (directory? name type)
+                                      (get-mode (string-append name "/."))
+                                      (let* ([child (path-add-component p (component-literal (car cs)))]
+                                             [next (cdr cs)])
+                                        ;; A terminal globstar also accepts this entry itself.
+                                        (when (or (null? next)
+                                                  (and (not (car next)) (null? (cdr next)))
+                                                  (directory? ($physical child) 'FT_unknown))
+                                          (set! stack (cons (vector 'node child next
+                                                                     (if (and follow-link? (pair? next))
+                                                                         (cons (identity name) ancestors)
+                                                                         ancestors)
+                                                                     separator 'FT_unknown) stack)))))
+                                    (loop)]
+                                   ;; Windows literals scan too: all case-equivalent names are eligible.
+                                   [else (open-scan p cs ancestors separator type) (loop)]))]
                           [(scan)
-                           (let* ([physical (task-physical task)]
-                                  [cs (task-components task)]
+                           (let* ([cs (task-components task)]
                                   [directory (scan-directory task)]
                                   [separator (scan-separator task)]
                                   [entry (fs-read-directory directory)])
@@ -441,28 +837,37 @@
                                     (fs-close-directory directory)
                                     (set! stack (cdr stack)) (loop)]
                                    [(member (car entry) '("." "..")) (loop)]
+                                   ;; A Unix name containing backslash cannot be one Windows component.
+                                   [(and (eq? (glob-flavor compiled) 'windows)
+                                         (string-search (car entry) #\\)) (loop)]
                                    [(or (not (car cs))
-                                        (regex-matches? (component-regex (car cs)) (car entry)))
+                                        ($component-matches? (car cs) (car entry)))
                                     (set! stack
                                           (cons (vector 'node (path-add-component p (car entry))
-                                                        (path-add-component physical (car entry))
-                                                        (if (car cs) (cdr cs) cs) ancestors separator) stack))
+                                                        (if (car cs) (cdr cs) cs) ancestors separator
+                                                        (cdr entry)) stack))
                                     (loop)]
                                    [else (loop)]))]))]))))
          (lambda ()
            (close-all) (set! branches (glob-patterns compiled))
-           (set! seen (make-hashtable string-hash string=?)) (set! finished? #f))
+           (set! seen (make-hashtable string-hash string=?)) (set! states #f)
+           (set! finished? #f))
          (lambda () (close-all) (set! finished? #t))))))
 
-  (define $path<?
-    (lambda (flavor a b)
-      (let loop ([xs (path-components (path-parse flavor a))]
-                 [ys (path-components (path-parse flavor b))])
+  (define $components<?
+    (lambda (a b)
+      (let loop ([xs a] [ys b])
         (cond [(null? xs) (pair? ys)] [(null? ys) #f]
               [else
-               (let ([x (if (eq? flavor 'windows) (string-foldcase (car xs)) (car xs))]
-                     [y (if (eq? flavor 'windows) (string-foldcase (car ys)) (car ys))])
-                 (if (string=? x y) (loop (cdr xs) (cdr ys)) (string<? x y)))]))))
+               (if (string=? (car xs) (car ys))
+                   (loop (cdr xs) (cdr ys))
+                   (string<? (car xs) (car ys)))]))))
+  (define $path-sort-key
+    (lambda (flavor path)
+      (let ([components (path-components (path-parse flavor path))])
+        (if (eq? flavor 'windows)
+            (map $fold-string components)
+            components))))
 
   (define $glob-expand
     (lambda (flavor pattern follow-link? include-directories? unmatched)
@@ -474,15 +879,30 @@
             (let loop ([value (iter-next! iterator)])
               (unless (eq? value iter-end) (results value) (loop (iter-next! iterator)))))
           (lambda () (iter-finalize! iterator)))
-        (let ([values (sort (lambda (a b) ($path<? flavor a b)) (results))])
-          (if (and (null? values) (eq? unmatched 'literal)) (list pattern) values)))))
+        (let* ([entries (map (lambda (path) (cons ($path-sort-key flavor path) path))
+                             (results))]
+               [sorted (sort (lambda (a b)
+                               (or ($components<? (car a) (car b))
+                                   (and (equal? (car a) (car b))
+                                        (string<? (cdr a) (cdr b))))) entries)]
+               [values (map cdr sorted)])
+          (if (and (null? values) (eq? unmatched 'literal)) (list (string-copy pattern)) values)))))
 
   #|proc:glob
   Expand string `pattern` against the filesystem and return duplicate-free path
-  strings sorted by component order. Optional `flavor` is `'unix` (the default)
-  or `'windows`. Traversal starts at the longest literal prefix and preserves
-  the root spelling. Symlinked directories are not descended into; matching
-  directories are excluded. An unmatched pattern returns the empty list.
+  strings sorted by component order, using simple case folding for Windows sorting.
+  Equal folded keys are ordered by the rendered strings. Results use on-disk entry names,
+  including every case-equivalent Windows match, and retain the pattern's separator style.
+  Literal leading tildes receive a `./` prefix (or `.\` with backslash separators),
+  so returned paths can be passed to filesystem APIs without home expansion.
+  Optional `flavor` follows the host OS:
+  `'windows` on Windows, `'unix` elsewhere. Unix literals use direct lookups; Windows
+  components scan case-insensitively. Root spelling is preserved.
+  UNC/device root results preserve optional trailing markers.
+  Symlinked directories are not descended into; matching directories are excluded.
+  An unmatched pattern returns `()`.
+  Windows expansion skips Unix entries containing backslash, which is a Windows separator.
+  An empty pattern has no filesystem matches.
   |#
   (define glob
     (case-lambda
@@ -493,12 +913,18 @@
 
   #|proc:glob*
   Expand string `pattern` and return sorted, duplicate-free matching path
-  strings. Optional `flavor` follows the host OS: `'windows` on Windows, `'unix`
+  strings, using the same entry spelling and sorting as `glob`.
+  Optional `flavor` follows the host OS: `'windows` on Windows, `'unix`
   elsewhere.
   Boolean `follow-link?` permits descending into symlinked directories with
-  cycle detection. Boolean `include-directories?` includes matching directories;
+  cycle detection that counts literal and wildcard directory ancestors. Each directory's
+  mount view is part of its identity. If mount IDs are unavailable, ambiguous
+  repeated identities raise an I/O error rather than silently omitting descendants. An explicit
+  parent component starts a new descent chain. A terminal `**` may match a cycle symlink itself
+  without traversing it. Boolean `include-directories?` includes directories;
   files and symlinks are always eligible. `unmatched` is `'empty` to return `()`
-  when nothing matches, or `'literal` to return a list of the original pattern.
+  when nothing matches, or `'literal` to return a list containing a fresh copy of the pattern.
+  An empty pattern has no filesystem matches; the `unmatched` policy still applies.
   |#
   (define glob*
     (case-lambda
@@ -518,6 +944,9 @@
   exhausted. Streams open on advancement and close on exhaustion, reset,
   finalization, or error. `iter-reset!` begins a new pass over the current tree;
   `iter-finalize!` releases active streams without collecting the remaining tree.
+  If any branch is relative, keep the process current directory unchanged from the first
+  advance until exhaustion or finalization. Reset closes the current pass; the next pass uses
+  the current directory at its first advance.
   |#
   (define glob->iter
     (case-lambda
@@ -530,16 +959,21 @@
   Return a boolean indicating whether string `path` matches any alternative of
   compiled `glob`, using that object's flavor. The three-argument form compiles
   string `pattern` for explicit `flavor` (`'unix` or `'windows`) before matching
-  `path`. Matching is lexical, case-insensitive for Windows, and performs no
-  filesystem access or dot-component normalization.
+  `path`. Matching is lexical, uses Unicode simple case folding for Windows, and performs no
+  filesystem access or dot-component normalization. A trailing separator on either
+  pattern or candidate requires a trailing separator on both.
+  Simple folding is symmetric and preserves character count: `straße` differs from `STRASSE`.
+  Bracket classes, including negated classes and ranges, use the same rule as literals.
   |#
   (define glob-match?
     (case-lambda
       [(glob path)
        (pcheck ([glob? glob] [string? path])
-               (let* ([p (path-parse (glob-flavor glob) path)] [root (path-root-info p)]
+               (let* ([p (path-parse (glob-flavor glob) path)]
                       [values (path-components p)])
-                 (exists (lambda (x) (and ($root=? (glob-flavor glob) root (path-root-info (branch-path x)))
+                 (exists (lambda (x) (and (path-same-root? (branch-root x) p)
+                                         (eq? (branch-directory? x)
+                                              ($trailing-separator? (glob-flavor glob) path))
                                          ($match? (branch-components x) values)))
                          (glob-patterns glob))))]
       [(flavor pattern path)

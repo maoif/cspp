@@ -14,7 +14,12 @@
 
           make-path
 
-          file-stat file-type file-type->symbol file-mode file-size file-size-h
+          file-stat file-stat? file-stat-type file-stat-mode file-stat-inode
+          file-stat-owner file-stat-group file-stat-nlinks file-stat-size
+          file-stat-blocks file-stat-dev-major file-stat-dev-minor
+          file-stat-access-time file-stat-modification-time file-stat-change-time
+          file-stat-creation-time
+          file-type file-type->symbol file-mode file-size file-size-h
           file-access-time file-modification-time file-change-time file-creation-time
           file-inode file-blocks file-nlinks file-owner file-group
           file-dev-major file-dev-minor
@@ -45,11 +50,29 @@
           make-i/o-file-not-directory-error i/o-file-not-directory-error?)
   (import (cspp chez)
           (cspp private os)
+          (cspp private file)
+          (cspp path)
           (cspp internal)
           (cspp utils)
+          (only (cspp string) string-search)
           (cspp list)
           (cspp iter)
           (cspp io))
+
+  #|doc
+  Filesystem path arguments must be strings without NUL characters. Invalid names raise
+  an error before filesystem access, rather than selecting a prefix of the supplied name.
+  File contents may contain NUL characters.
+  Names and symbolic-link targets read from the filesystem must be valid UTF-8.
+  Undecodable bytes raise an error; they are never replaced with another filename.
+  Concurrent filesystem operations on the same files have undefined behavior. Callers must
+  synchronize them.
+  |#
+  ;; Validate the original Scheme string before any C-string conversion or filesystem probe.
+  ;; Empty names retain each operation's existing behavior; NUL is never a filename character.
+  (define $filename?
+    (lambda (value)
+      (and (string? value) (not (string-search value #\nul)))))
 
 
   (define-condition-type &i/o-file-not-regular &i/o-filename
@@ -58,15 +81,13 @@
     make-i/o-file-not-directory-error i/o-file-not-directory-error?)
 
   (define $err-file
-    (case-lambda
-      [(who msg)
-       (raise (condition (make-who-condition who) (make-message-condition msg)))]
-      [(who x msg)
-       (cond [(condition? x)
-              (raise (condition (make-who-condition who) x (make-message-condition msg)))]
-             [(string? x)
-              (raise (condition (make-who-condition who) (make-i/o-filename-error x) (make-message-condition msg)))]
-             [else (assert-unreachable)])]))
+    (lambda (who x msg)
+      (cond [(condition? x)
+             (raise (condition (make-who-condition who) x (make-message-condition msg)))]
+            [(string? x)
+             (raise (condition (make-who-condition who) (make-i/o-filename-error x)
+                               (make-message-condition msg)))]
+            [else (assert-unreachable)])))
 
   (define $err-file-not-regular
     (lambda (who p)
@@ -101,15 +122,23 @@
 ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+  (define $with-port
+    (lambda (port proc)
+      (dynamic-wind
+        void
+        (lambda () (proc port))
+        (lambda ()
+          (unless (port-closed? port)
+            (close-port port))))))
+
   #|proc:read-lines
   The `read-lines` procedure reads the text file at `path` and returns a list of lines.
   The `path` parameter is the filesystem path string to read.
   |#
   (define read-lines
     (lambda (path)
-      (pcheck-file
-       (path)
-       (call-with-input-file path
+      (pcheck ([$filename? path] [file-regular? path])
+       ($with-port (open-input-file path)
          (lambda (p)
            (let ([lb (make-list-builder)])
              (let loop ()
@@ -124,9 +153,8 @@
   |#
   (define read-string
     (lambda (path)
-      (pcheck-file
-       (path)
-       (call-with-input-file path
+      (pcheck ([$filename? path] [file-regular? path])
+       ($with-port (open-input-file path)
          (lambda (p)
            (let ([x (get-string-all p)])
              (if (eof-object? x) "" x)))))))
@@ -136,9 +164,8 @@
   |#
   (define read-chars
     (lambda (path)
-      (pcheck-file
-       (path)
-       (call-with-input-file path
+      (pcheck ([$filename? path] [file-regular? path])
+       ($with-port (open-input-file path)
          (lambda (p)
            (let ([lb (make-list-builder)])
              (let loop ()
@@ -150,12 +177,13 @@
   #|proc:read-data
   The `read-data` procedure reads datums from `path` and returns them as a list.
   The `path` parameter is the filesystem path string to read.
+  A top-level `#!eof` datum terminates reading, as with Chez `load`; it and any following
+  datums are excluded. An empty file returns `()`.
   |#
   (define read-data
     (lambda (path)
-      (pcheck-file
-       (path)
-       (call-with-input-file path
+      (pcheck ([$filename? path] [file-regular? path])
+       ($with-port (open-input-file path)
          (lambda (p)
            (let ([lb (make-list-builder)])
              (let loop ()
@@ -170,147 +198,173 @@
   |#
   (define read-datum
     (lambda (path)
-      (pcheck-file
-       (path)
-       (call-with-input-file path
+      (pcheck ([$filename? path] [file-regular? path])
+       ($with-port (open-input-file path)
          (lambda (p) (get-datum p))))))
+  ;; Identify whether the next native read will decode a datum or only consume framing.
+  ;; Chez uses byte 0 for a header and 127 for a group terminator. Headers contain the
+  ;; seven-byte magic suffix, two base-128 integers, and a parenthesized boot-file list.
+  ;; fasl-read validates the full representation. Rewind after inspection to clear the
+  ;; port buffer: byte lookahead selects a different Chez decoding path.
+  (define $fasl-datum?
+    (lambda (port)
+      (define byte
+        (lambda ()
+          (let ([value (get-u8 port)])
+            (when (eof-object? value)
+              (errorf 'read-data-fasl "unexpected EOF in FASL header"))
+            value)))
+      (define skip-integer
+        (lambda () (when (fxlogbit? 7 (byte)) (skip-integer))))
+      (let ([start (port-position port)])
+        (dynamic-wind
+          void
+          (lambda ()
+            (let loop ()
+              (let ([type (get-u8 port)])
+                (cond [(or (eof-object? type) (eqv? type 127)) #f]
+                      [(eqv? type 0)
+                       (do ([index 0 (fx1+ index)]) ((fx= index 7)) (byte))
+                       (skip-integer)
+                       (skip-integer)
+                       (unless (fx= (byte) 40)
+                         (errorf 'read-data-fasl "invalid FASL header boot-file list"))
+                       (let skip-boot-files ()
+                         (unless (fx= (byte) 41) (skip-boot-files)))
+                       (loop)]
+                      [else #t]))))
+          (lambda () (set-port-position! port start))))))
+
   #|proc:read-data-fasl
   The `read-data-fasl` procedure reads fasl datums from `path` as a list.
   The `path` parameter is the filesystem path string to read.
+  Return all datums in order, including serialized EOF objects, stopping at physical EOF.
+  FASL group headers and terminators are excluded; later groups are still read.
+  An empty file returns `()`. Malformed or truncated fasl data raises an error.
   |#
   (define read-data-fasl
     (lambda (path)
-      (pcheck-file
-       (path)
-       (call-with-port (open-file-input-port path)
+      (pcheck ([$filename? path] [file-regular? path])
+       ($with-port (open-file-input-port path)
          (lambda (p)
            (let ([lb (make-list-builder)])
              (let loop ()
-               (let ([x (fasl-read p)])
-                 (if (eof-object? x)
-                     (lb)
-                     (begin (lb x)
-                            (loop)))))))))))
+               (let* ([start (port-position p)]
+                      [datum? ($fasl-datum? p)]
+                      [datum (fasl-read p)])
+                 (when datum? (lb datum))
+                 (if (= start (port-position p)) (lb) (loop))))))))))
   #|proc:read-datum-fasl
   The `read-datum-fasl` procedure reads one fasl datum from `path`.
   The `path` parameter is the filesystem path string to read.
   |#
   (define read-datum-fasl
     (lambda (path)
-      (pcheck-file
-       (path)
-       (call-with-port (open-file-input-port path)
+      (pcheck ([$filename? path] [file-regular? path])
+       ($with-port (open-file-input-port path)
          (lambda (p) (fasl-read p))))))
   #|proc:read-u8vec
   The `read-u8vec` procedure reads the binary file at `path` as a bytevector.
   The `path` parameter is the filesystem path string to read.
+  An empty file returns an empty bytevector.
   |#
   (define read-u8vec
     (lambda (path)
-      (pcheck-file
-       (path)
-       (call-with-port (open-file-input-port path)
-         (lambda (p) (get-bytevector-all p))))))
+      (pcheck ([$filename? path] [file-regular? path])
+       ($with-port (open-file-input-port path)
+         (lambda (p)
+           (let ([value (get-bytevector-all p)])
+             (if (eof-object? value) #vu8() value)))))))
 
-  (define all-strings? (lambda (x) (andmap string? x)))
-  (define all-chars?   (lambda (x) (andmap char? x)))
+  (define all-strings? (lambda (x) (and (list? x) (andmap string? x))))
+  (define all-chars?   (lambda (x) (and (list? x) (andmap char? x))))
 
 
   ;; mode when file exists: 'error, 'truncate, 'append
   (define $write-helper
     (lambda (who path mode bin? writer)
-      (let ([go (lambda (mode)
-                  (let ([op (if mode
-                                (case mode
-                                  [truncate (file-options replace)]
-                                  [append   (file-options no-truncate no-fail append)]
-                                  [else ($err-bad-write-mode who mode)])
-                                (file-options))])
-                    (call-with-port (open-file-output-port path op (buffer-mode block)
-                                                           (if bin? #f (current-transcoder)))
-                      (lambda (p) (writer p)))))])
-        (if (file-exists? path)
-            (if (eq? mode 'error)
-                ($err-file-exists who path)
-                (if (file-regular? path)
-                    (go mode)
-                    ($err-file-not-regular who path)))
-            ;; feel free to write
-            (go #f)))))
+      (pcheck ([$filename? path])
+              (let ([go (lambda (mode)
+                          (let ([op (case mode
+                                      [error (file-options)]
+                                      [truncate (file-options no-fail)]
+                                      [append (file-options no-truncate no-fail append)]
+                                      [else ($err-bad-write-mode who mode)])])
+                            ($with-port (open-file-output-port path op (buffer-mode block)
+                                                               (if bin? #f (current-transcoder)))
+                              writer)))])
+                (cond [(not (file-exists? path)) (go mode)]
+                      [(eq? mode 'error) ($err-file-exists who path)]
+                      [(file-regular? path) (go mode)]
+                      [else ($err-file-not-regular who path)])))))
 
-  ;; a newline is added after writing each string
+  ;; A newline is added after writing each string or text datum.
   (define $write-lines
     (lambda (who path mode lines)
       (pcheck ([all-strings? lines])
-              (let ([do-write (lambda (p)
-                                (let loop ([lines lines])
-                                  (unless (null? lines)
-                                    (put-string p (car lines))
-                                    (newline p)
-                                    (loop (cdr lines)))))])
-                ($write-helper who path mode #f do-write)))))
+        ($write-helper who path mode #f
+          (lambda (port)
+            (let loop ([lines lines])
+              (unless (null? lines)
+                (put-string port (car lines))
+                (newline port)
+                (loop (cdr lines)))))))))
+
   (define $write-string
     (lambda (who path mode str)
-      (pcheck-string
-       (str)
-       (let ([do-write (lambda (p)
-                         (put-string p str))])
-         ($write-helper who path mode #f do-write)))))
+      (pcheck-string (str)
+        ($write-helper who path mode #f (lambda (port) (put-string port str))))))
+
   (define $write-chars
     (lambda (who path mode chars)
       (pcheck ([all-chars? chars])
-              (let ([do-write (lambda (p)
-                                (let loop ([chars chars])
-                                  (unless (null? chars)
-                                    (put-char p (car chars))
-                                    (loop (cdr chars)))))])
-                ($write-helper who path mode #f do-write)))))
-  ;; write a list of datum
+        ($write-helper who path mode #f
+          (lambda (port)
+            (let loop ([chars chars])
+              (unless (null? chars)
+                (put-char port (car chars))
+                (loop (cdr chars)))))))))
+
   (define $write-data
     (lambda (who path mode data)
-      (pcheck-list
-       (data)
-       (let ([do-write (lambda (p)
-                         (let loop ([data data])
-                           (unless (null? data)
-                             (put-datum p (car data))
-                             ;; for better readability
-                             (newline p)
-                             (loop (cdr data)))))])
-         ($write-helper who path mode #f do-write)))))
-  ;; write a single datum
+      (pcheck-list (data)
+        ($write-helper who path mode #f
+          (lambda (port)
+            (let loop ([data data])
+              (unless (null? data)
+                (put-datum port (car data))
+                (newline port)
+                (loop (cdr data)))))))))
+
   (define $write-datum
     (lambda (who path mode datum)
       (define writable?
         (lambda (x)
           (not (or (procedure? x) (hashtable? x) (port? x)))))
       (pcheck ([writable? datum])
-              (let ([do-write (lambda (p)
-                                (put-datum p datum)
-                                (newline p))])
-                ($write-helper who path mode #f do-write)))))
-  ;; write a list of datum in fasl format
+        ($write-helper who path mode #f
+          (lambda (port)
+            (put-datum port datum)
+            (newline port))))))
+
   (define $write-data-fasl
     (lambda (who path mode data)
-      (pcheck-list
-       (data)
-       (let ([do-write (lambda (p)
-                         (let loop ([data data])
-                           (unless (null? data)
-                             (fasl-write (car data) p)
-                             (loop (cdr data)))))])
-         ($write-helper who path mode #t do-write)))))
-  ;; write a single datum in fasl format
+      (pcheck-list (data)
+        ($write-helper who path mode #t
+          (lambda (port)
+            (let loop ([data data])
+              (unless (null? data)
+                (fasl-write (car data) port)
+                (loop (cdr data)))))))))
+
   (define $write-datum-fasl
     (lambda (who path mode datum)
-      (let ([do-write (lambda (p) (fasl-write datum p))])
-        ($write-helper who path mode #t do-write))))
+      ($write-helper who path mode #t (lambda (port) (fasl-write datum port)))))
+
   (define $write-u8vec
     (lambda (who path mode u8vec)
-      (pcheck-bytevector
-       (u8vec)
-       (let ([do-write (lambda (p) (put-bytevector p u8vec))])
-         ($write-helper who path mode #t do-write)))))
+      (pcheck-bytevector (u8vec)
+        ($write-helper who path mode #t (lambda (port) (put-bytevector port u8vec))))))
 
   ;; error by default when file already exist
   #|proc:write-lines
@@ -602,14 +656,102 @@
   (define s64? (signed-value-pred 64))
 
 
-  ;; per-thread bytevectors for IO to avoid
-  ;; excessive creations of temporary bytevectors
-  (define bv16 (make-thread-parameter (make-bytevector 2 0)))
-  (define bv32 (make-thread-parameter (make-bytevector 4 0)))
-  (define bv64 (make-thread-parameter (make-bytevector 8 0)))
-
   ;; All subsequent procedures raise an exception when there are no enough
   ;; bytes to make up the number.
+
+  (define $valid-endianness
+    (lambda (who end)
+      (unless (memq end '(big little)) ($bad-endianness who end))))
+
+  (define $get-integer64
+    (lambda (who port end expected signed?)
+      ($valid-endianness who end)
+      ;; Keep storage local so a custom port can reenter integer reads safely.
+      (let ([bytes (get-bytevector-n port 8)])
+        (unless (and (bytevector? bytes) (fx= 8 (bytevector-length bytes)))
+          ($no-enough-data who expected))
+        (if signed?
+            (bytevector-s64-ref bytes 0 end)
+            (bytevector-u64-ref bytes 0 end)))))
+
+  (define $get-unsigned
+    (lambda (who p count end expected)
+      ($valid-endianness who end)
+      (let* ([fixnum? (fx<= (fx* count 8) (fixnum-width))]
+             [combine-big (if fixnum?
+                              (lambda (value byte) (fx+ (fx* value 256) byte))
+                              (lambda (value byte) (+ (* value 256) byte)))]
+             [combine-little (if fixnum?
+                                 (lambda (value byte factor)
+                                   (fx+ value (fx* byte factor)))
+                                 (lambda (value byte factor) (+ value (* byte factor))))]
+             [multiply-256 (if fixnum? (lambda (value) (fx* value 256))
+                               (lambda (value) (* value 256)))])
+        (if (eq? end 'big)
+            (let loop ([remaining count] [value 0])
+              (if (fxzero? remaining)
+                  value
+                  (let ([byte (get-u8 p)])
+                    (when (eof-object? byte) ($no-enough-data who expected))
+                    (loop (fx1- remaining) (combine-big value byte)))))
+            (let loop ([remaining count] [value 0] [factor 1])
+              (if (fxzero? remaining)
+                  value
+                  (let ([byte (get-u8 p)])
+                    (when (eof-object? byte) ($no-enough-data who expected))
+                    (loop (fx1- remaining) (combine-little value byte factor)
+                          (multiply-256 factor)))))))))
+
+  (define $get-signed
+    (lambda (who p count end expected)
+      (let* ([unsigned ($get-unsigned who p count end expected)]
+             [bits (fx* count 8)]
+             [sign (expt 2 (fx- bits 1))])
+        (if (>= unsigned sign) (- unsigned (expt 2 bits)) unsigned))))
+
+  (define $put-unsigned
+    (lambda (who p value count end)
+      ($valid-endianness who end)
+      (let emit ([value value] [remaining count])
+        (let ([byte (if (fx<= (fx* count 8) (fixnum-width))
+                        (fxmod value 256)
+                        (mod value 256))]
+              [rest (if (fx<= (fx* count 8) (fixnum-width))
+                        (fxquotient value 256)
+                        (quotient value 256))])
+          (if (eq? end 'big)
+              (begin
+                (unless (fx= remaining 1) (emit rest (fx1- remaining)))
+                (put-u8 p byte))
+              (begin
+                (put-u8 p byte)
+                (unless (fx= remaining 1) (emit rest (fx1- remaining)))))))))
+
+  (define $put-integer64
+    (lambda (who port value end signed?)
+      ($valid-endianness who end)
+      ;; A custom output callback may reenter this codec before consuming these bytes.
+      (let ([bytes (make-bytevector 8)])
+        (if signed?
+            (bytevector-s64-set! bytes 0 value end)
+            (bytevector-u64-set! bytes 0 value end))
+        (put-bytevector port bytes))))
+
+  (define $put-value
+    (lambda (who p value count end expected signed?)
+      (let ([valid? (case count
+                      [(2) (if signed? s16? u16?)]
+                      [(4) (if signed? s32? u32?)]
+                      [else (if signed? s64? u64?)])])
+        (if (valid? value)
+            (if (fx= count 8)
+                ($put-integer64 who p value end signed?)
+                ($put-unsigned who p
+                               (if (and signed? (< value 0))
+                                   (+ value (expt 2 (fx* count 8)))
+                                   value)
+                               count end))
+            ($invalid-value who value expected)))))
 
   #|proc:get-u16
   The `get-u16` procedure reads an unsigned 16-bit integer from binary input port `p`.
@@ -620,17 +762,7 @@
     (case-lambda
       [(p) (get-u16 p 'little)]
       [(p end)
-       (pcheck-input-binary-port
-        (p)
-        (let* ([count 2] [bv (bv16)]
-               [go (lambda (get) (let ([c (get-bytevector-n! p bv 0 count)])
-                                   (if (fx< c count)
-                                       ($no-enough-data who 'u16)
-                                       (get))))])
-          (case end
-            [big    (go (lambda () (bytevector-u16-ref bv 0 (endianness big))))]
-            [little (go (lambda () (bytevector-u16-ref bv 0 (endianness little))))]
-            [else ($bad-endianness who end)])))]))
+       (pcheck-input-binary-port (p) ($get-unsigned who p 2 end 'u16))]))
   #|proc:get-u32
   The `get-u32` procedure reads an unsigned 32-bit integer from binary input port `p`.
   The `p` parameter is the binary input port to read.
@@ -640,17 +772,7 @@
     (case-lambda
       [(p) (get-u32 p 'little)]
       [(p end)
-       (pcheck-input-binary-port
-        (p)
-        (let* ([count 4] [bv (bv32)]
-               [go (lambda (get) (let ([c (get-bytevector-n! p bv 0 count)])
-                                   (if (fx< c count)
-                                       ($no-enough-data who 'u32)
-                                       (get))))])
-          (case end
-            [big    (go (lambda () (bytevector-u32-ref bv 0 (endianness big))))]
-            [little (go (lambda () (bytevector-u32-ref bv 0 (endianness little))))]
-            [else ($bad-endianness who end)])))]))
+       (pcheck-input-binary-port (p) ($get-unsigned who p 4 end 'u32))]))
   #|proc:get-u64
   The `get-u64` procedure reads an unsigned 64-bit integer from binary input port `p`.
   The `p` parameter is the binary input port to read.
@@ -660,17 +782,7 @@
     (case-lambda
       [(p) (get-u64 p 'little)]
       [(p end)
-       (pcheck-input-binary-port
-        (p)
-        (let* ([count 8] [bv (bv64)]
-               [go (lambda (get) (let ([c (get-bytevector-n! p bv 0 count)])
-                                   (if (fx< c count)
-                                       ($no-enough-data who 'u64)
-                                       (get))))])
-          (case end
-            [big    (go (lambda () (bytevector-u64-ref bv 0 (endianness big))))]
-            [little (go (lambda () (bytevector-u64-ref bv 0 (endianness little))))]
-            [else ($bad-endianness who end)])))]))
+       (pcheck-input-binary-port (p) ($get-integer64 who p end 'u64 #f))]))
 
   #|proc:get-s16
   The `get-s16` procedure reads a signed 16-bit integer from binary input port `p`.
@@ -681,17 +793,7 @@
     (case-lambda
       [(p) (get-s16 p 'little)]
       [(p end)
-       (pcheck-input-binary-port
-        (p)
-        (let* ([count 2] [bv (bv16)]
-               [go (lambda (get) (let ([c (get-bytevector-n! p bv 0 count)])
-                                   (if (fx< c count)
-                                       ($no-enough-data who 's16)
-                                       (get))))])
-          (case end
-            [big    (go (lambda () (bytevector-s16-ref bv 0 (endianness big))))]
-            [little (go (lambda () (bytevector-s16-ref bv 0 (endianness little))))]
-            [else ($bad-endianness who end)])))]))
+       (pcheck-input-binary-port (p) ($get-signed who p 2 end 's16))]))
   #|proc:get-s32
   The `get-s32` procedure reads a signed 32-bit integer from binary input port `p`.
   The `p` parameter is the binary input port to read.
@@ -701,17 +803,7 @@
     (case-lambda
       [(p) (get-s32 p 'little)]
       [(p end)
-       (pcheck-input-binary-port
-        (p)
-        (let* ([count 4] [bv (bv32)]
-               [go (lambda (get) (let ([c (get-bytevector-n! p bv 0 count)])
-                                   (if (fx< c count)
-                                       ($no-enough-data who 's32)
-                                       (get))))])
-          (case end
-            [big    (go (lambda () (bytevector-s32-ref bv 0 (endianness big))))]
-            [little (go (lambda () (bytevector-s32-ref bv 0 (endianness little))))]
-            [else ($bad-endianness who end)])))]))
+       (pcheck-input-binary-port (p) ($get-signed who p 4 end 's32))]))
   #|proc:get-s64
   The `get-s64` procedure reads a signed 64-bit integer from binary input port `p`.
   The `p` parameter is the binary input port to read.
@@ -721,17 +813,7 @@
     (case-lambda
       [(p) (get-s64 p 'little)]
       [(p end)
-       (pcheck-input-binary-port
-        (p)
-        (let* ([count 8] [bv (bv64)]
-               [go (lambda (get) (let ([c (get-bytevector-n! p bv 0 count)])
-                                   (if (fx< c count)
-                                       ($no-enough-data who 's64)
-                                       (get))))])
-          (case end
-            [big    (go (lambda () (bytevector-s64-ref bv 0 (endianness big))))]
-            [little (go (lambda () (bytevector-s64-ref bv 0 (endianness little))))]
-            [else ($bad-endianness who end)])))]))
+       (pcheck-input-binary-port (p) ($get-integer64 who p end 's64 #t))]))
 
   #|proc:put-u16
   The `put-u16` procedure writes unsigned 16-bit integer `n` to binary output port `p`.
@@ -745,15 +827,7 @@
       [(p n end)
        (pcheck-output-binary-port
         (p)
-        (if (u16? n)
-            (let ([bv (bv16)])
-              (case end
-                [big    (bytevector-u16-set! bv 0 n (endianness big))
-                        (put-bytevector p bv)]
-                [little (bytevector-u16-set! bv 0 n (endianness little))
-                        (put-bytevector p bv)]
-                [else ($bad-endianness who end)]))
-            ($invalid-value who n 'u16)))]))
+        ($put-value who p n 2 end 'u16 #f))]))
   #|proc:put-u32
   The `put-u32` procedure writes unsigned 32-bit integer `n` to binary output port `p`.
   The `p` parameter is the binary output port to write.
@@ -766,15 +840,7 @@
       [(p n end)
        (pcheck-output-binary-port
         (p)
-        (if (u32? n)
-            (let ([bv (bv32)])
-              (case end
-                [big    (bytevector-u32-set! bv 0 n (endianness big))
-                        (put-bytevector p bv)]
-                [little (bytevector-u32-set! bv 0 n (endianness little))
-                        (put-bytevector p bv)]
-                [else ($bad-endianness who end)]))
-            ($invalid-value who n 'u32)))]))
+        ($put-value who p n 4 end 'u32 #f))]))
   #|proc:put-u64
   The `put-u64` procedure writes unsigned 64-bit integer `n` to binary output port `p`.
   The `p` parameter is the binary output port to write.
@@ -787,15 +853,7 @@
       [(p n end)
        (pcheck-output-binary-port
         (p)
-        (if (u64? n)
-            (let ([bv (bv64)])
-              (case end
-                [big    (bytevector-u64-set! bv 0 n (endianness big))
-                        (put-bytevector p bv)]
-                [little (bytevector-u64-set! bv 0 n (endianness little))
-                        (put-bytevector p bv)]
-                [else ($bad-endianness who end)]))
-            ($invalid-value who n 'u64)))]))
+        ($put-value who p n 8 end 'u64 #f))]))
 
   #|proc:put-s16
   The `put-s16` procedure writes signed 16-bit integer `n` to binary output port `p`.
@@ -809,15 +867,7 @@
       [(p n end)
        (pcheck-output-binary-port
         (p)
-        (if (s16? n)
-            (let ([bv (bv16)])
-              (case end
-                [big    (bytevector-s16-set! bv 0 n (endianness big))
-                        (put-bytevector p bv)]
-                [little (bytevector-s16-set! bv 0 n (endianness little))
-                        (put-bytevector p bv)]
-                [else ($bad-endianness who end)]))
-            ($invalid-value who n 's16)))]))
+        ($put-value who p n 2 end 's16 #t))]))
   #|proc:put-s32
   The `put-s32` procedure writes signed 32-bit integer `n` to binary output port `p`.
   The `p` parameter is the binary output port to write.
@@ -830,15 +880,7 @@
       [(p n end)
        (pcheck-output-binary-port
         (p)
-        (if (s32? n)
-            (let ([bv (bv32)])
-              (case end
-                [big    (bytevector-s32-set! bv 0 n (endianness big))
-                        (put-bytevector p bv)]
-                [little (bytevector-s32-set! bv 0 n (endianness little))
-                        (put-bytevector p bv)]
-                [else ($bad-endianness who end)]))
-            ($invalid-value who n 's32)))]))
+        ($put-value who p n 4 end 's32 #t))]))
   #|proc:put-s64
   The `put-s64` procedure writes signed 64-bit integer `n` to binary output port `p`.
   The `p` parameter is the binary output port to write.
@@ -851,15 +893,7 @@
       [(p n end)
        (pcheck-output-binary-port
         (p)
-        (if (s64? n)
-            (let ([bv (bv64)])
-              (case end
-                [big    (bytevector-s64-set! bv 0 n (endianness big))
-                        (put-bytevector p bv)]
-                [little (bytevector-s64-set! bv 0 n (endianness little))
-                        (put-bytevector p bv)]
-                [else ($bad-endianness who end)]))
-            ($invalid-value who n 's64)))]))
+        ($put-value who p n 8 end 's64 #t))]))
 
 
   ;; big-endian aliases
@@ -940,17 +974,40 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
   #|proc:make-path
-  Build paths. A multi-arity variant of builtin `path-build`.
+  Combine string `first-path` and the remaining string `paths` with Chez `path-build` rules.
+  Insert the host directory separator after a nonempty prefix that does not end in a separator.
+  Fragments, including rooted strings, are appended as written; no normalization is performed.
+  Return the resulting string. Use `path-join` on path objects for root-aware joining.
   |#
   (define make-path
-    (lambda (p . p*)
-      (pcheck ([string? p] [(lambda (x) (andmap string? x)) p*])
-              (if (null? p*)
-                  p
-                  (let loop ([res p] [pp p*])
-                    (if (null? pp)
-                        res
-                        (path-build res (loop (car pp) (cdr pp)))))))))
+    (lambda (first-path . paths)
+      (pcheck ([$filename? first-path] [(lambda (values) (andmap $filename? values)) paths])
+        (cond [(null? paths) first-path]
+              [(null? (cdr paths)) (path-build first-path (car paths))]
+              [else
+               (let* ([separator (directory-separator)] [parts (cons first-path paths)]
+                      [length
+                       (let loop ([parts parts] [total 0] [last #f])
+                         (if (null? parts) total
+                             (let* ([part (car parts)] [length (string-length part)]
+                                    [separate? (and last (not (directory-separator? last)))])
+                               (loop (cdr parts) (+ total length (if separate? 1 0))
+                                     (cond [(fx> length 0) (string-ref part (fx1- length))]
+                                           [separate? separator]
+                                           [else last])))))]
+                      [result (make-string length)])
+                 ;; Keep native separator decisions and fill one preallocated result.
+                 (let loop ([parts parts] [index 0])
+                   (if (null? parts) result
+                       (let* ([index
+                               (if (and (fx> index 0)
+                                        (not (directory-separator?
+                                              (string-ref result (fx1- index)))))
+                                   (begin (string-set! result index separator) (fx1+ index))
+                                   index)]
+                              [part (car parts)] [length (string-length part)])
+                         (string-copy! part 0 result index length)
+                         (loop (cdr parts) (fx+ index length))))))]))))
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -961,23 +1018,108 @@
 
 ;;;; file stats
 
-  (define-record-type $file-stat
+  #|proc:file-stat?
+  Return whether arbitrary `object` is a filesystem metadata snapshot returned by `file-stat`.
+  |#
+  (define-record-type ($file-stat make-$file-stat file-stat?)
     (nongenerative)
-    (fields (immutable type   file-stat-type)
-            (immutable mode   file-stat-mode)
-            (immutable inode  file-stat-inode)
-            (immutable owner  file-stat-owner)
-            (immutable group  file-stat-group)
-            (immutable nlinks file-stat-nlinks)
-            (immutable size   file-stat-size)
-            (immutable blocks file-stat-blocks)
-            (immutable dev-major file-stat-dev-major)
-            (immutable dev-minor file-stat-dev-minor)
+    (fields (immutable type   $file-stat-type)
+            (immutable mode   $file-stat-mode)
+            (immutable inode  $file-stat-inode)
+            (immutable owner  $file-stat-owner)
+            (immutable group  $file-stat-group)
+            (immutable nlinks $file-stat-nlinks)
+            (immutable size   $file-stat-size)
+            (immutable blocks $file-stat-blocks)
+            (immutable dev-major $file-stat-dev-major)
+            (immutable dev-minor $file-stat-dev-minor)
             ;;(immutable attributes  file-stat-attributes)
-            (immutable access-time       file-stat-access-time)
-            (immutable modification-time file-stat-modification-time)
-            (immutable change-time       file-stat-change-time)
-            (immutable creation-time     file-stat-creation-time)))
+            (immutable access-time       $file-stat-access-time)
+            (immutable modification-time $file-stat-modification-time)
+            (immutable change-time       $file-stat-change-time)
+            (immutable creation-time     $file-stat-creation-time)))
+
+  ;; Preserve checked public boundaries when record accessors compile without checks.
+  (define-syntax $define-stat-accessor
+    (syntax-rules ()
+      [(_ name raw)
+       (define name
+         (lambda (stat)
+           (pcheck ([file-stat? stat]) (raw stat))))]))
+
+  #|proc:file-stat-type
+  Return the numeric file-type bits in snapshot `stat`. Use `file-type->symbol` to name them.
+  |#
+  ($define-stat-accessor file-stat-type $file-stat-type)
+
+  #|proc:file-stat-mode
+  Return the integer permission and special mode bits in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-mode $file-stat-mode)
+
+  #|proc:file-stat-inode
+  Return the nonnegative integer inode number in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-inode $file-stat-inode)
+
+  #|proc:file-stat-owner
+  Return the nonnegative integer user ID of the owner in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-owner $file-stat-owner)
+
+  #|proc:file-stat-group
+  Return the nonnegative integer group ID in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-group $file-stat-group)
+
+  #|proc:file-stat-nlinks
+  Return the nonnegative integer hard-link count in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-nlinks $file-stat-nlinks)
+
+  #|proc:file-stat-size
+  Return the nonnegative integer size in bytes in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-size $file-stat-size)
+
+  #|proc:file-stat-blocks
+  Return the nonnegative integer count of allocated 512-byte blocks in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-blocks $file-stat-blocks)
+
+  #|proc:file-stat-dev-major
+  Return the nonnegative integer major number of the containing device in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-dev-major $file-stat-dev-major)
+
+  #|proc:file-stat-dev-minor
+  Return the nonnegative integer minor number of the containing device in snapshot `stat`.
+  |#
+  ($define-stat-accessor file-stat-dev-minor $file-stat-dev-minor)
+
+  #|proc:file-stat-access-time
+  Return the recorded access time in snapshot `stat`, or `#f` when unavailable.
+  The result is a Chez `time-utc` object; no filesystem call is made.
+  |#
+  ($define-stat-accessor file-stat-access-time $file-stat-access-time)
+
+  #|proc:file-stat-modification-time
+  Return the recorded content modification time in snapshot `stat`, or `#f` when unavailable.
+  The result is a Chez `time-utc` object; no filesystem call is made.
+  |#
+  ($define-stat-accessor file-stat-modification-time $file-stat-modification-time)
+
+  #|proc:file-stat-change-time
+  Return the recorded metadata change time in snapshot `stat`, or `#f` when unavailable.
+  The result is a Chez `time-utc` object; no filesystem call is made.
+  |#
+  ($define-stat-accessor file-stat-change-time $file-stat-change-time)
+
+  #|proc:file-stat-creation-time
+  Return the recorded creation time in snapshot `stat`, or `#f` when unavailable.
+  The result is a Chez `time-utc` object; no filesystem call is made.
+  |#
+  ($define-stat-accessor file-stat-creation-time $file-stat-creation-time)
 
   #|FT_unknown
   The symbol identifying unavailable or unrecognized filesystem entry types.
@@ -1014,11 +1156,15 @@
     (opaque #t)
     (sealed #t))
 
+  (define-condition-type &$filename-encoding &i/o-filename
+    $make-filename-encoding-error $filename-encoding-error?)
+
   (define $fs-ensure-linux
-    (lambda (who)
-      (let* ([name (symbol->string (machine-type))] [length (string-length name)])
-        (unless (and (fx>= length 2)
-                     (string=? "le" (substring name (fx- length 2) length)))
+    (let* ([name (symbol->string (machine-type))] [length (string-length name)]
+           [supported? (and (fx>= length 2)
+                            (string=? "le" (substring name (fx- length 2) length)))])
+      (lambda (who)
+        (unless supported?
           (errorf who "local directory iteration is unsupported on this platform")))))
 
   #|proc:fs-directory?
@@ -1039,22 +1185,24 @@
   #|proc:fs-open-directory
   Open local directory named by string `path` and return an opaque directory stream.
   Linux is required. A missing or inaccessible directory raises an error.
+  Serialize operations on the same stream; do not close it while another thread reads it.
   |#
   (define fs-open-directory
     (lambda (path)
-      (pcheck ([string? path])
+      (pcheck ([$filename? path])
               ($fs-ensure-linux 'fs-open-directory)
               (let* ([open (foreign-procedure "cspp_fs_open_directory" (string) uptr)]
                      [handle (open path)])
                 (if (= handle 0)
                     ($err-file 'fs-open-directory path "cannot open directory")
-                    (%make-fs-directory handle path #f))))))
+                    (%make-fs-directory handle (string-copy path) #f))))))
 
   #|proc:fs-read-directory
   Read one entry from open stream `directory`. Return `(entry-name . entry-type)`,
   or `#f` at EOF. Types are `FT_*` symbols; unrecognized types are `FT_unknown`.
   Entries include `.` and `..`, as returned by Linux `readdir`.
   Reading a closed stream raises an error.
+  An entry name containing invalid UTF-8 bytes raises an error.
   |#
   (define fs-read-directory
     (lambda (directory)
@@ -1065,15 +1213,22 @@
                   (let* ([read (foreign-procedure "cspp_fs_read_directory" (uptr) scheme-object)]
                          [value (read (fs-directory-handle directory))])
                     (cond [(eq? value #f) #f]
+                          [(eqv? value -1)
+                           ($err-file 'fs-read-directory
+                                      ($make-filename-encoding-error
+                                       (fs-directory-path directory))
+                                      "filesystem entry name is not valid UTF-8")]
                           [(string? value) ($err-file 'fs-read-directory
                                                      (fs-directory-path directory) value)]
                           [else
-                           (cons (car value)
-                                 (case (cdr value)
-                                   [(4) 'FT_dir] [(8) 'FT_regular]
-                                   [(10) 'FT_symlink] [(6) 'FT_block]
-                                   [(2) 'FT_chardev] [(1) 'FT_fifo]
-                                   [(12) 'FT_socket] [else 'FT_unknown]))]))))))
+                           ;; The native result is fresh; translate its type in place.
+                           (set-cdr! value
+                                     (case (cdr value)
+                                       [(4) 'FT_dir] [(8) 'FT_regular]
+                                       [(10) 'FT_symlink] [(6) 'FT_block]
+                                       [(2) 'FT_chardev] [(1) 'FT_fifo]
+                                       [(12) 'FT_socket] [else 'FT_unknown]))
+                           value]))))))
 
   #|proc:fs-close-directory
   Close stream `directory` and return the same object. Closing an already closed
@@ -1094,10 +1249,58 @@
               directory)))
 
   (define $fs-entry-directory?
-    (lambda (path type follow-link?)
+    (lambda (who path type follow-link?)
       (or (eq? type 'FT_dir)
-          (and (eq? type 'FT_unknown) (file-directory? path follow-link?))
-          (and (eq? type 'FT_symlink) follow-link? (file-directory? path #t)))))
+          (and (or (eq? type 'FT_unknown) (and (eq? type 'FT_symlink) follow-link?))
+               (eq? ($file-type who path follow-link?) 'FT_dir)))))
+
+  ;; Use the checked native stream for every traversal, including eager walkers.
+  ;; Chez directory-list replaces invalid UTF-8 and strips a leading UTF-8 BOM.
+  ;; Preserve each fresh entry pair as (full-path . type) for callers that classify entries.
+  (define $directory-entries
+    (case-lambda
+      [(path) ($directory-entries path #f)]
+      [(path on-invalid)
+       (let ([directory (fs-open-directory path)] [entries (make-list-builder)])
+         (define next-entry
+           (lambda ()
+             (guard (failure [(and on-invalid ($filename-encoding-error? failure))
+                              (on-invalid)
+                              (next-entry)])
+               (fs-read-directory directory))))
+         (dynamic-wind
+           void
+           (lambda ()
+             (let loop ([entry (next-entry)])
+               (if entry
+                   (begin
+                     (unless (member (car entry) '("." ".."))
+                       (set-car! entry (path-build path (car entry)))
+                       (entries entry))
+                     (loop (next-entry)))
+                   (entries))))
+           (lambda () (fs-close-directory directory))))]))
+
+  (define $directory-children
+    (lambda (path follow-link?)
+      (let ([directories (make-list-builder)] [files (make-list-builder)])
+        (for-each
+         (lambda (entry)
+           ((if ($fs-entry-directory? 'walk-files (car entry) (cdr entry) follow-link?)
+                directories files)
+            (car entry)))
+         ($directory-entries path))
+        (values (directories) (files)))))
+
+  (define $file-identity
+    (lambda (path follow-link?)
+      (let ([stat (file-stat path follow-link?)])
+        (list (file-stat-dev-major stat) (file-stat-dev-minor stat)
+              (file-stat-inode stat)))))
+
+  (define $directory-view
+    (lambda (who path)
+      ($file-view-key who path ($file-identity path #t))))
 
   #|proc:fs->iter
   Return an iterator lazily traversing directory `path`, including the root itself.
@@ -1106,18 +1309,26 @@
   Results are unsorted path strings, with each entry yielded once. Directory handles
   open on demand and close on exhaustion, reset, errors, or `iter-finalize!`.
   Reset starts a fresh pass over the current filesystem. Linux is required.
+  Distinct directory aliases are traversed separately; only ancestor cycles are skipped.
+  Cycle checks distinguish Linux mount views. If mount IDs are unavailable, an ambiguous
+  repeated directory identity raises an I/O error instead of omitting its descendants.
+  A root symlink is followed even when `follow-link?` is `#f`; that flag controls descendants.
+  Input and yielded path strings do not share storage with the iterator's traversal state.
+  For a relative `path`, keep the process current directory unchanged from the first advance
+  until exhaustion or finalization. Reset closes the current pass; the next pass uses the
+  current directory at its first advance.
   |#
   (define fs->iter
     (case-lambda
       [(path) (fs->iter path #f #t)]
       [(path follow-link?) (fs->iter path follow-link? #t)]
       [(path follow-link? top-down?)
-       (pcheck ([string? path] [boolean? follow-link? top-down?])
+       (pcheck ([$filename? path] [boolean? follow-link? top-down?])
                ($fs-ensure-linux 'fs->iter)
-               ;; Frames hold the directory path and its lazily opened stream.
-               (let ([stack (list (vector path #f))]
-                     [visited (make-hashtable equal-hash equal?)]
-                     [finished? #f])
+               ;; Frames hold a private path, lazily opened stream, and ancestor identities.
+               (let* ([root-path (string-copy path)]
+                      [stack (list (vector root-path #f '()))]
+                      [finished? #f])
                  (define close-all
                    (lambda ()
                      (let ([frames stack] [failure #f])
@@ -1130,15 +1341,6 @@
                                 (fs-close-directory directory)))))
                         frames)
                        (when failure (raise failure)))))
-                 (define unseen-directory?
-                   (lambda (directory)
-                     (if (not follow-link?) #t
-                         (let* ([stat (file-stat directory)]
-                                [identity (list (file-stat-dev-major stat)
-                                                (file-stat-dev-minor stat)
-                                                (file-stat-inode stat))])
-                           (if (hashtable-contains? visited identity) #f
-                               (begin (hashtable-set! visited identity #t) #t))))))
                  (make-iter
                   (lambda ()
                     (guard (condition
@@ -1153,37 +1355,52 @@
                                    [root (vector-ref frame 0)]
                                    [directory (vector-ref frame 1)])
                               (if (not directory)
-                                  (begin
-                                    (unseen-directory? root)
-                                    (vector-set! frame 1 (fs-open-directory root))
-                                    (if top-down? root (loop)))
+                                  (let ([identity (and follow-link? ($directory-view 'fs->iter root))]
+                                        [ancestors (vector-ref frame 2)])
+                                    (if (and identity
+                                             ($file-view-seen? 'fs->iter root identity ancestors))
+                                        (begin
+                                          (set! stack (cdr stack))
+                                          (string-copy root))
+                                        (begin
+                                          (vector-set! frame 2
+                                                       (if identity
+                                                           (cons identity ancestors) ancestors))
+                                          (vector-set! frame 1 (fs-open-directory root))
+                                          (if top-down? (string-copy root) (loop)))))
                                   (let ([entry (fs-read-directory directory)])
                                     (cond
                                      [(not entry)
                                       (fs-close-directory directory)
                                       (set! stack (cdr stack))
-                                      (if top-down? (loop) root)]
+                                      (if top-down? (loop) (string-copy root))]
                                      [(member (car entry) '("." "..")) (loop)]
                                      [else
                                       (let* ([child (path-build root (car entry))]
                                              [directory? ($fs-entry-directory?
-                                                          child (cdr entry) follow-link?)])
-                                        (if (and directory? (unseen-directory? child))
+                                                          'fs->iter child (cdr entry) follow-link?)])
+                                        (if directory?
                                             (begin
-                                              (set! stack (cons (vector child #f) stack))
+                                              (set! stack
+                                                    (cons (vector child #f (vector-ref frame 2))
+                                                          stack))
                                               (loop))
                                             child))]))))))))
                   (lambda ()
                     (close-all)
-                    (hashtable-clear! visited)
-                    (set! stack (list (vector path #f)))
+                    (set! stack (list (vector root-path #f '())))
                     (set! finished? #f))
                   close-all)))]))
+
+  (define $absolute-file-path
+    (lambda (path)
+      (path-absolute (path-parse 'unix (current-directory))
+                     (path-parse 'unix path))))
 
   (define $statx
     (let ([ffi-statx (foreign-procedure "cspp_statx" (string boolean) scheme-object)])
       (lambda (who path follow-link?)
-        (pcheck ([(lambda (x) (file-exists? x follow-link?)) path] [boolean? follow-link?])
+        (pcheck ([$filename? path] [boolean? follow-link?])
                 (let ([x (ffi-statx path follow-link?)])
                   (if (vector? x)
                       x
@@ -1208,6 +1425,12 @@
   (define $statx-dev-major (lambda (v) (vector-ref v 16)))
   (define $statx-dev-minor (lambda (v) (vector-ref v 17)))
 
+  #|proc:file-stat
+  Read filesystem metadata for string `path` and return a snapshot accepted by `file-stat?`.
+  Boolean `follow-link?` defaults to `#t`; use `#f` to inspect a symlink itself. Missing or
+  inaccessible paths raise an error. The `file-stat-` accessors read the snapshot without
+  querying the filesystem again. Timestamp objects are shared with the snapshot.
+  |#
   (define-who file-stat
     (case-lambda [(path)
                   (file-stat path #t)]
@@ -1232,74 +1455,145 @@
                      atime mtime ctime btime))]))
 
 
+  #|proc:file-access-time
+  Return the last access timestamp of the selected filesystem entry.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is a Chez `time-utc` object, or `#f` when unavailable.
+  |#
   (define-who file-access-time
     (case-lambda [(path)
                   ($statx-atime ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-atime ($statx who path follow-link?))]))
+  #|proc:file-modification-time
+  Return the content modification timestamp of the selected filesystem entry.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is a Chez `time-utc` object, or `#f` when unavailable.
+  |#
   (define-who file-modification-time
     (case-lambda [(path)
                   ($statx-mtime ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-mtime ($statx who path follow-link?))]))
+  #|proc:file-change-time
+  Return the metadata change timestamp of the selected filesystem entry.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is a Chez `time-utc` object, or `#f` when unavailable.
+  |#
   (define-who file-change-time
     (case-lambda [(path)
                   ($statx-ctime ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-ctime ($statx who path follow-link?))]))
+  #|proc:file-creation-time
+  Return the creation timestamp of the selected filesystem entry.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is a Chez `time-utc` object, or `#f` when unavailable.
+  |#
   (define-who file-creation-time
     (case-lambda [(path)
                   ($statx-btime ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-btime ($statx who path follow-link?))]))
+  #|proc:file-type
+  Return the selected filesystem entry's type as an `FT_*` symbol.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  Unrecognized or unavailable type bits produce `FT_unknown`.
+  |#
   (define-who file-type
     (case-lambda [(path)
                   (file-type->symbol ($statx-type ($statx who path #t)))]
                  [(path follow-link?)
                   (file-type->symbol ($statx-type ($statx who path follow-link?)))]))
+  #|proc:file-mode
+  Return the selected filesystem entry's integer permission and special mode bits.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is `#f` when those bits are unavailable.
+  |#
   (define-who file-mode
     (case-lambda [(path)
                   ($statx-mode ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-mode ($statx who path follow-link?))]))
+  #|proc:file-inode
+  Return the selected filesystem entry's nonnegative exact inode number.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is `#f` when unavailable.
+  |#
   (define-who file-inode
     (case-lambda [(path)
                   ($statx-inode ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-inode ($statx who path follow-link?))]))
+  #|proc:file-nlinks
+  Return the selected filesystem entry's nonnegative exact hard-link count.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is `#f` when unavailable.
+  |#
   (define-who file-nlinks
     (case-lambda [(path)
                   ($statx-nlinks ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-nlinks ($statx who path follow-link?))]))
+  #|proc:file-dev-major
+  Return the nonnegative exact major number of the entry's containing device.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The device identity is reported independently of file type.
+  |#
   (define-who file-dev-major
     (case-lambda [(path)
                   ($statx-dev-major ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-dev-major ($statx who path follow-link?))]))
+  #|proc:file-dev-minor
+  Return the nonnegative exact minor number of the entry's containing device.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The device identity is reported independently of file type.
+  |#
   (define-who file-dev-minor
     (case-lambda [(path)
                   ($statx-dev-minor ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-dev-minor ($statx who path follow-link?))]))
+  #|proc:file-blocks
+  Return the selected entry's nonnegative exact count of allocated 512-byte blocks.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is `#f` when unavailable; sparse files can use fewer bytes than their size.
+  |#
   (define-who file-blocks
     (case-lambda [(path)
                   ($statx-blocks ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-blocks ($statx who path follow-link?))]))
-  ;; this is implemented using port above
-  #;
-  (define-who file-size
-  (case-lambda [(path)
-  ($statx-size ($statx who path #t))]
-  [(path follow-link?)
-  ($statx-size ($statx who path follow-link?))]))
 
+  #|proc:file-owner
+  Return the selected filesystem entry's nonnegative exact owner user ID.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is `#f` when unavailable.
+  |#
   (define-who file-owner
     (case-lambda [(path)
                   ($statx-uid ($statx who path #t))]
                  [(path follow-link?)
                   ($statx-uid ($statx who path follow-link?))]))
+  #|proc:file-group
+  Return the selected filesystem entry's nonnegative exact owner group ID.
+  Path string `path` names the entry. Boolean `follow-link?` defaults to `#t`;
+  `#f` inspects a symbolic link itself. Missing or inaccessible entries raise errors.
+  The result is `#f` when unavailable.
+  |#
   (define-who file-group
     (case-lambda [(path)
                   ($statx-gid ($statx who path #t))]
@@ -1309,26 +1603,28 @@
 
   (define $file-size
     (lambda (who path)
-      ;; dir and regular files are both OK
-      (pcheck ([file-exists? path])
-              (call-with-port (open-file-input-port path)
-                (lambda (p) (file-length p))))))
+      ($statx-size ($statx who path #t))))
 
+  #|proc:file-size
+  Return the byte size of the filesystem entry at `path`, following symbolic links.
+  `path` is the path string to inspect. The result is a nonnegative exact integer.
+  |#
   (define-who file-size
     (lambda (path) ($file-size who path)))
 
   #|proc:file-size-h
-  Return a human-readable string of the file size.
+  Return a human-readable string for the byte size of the filesystem entry at `path`.
+  `path` is the path string to inspect; symbolic links are followed.
   |#
   (define-who file-size-h
     (lambda (path)
       (define 1K 1024)
-      (define 1M (fx* 1K 1024))
-      (define 1G (fx* 1M 1024))
+      (define 1M (* 1K 1024))
+      (define 1G (* 1M 1024))
       (let ([size ($file-size who path)])
-        (cond [(fx< size 1K) (format "~,2f B" size)]
-              [(fx< size 1M) (format "~,2f KiB" (inexact (/ size 1K)))]
-              [(fx< size 1G) (format "~,2f MiB" (inexact (/ size 1M)))]
+        (cond [(< size 1K) (format "~,2f B" size)]
+              [(< size 1M) (format "~,2f KiB" (inexact (/ size 1K)))]
+              [(< size 1G) (format "~,2f MiB" (inexact (/ size 1M)))]
               [else (format "~,2f GiB" (inexact (/ size 1G)))]))))
 
 
@@ -1336,37 +1632,59 @@
     (lambda (path follow-link? bits)
       (not (fx= 0 (fxlogand (get-mode path follow-link?) bits)))))
 
+  #|proc:file-readable?
+  Return whether any user, group, or other read permission bit is set on path string `path`.
+  Boolean `follow-link?` defaults to `#t`. The selected entry must exist.
+  This inspects mode bits, not effective access for the current user or ACL permissions.
+  |#
   (define-who file-readable?
     (case-lambda [(path) (file-readable? path #t)]
                  [(path follow-link?)
-                  (pcheck ([string? path] [boolean? follow-link?]
+                  (pcheck ([$filename? path] [boolean? follow-link?]
                            [(lambda (x) (file-exists? x follow-link?)) path])
                           ($mode-any-set? path follow-link? #o444))]))
+  #|proc:file-writable?
+  Return whether any user, group, or other write permission bit is set on path string `path`.
+  Boolean `follow-link?` defaults to `#t`. The selected entry must exist.
+  This inspects mode bits, not effective access for the current user or ACL permissions.
+  |#
   (define-who file-writable?
     (case-lambda [(path) (file-writable? path #t)]
                  [(path follow-link?)
-                  (pcheck ([string? path] [boolean? follow-link?]
+                  (pcheck ([$filename? path] [boolean? follow-link?]
                            [(lambda (x) (file-exists? x follow-link?)) path])
                           ($mode-any-set? path follow-link? #o222))]))
+  #|proc:file-executable?
+  Return whether any user, group, or other execute permission bit is set on path string `path`.
+  Boolean `follow-link?` defaults to `#t`. The selected entry must exist.
+  This inspects mode bits, not effective access for the current user or ACL permissions.
+  |#
   (define-who file-executable?
     (case-lambda [(path) (file-executable? path #t)]
                  [(path follow-link?)
-                  (pcheck ([string? path] [boolean? follow-link?]
+                  (pcheck ([$filename? path] [boolean? follow-link?]
                            [(lambda (x) (file-exists? x follow-link?)) path])
                           ($mode-any-set? path follow-link? #o111))]))
 
+  #|proc:file-hidden?
+  Return whether filesystem path string `path` has a hidden basename on Unix.
+  Boolean `follow-link?` defaults to `#t`; when true, a symlink uses its resolved target's name.
+  A hidden basename starts with a dot and is neither `.` nor `..`. The selected entry must exist.
+  |#
   (define-who file-hidden?
     (case-lambda [(path) (file-hidden? path #t)]
                  [(path follow-link?)
-                  (pcheck ([(lambda (x) (file-exists? x follow-link?)) path])
+                  (pcheck ([$filename? path] [boolean? follow-link?]
+                           [(lambda (x) (file-exists? x follow-link?)) path])
                           (cond
                            [(unix?)
-                            (let ([path (let ([p (if (and follow-link? (file-symbolic-link? path)) (readlink2 path #t) path)])
-                                          (if (file-directory? p follow-link?)
-                                              (path-last (path-parent (string-append p (string (directory-separator)))))
-                                              (path-last p)))])
-                              (and (not (string=? path ".")) (not (string=? path ".."))
-                                   (char=? #\. (string-ref path 0))))]
+                            (let* ([expanded ($expand-file-path who path)]
+                                   [selected (if (and follow-link?
+                                                      (file-symbolic-link? expanded))
+                                                 (readlink2 expanded #t) expanded)]
+                                   [basename (path-basename (path-parse 'unix selected))])
+                              (and basename (not (member basename '("." "..")))
+                                   (char=? #\. (string-ref basename 0))))]
                            [else (todo who)]))]))
 
   #|proc:file-special?
@@ -1376,7 +1694,8 @@
     (case-lambda
       [(path) (file-special? path #t)]
       [(path follow-link?)
-       (pcheck ([string? path] [(lambda (x) (file-exists? x follow-link?)) path])
+       (pcheck ([$filename? path] [boolean? follow-link?]
+                [(lambda (x) (file-exists? x follow-link?)) path])
                (let ([t (file-type path follow-link?)])
                  (bool (memq t '(FT_socket FT_block FT_chardev FT_fifo)))))]))
 
@@ -1390,7 +1709,8 @@
     (case-lambda
       [(path1 path2) (same-file? path1 path2 #t)]
       [(path1 path2 follow-link?)
-       (pcheck ([string? path1 path2] [(lambda (x) (file-exists? x follow-link?)) path1 path2])
+       (pcheck ([$filename? path1 path2] [boolean? follow-link?]
+                [(lambda (x) (file-exists? x follow-link?)) path1 path2])
                (let* ([st1 (file-stat path1 follow-link?)]
                       [st2 (file-stat path2 follow-link?)]
                       [inode1 (file-stat-inode st1)]
@@ -1402,25 +1722,49 @@
                  (and (= inode1 inode2) (= major1 major2) (= minor1 minor2))))]))
 
 
+  (define $same-file-port-contents?
+    (lambda (left right)
+      (let ([length (file-length left)])
+        ;; Reported sizes are hints only: virtual files can report zero.
+        ;; Empty files and an immediate mismatch need no buffers.
+        (let ([first-left (get-u8 left)] [first-right (get-u8 right)])
+          (cond [(eof-object? first-left) (eof-object? first-right)]
+                [(or (eof-object? first-right) (not (fx= first-left first-right))) #f]
+                [else
+                 (let* ([capacity (if (zero? length) 16384 (min length 16384))]
+                        [left-buffer (make-bytevector capacity 0)]
+                        [right-buffer (make-bytevector capacity 0)])
+                   (let loop ()
+                     (let ([left-count (get-bytevector-n! left left-buffer 0 capacity)]
+                           [right-count (get-bytevector-n! right right-buffer 0 capacity)])
+                       (if (eof-object? left-count)
+                           (eof-object? right-count)
+                           (and (eqv? left-count right-count)
+                                ;; Unwritten suffixes stay equal after each successful comparison.
+                                (bytevector=? left-buffer right-buffer)
+                                (loop))))))])))))
+
+  (define $file-regular?
+    (let ([inspect (foreign-procedure "cspp_file_regular" (string) scheme-object)])
+      (lambda (who path)
+        (let ([result (inspect path)])
+          (if (string? result) ($err-file who path result) result)))))
+
   #|proc:same-file-contents?
-  Test whether two files have the same content.
-  `path1` and `path2` must point to regular files. File contents are compared byte by byte.
-  Symlinks are always followed.
+  Return whether regular files named by path strings `path1` and `path2` have equal byte contents.
+  Symlinks are always followed. Return `#f` for a missing or nonregular entry.
+  Compare with bounded reusable buffers; lookup failures other than a missing path and
+  all read errors propagate.
   |#
   (define-who same-file-contents?
     (lambda (path1 path2)
-      (pcheck ([string? path1 path2])
-              (if (and (file-regular? path1 #t) (file-regular? path2 #t))
-                  (call-with-port (open-file-input-port path1)
+      (pcheck ([$filename? path1 path2])
+              (if (and ($file-regular? who path1) ($file-regular? who path2))
+                  ($with-port (open-file-input-port path1)
                     (lambda (p1)
-                      (call-with-port (open-file-input-port path2)
+                      ($with-port (open-file-input-port path2)
                         (lambda (p2)
-                          (and (fx= (file-length p1) (file-length p2))
-                               (let loop ()
-                                 (let ([b1 (get-u8 p1)] [b2 (get-u8 p2)])
-                                   (if (eof-object? b1)
-                                       #t
-                                       (if (fx= b1 b2) (loop) #f)))))))))
+                          ($same-file-port-contents? p1 p2)))))
                   #f))))
 
 
@@ -1436,9 +1780,20 @@
   (define $valid-smodes?
     (lambda (m) (and (list? m) (andmap $valid-smode-sym? m) (unique? m))))
 
+  (define $mode-adjustment?
+    (lambda (mode valid?)
+      (or (not mode)
+          (valid? (if (and (pair? mode) (memq (car mode) '(+ -)))
+                      (cdr mode) mode)))))
+
+  #|proc:file-mode->symbols
+  Convert integer permission bits `mode` (0 through #o7777) to four fresh lists:
+  special, user, group, and other permissions. Read/write/execute use `r`, `w`, `x`;
+  set-user-ID, set-group-ID, and sticky bits use `su`, `sg`, `t`.
+  |#
   (define file-mode->symbols
     (lambda (mode)
-      (pcheck ([$mode-num? mode])
+          (pcheck ([$mode-num? mode])
               (let* ([ss '((su . 11) (sg . 10) (t . 9))]
                      [us '((r . 8) (w . 7) (x . 6))]
                      [gs '((r . 5) (w . 4) (x . 3))]
@@ -1455,6 +1810,11 @@
                      [g (scanX gs)]
                      [o (scanX os)])
                 `(,(s '()) ,(u '()) ,(g '()) ,(o '()))))))
+  #|proc:symbols->file-mode
+  Convert special/user/group/other symbol lists `smode`, `umode`, `gmode`, `omode`
+  to integer permission bits. Special symbols are `su`, `sg`, `t`; other groups use
+  `r`, `w`, `x`. Each list must contain unique symbols. Return an integer from 0 through #o7777.
+  |#
   (define symbols->file-mode
     (lambda (smode umode gmode omode)
       (pcheck ([list? smode umode gmode omode]
@@ -1485,16 +1845,18 @@
       [(who path mode)
        (cond [($mode-num? mode)
               (chmod path mode)]
-             [(list? mode)
-              ($file-chmod who path '() mode '() '())]
+             [(or (not mode) (list? mode))
+              ($file-chmod who path #f mode #f #f)]
              [else (errorf who "invalid file mode: ~a" mode)])]
       [(who path umode gmode)
-       ($file-chmod who path '() umode gmode '())]
+       ($file-chmod who path #f umode gmode #f)]
       [(who path umode gmode omode)
-       ($file-chmod who path '() umode gmode omode)]
+       ($file-chmod who path #f umode gmode omode)]
       [(who path smode umode gmode omode)
-       (pcheck ([file-exists? path]
-                [(lambda (x) (or (not x) (list? x))) smode umode gmode omode])
+       (pcheck ([$filename? path]
+                [(lambda (mode) ($mode-adjustment? mode $valid-smodes?)) smode]
+                [(lambda (mode) ($mode-adjustment? mode $valid-modes?)) umode gmode omode]
+                [file-exists? path])
                (let* ([m (get-mode path #t)]
                       [sm (file-mode->symbols m)]
                       [filter-mode (lambda (mode i)
@@ -1510,9 +1872,7 @@
                       [u (filter-mode umode 1)]
                       [g (filter-mode gmode 2)]
                       [o (filter-mode omode 3)])
-                 (pcheck ([$valid-smodes? s]
-                          [$valid-modes? u g o])
-                         (chmod path (symbols->file-mode s u g o)))))]))
+                 ($copy-file-mode who path (symbols->file-mode s u g o))))]))
 
 
   #|proc:file-chmod
@@ -1529,6 +1889,7 @@
   If two modes are given, they represent user mode and group mode;
   If three modes are given, they represent user mode, group mode and others mode;
   If four modes are given, they represent special mode, user mode, group mode, and others mode.
+  Omitted symbolic groups keep their current bits, as if supplied as `#f`.
 
   Special modes are set-user-ID, set-group-ID and sticky bit.
 
@@ -1552,10 +1913,13 @@
   For example, '(- x) removes the execution bit; '(+ w x) adds the write and execution bit.
   Nothing happens when trying to remove a bit that's not set or
   when trying to add a bit that already exists.
+  Symbolic requests leave an already matching mode unchanged. If a changed mode cannot retain
+  all requested bits, raise an I/O error; the filesystem may already have applied some changes.
   |#
   (define-who file-chmod
     (lambda (path mode . rest)
-      (apply $file-chmod who path mode rest)))
+      (pcheck ([$filename? path])
+              (apply $file-chmod who path mode rest))))
 
   #|proc:file-chmod-s
   Change the special mode only.
@@ -1605,22 +1969,28 @@
 
 
   #|proc:walk-files
-  Traverse the filesystem tree rooted at `path`.
-  This is similar to Python's os.walk() method.
+  Traverse the filesystem tree rooted at path string `path`.
+  Procedure `proc` has signature `(lambda (directory directories files) continue?)`.
 
-  For every directory `pdir` encounterd, `proc` is applied to three values:
+  For every directory `pdir` encountered, `proc` is applied to three values:
   1. pdir
   2. the list of all directories under `pdir`
   3. the list of all other files under `pdir`.
 
-  All paths in the above values are relative to `path`.
+  All paths retain the supplied root prefix; an absolute root produces absolute paths.
+  Return `#f` from `proc` to stop the whole traversal, or any other value to continue.
+  Return `#f` if traversal was stopped. A complete top-down walk returns `#t`;
+  a complete bottom-up walk returns the root callback's result.
   Calling `cd` or `current-directory` to change the current directory inside `proc`
   results in unspecified behavior.
 
   If `follow-link?` is #f (the default), symlinks to directories are not followed
-  and are therefore regarded as files.
+  and are therefore regarded as files. A symlink supplied as the root is always followed.
+  When following links, distinct aliases are visited separately while ancestor cycles are skipped.
+  Cycle checks distinguish Linux mount views. If mount IDs are unavailable, an ambiguous
+  repeated directory identity raises an I/O error instead of omitting its descendants.
 
-  If `top-down?` is #t (the default), the tree is travaled in a top-down manner,
+  If `top-down?` is #t (the default), the tree is traversed in a top-down manner,
   descending into each directory as deep as possible.
   `proc` in this case is called before any of the subdirectories are visited in 2.
 
@@ -1629,6 +1999,7 @@
 
   In top-down mode, one can set entries in 2 to #f to disable visits of those entries.
   In bottom-up mode, this behavior has no effect.
+  Pathname strings passed to `proc` are read-only and may be shared between callback calls.
   |#
   (define-who walk-files
     (case-lambda
@@ -1637,38 +2008,52 @@
       [(proc path follow-link?)
        (walk-files proc path follow-link? #t)]
       [(proc path follow-link? top-down?)
-       (pcheck ([procedure? proc] [string? path] [boolean? follow-link? top-down?])
-               (define dir? (lambda (x)  (file-directory? x follow-link?)))
-               (unless (file-directory? path) ($err-file-not-directory who path))
-               (if top-down?
-                   (let loop ([dir path])
-                     ;; `directory-list` result is relative to `dir`
-                     (let ([fs (map! (lambda (x) (path-build dir x)) (directory-list dir))])
-                       (let-values ([(dirs files) (partition dir? fs)])
-                         (if (proc dir dirs files)
-                             ;; visit each dir in `dirs`
-                             (let lp ([ds dirs])
-                               (unless (null? ds)
-                                 ;; user can modify `dirs` to control whether a dir should be visited
-                                 (if (car ds)
-                                     (if (loop (car ds))
-                                         (lp (cdr ds))
-                                         #f)
-                                     (lp (cdr ds)))))
-                             #f))))
-                   (let loop ([dir path])
-                     ;; `directory-list` result is relative to `dir`
-                     (let ([fs (map! (lambda (x) (path-build dir x)) (directory-list dir))])
-                       (let-values ([(dirs files) (partition dir? fs)])
-                         (if (null? dirs)
-                             (proc dir dirs files)
-                             ;; there's no way to control the traversal by modifying `dirs` here
-                             (let lp ([ds dirs])
-                               (if (null? ds)
-                                   (proc dir dirs files)
-                                   (if (loop (car ds))
-                                       (lp (cdr ds))
-                                       #f)))))))))]))
+       (pcheck ([procedure? proc] [$filename? path] [boolean? follow-link? top-down?])
+               (unless (file-directory? path)
+                 ($err-file-not-directory who path))
+               (let ()
+                 (define directory-ancestors
+                   (lambda (directory ancestors)
+                     (if (not follow-link?)
+                         ;; A callback may replace a listed directory with a link.
+                         (and (not (file-symbolic-link? directory)) ancestors)
+                         (let ([identity ($directory-view who directory)])
+                           (and (not ($file-view-seen? who directory identity ancestors))
+                                (cons identity ancestors))))))
+                 (define walk-top-down
+                   (lambda (directory ancestors)
+                     (let-values ([(dirs files) ($directory-children directory follow-link?)])
+                       (if (proc directory dirs files)
+                           (let visit ([remaining dirs])
+                             (cond
+                              [(null? remaining) #t]
+                              [(not (car remaining)) (visit (cdr remaining))]
+                              [else
+                               (let ([child-ancestors
+                                      (directory-ancestors (car remaining) ancestors)])
+                                 (cond [(not child-ancestors) (visit (cdr remaining))]
+                                       [(walk-top-down (car remaining) child-ancestors)
+                                        (visit (cdr remaining))]
+                                       [else #f]))]))
+                           #f))))
+                 (define walk-bottom-up
+                   (lambda (directory ancestors)
+                     (let-values ([(dirs files) ($directory-children directory follow-link?)])
+                       (let visit ([remaining dirs])
+                         (cond
+                          [(null? remaining) (proc directory dirs files)]
+                          [else
+                           (let ([child-ancestors
+                                  (directory-ancestors (car remaining) ancestors)])
+                             (cond [(not child-ancestors) (visit (cdr remaining))]
+                                   [(walk-bottom-up (car remaining) child-ancestors)
+                                    (visit (cdr remaining))]
+                                   [else #f]))])))))
+                 ;; The supplied root is followed even when descendant links are disabled.
+                 (let ([ancestors (if follow-link? (list ($directory-view who path)) '())])
+                   (if top-down?
+                       (walk-top-down path ancestors)
+                       (walk-bottom-up path ancestors)))))]))
 
   #|proc:print-file-tree
   Print the file tree rooted at `path`.
@@ -1676,7 +2061,7 @@
   |#
   (define print-file-tree
     (lambda (path)
-      (pcheck-directory (path)
+      (pcheck ([$filename? path] [file-directory? path])
                         (walk-files (lambda (pdir dirs files)
                                       (printf "~a:~n" pdir)
                                       (printf "  ~a~n" dirs)
@@ -1686,107 +2071,115 @@
 
 
   #|proc:file-find
-  Find file using a predicate.
-  Return the path of the first found file,
-  or #f if no matching file is found.
+  Apply `pred`, a procedure of signature `(path -> boolean)`, to each entry under `path`.
+  Return the first matching path, or `#f` if no entry matches. `follow-link?` controls
+  whether directory symlinks are traversed and defaults to `#f`.
   |#
   (define-who file-find
     (case-lambda
       [(pred path) (file-find pred path #f)]
       [(pred path follow-link?)
-       (let ([res #f])
-         (walk-files (lambda (dir dirs files)
-                       (let lp1 ([ds dirs])
-                         (if (null? ds)
-                             (let lp2 ([fs files])
-                               (unless (null? fs)
-                                 (if (pred (car fs))
-                                     (begin (set! res (car fs))
-                                            ;; use #f to end the walk
-                                            #f)
-                                     (lp2 (cdr fs)))))
-                             (if (pred (car ds))
-                                 (begin (set! res (car ds))
-                                        #f)
-                                 (lp1 (cdr ds))))))
-                     path follow-link?)
-         res)]))
+       (pcheck ([procedure? pred] [$filename? path] [boolean? follow-link?])
+         (let ([res #f])
+           (walk-files (lambda (dir dirs files)
+                         (let ([found (or (find pred dirs) (find pred files))])
+                           (if found
+                               (begin (set! res found) #f)
+                               #t)))
+                       path follow-link?)
+           res))]))
 
   ;; TODO lazy (iter/stream) file-find-all
   #|proc:file-find-all
-  Like `file-find`, but return a list of all found file.
-
-  `follow-link?` determines whether `file-find*` descends into a symlink
-  if it is a directory.
+  Apply `pred`, a procedure of signature `(path -> boolean)`, to each entry under `path` and
+  return a list of matching paths. `follow-link?` controls whether directory symlinks are
+  traversed and defaults to `#f`.
   |#
   (define-who file-find-all
     (case-lambda
       [(pred path) (file-find-all pred path #f)]
       [(pred path follow-link?)
-       (let ([lb (make-list-builder)])
-         (walk-files (lambda (dir dirs files)
-                       (let lp1 ([ds dirs])
-                         (if (null? ds)
-                             (let lp2 ([fs files])
-                               (unless (null? fs)
-                                 (when (pred (car fs))
-                                   (lb (car fs)))
-                                 (lp2 (cdr fs))))
-                             (begin (when (pred (car ds))
-                                      (lb (car ds)))
-                                    (lp1 (cdr ds))))))
-                     path follow-link?)
-         (lb))]))
+       (pcheck ([procedure? pred] [$filename? path] [boolean? follow-link?])
+         (let ([lb (make-list-builder)])
+           (walk-files (lambda (dir dirs files)
+                         (let ([visit (lambda (path) (when (pred path) (lb path)))])
+                           (for-each visit dirs)
+                           (for-each visit files))
+                         #t)
+                       path follow-link?)
+           (lb)))]))
 
 
   #|proc:file-map
-  Map `proc` over all files found under `path`, recursively,
-  the result of `proc` is collected into a list and returned.
+  Apply `proc`, a procedure of signature `(path -> value)`, to each entry under `path` and
+  return the resulting values as a list. `follow-link?` controls whether directory symlinks
+  are traversed and defaults to `#f`.
   |#
   (define file-map
     (case-lambda
       [(proc path) (file-map proc path #f)]
       [(proc path follow-link?)
-       (let ([lb (make-list-builder)])
-         (walk-files (lambda (dir dirs files)
-                       (let lp1 ([ds dirs])
-                         (if (null? ds)
-                             (let lp2 ([fs files])
-                               (unless (null? fs)
-                                 (lb (proc (car fs)))
-                                 (lp2 (cdr fs))))
-                             (begin (lb (proc (car ds)))
-                                    (lp1 (cdr ds))))))
-                     path follow-link?)
-         (lb))]))
+       (pcheck ([procedure? proc] [$filename? path] [boolean? follow-link?])
+         (let ([lb (make-list-builder)])
+           (walk-files (lambda (dir dirs files)
+                         (let ([visit (lambda (path) (lb (proc path)))])
+                           (for-each visit dirs)
+                           (for-each visit files))
+                         #t)
+                       path follow-link?)
+           (lb)))]))
 
 
   #|proc:file-for-each
-  Apply `proc` over all files found under `path`, recursively.
-  This procedure is for effect only.
+  Apply `proc`, a procedure of signature `(path -> unspecified)`, to each entry under `path`.
+  `follow-link?` controls whether directory symlinks are traversed and defaults to `#f`.
   |#
   (define file-for-each
     (case-lambda
       [(proc path) (file-for-each proc path #f)]
       [(proc path follow-link?)
-       (walk-files (lambda (dir dirs files)
-                     (let lp1 ([ds dirs])
-                       (if (null? ds)
-                           (let lp2 ([fs files])
-                             (unless (null? fs)
-                               (proc (car fs))
-                               (lp2 (cdr fs))))
-                           (begin (proc (car ds))
-                                  (lp1 (cdr ds))))))
-                   path follow-link?)]))
+       (pcheck ([procedure? proc] [$filename? path] [boolean? follow-link?])
+         (walk-files (lambda (dir dirs files)
+                       (for-each proc dirs)
+                       (for-each proc files)
+                       #t)
+                     path follow-link?))]))
 
   ;; Some procedures only need the presence of the symlink per se, not its target.
   (define file-exists?-no-follow (lambda (path) (file-exists? path #f)))
-  (define $touch-empty-file (lambda (path) (call-with-port (open-file-output-port path) (lambda (x) (void)))))
+  (define $touch-empty-file
+    (lambda (path)
+      ($with-port (open-file-output-port path (file-options no-fail no-truncate))
+        (lambda (port) (void)))))
 
-  (define $path-seen?
-    (lambda (path seen)
-      (exists (lambda (p) (string=? p path)) seen)))
+  (define $link-target-path
+    (lambda (parent target)
+      ;; Chez path-build appends even absolute fragments. Link text is never home-expanded.
+      (if (and (fx> (string-length target) 0) (char=? (string-ref target 0) #\/))
+          target
+          (path-build parent target))))
+
+  (define $readlink-target-link?
+    (let ([inspect (foreign-procedure "cspp_file_symbolic_link" (string) scheme-object)])
+      (lambda (who path)
+        (let ([result (inspect path)])
+          (if (string? result) ($err-file who path result) result)))))
+
+  ;; Expand before decomposing a filesystem pathname. Keep physical dot/parent traversal
+  ;; intact, and protect any literal leading tilde left by the native expansion.
+  (define $expand-file-path
+    (let ([expand (foreign-procedure "cspp_file_expand_pathname" (string) scheme-object)])
+      (lambda (who path)
+        (if (or (fxzero? (string-length path)) (not (char=? (string-ref path 0) #\~)))
+            path
+            (let ([expanded (expand path)])
+              (when (vector? expanded) ($err-file who path (vector-ref expanded 0)))
+              ;; An unknown user or relative HOME can leave a literal leading tilde.
+              ;; Protect it from another home expansion during subsequent native calls.
+              (if (and (fx> (string-length expanded) 0)
+                       (char=? (string-ref expanded 0) #\~))
+                  (path-build "." expanded)
+                  expanded))))))
 
   (define $readlink
     (let ([ffi (let ([ffi-readlink (foreign-procedure "cspp_readlink" (string) scheme-object)])
@@ -1795,30 +2188,42 @@
                      (if (vector? x)
                          ($err-file who path (vector-ref x 0))
                          x))))])
-      (case-lambda
-        [(who path) ($readlink path #f)]
-        [(who path recursive?)
-         ;; we don't care about whether the link is dangling or not
-         (pcheck ([file-exists?-no-follow path] [file-symbolic-link? path])
-                 (let loop ([path path] [seen '()])
-                   (if ($path-seen? path seen)
-                       (errorf who "symlink cycle detected at: ~a" path)
-                       (let* ([ln (ffi who path)]
-                              [target (path-build (path-parent path) ln)])
-                         (if (file-symbolic-link? target)
-                             (if recursive?
-                                 (loop target (cons path seen))
-                                 ln)
-                             (if recursive?
-                                 (values ln (path-parent path))
-                                 ln))))))])))
+      (lambda (who path recursive?)
+        ;; The link itself may exist even when its target does not.
+        (pcheck ([$filename? path] [boolean? recursive?]
+                 [file-exists?-no-follow path] [file-symbolic-link? path])
+          (if (not recursive?)
+              (ffi who path)
+              (let ([seen (make-hashtable equal-hash equal?)])
+                (let loop ([path ($expand-file-path who path)])
+                  ;; A relative link's target depends on its parent directory.
+                  ;; Hard-linked symlinks and distinct mount views need separate contexts.
+                  (let* ([parent (let ([parent (path-parent path)])
+                                   (if (string=? parent "") "." parent))]
+                         [identity (list ($file-identity path #f)
+                                         ($directory-view who parent))])
+                    (when (hashtable-contains? seen identity)
+                      (errorf who "symlink cycle detected at: ~a" path))
+                    (hashtable-set! seen identity #t)
+                    (let* ([ln (ffi who path)] [target ($link-target-path parent ln)])
+                      (if ($readlink-target-link? who target)
+                          (loop target)
+                          (values ln parent)))))))))))
 
 
   #|proc:readlink
-  Return the content of a symbolic link.
+  Return the symbolic-link text at path string `path`.
+  Boolean `recursive?` defaults to `#f`.
 
   If `recursive?`, then the dereference continues until a non-symlink target is met,
-  and *both* the target and the link's parent directory is returned.
+  and both the target text and the final link's parent directory are returned.
+  A bare link uses `.` as its parent, so joining preserves literal leading tildes.
+  A leading tilde in the input pathname is expanded before determining that parent.
+  Symbolic-link target text is never home-expanded or lexically normalized.
+  Cycle detection includes the parent directory's mount view, so finite chains through
+  different bind mounts can resolve even when their link and parent inodes match.
+  Missing targets terminate resolution. Inspection failures, including intermediate cycles
+  and inaccessible directories, raise an I/O error.
 
   Otherwise the first symlink content is returned.
   |#
@@ -1827,46 +2232,91 @@
                  [(path recursive?) ($readlink who path recursive?)]))
 
   #|proc:readlink2
-  Similar to `readlink`, with the difference being if `recursive?`,
-  the return value is the path built with link's parent directory and the symlink content.
+  Return the symlink text at path string `path` when boolean `recursive?` is false or omitted.
+  When true, resolve the link chain and return the final target pathname. Absolute targets
+  retain their root; relative targets use the final link's parent directory. A leading tilde
+  in `path` is expanded first; target text is not home-expanded or lexically normalized.
+  Missing targets terminate resolution. A cycle or a target inspection failure raises an error.
   |#
   (define-who readlink2
     (case-lambda [(path) ($readlink who path #f)]
                  [(path recursive?)
-                  (if recursive?
-                      (let-values ([(ln pdir) ($readlink who path #t)])
-                        (path-build pdir ln))
-                      ($readlink who path #f))]))
+                  (pcheck ([$filename? path] [boolean? recursive?])
+                          (if recursive?
+                              (let-values ([(ln pdir) ($readlink who path #t)])
+                                ($link-target-path pdir ln))
+                              ($readlink who path #f)))]))
 
 
 
 ;;;; soft and hard links
 
+  (define $parse-file-path
+    (lambda (who path)
+      (path-parse 'unix ($expand-file-path who path))))
+
+  (define $parent-directory-name
+    (lambda (path)
+      (let ([name (path-render (path-drop-basename path))])
+        (if (string=? name "") "." name))))
+
+  (define $same-file-entry?
+    (lambda (who path1 path2)
+      ;; Distinct hard links may be replaced, but two names for the same directory
+      ;; entry must not delete the source. Do not follow the final symlink.
+      (let ([left ($parse-file-path who path1)] [right ($parse-file-path who path2)])
+        (and (equal? (path-basename left) (path-basename right))
+             (same-file? ($parent-directory-name left) ($parent-directory-name right))))))
+
+  (define $replace-file-entry
+    (let ([stage (foreign-procedure "cspp_file_staging_directory" (string) scheme-object)])
+      (lambda (who destination create)
+        (let ([directory (stage ($parent-directory-name ($parse-file-path who destination)))])
+          (when (vector? directory) ($err-file who destination (vector-ref directory 0)))
+          (let ([temporary (path-build directory "entry")])
+            (dynamic-wind
+              void
+              (lambda ()
+                (create temporary)
+                (rename-file temporary destination))
+              (lambda ()
+                ;; Creation may have failed after writing part of the replacement.
+                (dynamic-wind
+                  void
+                  (lambda ()
+                    (when (file-exists? temporary #f) (delete-file temporary #t)))
+                  (lambda () (delete-directory directory #t))))))))))
+
   (define $link/copy-helper
     (lambda (who link/copy-what overwrite?)
-      (case-lambda
-        [(src dest) (($link/copy-helper who link/copy-what overwrite?) src dest src)]
-        [(src dest name-src)
-         (if (file-exists? dest #f)
-             (let ([overwrite/error
-                    (lambda (dest)
-                      (if (file-exists? dest #f)
-                          (if overwrite?
-                              ;; `dest` is file or symlink to file
-                              ;; If `dest` is symlink, always overwrite the symlink itself.
-                              ;; This is different from `cp` semantics,
-                              ;; but it matches `ln` semantics.
-                              (begin (delete-file dest)
-                                     (link/copy-what src dest))
-                              ($err-file-exists who dest))
-                          (link/copy-what src dest)))])
-               (if (file-directory? dest #t)
-                   (let ([newd (path-build dest (path-last name-src))])
-                     (if (file-directory? newd #t)
-                         ($err-directory-exists who newd)
-                         (overwrite/error newd)))
-                   (overwrite/error dest)))
-             (link/copy-what src dest))])))
+      (lambda (src dest name-src source-path)
+        (if (file-exists? dest #f)
+            (let ([overwrite/error
+                   (lambda (dest)
+                     (if (file-exists? dest #f)
+                         (if overwrite?
+                             (begin
+                               (when (and source-path
+                                          (or ($same-file-entry? who source-path dest)
+                                              ($same-file-entry? who name-src dest)))
+                                 ($err-file who dest "source and destination are the same file"))
+                               ;; Commit only a complete replacement; do not follow dest links.
+                               ($replace-file-entry who dest
+                                 (lambda (temporary) (link/copy-what src temporary))))
+                             ($err-file-exists who dest))
+                         (link/copy-what src dest)))])
+              (if (file-directory? dest #t)
+                  (let* ([basename (or (path-basename
+                                       (if source-path ($parse-file-path who name-src)
+                                           (path-parse 'unix name-src)))
+                                       (errorf who "source has no basename for a directory destination: ~a"
+                                               name-src))]
+                         [newd (path-build dest basename)])
+                    (if (file-directory? newd #t)
+                        ($err-directory-exists who newd)
+                        (overwrite/error newd)))
+                  (overwrite/error dest)))
+            (link/copy-what src dest)))))
 
   ;; Symlinks can also have hard links.
   (define $file-link
@@ -1877,20 +2327,24 @@
                        (lambda (src dest)
                          (let ([x (ffi src dest)])
                            (when (string? x)
-                             ($err-file who x)))))]
+                             ($err-file who dest x)))))]
               [link ($link/copy-helper who $link overwrite?)])
-         (link src dest name-src))]))
+         (link src dest name-src src))]))
 
   ;; TODO use macro in the following?
   #|proc:file-link
   Create a hard link from `src` to `dest`.
 
   Symlinks are followed recursively if `follow-link?` is #t.
+  If destination string `dest` names a directory or a symlink to one, create the link
+  inside it using `src`'s basename. Otherwise `dest` names the new entry. Return unspecified values.
+  Home notation is expanded before choosing the source basename.
+  Native creation failures raise I/O errors identifying the attempted destination pathname.
   |#
   (define-who file-link
     (case-lambda [(src dest) (file-link src dest #t)]
                  [(src dest follow-link?)
-                  (pcheck ([string? src dest] [boolean? follow-link?]
+                  (pcheck ([$filename? src dest] [boolean? follow-link?]
                            [(lambda (x) (file-exists? x follow-link?)) src])
                           (if (file-symbolic-link? src)
                               (if follow-link?
@@ -1901,11 +2355,14 @@
 
   #|proc:file-link!
   Similar to `file-link`, but if `dest` already exists, it is overwritten.
+  Prepare the replacement before renaming it over the destination entry. Failures before
+  that rename leave the destination intact. Other hard links keep their old contents.
+  Directory destinations, including directory symlinks, are resolved as containers first.
   |#
   (define-who file-link!
     (case-lambda [(src dest) (file-link! src dest #t)]
                  [(src dest follow-link?)
-                  (pcheck ([string? src dest] [boolean? follow-link?]
+                  (pcheck ([$filename? src dest] [boolean? follow-link?]
                            [(lambda (x) (file-exists? x follow-link?)) src])
                           (if (file-symbolic-link? src)
                               (if follow-link?
@@ -1914,53 +2371,89 @@
                               ($file-link who src dest #t)))]))
 
 
+  (define $symlink-entry
+    (let ([create (foreign-procedure "cspp_symlink" (string string) scheme-object)])
+      (lambda (who src dest)
+        (let ([result (create src dest)])
+          (when (string? result) ($err-file who dest result))))))
+
   (define $file-symlink
     (lambda (who src dest overwrite?)
-      (let* ([$symlink (let ([ffi (foreign-procedure "cspp_symlink" (string string) scheme-object)])
-                         (lambda (src dest)
-                           (let ([x (ffi src dest)])
-                             (when (string? x)
-                               ($err-file who x)))))]
-             [link ($link/copy-helper who $symlink overwrite?)])
-        (link src dest))))
+      (let ([link ($link/copy-helper who
+                                   (lambda (src dest) ($symlink-entry who src dest)) overwrite?)])
+        (link src dest src #f))))
+
+  ;; A declaration names one exact entry, never a directory container. Stage a
+  ;; replacement symlink so a creation failure leaves the previous entry intact.
+  (define $file-tree-symlink
+    (lambda (who src dest overwrite?)
+      (pcheck ([$filename? src dest])
+        (if (file-exists? dest #f)
+            (cond [(not overwrite?) ($err-file-exists who dest)]
+                  [(file-directory? dest #f) ($err-directory-exists who dest)]
+                  [else
+                   ($replace-file-entry who dest
+                     (lambda (temporary) ($symlink-entry who src temporary)))])
+            ($symlink-entry who src dest)))))
 
 
   #|proc:file-symlink
   Create a symbolic link from `src` to `dest`.
   `src` must be a string and is written as is to `dest` as the symlink content.
+  If destination string `dest` names a directory or a symlink to one, create the link inside it
+  using `src`'s basename after ignoring trailing separators. A root target has no such basename
+  and requires an explicit destination entry name. Return unspecified values.
+  Native creation failures raise I/O errors identifying the attempted destination pathname.
   |#
   (define-who file-symlink
     (lambda (src dest)
-      (pcheck ([string? src dest])
+      (pcheck ([$filename? src dest])
               ($file-symlink who src dest #f))))
 
 
   #|proc:file-symlink!
   Similar to `file-symlink`, but if `dest` already exists, it is overwritten.
+  Create the new link before replacing the destination entry; a creation failure preserves it.
+  Directory destinations, including directory symlinks, are resolved as containers first.
   |#
   (define-who file-symlink!
     (lambda (src dest)
-      (pcheck ([string? src dest])
+      (pcheck ([$filename? src dest])
               ($file-symlink who src dest #t))))
 
 
 
   (define $touch (foreign-procedure "cspp_touch" (string ptr ptr boolean) scheme-object))
+  (define $touch!
+    (lambda (who path atime mtime follow-link?)
+      (let ([result ($touch path atime mtime follow-link?)])
+        (when (string? result) ($err-file who path result))
+        result)))
   (define $time->vec (lambda (t) (vector (time-nanosecond t) (time-second t))))
+  (define $check-file-time
+    (let* ([bits ((foreign-procedure "cspp_file_time_bits" () int))]
+           [limit (expt 2 (fx1- bits))])
+      (lambda (who time)
+        (when time
+          (unless (eq? 'time-utc (time-type time))
+            (errorf who "invalid time type ~a (should be 'time-utc)" (time-type time)))
+          ;; Chez integer conversions also accept unsigned positive values.
+          (unless (<= (- limit) (time-second time) (- limit 1))
+            (errorf who "UTC seconds are outside the native timestamp range: ~a"
+                    (time-second time)))))))
+
   (define $file-touch
     (lambda (who path atime mtime follow-link? force?)
-      (pcheck ([boolean? follow-link? force?])
-              (define (check-time t)
-                (when t
-                  (unless (eq? 'time-utc (time-type t))
-                    (errorf who "invalid time type ~a of ~a (should be 'time-utc)" (time-type t) t))))
-              (check-time atime) (check-time mtime)
+      (pcheck ([$filename? path]
+               [(lambda (x) (or (not x) (time? x))) atime mtime]
+               [boolean? follow-link? force?])
+              ($check-file-time who atime) ($check-file-time who mtime)
 
               (let* ([atime (if atime ($time->vec atime) #f)] [mtime (if mtime ($time->vec mtime) #f)]
                      [force-or-not (lambda (dest)
                                      (if force?
                                          (begin ($touch-empty-file dest)
-                                                ($touch dest atime mtime #t))
+                                                ($touch! who dest atime mtime #t))
                                          ($err-file-not-found who dest)))])
                 (if (file-exists? path #f)
                     (if (file-symbolic-link? path)
@@ -1968,10 +2461,10 @@
                             ;; need to make up the correct target path
                             (let ([dest (readlink2 path #t)])
                               (if (file-exists? dest #f)
-                                  ($touch dest atime mtime #f)
+                                  ($touch! who dest atime mtime #f)
                                   (force-or-not dest)))
-                            ($touch path atime mtime #f))
-                        ($touch path atime mtime #f))
+                            ($touch! who path atime mtime #f))
+                        ($touch! who path atime mtime #f))
                     (force-or-not path))))))
 
 
@@ -1980,6 +2473,8 @@
   Change the last access and modification times of a file to `time`.
   `time` is the UTC time type ('time-utc) as can be made by `make-time`.
   By default, it is the current time as returned by `(current-time)`.
+  Seconds must fit the platform's signed native timestamp range; invalid times are rejected
+  before creating a missing file. The filesystem may further limit representable dates.
 
   If `force?`, then if the file does not exist, an empty file with the same name is created.
   Otherwise, it is an error if the file does not exist.
@@ -2034,43 +2529,54 @@
 
 ;;;; copies and moves
 
+  (define $copy-file-mode
+    (let ([copy (foreign-procedure "cspp_file_copy_mode" (string unsigned-32) scheme-object)])
+      (lambda (who path mode)
+        (let ([result (copy path mode)])
+          (when (string? result) ($err-file who path result))))))
+
   #|proc:file-copymode
-  Copy the permission bits from `src` to `dest`.
+  Copy permission bits from path string `src` to path string `dest`.
+  Return unspecified values.
 
   If `src` or `dest` is a symlink, it is always dereferenced.
+  An already matching mode is left unchanged. If the filesystem cannot retain all copied
+  bits, including set-group-ID, raise an I/O error identifying `dest`.
   |#
   (define-who file-copymode
     (lambda (src dest)
-      (pcheck ([string? src dest] [file-exists? src dest])
+      (pcheck ([$filename? src dest] [file-exists? src dest])
               (let ([m (get-mode src #t)])
-                (chmod dest m)))))
+                ($copy-file-mode who dest m)))))
 
 
   #|proc:file-copymeta
-  Copy metadata from `src` to `dest`.
-  Metadata includes permission bits, last access time, and last modification time.
-
-  If `follow-link?` is #f and `src` is a symlink, the metadata excluding the permission bits
-  of the symlink per se is copied. Permission bits are copied from the symlink target.
-
-  If `dest` is a symlink, it is always dereferenced.
+  Copy permission bits and access/modification times from path string `src` to `dest`.
+  Optional booleans `follow-link-src?` and `follow-link-dest?` default to `#t` and control
+  which entry supplies or receives timestamps. Permission bits always come from the source
+  target and are read and copied only when `follow-link-dest?` is true. Both selected entries must
+  exist. Return unspecified values; ownership, creation times, and xattrs are not copied.
+  Timestamps are applied before permission bits, so restrictive directory modes do not
+  prevent completing the copy through a pathname such as `directory/.`.
+  An already matching mode is left unchanged. Failure to retain all copied permission bits
+  raises an I/O error identifying `dest`; timestamps may already have been copied.
   |#
   (define-who file-copymeta
     (case-lambda
       [(src dest) (file-copymeta src dest #t #t)]
       [(src dest follow-link-src? follow-link-dest?)
-       (pcheck ([string? src dest] [boolean? follow-link-src? follow-link-dest?]
+       (pcheck ([$filename? src dest] [boolean? follow-link-src? follow-link-dest?]
                 [(lambda (x) (file-exists? x follow-link-src?)) src]
                 [(lambda (x) (file-exists? x follow-link-dest?)) dest])
-               (let* ([m (get-mode src #t)]
-                      [st (file-stat src follow-link-src?)]
+               (let* ([st (file-stat src follow-link-src?)]
                       [atime (file-stat-access-time st)]
-                      [mtime (file-stat-modification-time st)])
+                      [mtime (file-stat-modification-time st)]
+                      [mode (and follow-link-dest? (get-mode src #t))])
                  ;; TODO xattrs
-                 (when (and (file-exists? dest #t) follow-link-dest?)
+                 ($file-touch who dest atime mtime follow-link-dest? #f)
+                 (when follow-link-dest?
                    ;; if `dest` is a symlink, changing its own mode has no effect
-                   (chmod dest m))
-                 ($file-touch who dest atime mtime follow-link-dest? #f)))]))
+                   ($copy-file-mode who dest mode))))]))
 
 
   (define $copy-port
@@ -2079,18 +2585,22 @@
               (pcheck-open-port (pin pout)
                                 (cond
                                  [(and (binary-port? pin) (binary-port? pout))
-                                  (let loop ()
-                                    (let ([x (get-u8 pin)])
-                                      (unless (eof-object? x)
-                                        (put-u8 pout x)
-                                        (loop))))
+                                  (let ([buffer (make-bytevector 16384)])
+                                    (let loop ()
+                                      (let ([count (get-bytevector-n! pin buffer 0
+                                                                      (bytevector-length buffer))])
+                                        (unless (eof-object? count)
+                                          (put-bytevector pout buffer 0 count)
+                                          (loop)))))
                                   (flush-output-port pout)]
                                  [(and (textual-port? pin) (textual-port? pout))
-                                  (let loop ()
-                                    (let ([x (get-char pin)])
-                                      (unless (eof-object? x)
-                                        (put-char pout x)
-                                        (loop))))
+                                  (let ([buffer (make-string 8192)])
+                                    (let loop ()
+                                      (let ([count (get-string-n! pin buffer 0
+                                                                  (string-length buffer))])
+                                        (unless (eof-object? count)
+                                          (put-string pout buffer 0 count)
+                                          (loop)))))
                                   (flush-output-port pout)]
                                  [else (errorf who "ports do not have the same type")])))))
 
@@ -2112,9 +2622,9 @@
       [(who src dest overwrite? name-src)
        ;; `src` can only be regular or symlink
        (let ([copy-file ($link/copy-helper who (lambda (src dest)
-                                                 (call-with-port (open-file-input-port src)
+                                                 ($with-port (open-file-input-port src)
                                                    (lambda (pin)
-                                                     (call-with-port (open-file-output-port dest)
+                                                     ($with-port (open-file-output-port dest)
                                                        (lambda (pout)
                                                          ($copy-port who pin pout))))))
                                            overwrite?)]
@@ -2122,22 +2632,26 @@
          (cond
           [(file-symbolic-link? src)
            (let ([ln (readlink src)])
-             (copy-link ln dest name-src))]
+             (copy-link ln dest name-src src))]
           [(file-regular? src #f)
-           (copy-file src dest name-src)]
-          [else (unreachable! who)]))]))
+           (copy-file src dest name-src src)]
+          [else ($err-file-not-regular who src)]))]))
 
 
   #|proc:file-copy
   Copy a single regular file from `src` to `dest`.
 
   `follow-link?`: copy the symlink per se or copy the file it points to (default: #t).
+  If destination string `dest` names a directory or a symlink to one, copy inside it using
+  `src`'s basename. Otherwise `dest` names the new entry. Metadata is not copied.
+  Home notation is expanded before choosing the source basename.
+  Return unspecified values.
   |#
   (define-who file-copy
     (case-lambda
       [(src dest) (file-copy src dest #t)]
       [(src dest follow-link?)
-       (pcheck ([string? src dest] [boolean? follow-link?]
+       (pcheck ([$filename? src dest] [boolean? follow-link?]
                 [(lambda (x) (file-exists? x follow-link?)) src])
                (if (file-symbolic-link? src)
                    (if follow-link?
@@ -2148,12 +2662,16 @@
 
   #|proc:file-copy!
   Similar to `file-copy`, but overwrites `dest` if it exists.
+  Finish copying before renaming the replacement over the destination entry. Copy failures
+  preserve an existing destination. Directory destinations, including directory symlinks, are
+  resolved as containers first. A final destination symlink is replaced; other hard links retain
+  their previous contents. Metadata is not copied, as with `file-copy`.
   |#
   (define-who file-copy!
     (case-lambda
       [(src dest) (file-copy! src dest #t)]
       [(src dest follow-link?)
-       (pcheck ([string? src dest] [boolean? follow-link?]
+       (pcheck ([$filename? src dest] [boolean? follow-link?]
                 [(lambda (x) (file-exists? x follow-link?)) src])
                (if (file-symbolic-link? src)
                    (if follow-link?
@@ -2163,97 +2681,245 @@
 
 
 
-  #|proc:file-copytree
-  Copy a directory recursively from `src` to `dest`.
+  (define $canonical-file-path
+    (let ([resolve (foreign-procedure "cspp_realpath" (string) scheme-object)])
+      (lambda (who path)
+        (let ([result (resolve (if (string=? path "") "." path))])
+          (if (vector? result)
+              ($err-file who path (vector-ref result 0))
+              (path-parse 'unix result))))))
 
-  It is an error if `src` is not a directory.
-  If `src` is a symlink, it is dereferenced automatically.
+  (define $copytree-destination-inside-source?
+    (lambda (who src dest snapshots)
+      ;; Resolve existing directories before lexical comparison: normalizing first
+      ;; would change the meaning of .. after a symlink.
+      (let* ([source ($canonical-file-path who src)]
+             [container (if (file-directory? dest)
+                            dest
+                            ($parent-directory-name ($parse-file-path who dest)))]
+             [destination ($canonical-file-path who container)]
+             [relative (path-components (path-relative-to source destination))])
+        (or (not (and (pair? relative) (string=? (car relative) "..")))
+            ;; realpath does not collapse bind mounts. Inspect the source before creating
+            ;; anything, comparing the destination container with every source directory.
+            ;; Track mount views separately: one inode can expose different child mounts.
+            (let ([target ($file-identity container #t)]
+                  [visited (make-hashtable equal-hash equal?)])
+              (let scan ([directory src])
+                (let* ([identity ($file-identity directory #t)]
+                       [mount ($file-mount-id who directory)] [key (cons mount identity)])
+                  (cond [(equal? identity target) #t]
+                        [(hashtable-contains? visited key)
+                         ;; Older kernels can inspect ordinary trees, but cannot prove that
+                         ;; repeated aliases have the same view without a mount ID.
+                         (unless mount
+                           ($err-file who directory "mount identity is unavailable for alias"))
+                         #f]
+                        [else
+                         (hashtable-set! visited key #t)
+                         ;; Keep the first snapshot of each underlying directory. Reading
+                         ;; any of its mount views can change the shared access timestamp.
+                         (when (and snapshots (not (hashtable-contains? snapshots identity)))
+                           (hashtable-set! snapshots identity (file-stat directory)))
+                         (exists (lambda (entry)
+                                   (and ($fs-entry-directory? who (car entry) (cdr entry) #f)
+                                        (scan (car entry))))
+                                 ($directory-entries directory))]))))))))
 
-  `dest` has to exist as a directory or its parent directory has to exist.
-  In the former case, contents in `src` are copied under `dest`;
-  in the latter case, a new directory with the same basename as that of `src`
-  is created under `dest`, then contents in `src` are copied under the new directory.
-  Symlinks are always followed in the process.
+  (define $apply-copy-metadata
+    (lambda (who dest stat)
+      (let ([link? (eq? (file-type->symbol (file-stat-type stat)) 'FT_symlink)])
+        ($file-touch who dest (file-stat-access-time stat) (file-stat-modification-time stat)
+                     (not link?) #f)
+        (unless link? ($copy-file-mode who dest (file-stat-mode stat))))))
 
-  `copy` is a procedure used to copy individual files.
-  It is `file-copy` with `follow-link?` set to #f by default.
-  |#
-  (define-who file-copytree
-    (case-lambda
-      [(src dest)
-       (file-copytree src dest (lambda (src dest) (file-copy src dest #f)))]
-      [(src dest copy)
-       (pcheck ([string? src dest] [file-directory? src] [procedure? copy])
-               (let* ([relativize (lambda (path)
-                                    (let loop ([parts '()] [path path])
-                                      (if (string=? path src)
-                                          (if (null? parts)
-                                              path
-                                              (apply make-path parts))
-                                          (loop (cons (path-last path) parts) (path-parent path)))))]
+  (define $copy-tree-file
+    (lambda (src dest)
+      ;; Tree traversal supplies an exact entry name, never another container.
+      (when (file-directory? dest) ($err-directory-exists 'file-copytree dest))
+      (file-copy src dest #f)))
+
+  (define $copy-tree-for-move
+    (lambda (src dest)
+      ;; Snapshot before reading the file can update its access time.
+      (let ([stat (file-stat src #f)])
+        ($copy-tree-file src dest)
+        ($apply-copy-metadata 'file-move dest stat))))
+
+  (define $copy-for-move
+    (lambda (src dest)
+      ($copy-tree-for-move src (if (file-directory? dest)
+                                  (path-build dest (path-last src)) dest))))
+
+  (define $make-move-directory
+    (let ([access (foreign-procedure "cspp_file_directory_access" (string) scheme-object)])
+      (lambda (who path)
+        (mkdir path #o700)
+        (let ([result (access path)])
+          (when (string? result) ($err-file who path result))))))
+
+  (define $file-copytree
+    (lambda (who src dest copy preserve-metadata?)
+       (pcheck ([$filename? src dest] [file-directory? src] [procedure? copy])
+               (let* ([source-path ($absolute-file-path src)]
+                      [snapshots (and preserve-metadata? (make-hashtable equal-hash equal?))]
+                      [metadata '()]
+                      [remember-directory
+                       (lambda (source target)
+                         (when preserve-metadata?
+                           (set! metadata
+                                 (cons (cons target
+                                             (hashtable-ref snapshots ($file-identity source #t) #f))
+                                       metadata))))]
+                      [make-directory
+                       (lambda (source target)
+                         (remember-directory source target)
+                         ;; A new move destination stays private until copying finishes.
+                         (if preserve-metadata?
+                             ($make-move-directory who target)
+                             (mkdir target #o777)))]
+                      [relativize (lambda (path)
+                                    (path-render
+                                     (path-relative-to source-path
+                                                       ($absolute-file-path path))))]
                       [do-copytree (lambda (dest)
                                      (walk-files (lambda (dir dirs files)
                                                    ;; paths are relative to `src`
                                                    (for-each (lambda (d)
                                                                (let ([newd (path-build dest (relativize d))])
-                                                                 (mkdir newd)))
+                                                                 (make-directory d newd)))
                                                              dirs)
                                                    (for-each (lambda (f)
                                                                (let ([newd (path-build dest (relativize f))])
                                                                  (copy f newd)))
                                                              files))
                                                  src #f #t))])
-                 (if (file-directory? dest #t)
-                     (do-copytree dest)
-                     ;; TODO (path-parent dest) is brittle
-                     (if (file-directory? (path-parent dest) #t)
-                         (begin
-                           ;; TODO handle error?
-                           (mkdir dest)
-                           (do-copytree dest))
-                         (errorf who "destination's parent directory doesn't exist: ~a" (path-parent dest))))))]))
+                 (when ($copytree-destination-inside-source? who src dest snapshots)
+                   (errorf who "destination cannot be inside the source directory"))
+                 (unless (file-directory? dest #t)
+                     (let ([parent ($parent-directory-name ($parse-file-path who dest))])
+                       (if (file-directory? parent #t)
+                           (make-directory src dest)
+                           (errorf who "destination's parent directory doesn't exist: ~a"
+                                   parent))))
+                 (do-copytree dest)
+                 metadata))))
 
-
-  #|proc:file-move
-  Move a single file or directory from `src` to `dest`.
-
-  `copy` is the procedure used to copy individual files.
-  It is `file-copy` with `follow-link?` set to #f by default.
+  #|proc:file-copytree
+  Copy the contents of directory path string `src` into directory path string `dest`.
+  An existing `dest` receives the contents directly; otherwise its parent must exist and
+  `dest` itself is created. A destination within `src` is rejected. A source root symlink is
+  followed, but nested directory symlinks are not traversed.
+  The containment check follows symlink and bind-mount aliases of the destination.
+  Source directories are inspected before creating destination entries.
+  Repeated directory aliases require Linux mount IDs; unavailable mount IDs raise an error
+  when the check cannot distinguish their views.
+  Containment and parent checks expand home notation without lexical normalization.
+  Optional `copy` has signature `(lambda (source-path destination-path) ...)` and copies
+  each file or symlink; its return values are ignored. By default `file-copy` preserves
+  symlinks. Directory metadata is not copied. Return unspecified values.
+  Existing child names cause an error unless `copy` handles a file collision; existing
+  child directories are not merged recursively. A failed copy can leave a partial destination.
   |#
+  (define-who file-copytree
+    (case-lambda
+      [(src dest)
+       (file-copytree src dest $copy-tree-file)]
+      [(src dest copy) ($file-copytree who src dest copy #f) (void)]))
+
   (define $try-rename-file
     (lambda (src dest)
       (guard (e [(error? e) #f])
         (rename-file src dest)
         #t)))
 
+  (define $removable-entry-path
+    (lambda (path)
+      ;; The caller expands home notation before stripping markers or rejecting roots.
+      (let* ([parsed (path-with-trailing-directory (path-parse 'unix path) #f)]
+             [basename (path-basename parsed)])
+        ;; Do not normalize: a parent component after a symlink has physical meaning.
+        (and basename (not (member basename '("." ".."))) (path-render parsed)))))
+
+  (define $file-move
+    (lambda (who src dest copy copy-tree)
+       (pcheck ([$filename? src dest] [procedure? copy])
+               (let* ([expanded ($expand-file-path who src)]
+                      [directory-marked? (and (fx> (string-length expanded) 0)
+                                              (char=? #\/ (string-ref expanded
+                                                           (fx1- (string-length expanded)))))]
+                      [src (or ($removable-entry-path expanded)
+                               (errorf who "source must name a removable entry: ~a" src))])
+                 (unless (file-exists? src #f) ($err-file-not-found who src))
+                 (when (and directory-marked? (not (file-symbolic-link? src))
+                            (not (file-directory? src)))
+                   ($err-file-not-directory who src))
+                 (cond [(and (file-exists? dest #f) ($same-file-entry? who src dest))
+                        ($err-file who dest "source and destination are the same file")]
+                       [(and (not (file-exists? dest #f)) ($try-rename-file src dest)) #t]
+                       [(and (file-directory? src #f) (not (file-symbolic-link? src)))
+                        (let ([metadata ($file-copytree who src dest copy-tree #t)])
+                          ;; Only new directories receive source metadata. Existing merge
+                          ;; roots stay usable, including when they contain the source.
+                          (for-each (lambda (entry)
+                                      ($apply-copy-metadata who (car entry) (cdr entry)))
+                                    metadata)
+                          (file-removetree src #t)
+                          #t)]
+                       [else
+                        (let* ([container? (file-directory? dest)]
+                               [target (if container? (path-build dest (path-last src)) dest)])
+                          (when (and (file-exists? target #f) ($same-file-entry? who src target))
+                            ($err-file who target "source and destination are the same file"))
+                          (if (and container? (not (file-exists? target #f))
+                                   ($try-rename-file src target))
+                              #t
+                              (begin (copy src dest)
+                                     (delete-file src))))])))))
+
+  #|proc:file-move
+  Move filesystem path string `src` to `dest`, renaming when the target entry is absent and
+  the filesystem permits it. An existing directory receives a file under its source basename,
+  or the contents of a source directory. For files and symlinks, the target is resolved inside
+  that directory before attempting rename. Nested directory symlinks are copied as links.
+  When copying is necessary, the default preserves permission bits and access/modification
+  times, but not ownership, hard-link relationships, or extended attributes.
+  Source directory metadata is applied only to newly created destination directories, before
+  source removal. Original directory timestamps are captured before preflight enumeration.
+  Existing merge roots keep their permissions and do not receive source
+  timestamps; ordinary filesystem activity may update their timestamps.
+  Optional `copy` has signature `(lambda (source-path destination-path) ...)` and controls
+  copying individual files and symlinks, including their metadata; return values are ignored.
+  A successful rename bypasses `copy`. Source entries are removed only after copying succeeds.
+  The default copier verifies restored permission bits; failure to retain them raises an I/O
+  error before source removal. An already matching destination mode is left unchanged.
+  Moving an entry onto itself raises an error before calling `copy`.
+  A trailing separator on a source symlink is ignored: the link itself is moved.
+  Filesystem roots and final `.` or `..` components are rejected before any changes.
+  Home notation in `src` is expanded before checking the entry and its trailing separator.
+  Existing child directories are not merged recursively, as in `file-copytree`.
+  A failed copy can leave a partial destination; the source remains until copying succeeds.
+  Return `#t` for a renamed file or moved directory, unspecified values for a copied file.
+  |#
   (define-who file-move
     (case-lambda
-      [(src dest)
-       (file-move src dest (lambda (src dest) (file-copy src dest #f)))]
-      [(src dest copy)
-       (pcheck ([string? src dest] [file-exists? src] [procedure? copy])
-               (if (and (file-directory? src #f)
-                        (not (file-symbolic-link? src)))
-                   (begin (file-copytree src dest copy)
-                          (file-removetree src))
-                   (if (file-directory? dest #t)
-                       (begin (copy src dest)
-                              (delete-file src))
-                       (if (and (not (file-exists? dest #f))
-                                ($try-rename-file src dest))
-                           #t
-                           (begin (copy src dest)
-                                  (delete-file src))))))]))
+      [(src dest) ($file-move who src dest $copy-for-move $copy-tree-for-move)]
+      [(src dest copy) ($file-move who src dest copy copy)]))
 
 
   #|proc:file-removetree
   Remove a directory, recursively.
-  It is an error if `path` is not a directory.
+  Path string `path` must name a directory, not a symlink, even with trailing separators.
+  Filesystem roots and final `.` or `..` components are rejected before removing any contents.
+  Home notation is expanded before these checks and before stripping trailing separators.
 
   If `error?`, an error condition is raised when the procedure fails to remove
   a file or directory.
   Otherwise, no error condition is raised and the procedure tries to remove
   as many files and directories as possible.
+  Undecodable entry names are left in place; valid siblings are still removed in that mode.
+  Return `#t` if the whole tree was removed without errors, or `#f` otherwise.
+  A missing root or a root that is not a directory also returns `#f` when errors are suppressed.
 
   Use `delete-file` or `delete-directory` to remove a single file or directory.
   |#
@@ -2261,41 +2927,120 @@
     (case-lambda
       [(path) (file-removetree path #f)]
       [(path err?)
-       (pcheck ([string? path] [boolean? err?])
-               (if (file-exists? path #f)
-                   (if (and (file-directory? path #f)
-                            (not (file-symbolic-link? path)))
-                       (guard (e [(error? e) (if err? (raise e) #f)])
-                         (walk-files (lambda (dir dirs files)
-                                       (for-each (lambda (x) (delete-file x err?)) files)
-                                       ;; normally, directories in `dirs` are guaranteed to be empty
-                                       (for-each (lambda (x) (delete-directory x err?)) dirs))
-                                     path #f #f)
-                         (delete-directory path err?)
-                         #t)
-                       (when err? ($err-file-not-directory who path)))
-                   (when err? ($err-file-not-found who path))))]))
+       (pcheck ([$filename? path] [boolean? err?])
+               (define complete? #t)
+               (define attempt
+                 (lambda (operation)
+                   (guard (failure [(and (not err?) (error? failure))
+                                    (set! complete? #f)
+                                    #f])
+                     (operation))))
+               (define remove-tree
+                 (lambda (directory)
+                   (let ([entries
+                          (attempt
+                           (lambda ()
+                             ($directory-entries directory
+                               (and (not err?) (lambda () (set! complete? #f))))))])
+                     (when entries
+                       (for-each
+                        (lambda (entry)
+                          (attempt
+                           (lambda ()
+                             (let ([child (car entry)])
+                               (if ($fs-entry-directory? who child (cdr entry) #f)
+                                   (remove-tree child)
+                                   (delete-file child #t))))))
+                        entries)))
+                   (attempt (lambda () (delete-directory directory #t)))))
+               ;; A trailing slash makes lstat follow the final symlink on POSIX.
+               (let ([entry ($removable-entry-path ($expand-file-path who path))])
+                 (cond [(not entry)
+                        (if err? (errorf who "path must name a removable directory: ~a" path) #f)]
+                       [(not (file-exists? entry #f))
+                        (if err? ($err-file-not-found who entry) #f)]
+                       [(or (not (file-directory? entry #f)) (file-symbolic-link? entry))
+                        (if err? ($err-file-not-directory who entry) #f)]
+                       [else (remove-tree entry) complete?])))]))
 
+
+  ;; Remove only terminal dot components. Keep their preceding separator so drive and
+  ;; filesystem roots retain their meaning; parents after symlinks must not be normalized.
+  (define $mkdirs-target
+    (lambda (path)
+      (let loop ([end (string-length path)] [cut #f])
+        (let ([end (let skip-separators ([index end])
+                     (if (and (fx> index 0)
+                              (directory-separator? (string-ref path (fx1- index))))
+                         (skip-separators (fx1- index))
+                         index))])
+          (if (and (fx> end 0) (char=? (string-ref path (fx1- end)) #\.)
+                   (or (fx= end 1)
+                       (directory-separator? (string-ref path (fx- end 2)))))
+              (loop (fx1- end) (fx1- end))
+              (if cut
+                  (if (fxzero? cut) "." (substring path 0 cut))
+                  path))))))
 
   #|proc:mkdirs
-  Create directory; also create all intermediate directories as needed.
+  Create directory path string `path` and any missing intermediate directories.
+  Integer `mode` supplies the leaf directory's permission bits from 0 through #o7777;
+  the default is #o777. Missing parents use #o777. All creation modes are subject to umask.
+  Home notation is expanded before creating parents, without lexical normalization.
+  Terminal `.` components do not change which newly created directory receives `mode`.
+  A final directory first created as an intermediate directory in this call also receives
+  the leaf mode, subject to the permissions allowed at creation. Parent traversal is physical.
+  Existing directories are left unchanged, including ones created by a concurrent call.
+  If applying the leaf mode cannot preserve inherited set-group-ID, an I/O error is raised.
+  Return unspecified values.
   |#
   (define-who mkdirs
     (case-lambda
       [(path) (mkdirs path #o777)]
       [(path mode)
-       (pcheck-string (path)
-                      (if (file-exists? path)
-                          (unless (file-directory? path)
-                            ($err-file-exists who path))
-                          (let ([path (string-append path (string (directory-separator)))])
-                            (let loop ([first (path-first path)] [rest (path-rest path)])
-                              (if (file-exists? first)
-                                  (unless (file-directory? first)
-                                    ($err-file-not-directory who first))
-                                  (mkdir first mode))
-                              (unless (string=? "" rest)
-                                (loop (path-build first (path-first rest)) (path-rest rest)))))))]))
+       (pcheck ([$filename? path] [$mode-num? mode])
+         (let ([path ($mkdirs-target ($expand-file-path who path))])
+           (if (file-exists? path)
+               (unless (file-directory? path)
+                 ($err-file-exists who path))
+               (let ([path (string-append path (string (directory-separator)))]
+                     ;; Only paths with parents can revisit an intermediate directory.
+                     [created (and (string-search path "..")
+                                   (make-hashtable equal-hash equal?))])
+                 (let loop ([first (path-first path)] [rest (path-rest path)])
+                   (if (file-exists? first)
+                       (begin
+                         (unless (file-directory? first)
+                           ($err-file-not-directory who first))
+                         (let ([target (and created (string=? rest "")
+                                            (hashtable-ref created ($file-identity first #t) #f))])
+                           (when target
+                             ;; Intermediate #o777 creation records effective permissions,
+                             ;; including umask/default ACL restrictions. Linux mkdir ignores
+                             ;; requested set-ID bits, preserves inherited SGID, and sets sticky.
+                             (let* ([actual (get-mode target)]
+                                    [desired (fxlogior
+                                              (fxlogand actual
+                                                        (fxlogior (fxlogand mode #o777) #o2000))
+                                              (fxlogand mode #o1000))])
+                               ;; Redundant chmod can clear SGID outside the caller's groups.
+                               (unless (fx= actual desired)
+                                 ;; The creation path does not traverse this directory itself,
+                                 ;; so inspection works after removing its search permission.
+                                 (chmod target desired)
+                                 (when (and (not (fxzero? (fxlogand desired #o2000)))
+                                            (fxzero? (fxlogand (get-mode target) #o2000)))
+                                   ($err-file who first
+                                              "cannot preserve inherited set-group-ID bit")))))))
+                       (let ([made?
+                              (guard (failure
+                                      [(and (error? failure) (file-directory? first)) #f])
+                                (mkdir first (if (string=? rest "") mode #o777))
+                                #t)])
+                         (when (and made? created (not (string=? rest "")))
+                           (hashtable-set! created ($file-identity first #t) first))))
+                   (unless (string=? "" rest)
+                     (loop (path-build first (path-first rest)) (path-rest rest))))))))]))
 
 
 
@@ -2313,6 +3058,11 @@
   consisting of data from bytevectors.
   Permission bits (mode) of each kind of file can be set individually.
   They can be in either octal mode or symbolic mode.
+  Directory modes are applied after constructing their children, allowing read-only trees.
+  Symlink declarations name exact entries. Overwrite mode replaces an existing file or
+  symlink itself, including a symlink to a directory; a real directory is rejected.
+  A file declaration without content touches the entry, preserving existing bytes in overwrite
+  mode. Use `(text "")` to explicitly truncate a file to empty contents.
   If mode is not given, default mode is applied.
   Owner and group of files are the effective user and group of the process.
 
@@ -2392,9 +3142,7 @@
              (eq? 'symlink (datum ty))
              #`(let ([v e])
                  (if (string? v)
-                     #,(if overwrite?
-                           #`(file-symlink! v #,path)
-                           #`(file-symlink  v #,path))
+                     ($file-tree-symlink '#,who v #,path #,overwrite?)
                      (errorf '#,who "fail to create symlink at ~a, not a valid path: ~a" #,path v)))]
             [_ (syntax-violation 'define-file-tree
                                  "invalid file type:" decl)])))
@@ -2404,7 +3152,7 @@
             [(name . rest)
              (with-syntax ([(p) (generate-temporaries '(p))])
                #`(let ([n name])
-                   (if (string? n)
+                   (if ($filename? n)
                        (let ([p (path-build #,pdir n)])
                          #,(syntax-case #'rest ()
                              ;; files without contents are always touched
@@ -2434,7 +3182,7 @@
             [(name . rest)
              (with-syntax ([(p) (generate-temporaries '(p))])
                #`(let ([n name])
-                   (if (string? n)
+                   (if ($filename? n)
                        (let ([p (path-build #,pdir n)])
                          #,(syntax-case #'rest ()
                              [() (if overwrite? #'(mkdirs p) #'(mkdir p))]
@@ -2445,8 +3193,8 @@
                              [((mode m m* ...) decl* ...)
                               (eq? 'mode (datum mode))
                               #`(begin #,(if overwrite? #'(mkdirs p) #'(mkdir p))
-                                       (file-chmod p m m* ...)
-                                       #,(parse-decls overwrite? who #'p #'(decl* ...)))]
+                                       #,(parse-decls overwrite? who #'p #'(decl* ...))
+                                       (file-chmod p m m* ...))]
                              [(decl* ...)
                               #`(begin #,(if overwrite? #'(mkdirs p) #'(mkdir p))
                                        #,(parse-decls overwrite? who #'p #'(decl* ...)))]
@@ -2473,9 +3221,7 @@
                                     (unless (string? p)
                                       (errorf '#,who "fail to create symlink at ~a, target not valid: ~a" p p))
                                     (let ([target (path-build #,pdir p)])
-                                      #,(if overwrite?
-                                            #'(file-symlink! s target)
-                                            #'(file-symlink  s target))))]
+                                      ($file-tree-symlink '#,who s target #,overwrite?)))]
                                [_ (syntax-violation 'define-file-tree
                                                     "invalid file/directory declaration:" decl)]))
                            decl*))))
@@ -2487,7 +3233,7 @@
            #`(begin
                (define $mk
                  (lambda (who pdir ow?)
-                   (pcheck ([string? pdir] [boolean? ow?])
+                   (pcheck ([$filename? pdir] [boolean? ow?])
                            (if (file-exists? pdir)
                                (if ow?
                                    (unless (file-directory? pdir)
@@ -2508,11 +3254,22 @@
 ;;;; filesystem watcher
 ;;;;===----------------------------------------------------------------------===
 
-  (define-condition-type &fswatcher-error &i/o-filename make-fswatcher-error fswatcher-error?)
+  #|proc:fswatcher-error?
+  Return whether arbitrary `object` contains a filesystem-watcher I/O error condition.
+  A watcher error also contains an I/O filename condition when the affected path is known.
+  Pathless failures, such as descriptor exhaustion during initialization, omit that condition.
+  |#
+  (define-condition-type &fswatcher-error &i/o make-fswatcher-error fswatcher-error?)
 
   (define $err-fswatcher-error
-    (lambda (who x)
-      (raise (condition (make-who-condition who) (make-fswatcher-error x) (make-message-condition x)))))
+    (case-lambda
+      [(who message) ($err-fswatcher-error who #f message)]
+      [(who path message)
+       (raise (if path
+                  (condition (make-who-condition who) (make-fswatcher-error)
+                             (make-i/o-filename-error path) (make-message-condition message))
+                  (condition (make-who-condition who) (make-fswatcher-error)
+                             (make-message-condition message))))]))
 
   (define $fsw-init
     (let ([ffi (foreign-procedure "cspp_fswatcher_init" (boolean) ptr)])
@@ -2533,14 +3290,14 @@
       (lambda (who fswid path events)
         (let ([x (ffi fswid path events)])
           (if (string? x)
-              ($err-fswatcher-error who x)
+              ($err-fswatcher-error who path x)
               x)))))
   (define $fsw-remove!
     (let ([ffi (foreign-procedure "cspp_fswatcher_remove" (int int) ptr)])
-      (lambda (who fswid fid)
+      (lambda (who fswid fid path)
         (let ([x (ffi fswid fid)])
           (if (string? x)
-              ($err-fswatcher-error who x)
+              ($err-fswatcher-error who path x)
               x)))))
   (define $fsw-next!
     (let ([ffi (foreign-procedure "cspp_fswatcher_next" (int int) ptr)])
@@ -2555,7 +3312,12 @@
   Filesystem events bitmask that can be given to `fswatcher-add!` or returned by `fswatcher-next!`.
   Use expressions like `(fswatcher-mask FSW_access FSW_modify)` to make the right bitmask.
   |#
-  (define-flags fswatcher-mask
+  #|proc:fswatcher-mask->symbols
+  Decode unsigned 32-bit integer `mask` into a list of fully present `FSW_*` symbols.
+  Composite aliases are included only when all their constituent bits are set.
+  Symbols follow declaration order; unknown bits are ignored.
+  |#
+  (define-flags fswatcher-mask u32?
     (FSW_access        #x00000001)
     (FSW_modify        #x00000002)
     (FSW_attrib        #x00000004)
@@ -2589,7 +3351,8 @@
             (immutable paths) (mutable pending)))
 
   (define $fswatcher-timeout?
-    (lambda (timeout) (and (natural? timeout) (<= timeout #x7fffffff))))
+    (lambda (timeout)
+      (and (integer? timeout) (exact? timeout) (<= 0 timeout #x7fffffff))))
 
   #|proc:make-fswatcher
   The `make-fswatcher` procedure returns a new filesystem watcher.
@@ -2624,8 +3387,10 @@
   The optional `events` parameter is an unsigned 32-bit mask made with `fswatcher-mask`.
   It returns an unspecified value. Directories are watched without recursion.
   Multiple paths to the same inode share a watch; events report the first recorded path.
+  The recorded path is copied, so later mutations of the input string do not change it.
   Adding that inode again replaces its event mask unless `FSW_mask_add` is supplied.
   `FSW_dont_follow` watches a symbolic link itself, including a dangling link.
+  Native addition failures include `path` in the I/O filename condition.
 
   The default mask for files is:
   `(fswatcher-mask FSW_access FSW_open FSW_modify FSW_close FSW_delete_self)`.
@@ -2635,7 +3400,7 @@
   (define-who fswatcher-add!
     (case-lambda
       [(watcher path)
-       (pcheck ([$fswatcher? watcher] [$fswatcher-open? watcher] [string? path])
+       (pcheck ([$fswatcher? watcher] [$fswatcher-open? watcher] [$filename? path])
                (cond [(file-directory? path)
                       (fswatcher-add! watcher path
                                       (fswatcher-mask FSW_access FSW_open FSW_modify FSW_close
@@ -2647,12 +3412,12 @@
                                                      FSW_delete_self))]
                      [else ($err-file-not-found who path)]))]
       [(watcher path events)
-       (pcheck ([$fswatcher? watcher] [$fswatcher-open? watcher] [string? path] [u32? events])
+       (pcheck ([$fswatcher? watcher] [$fswatcher-open? watcher] [$filename? path] [u32? events])
                ;; Let inotify validate existence using the requested symlink semantics.
                (let* ([fid ($fsw-add! who ($fswatcher-id watcher) path events)]
                       [paths ($fswatcher-paths watcher)])
                  (unless (hashtable-contains? paths fid)
-                   (hashtable-set! paths fid (cons path #t)))))]))
+                   (hashtable-set! paths fid (cons (string-copy path) #t)))))]))
 
   (define $fswatcher-next!
     (lambda (who watcher timeout)
@@ -2667,20 +3432,27 @@
                    [paths ($fswatcher-paths watcher)]
                    [entry (hashtable-ref paths fid #f)])
               ($fswatcher-pending-set! watcher (cdr pending))
-              (vector-set! event 0 (and entry (car entry)))
+              (vector-set! event 0 (and entry (string-copy (car entry))))
               ;; Keep the path for queued events, including the final ignored notification.
               (when (flag-any-set? (fswatcher-mask FSW_ignored) (vector-ref event 1))
                 (hashtable-delete! paths fid))
+              (when (eqv? (vector-ref event 2) -1)
+                ($err-fswatcher-error who (vector-ref event 0)
+                                     "filesystem event name is not valid UTF-8"))
               event)))))
 
   #|proc:fswatcher-next!
   The `fswatcher-next!` procedure returns the next queued filesystem event from `watcher`.
   An event is a three-element vector: the watched path, the event bitmask, and the child
   filename, or `#f` for events without a child name. A directory event reports the watched
-  directory as its path. Queue overflow is reported with `FSW_overflow` and a `#f` path;
+  directory as its path. Each reported path is a fresh string independent of the watcher.
+  Queue overflow is reported with `FSW_overflow` and a `#f` path;
   events lost by the kernel cannot be recovered and callers should rescan their files.
   `FSW_ignored` is delivered with the recorded path and retires the watch.
-  The optional `timeout` is an integer from 0 through 2147483647, in milliseconds.
+  An event with an undecodable UTF-8 name is consumed and raises a watcher error.
+  That error identifies the watched path when it is still recorded.
+  Subsequent calls continue with the remaining events, including valid events from the same read.
+  The optional `timeout` is an exact integer from 0 through 2147483647, in milliseconds.
   Zero polls immediately; a positive timeout waits at most that long for an event, regardless
   of the watcher's blocking setting. Without `timeout`, the watcher's setting is used.
   The procedure returns `#f` when no event is available before the wait ends.
@@ -2698,23 +3470,30 @@
   The `fswatcher-remove!` procedure stops watching the recorded path string `path` in
   `watcher` and returns an unspecified value. It also accepts watches already removed by
   the kernel whose `FSW_ignored` event has not yet been consumed.
+  If a pathname was reused for another file, remove all active registrations recorded under
+  that pathname, including registrations for an earlier file that was renamed or deleted.
   Events already queued, including `FSW_ignored`, remain available with their recorded path.
   An unknown path or a watch explicitly removed already raises a watcher error.
+  Removal errors include `path` in the I/O filename condition.
   |#
   (define-who fswatcher-remove!
     (lambda (watcher path)
-      (pcheck ([$fswatcher? watcher] [$fswatcher-open? watcher] [string? path])
+      (pcheck ([$fswatcher? watcher] [$fswatcher-open? watcher] [$filename? path])
               (let-values ([(ids entries) (hashtable-entries ($fswatcher-paths watcher))])
                 (let ([length (vector-length entries)])
-                  (let loop ([index 0])
+                  (let loop ([index 0] [removed? #f])
                     (if (fx= index length)
-                        ($err-fswatcher-error who (format "invalid path: ~a" path))
+                        (unless removed?
+                          ($err-fswatcher-error who path (format "invalid path: ~a" path)))
                         (let ([entry (vector-ref entries index)])
                           (if (and (cdr entry) (string=? path (car entry)))
                               (begin
-                                ($fsw-remove! who ($fswatcher-id watcher) (vector-ref ids index))
-                                (set-cdr! entry #f))
-                              (loop (fx1+ index)))))))))))
+                                ($fsw-remove! who ($fswatcher-id watcher)
+                                              (vector-ref ids index) path)
+                                ;; Retain the entry for attribution of queued notifications.
+                                (set-cdr! entry #f)
+                                (loop (fx1+ index) #t))
+                              (loop (fx1+ index) removed?))))))))))
 
 
 

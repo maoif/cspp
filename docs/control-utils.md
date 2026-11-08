@@ -2,7 +2,7 @@
 
 `(cspp control)` provides composition, sections, loop escape, and continuation bindings.
 `(cspp utils)` provides argument checks, small predicates/macros, procedure inspection, random
-data generators, and fixnum flags. Both are included by `(cspp)`.
+data generators, and integer flags. Both are included by `(cspp)`.
 
 These libraries keep reusable descriptions separate from invocation state. Compositions and
 sections capture their callbacks and fixed values; each call has its own traversal state.
@@ -130,19 +130,21 @@ The result of `random-list` is undefined under replay of a continuation captured
 
 ## Flags
 
-`define-flags` generates a flag-combining macro and a `name->symbols` decoder. Masks are fixnums;
-composites can refer to earlier flags using `or`. Decoding selects every flag with any overlapping
-bit, including aliases and composite masks, in declaration order. Zero masks are never listed.
+`define-flags` generates a flag-combining macro and a `name->symbols` decoder. Masks are exact
+integers; composites can refer to earlier flags using `or`. Decoding selects every flag whose
+bits are all present, including aliases and composite masks, in declaration order. Zero masks
+are never listed. The optional predicate in `(define-flags name mask? (flag mask) ...)` further
+restricts decoder inputs; it receives one exact integer and returns whether it is accepted.
 The macro name and flag names must be identifiers; nonidentifier names raise syntax errors.
 Flag names must also be distinct; duplicate declarations are rejected during expansion.
 
 ```scheme
 (define-flags permissions (none 0) (read 1) (write 2) (both (or read write)))
 (= 3 (permissions read write)) ; => #t
-(equal? '(read both) (permissions->symbols 1)) ; => #t
+(equal? '(read) (permissions->symbols 1)) ; => #t
 (and (flag-any-set? 3 1) (not (flag-all-set? 3 1))) ; => #t
 ```
 
-Flag operations validate fixnums even in release code. `flag-set` and `flag-reset` return new
-integer values without mutating inputs; `flag-all-set?` accepts a zero mask as true.
+Flag operations validate exact integers even in release code. `flag-set` and `flag-reset`
+return new integer values without mutating inputs; `flag-all-set?` accepts a zero mask as true.
 The generated decoder ignores unknown bits.

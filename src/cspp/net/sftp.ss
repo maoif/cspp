@@ -359,11 +359,6 @@ remote directory, and its closed field reports whether the native stream has bee
     (lambda (session path)
       (guard (condition [else #f]) (sftp-stat session path))))
 
-  (define local-file-size
-    (lambda (path)
-      (call-with-port (open-file-input-port path)
-        (lambda (port) (file-length port)))))
-
   (define ensure-local-directory
     (lambda (path)
       (unless (file-exists? path)
@@ -947,7 +942,7 @@ The `sftp-download` procedure downloads a remote file to a local pathname and re
                  [(and existing? (eq? overwrite 'error))
                   (errorf who "local destination exists: ~a" local-path)]
                  [else
-                  (let* ([local-size (if existing? (local-file-size local-path) 0)]
+                  (let* ([local-size (if existing? (file-size local-path) 0)]
                          [resume (transfer-policy-resume policy)]
                          [offset (cond [(natural? resume) resume]
                                        [(eq? resume 'resume) local-size]
@@ -996,7 +991,7 @@ The `sftp-upload` procedure uploads a local file to a remote pathname and return
                  [(and existing (eq? overwrite 'error))
                   (errorf who "remote destination exists: ~a" remote-path)]
                  [else
-                  (let* ([local-size (local-file-size local-path)]
+                  (let* ([local-size (file-size local-path)]
                          [resume (transfer-policy-resume policy)]
                          [remote-size (and existing (sftp-attributes-size existing))]
                          [offset (cond [(natural? resume) resume]

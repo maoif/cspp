@@ -85,9 +85,10 @@
                (check (eq? #t (link (string-append "~__cspp_tilde_gc__" path)
                                    (string-append path "-hard"))))
                (check (same-file? path (string-append path "-hard"))))
+             ;; Symlink targets are literal; expand the destination to exercise GC instead.
              (lambda ()
-               (check (eq? #t (symlink (string-append "~__cspp_tilde_gc__" path)
-                                      (string-append path "-symbolic"))))
+               (check (eq? #t (symlink (string-append path)
+                                      (string-append "~__cspp_tilde_gc__" path "-symbolic"))))
                (check (same-file? path (string-append path "-symbolic"))))
              ;; Error case: timestamp vectors must be decoded before path expansion allows GC.
              (lambda ()

@@ -304,14 +304,14 @@
 
 (mat flag-check-argument-safety
 
-     ;; Error case: generated decoders must check fixnum arguments even at optimize level 3.
+     ;; Error case: generated decoders must check exact-integer arguments even at optimize level 3.
      (parameterize ([optimize-level 3])
        (eval '(let ()
                 (define-flags checked-flags (first 1))
                 (guard (condition [else #t]) (checked-flags->symbols 'invalid) #f))
              (environment '(cspp chez) '(cspp utils))))
 
-     ;; Error case: flag operations reject nonfixnum masks and values in release code.
+     ;; Error case: flag operations reject noninteger masks and values in release code.
      (parameterize ([optimize-level 3])
        (eval '(let ([invalid 'invalid])
                 (and (guard (condition [else #t]) (flag-any-set? invalid 1) #f)
@@ -439,9 +439,11 @@
 
 (define-flags review-flags (none 0) (first 1) (second 2) (both (or first second)) (alias 1))
 
-(mat flag-overlap-contract
+(mat flag-complete-mask-contract
 
-     (equal? '(first both alias) (review-flags->symbols 1))
+     (equal? '(first alias) (review-flags->symbols 1))
+
+     (equal? '(first second both alias) (review-flags->symbols 3))
 
      (null? (review-flags->symbols 0))
 

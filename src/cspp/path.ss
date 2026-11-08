@@ -25,9 +25,13 @@
             (immutable components $path-components)
             (immutable trailing? $path-trailing?)))
 
+  ;; Adopt private storage: parsers create fresh strings; public constructors and edits
+  ;; copy caller input before reaching here. Derived paths may share these private values
+  ;; because no operation mutates them and public selectors return defensive copies.
   (define $make-path-object
     (lambda (flavor root-kind root components trailing?)
-      (mk-path flavor root-kind root components (and trailing? (not (null? components))))))
+      (mk-path flavor root-kind root components
+               (and trailing? (not (null? components))))))
 
   (define $err
     (lambda (who msg . args)
@@ -92,6 +96,10 @@
     (lambda (who flavor components)
       (for-each (lambda (component) ($check-component who flavor component)) components)))
 
+  (define $component-list?
+    (lambda (components)
+      (and (list? components) (andmap string? components))))
+
   (define $letter?
     (lambda (c)
       (or (and (char>=? c #\a) (char<=? c #\z))
@@ -151,13 +159,29 @@
              (and (or (char=? c #\?) (char=? c #\.))
                   ($sep? 'windows (string-ref s 3)))))))
 
+  (define $prefix-special-unc?
+    (lambda (root)
+      (let ([prefix "\\\\?\\UNC\\"])
+        (and (fx>= (string-length root) (string-length prefix))
+             (string-ci=? prefix (substring root 0 (string-length prefix)))))))
+
+  (define $special-volume-root?
+    (lambda (root)
+      (let ([prefix "\\\\?\\Volume{"] [n (string-length root)])
+        (and (fx> n (string-length prefix))
+             (string-ci=? prefix (substring root 0 (string-length prefix)))
+             (char=? (string-ref root (fx1- n)) #\})))))
+
   (define $windows-special-root
     (lambda (who s)
       (let* ([head (string-append "\\\\" (string (string-ref s 2)) "\\")]
              [parts ($string-split-path who 'windows s 4)]
              [trailing? ($trailing-sep? 'windows s)])
         (cond [(null? parts)
-               ($make-path-object 'windows 'special head '() #f)]
+               ($err who "device namespace requires a root: ~s" s)]
+              [(and (string-ci=? (car parts) "UNC")
+                    (or (null? (cdr parts)) (null? (cddr parts))))
+               ($err who "UNC path requires server and share: ~s" s)]
               [(and (string-ci=? (car parts) "UNC")
                     (pair? (cdr parts))
                     (pair? (cddr parts)))
@@ -165,7 +189,7 @@
                  ($make-path-object 'windows
                         'special
                         (let ([root (string-append head "UNC\\" (cadr parts) "\\" (caddr parts))])
-                          (if (and trailing? (null? components)) (string-append root "\\") root))
+                          root)
                         components
                         trailing?))]
               [else
@@ -173,7 +197,7 @@
                  ($make-path-object 'windows
                         'special
                         (let ([root (string-append head (car parts))])
-                          (if (and trailing? (null? components)) (string-append root "\\") root))
+                          root)
                         components
                         trailing?))]))))
 
@@ -221,8 +245,9 @@
                       ($trailing-sep? 'windows s))]))))
 
   #|proc:path-parse
-  The `path-parse` procedure parses `str` as a lexical path of `flavor`.
-  It does not require the path to exist.
+  Parse string `str` as a lexical path using `flavor`, either `'unix` or `'windows`.
+  Return a path object without checking whether the path exists.
+  Incomplete Windows UNC and device namespace roots raise an error.
   |#
   (define path-parse
     (lambda (flavor str)
@@ -238,22 +263,27 @@
     (lambda (components sep)
       (if (null? components)
           ""
-          (let ([op (open-output-string)])
-            (let loop ([components components] [first? #t])
-              (unless (null? components)
-                (unless first? (write-char sep op))
-                (put-string op (car components))
-                (loop (cdr components) #f)))
-            (get-output-string op)))))
+          (let* ([length
+                  ;; The sum need not fit a fixnum until make-string accepts the size.
+                  (let loop ([remaining components] [length -1])
+                    (if (null? remaining) length
+                        (loop (cdr remaining) (+ length 1 (string-length (car remaining))))))]
+                 [result (make-string length)])
+            (let loop ([remaining components] [index 0])
+              (let* ([component (car remaining)] [length (string-length component)]
+                     [end (fx+ index length)])
+                (string-copy! component 0 result index length)
+                (if (null? (cdr remaining)) result
+                    (begin
+                      (string-set! result end sep)
+                      (loop (cdr remaining) (fx1+ end))))))))))
 
   (define $render-unix
     (lambda (p sep)
       (let* ([components ($path-components p)]
              [body ($join-components components sep)]
              [rooted? (eq? ($path-root-kind p) 'absolute)]
-             [base (cond [(and rooted? (null? components)) (string sep)]
-                         [rooted? (string-append (string sep) body)]
-                         [else body])])
+             [base (if rooted? (string-append (string sep) body) body)])
         (if (and ($path-trailing? p) (not (string=? base "")))
             (string-append base (string sep))
             base))))
@@ -266,24 +296,30 @@
              [root ($path-root p)]
              [base
               (case root-kind
-                [(relative) body]
+                [(relative)
+                 ;; Keep a colon in the first component from becoming a drive prefix.
+                 (if (and (fx>= (string-length body) 2)
+                          (char=? (string-ref body 1) #\:))
+                     (string-append "." (string sep) body)
+                     body)]
                 [(rooted)
-                 (if (null? components) (string sep) (string-append (string sep) body))]
+                 (string-append (string sep) body)]
                 [(drive-relative)
                  (string-append root ":" body)]
                 [(drive-absolute)
-                 (if (null? components)
-                     (string-append root ":" (string sep))
-                     (string-append root ":" (string sep) body))]
+                 (string-append root ":" (string sep) body)]
                 [(unc)
                  (let ([prefix (string-append (string sep) (string sep)
                                               (car root) (string sep) (cadr root))])
-                   (if (null? components)
-                       (string-append prefix (string sep))
-                       (string-append prefix (string sep) body)))]
+                   (string-append prefix (string sep) body))]
                 [(special)
                  (if (null? components)
-                     root
+                     (if (or (and (fx= (string-length root) 6)
+                                  (char=? (string-ref root 5) #\:))
+                             ($prefix-special-unc? root)
+                             ($special-volume-root? root))
+                         (string-append root (string sep))
+                         (string-copy root))
                      (string-append root (string sep) body))]
                 [else ($err 'path-render "invalid root kind: ~s" root-kind)])])
         (if (and ($path-trailing? p) (not (null? components)))
@@ -293,7 +329,10 @@
   #|proc:path-render
   The `path-render` procedure renders a path object as a string.
   With one argument it uses the flavor's default separator; with two arguments
-  it uses the given separator character.
+  it uses the given separator character. Windows relative paths whose first component
+  looks like a drive prefix receive a leading dot component to preserve their root kind.
+  Windows device namespace roots retain canonical backslashes (`\\?\` or `\\.\`);
+  the requested separator applies to components outside those roots.
   |#
   (define path-render
     (case-lambda
@@ -315,7 +354,7 @@
               ($path-flavor p))))
 
   #|proc:path-components
-  The `path-components` procedure returns a fresh list of component strings.
+  Return a fresh list of fresh strings containing path `p`'s components.
   |#
   (define path-components
     (lambda (p)
@@ -323,8 +362,8 @@
               ($copy-components ($path-components p)))))
 
   #|proc:path-root-info
-  The `path-root-info` procedure returns a symbolic root description useful for
-  diagnostics and tests.
+  Return a fresh list describing path `p`'s root. It starts with the flavor and root kind,
+  then includes a drive, special root, or UNC server and share when present.
   |#
   (define path-root-info
     (lambda (p)
@@ -334,18 +373,21 @@
                     [root ($path-root p)])
                 (case root-kind
                   [(relative absolute rooted) (list flavor root-kind #f)]
-                  [(drive-relative drive-absolute special) (list flavor root-kind root)]
-                  [(unc) (list flavor root-kind (car root) (cadr root))]
+                  [(drive-relative drive-absolute special)
+                   (list flavor root-kind (string-copy root))]
+                  [(unc) (list flavor root-kind (string-copy (car root))
+                               (string-copy (cadr root)))]
                   [else ($err 'path-root-info "invalid root kind: ~s" root-kind)])))))
 
   #|proc:path
-  The `path` procedure creates a relative path of `flavor` from components.
+  Create a relative path using flavor `flavor` (`'unix` or `'windows`) and component
+  strings `components`. Return the new path object.
   |#
   (define path
     (lambda (flavor . components)
-      ($check-flavor 'path flavor)
-      ($check-components 'path flavor components)
-      ($make-path-object flavor 'relative #f components #f)))
+      (pcheck ([path-flavor? flavor] [$component-list? components])
+              ($check-components 'path flavor components)
+              ($make-path-object flavor 'relative #f ($copy-components components) #f))))
 
   #|proc:path-rooted
   The `path-rooted` procedure creates an absolute Unix path or a Windows path
@@ -353,39 +395,53 @@
   |#
   (define path-rooted
     (lambda (flavor . components)
-      ($check-flavor 'path-rooted flavor)
-      ($check-components 'path-rooted flavor components)
-      ($make-path-object flavor (if (eq? flavor 'unix) 'absolute 'rooted) #f components #f)))
+      (pcheck ([path-flavor? flavor] [$component-list? components])
+              ($check-components 'path-rooted flavor components)
+              ($make-path-object flavor (if (eq? flavor 'unix) 'absolute 'rooted)
+                                 #f ($copy-components components) #f))))
 
   #|proc:path-drive
-  The `path-drive` procedure creates a Windows drive-relative path.
+  Create a Windows drive-relative path using drive letter `drive` and component strings
+  `components`. Return the new path object.
   |#
   (define path-drive
     (lambda (drive . components)
-      (let ([drive ($drive->string 'path-drive drive)])
-        ($check-components 'path-drive 'windows components)
-        ($make-path-object 'windows 'drive-relative drive components #f))))
+      (pcheck ([(lambda (value) (or (char? value) (string? value))) drive]
+               [$component-list? components])
+              (let ([drive ($drive->string 'path-drive drive)])
+                ($check-components 'path-drive 'windows components)
+                ($make-path-object 'windows 'drive-relative drive
+                                   ($copy-components components) #f)))))
 
   #|proc:path-drive-absolute
-  The `path-drive-absolute` procedure creates a Windows drive-absolute path.
+  Create a Windows drive-absolute path using drive letter `drive` and component strings
+  `components`. Return the new path object.
   |#
   (define path-drive-absolute
     (lambda (drive . components)
-      (let ([drive ($drive->string 'path-drive-absolute drive)])
-        ($check-components 'path-drive-absolute 'windows components)
-        ($make-path-object 'windows 'drive-absolute drive components #f))))
+      (pcheck ([(lambda (value) (or (char? value) (string? value))) drive]
+               [$component-list? components])
+              (let ([drive ($drive->string 'path-drive-absolute drive)])
+                ($check-components 'path-drive-absolute 'windows components)
+                ($make-path-object 'windows 'drive-absolute drive
+                                   ($copy-components components) #f)))))
 
   #|proc:path-unc
-  The `path-unc` procedure creates a Windows UNC path from server, share, and
-  optional components.
+  Create a Windows UNC path using string names `server` and `share`, and optional
+  component strings `components`. Return the new path object. Reserved server names
+  `.` and `?` are rejected because they select Windows device namespaces.
   |#
   (define path-unc
     (lambda (server share . components)
-      (pcheck ([string? server share])
+      (pcheck ([string? server share] [$component-list? components])
               ($check-component 'path-unc 'windows server)
               ($check-component 'path-unc 'windows share)
+              (when (member server '("." "?"))
+                ($err 'path-unc "reserved UNC server name: ~s" server))
               ($check-components 'path-unc 'windows components)
-              ($make-path-object 'windows 'unc (list server share) components #f))))
+              ($make-path-object 'windows 'unc
+                                 (list (string-copy server) (string-copy share))
+                                 ($copy-components components) #f))))
 
   (define $same-flavor
     (lambda (who a b)
@@ -426,34 +482,87 @@
              (append ($path-components p) components)
              trailing?)))
 
+  (define $windows-base-drive
+    (lambda (base)
+      (case ($path-root-kind base)
+        [(drive-absolute) (string-ref ($path-root base) 0)]
+        [(special)
+         (let ([root ($path-root base)])
+           (and (fx= (string-length root) 6)
+                (char=? (string-ref root 5) #\:)
+                ($letter? (string-ref root 4))
+                (string-ref root 4)))]
+        [else #f])))
+
   (define $path-rebase
-    (lambda (base part)
-      (if (path-absolute-path? part)
-          part
-          ($path-append-components base ($path-components part) ($path-trailing? part)))))
+    (lambda (who base part)
+      (let ([flavor ($path-flavor base)]
+            [kind ($path-root-kind part)])
+        (cond [(path-absolute-path? part) part]
+              [(and (eq? flavor 'windows) (eq? kind 'rooted))
+               (if ($windows-base-drive base)
+                   ($make-path-object flavor ($path-root-kind base) ($path-root base)
+                                     ($path-components part) ($path-trailing? part))
+                   ($err who "rooted Windows path requires a drive-absolute base"))]
+              [(and (eq? flavor 'windows) (eq? kind 'drive-relative))
+               (let ([drive ($windows-base-drive base)])
+                 (if (and drive (char-ci=? drive (string-ref ($path-root part) 0)))
+                     ($path-append-components base ($path-components part) ($path-trailing? part))
+                     ($err who "drive-relative path requires the matching drive-absolute base")))]
+              [else ($path-append-components base ($path-components part)
+                                             ($path-trailing? part))]))))
+
+  ;; Accumulate private component segments, copying their list cells only once.
+  ;; Root decisions still use the same rebasing rules as path-absolute.
+  (define $combine-paths
+    (lambda (who base parts join?)
+      (let ([flavor ($path-flavor base)])
+        (let loop ([root ($make-path-object flavor ($path-root-kind base) ($path-root base) '() #f)]
+                   [segments (list ($path-components base))]
+                   [trailing? ($path-trailing? base)] [parts parts])
+          (if (null? parts)
+              ($make-path-object flavor ($path-root-kind root) ($path-root root)
+                                 (apply append (reverse segments)) trailing?)
+              (let ([part (car parts)])
+                (let ([part
+                       (cond [(path? part) ($same-flavor who base part) part]
+                             [(and join? (string? part))
+                              (let ([parsed (path-parse flavor part)])
+                                (unless (path-rooted-path? parsed)
+                                  ($check-component who flavor part))
+                                parsed)]
+                             [else ($err who "invalid path part: ~s" part)])])
+                  (when (and (not join?) (path-rooted-path? part))
+                    ($err who "cannot append rooted path: ~a" (path-render part)))
+                  (case ($path-root-kind part)
+                    [(relative)
+                     (loop root (cons ($path-components part) segments)
+                           ($path-trailing? part) (cdr parts))]
+                    [(drive-relative)
+                     ;; Validate the drive without copying the accumulated components.
+                     ($path-rebase who root part)
+                     (loop root (cons ($path-components part) segments)
+                           ($path-trailing? part) (cdr parts))]
+                    [else
+                     (let ([rebased ($path-rebase who root part)])
+                       (loop ($make-path-object flavor ($path-root-kind rebased)
+                                                ($path-root rebased) '() #f)
+                             (list ($path-components part)) ($path-trailing? part)
+                             (cdr parts)))]))))))))
 
   #|proc:path-join
   The `path-join` procedure appends path parts. Absolute path parts of the same
-  flavor replace the accumulated base.
+  flavor replace the accumulated base. A Windows root-relative part uses the current
+  drive from a drive-absolute base; unresolved or different drive-relative parts error.
+  Extended drive bases retain their device namespace prefix.
+  `base` is a path object; each part is a same-flavor path object or a string.
+  An unrooted string must be one nonempty component without separators; use `path-parse`
+  to pass a relative fragment with multiple components. Return a new path object.
   |#
   (define path-join
     (lambda (base . parts)
       (pcheck ([path? base])
-              (let loop ([acc base] [parts parts])
-                (if (null? parts)
-                    acc
-                    (let ([part (car parts)])
-                      (cond [(path? part)
-                             ($same-flavor 'path-join acc part)
-                             (loop ($path-rebase acc part) (cdr parts))]
-                            [(string? part)
-                             (let ([parsed (path-parse ($path-flavor acc) part)])
-                               (if (path-absolute-path? parsed)
-                                   (loop parsed (cdr parts))
-                                   (begin
-                                     ($check-component 'path-join ($path-flavor acc) part)
-                                     (loop (path-add-component acc part) (cdr parts)))))]
-                            [else ($err 'path-join "invalid path part: ~s" part)])))))))
+              (if (null? parts) base ($combine-paths 'path-join base parts #t)))))
 
   #|proc:path-append
   The `path-append` procedure strictly appends path objects with compatible
@@ -466,16 +575,7 @@
        (pcheck ([path? p]) p)]
       [(p . paths)
        (pcheck ([path? p])
-               (let loop ([acc p] [paths paths])
-                 (if (null? paths)
-                     acc
-                     (let ([part (car paths)])
-                       (pcheck ([path? part])
-                               ($same-flavor 'path-append acc part)
-                               (when (path-rooted-path? part)
-                                 ($err 'path-append "cannot append rooted path: ~a" (path-render part)))
-                               (loop ($path-append-components acc ($path-components part) ($path-trailing? part))
-                                     (cdr paths)))))))]))
+               ($combine-paths 'path-append p paths #f))]))
 
   #|proc:path-add-component
   The `path-add-component` procedure returns a new path with `component` added
@@ -488,7 +588,7 @@
               ($make-path-object ($path-flavor p)
                      ($path-root-kind p)
                      ($path-root p)
-                     (append ($path-components p) (list component))
+                     (append ($path-components p) (list (string-copy component)))
                      #f))))
 
   #|proc:path-add-components
@@ -499,7 +599,13 @@
     (lambda (p components)
       (pcheck ([path? p] [list? components])
               ($check-components 'path-add-components ($path-flavor p) components)
-              ($path-append-components p components #f))))
+              ($path-append-components p ($copy-components components) #f))))
+
+  ;; Copy a nonempty component list, replacing its last cell with the private tail.
+  (define $replace-last-component
+    (lambda (components tail)
+      (if (null? (cdr components)) tail
+          (cons (car components) ($replace-last-component (cdr components) tail)))))
 
   #|proc:path-replace-basename
   The `path-replace-basename` procedure replaces the final component.
@@ -514,7 +620,7 @@
                     ($make-path-object ($path-flavor p)
                            ($path-root-kind p)
                            ($path-root p)
-                           (append (reverse (cdr (reverse components))) (list basename))
+                           ($replace-last-component components (list (string-copy basename)))
                            #f))))))
 
   #|proc:path-drop-basename
@@ -529,7 +635,7 @@
                     ($make-path-object ($path-flavor p)
                            ($path-root-kind p)
                            ($path-root p)
-                           (reverse (cdr (reverse components)))
+                           ($replace-last-component components '())
                            #f))))))
 
   (define $normalize-components
@@ -577,15 +683,15 @@
                      trailing?))))
 
   #|proc:path-basename
-  The `path-basename` procedure returns the final component string, or `#f` for
-  roots and empty paths.
+  Return a fresh string containing the final component of path `p`, or `#f` for roots
+  and empty paths.
   |#
   (define path-basename
     (lambda (p)
       (pcheck ([path? p])
               (let ([components ($path-components p)])
                 (and (pair? components)
-                     (car (reverse components)))))))
+                     (string-copy (car (last-pair components))))))))
 
   #|proc:path-dirname
   The `path-dirname` procedure returns the lexical parent path.
@@ -635,6 +741,16 @@
                            (substring base 0 i)
                            base)))))))
 
+  (define $windows-name=?
+    (lambda (left right)
+      ;; Chez char-ci=? uses Unicode simple folding, shared with Windows glob.
+      (let ([length (string-length left)])
+        (and (fx= length (string-length right))
+             (let loop ([index 0])
+               (or (fx= index length)
+                   (and (char-ci=? (string-ref left index) (string-ref right index))
+                        (loop (fx1+ index)))))))))
+
   (define $root=?
     (lambda (a b)
       (and (eq? ($path-flavor a) ($path-flavor b))
@@ -645,32 +761,29 @@
                    [(and (eq? ak 'relative) (eq? bk 'relative)) #t]
                    [(and (eq? ak 'rooted) (eq? bk 'rooted)) #t]
                    [(and (eq? ak 'drive-relative) (eq? bk 'drive-relative))
-                    (string-ci=? ($path-root a) ($path-root b))]
+                    ($windows-name=? ($path-root a) ($path-root b))]
                    [(and (eq? ak 'drive-absolute) (eq? bk 'drive-absolute))
-                    (string-ci=? ($path-root a) ($path-root b))]
+                    ($windows-name=? ($path-root a) ($path-root b))]
                    [(and (eq? ak 'unc) (eq? bk 'unc))
-                    (and (string-ci=? (car ($path-root a)) (car ($path-root b)))
-                         (string-ci=? (cadr ($path-root a)) (cadr ($path-root b))))]
+                    (and ($windows-name=? (car ($path-root a)) (car ($path-root b)))
+                         ($windows-name=? (cadr ($path-root a)) (cadr ($path-root b))))]
                    [(and (eq? ak 'special) (eq? bk 'special))
-                    (string-ci=? ($path-root a) ($path-root b))]
+                    ($windows-name=? ($path-root a) ($path-root b))]
                    [else #f])))))
 
   #|proc:path-same-root?
-  The `path-same-root?` procedure returns whether two paths can be relativized
-  against each other.
+  Return whether path objects `path1` and `path2` have compatible roots for relativization.
+  Windows roots use Unicode simple case folding, without multi-character string folding.
   |#
   (define path-same-root?
     (lambda (path1 path2)
       (pcheck ([path? path1 path2])
               ($root=? path1 path2))))
 
-  (define $make-relative-like
-    (lambda (flavor components trailing?)
-      ($make-path-object flavor 'relative #f components trailing?)))
-
   #|proc:path-absolute
   The `path-absolute` procedure makes `p` absolute by joining it to absolute
   `base`, then normalizing lexically.
+  Windows root-relative and matching drive-relative paths use the drive and namespace of `base`.
   |#
   (define path-absolute
     (lambda (base p)
@@ -678,46 +791,31 @@
               ($same-flavor 'path-absolute base p)
               (unless (path-absolute-path? base)
                 ($err 'path-absolute "base path is not absolute: ~a" (path-render base)))
-              (cond [(path-absolute-path? p) (path-normalize p)]
-                    [(and (eq? ($path-flavor p) 'windows)
-                          (eq? ($path-root-kind p) 'drive-relative))
-                     (if (and (eq? ($path-root-kind base) 'drive-absolute)
-                              (string-ci=? ($path-root base) ($path-root p)))
-                         (path-normalize
-                          ($make-path-object 'windows 'drive-absolute ($path-root base)
-                                 (append ($path-components base) ($path-components p))
-                                 ($path-trailing? p)))
-                         ($err 'path-absolute "drive-relative path requires matching drive-absolute base"))]
-                    [(and (eq? ($path-flavor p) 'windows)
-                          (eq? ($path-root-kind p) 'rooted))
-                     (if (eq? ($path-root-kind base) 'drive-absolute)
-                         (path-normalize
-                          ($make-path-object 'windows 'drive-absolute ($path-root base)
-                                 ($path-components p)
-                                 ($path-trailing? p)))
-                         ($err 'path-absolute "rooted Windows path requires drive-absolute base"))]
-                    [(eq? ($path-root-kind p) 'relative)
-                     (path-normalize
-                      ($make-path-object ($path-flavor base)
-                             ($path-root-kind base)
-                             ($path-root base)
-                             (append ($path-components base) ($path-components p))
-                             ($path-trailing? p)))]
-                    [else ($err 'path-absolute "cannot make path absolute: ~a" (path-render p))]))))
+              (path-normalize ($path-rebase 'path-absolute base p)))))
 
   (define $drop-common-prefix
-    (lambda (a b)
-      (if (and (pair? a) (pair? b) (string=? (car a) (car b)))
-          ($drop-common-prefix (cdr a) (cdr b))
+    (lambda (flavor a b)
+      (if (and (pair? a) (pair? b)
+               ((if (eq? flavor 'windows) $windows-name=? string=?) (car a) (car b)))
+          ($drop-common-prefix flavor (cdr a) (cdr b))
           (values a b))))
 
   (define $make-ups
     (lambda (components)
       (map (lambda (x) "..") components)))
 
+  (define $relative-components
+    (lambda (p)
+      ;; Drive-relative normalization preserves spelling, but relativization needs
+      ;; cancellable internal parents removed before counting directory levels.
+      ($normalize-components (if (eq? ($path-root-kind p) 'drive-relative)
+                                 'relative ($path-root-kind p))
+                             ($path-components p))))
+
   #|proc:path-relative-to
-  The `path-relative-to` procedure returns a lexical relative path from `base`
-  to `p`. Incompatible roots signal an error.
+  Return a lexical relative path from `base` to `p`. Windows components compare
+  character by character case-insensitively, as in glob. Incompatible roots and
+  unresolved divergent parent paths error.
   |#
   (define path-relative-to
     (lambda (base p)
@@ -725,24 +823,27 @@
               ($same-flavor 'path-relative-to base p)
               (unless (path-same-root? base p)
                 ($err 'path-relative-to "incompatible path roots"))
-              (let ([base (path-normalize base)]
-                    [p (path-normalize p)])
-                (call-with-values
-                  (lambda () ($drop-common-prefix ($path-components base) ($path-components p)))
+              (call-with-values
+                  (lambda () ($drop-common-prefix ($path-flavor p)
+                                                   ($relative-components base)
+                                                   ($relative-components p)))
                   (lambda (base-rest p-rest)
-                    ($make-relative-like ($path-flavor p)
-                                         (append ($make-ups base-rest) p-rest)
-                                         ($path-trailing? p))))))))
+                    (when (and (pair? base-rest) (string=? (car base-rest) ".."))
+                      ($err 'path-relative-to "cannot relativize from an unresolved parent path"))
+                    ($make-path-object ($path-flavor p) 'relative #f
+                                       (append ($make-ups base-rest) p-rest)
+                                       ($path-trailing? p)))))))
 
   #|proc:path-starts-with-user-home?
-  The `path-starts-with-user-home?` procedure returns whether the first
-  component of `p` is exactly `~`.
+  Return whether path object `p` is unrooted and its first component is exactly `~`.
+  A `~` directory in an absolute, root-relative, or drive-relative path is an ordinary name.
   |#
   (define path-starts-with-user-home?
     (lambda (p)
       (pcheck ([path? p])
               (let ([components ($path-components p)])
-                (and (pair? components)
+                (and (eq? ($path-root-kind p) 'relative)
+                     (pair? components)
                      (string=? (car components) "~"))))))
 
   (define $home-from-environment
@@ -764,19 +865,23 @@
             [else ($err who "invalid home path: ~s" home)])))
 
   #|proc:path-expand-user
-  The `path-expand-user` procedure expands a leading `~` component using either
-  the host current user's home directory or an explicit home path.
+  Expand an unrooted path object's leading `~` component using either the host current
+  user's home directory or explicit string/path object `home`. The home must be absolute
+  and have the same flavor as `p`. Return the expanded, lexically normalized path object.
+  Other inputs, including rooted paths with a `~` directory, are returned unchanged.
   |#
   (define path-expand-user
     (case-lambda
       [(p)
        (pcheck ([path? p])
-               (let ([home ($home-from-environment ($path-flavor p))])
-                 (if home
-                     (path-expand-user p home)
-                     ($err 'path-expand-user "no usable home directory in environment"))))]
+               (if (not (path-starts-with-user-home? p))
+                   p
+                   (let ([home ($home-from-environment ($path-flavor p))])
+                     (if home
+                         (path-expand-user p home)
+                         ($err 'path-expand-user "no usable home directory in environment")))))]
       [(p home)
-       (pcheck ([path? p])
+       (pcheck ([path? p] [(lambda (value) (or (string? value) (path? value))) home])
                (if (not (path-starts-with-user-home? p))
                    p
                    (let ([home ($coerce-home 'path-expand-user ($path-flavor p) home)])
