@@ -496,10 +496,7 @@
                              rest
                              (cons component rest)))))
                  separator
-                 (and (> (string-length expanded) 0)
-                      (let ([last (string-ref expanded (fx1- (string-length expanded)))])
-                        (if (eq? flavor 'unix) (char=? last #\/)
-                            (or (char=? last #\/) (char=? last #\\)))))))))
+                 ($trailing-separator? flavor expanded)))))
 
   (define $match/recursive?
     (lambda (components names)

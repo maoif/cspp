@@ -288,15 +288,11 @@
               (or (fx= j tlen)
                   (and (char=? (string-ref str i) (string-ref target j))
                        (loop (add1 i) (add1 j)))))))
-        (cond [(fx> (fx+ start tlen) slen) #f]
-              [(fx= (fx+ start tlen) slen) (and (str=? start) start)]
-              [else (let ([end (fx- slen tlen)])
-                      (let loop ([i start])
-                        (if (fx> i end)
-                            #f
-                            (if (str=? i)
-                                i
-                                (loop (add1 i))))))]))))
+        (let ([end (fx- slen tlen)])
+          (let loop ([index start])
+            (cond [(fx> index end) #f]
+                  [(str=? index) index]
+                  [else (loop (fx1+ index))]))))))
 
   (define $string-prefix-table
     (lambda (target)

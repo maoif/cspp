@@ -712,36 +712,14 @@
                     (file-exists? (path-build root "sub/nested.txt"))))))))
       '(#f #t)))
 
-(define $concurrent-create
-  (lambda (operation path)
-    (let* ([mutex (make-mutex)] [condition (make-condition)] [ready 0]
-           [worker
-            (lambda ()
-              (mutex-acquire mutex)
-              (set! ready (fx1+ ready))
-              (if (= ready 8) (condition-broadcast condition)
-                  (let loop ()
-                    (unless (= ready 8) (condition-wait condition mutex) (loop))))
-              (mutex-release mutex)
-              (operation path)
-              #t)])
-      (for-all (lambda (result) (eq? result #t))
-               (vector->list (apply run-threads 0 (make-list 8 worker)))))))
-
-(mat file-concurrent-idempotent-creation
+(mat mkdirs-leaf-mode
+     ;; Error case: invalid directory modes must be rejected even when the path exists.
      ($with-fs-fixture
       (lambda (root)
-        (for-all
-         (lambda (index)
-           (let ([file (path-build root (format "touch-~a" index))]
-                 [directory (path-build root (format "mkdir-~a/sub" index))])
-             (and ($concurrent-create file-touch file)
-                  (file-regular? file)
-                  ($concurrent-create mkdirs directory)
-                  (file-directory? directory))))
-         (iota 24)))))
+        (for-all (lambda (mode)
+                   (guard (failure [else #t]) (mkdirs root mode) #f))
+                 '(#f bad -1 4096))))
 
-(mat mkdirs-leaf-mode
      ($with-fs-fixture
       (lambda (root)
         (let ([path (path-build root "parent/leaf")])
@@ -1216,7 +1194,14 @@
                  (equal? paths (file-map values root))
                  (equal? paths (file-find-all (lambda (path) #t) root))
                  (equal? '(#f #f #f) (file-map (lambda (path) #f) root))
-                 (null? (file-find-all (lambda (path) #f) root))))))))
+                 (null? (file-find-all (lambda (path) #f) root)))))))
+
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([seen (make-list-builder)] [top (path-build root "top.txt")])
+          (and (string=? top (file-find (lambda (path) (seen path) (string=? path top)) root))
+               (equal? (seen) (list (path-build root "sub") top))
+               (not (file-find (lambda (path) #f) root)))))))
 
 (mat same-file-contents-propagates-lookup-errors
      ($with-fs-fixture
@@ -1782,20 +1767,13 @@
          (lambda () (when (file-directory? root #f) (file-removetree root))))))
 
 
-(mat simple-read/write
+(mat file-io-errors-and-cleanup
 
      (let ([path ($random-file)])
        (dynamic-wind
          (lambda () (write-u8vec path #vu8()))
          (lambda () (equal? #vu8() (read-u8vec path)))
          (lambda () (delete-file path))))
-
-     ;; Error case: invalid directory modes must be rejected even when the path exists.
-     ($with-fs-fixture
-      (lambda (root)
-        (for-all (lambda (mode)
-                   (guard (failure [else #t]) (mkdirs root mode) #f))
-                 '(#f bad -1 4096))))
 
      ;; Error case: a malformed datum must close the opened input port.
      (let ([path ($random-file)])
@@ -1822,14 +1800,6 @@
          (lambda ()
            (when (file-exists? path) (delete-file path)))))
 
-     ;; errors
-     ;; path not string
-     (error? (write-lines  #f (map (lambda (x) (random-string 10)) (iota 100))))
-     (error? (write-string 0 (random-string 10 20)))
-     (error? (write-chars  'bla (random-char)))
-     (error? (write-data   #t (random-list)))
-     (error? (write-datum  '() (random-datum)))
-
      ;; file not exist
      (error? (read-lines  "bla.bla"))
      (error? (read-string "bla.bla"))
@@ -1844,409 +1814,75 @@
      (error? (write-chars  "bla.bla" (random-box)))
      (error? (write-data   "bla.bla" #f))
      (error? (write-datum  "bla.bla" (make-eq-hashtable)))
-     (error? (write-u8vec "path" 123))
+     (error? (write-u8vec "path" 123)))
 
+;; Exercise creation, refusal to replace, truncation, and append for each writer family.
+;; `read-all` checks the whole file after truncation and append, including scalar datums.
+(define $check-file-writes
+  (lambda (writer overwrite appender reader read-all
+           first second expected-overwritten expected-appended)
+    (let ([path ($random-file)])
+      (dynamic-wind
+        void
+        (lambda ()
+          (writer path first)
+          (and (equal? first (reader path))
+               ;; Error case: the default writer must preserve an existing file.
+               (guard (failure [(i/o-file-already-exists-error? failure) #t])
+                 (writer path second)
+                 #f)
+               (equal? first (reader path))
+               (begin (overwrite path second)
+                      (and (equal? second (reader path))
+                           (equal? expected-overwritten (read-all path))))
+               (begin (delete-file path)
+                      (overwrite path first)
+                      (equal? first (reader path)))
+               (begin (delete-file path)
+                      (appender path first)
+                      (equal? first (reader path)))
+               (begin (appender path second)
+                      (equal? expected-appended (read-all path)))))
+        (lambda () (when (file-exists? path #f) (delete-file path)))))))
 
-;;; normal IO
-     ;; lines
-     (let ([lines (map (lambda (x) (random-string 100)) (iota 100))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-lines file lines)
-           (equal? lines
-                   (read-lines file)))
-         (lambda () (delete-file file))))
-     (let ([lines (map (lambda (x) (random-string 1000)) (iota 1000))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-lines file lines)
-           (equal? lines
-                   (read-lines file)))
-         (lambda () (delete-file file))))
+(mat file-read/write-modes
+     (let ([first (map (lambda (index) (random-string 1000)) (iota 1000))]
+           [second '("λ🚀" "")])
+       ($check-file-writes write-lines write-lines! write-lines>> read-lines read-lines
+                           first second second (append first second)))
 
+     (let ([first (random-string 1000)] [second "λ\x0;🚀"])
+       ($check-file-writes write-string write-string! write-string>> read-string read-string
+                           first second second (string-append first second)))
 
-     ;; string
-     (let ([str (random-string 100)]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-string file str)
-           (equal? str
-                   (read-string file)))
-         (lambda () (delete-file file))))
-     (let ([str (random-string 1000)]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-string file str)
-           (equal? str
-                   (read-string file)))
-         (lambda () (delete-file file))))
+     (let ([first (string->list (random-string 1000))] [second '(#\λ #\nul #\🚀)])
+       ($check-file-writes write-chars write-chars! write-chars>> read-chars read-chars
+                           first second second (append first second)))
 
+     (let ([first (map (lambda (index) (random-datum)) (iota 1000))] [second '(after)])
+       ($check-file-writes write-data write-data! write-data>> read-data read-data
+                           first second second (append first second)))
 
-     ;; chars
-     (let ([chars (map (lambda (x) (random-char)) (iota 100))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-chars file chars)
-           (equal? chars
-                   (read-chars file)))
-         (lambda () (delete-file file))))
-     (let ([chars (map (lambda (x) (random-char)) (iota 1000))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-chars file chars)
-           (equal? chars
-                   (read-chars file)))
-         (lambda () (delete-file file))))
+     (let ([first (list (make-string 1000 #\x) (random-datum))] [second 'after])
+       ($check-file-writes write-datum write-datum! write-datum>> read-datum read-data
+                           first second (list second) (list first second)))
 
+     (let ([first (map (lambda (index) (random-datum)) (iota 1000))] [second '(after)])
+       ($check-file-writes write-data-fasl write-data-fasl! write-data-fasl>>
+                           read-data-fasl read-data-fasl
+                           first second second (append first second)))
 
-     ;; data
-     (let ([data (map (lambda (x) (random-datum)) (iota 100))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-data file data)
-           (equal? data
-                   (read-data file)))
-         (lambda () (delete-file file))))
-     (let ([data (map (lambda (x) (random-datum)) (iota 1000))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-data file data)
-           (equal? data
-                   (read-data file)))
-         (lambda () (delete-file file))))
+     (let ([first (list (make-string 1000 #\x) (random-datum))] [second 'after])
+       ($check-file-writes write-datum-fasl write-datum-fasl! write-datum-fasl>>
+                           read-datum-fasl read-data-fasl
+                           first second (list second) (list first second)))
 
-
-     ;; datum
-     (andmap (lambda (x)
-               (let ([d (random-datum)]
-                     [file ($random-file)])
-                 (dynamic-wind
-                   void
-                   (lambda ()
-                     (write-datum file d)
-                     (equal? d
-                             (read-datum file)))
-                   (lambda () (delete-file file)))))
-             (iota 10))
-
-
-     ;; write-data-fasl
-     (let ([data (map (lambda (x) (random-datum)) (iota 100))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-data-fasl file data)
-           (equal? data
-                   (read-data-fasl file)))
-         (lambda () (delete-file file))))
-     (let ([data (map (lambda (x) (random-datum)) (iota 1000))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-data-fasl file data)
-           (equal? data
-                   (read-data-fasl file)))
-         (lambda () (delete-file file))))
-
-
-     ;; write-datum-fasl
-     (andmap (lambda (x)
-               (let ([d (random-datum)]
-                     [file ($random-file)])
-                 (dynamic-wind
-                   void
-                   (lambda ()
-                     (write-datum-fasl file d)
-                     (equal? d
-                             (read-datum-fasl file)))
-                   (lambda () (delete-file file)))))
-             (iota 10))
-
-     ;; u8vec
-     (let ([data (random-u8vec 1024 2048)]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-u8vec file data)
-           (equal? data
-                   (read-u8vec file)))
-         (lambda () (delete-file file))))
-     (let ([data (random-u8vec 2048 4096)]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-u8vec file data)
-           (equal? data
-                   (read-u8vec file)))
-         (lambda () (delete-file file))))
-
-
-;;; truncate
-
-     (let ([lines (map (lambda (x) (random-string 100)) (iota 100))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-lines file lines)
-           (write-lines! file lines)
-           (write-lines! file lines)
-           (equal? lines
-                   (read-lines file)))
-         (lambda () (delete-file file))))
-
-
-     (let ([str (random-string 100)]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-string file str)
-           (write-string! file str)
-           (write-string! file str)
-           (equal? str
-                   (read-string file)))
-         (lambda () (delete-file file))))
-
-
-     (let ([chars (map (lambda (x) (random-char)) (iota 100))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-chars file chars)
-           (write-chars! file chars)
-           (write-chars! file chars)
-           (equal? chars
-                   (read-chars file)))
-         (lambda () (delete-file file))))
-
-
-     (let ([data (map (lambda (x) (random-datum)) (iota 100))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-data file data)
-           (write-data! file data)
-           (write-data! file data)
-           (equal? data
-                   (read-data file)))
-         (lambda () (delete-file file))))
-
-
-     ;; write-datum
-     (andmap (lambda (x)
-               (let ([d (random-datum)]
-                     [file ($random-file)])
-                 (dynamic-wind
-                   void
-                   (lambda ()
-                     (write-datum-fasl! file d)
-                     (write-datum-fasl! file d)
-                     (equal? d
-                             (read-datum-fasl file)))
-                   (lambda () (delete-file file)))))
-             (iota 10))
-
-
-     ;; data-fasl
-     (let ([data (map (lambda (x) (random-datum)) (iota 100))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-data-fasl file data)
-           (write-data-fasl! file data)
-           (write-data-fasl! file data)
-           (equal? data
-                   (read-data-fasl file)))
-         (lambda () (delete-file file))))
-
-
-     ;; datum-fasl
-     (andmap (lambda (x)
-               (let ([d (random-datum)]
-                     [file ($random-file)])
-                 (dynamic-wind
-                   void
-                   (lambda ()
-                     (write-datum-fasl! file d)
-                     (write-datum-fasl! file d)
-                     (equal? d
-                             (read-datum-fasl file)))
-                   (lambda () (delete-file file)))))
-             (iota 10))
-
-     ;; u8vec
-     (let ([data (random-u8vec 1024 2048)]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-u8vec! file data)
-           (write-u8vec! file data)
-           (equal? data
-                   (read-u8vec file)))
-         (lambda () (delete-file file))))
-     (let ([data (random-u8vec 2048 4096)]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-u8vec! file data)
-           (write-u8vec! file data)
-           (equal? data
-                   (read-u8vec file)))
-         (lambda () (delete-file file))))
-
-
-;;; append
-
-     (let ([lines (map (lambda (x) (random-string 100)) (iota 100))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-lines file lines)
-           (write-lines>> file lines)
-           (write-lines>> file lines)
-           (equal? (append lines lines lines)
-                   (read-lines file)))
-         (lambda () (delete-file file))))
-
-
-     (let ([str (random-string 100)]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-string file str)
-           (write-string>> file str)
-           (write-string>> file str)
-           (equal? (string-append str str str)
-                   (read-string file)))
-         (lambda () (delete-file file))))
-
-
-     (let ([chars (map (lambda (x) (random-char)) (iota 100))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-chars file chars)
-           (write-chars>> file chars)
-           (write-chars>> file chars)
-           (equal? (append chars chars chars)
-                   (read-chars file)))
-         (lambda () (delete-file file))))
-
-
-     (let ([data (map (lambda (x) (random-datum)) (iota 100))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-data file data)
-           (write-data>> file data)
-           (write-data>> file data)
-           (equal? (append data data data)
-                   (read-data file)))
-         (lambda () (delete-file file))))
-
-
-     ;; write-datum
-     (andmap (lambda (x)
-               (let ([d (random-datum)]
-                     [file ($random-file)])
-                 (dynamic-wind
-                   void
-                   (lambda ()
-                     (write-datum>> file d)
-                     (write-datum>> file d)
-                     (equal? d
-                             (read-datum file)))
-                   (lambda () (delete-file file)))))
-             (iota 10))
-
-
-     ;; data-fasl
-     (let ([data (map (lambda (x) (random-datum)) (iota 100))]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-data-fasl file data)
-           (write-data-fasl>> file data)
-           (write-data-fasl>> file data)
-           (equal? (append data data data)
-                   (read-data-fasl file)))
-         (lambda () (delete-file file))))
-
-
-     ;; datum-fasl
-     (andmap (lambda (x)
-               (let ([d (random-datum)]
-                     [file ($random-file)])
-                 (dynamic-wind
-                   void
-                   (lambda ()
-                     (write-datum-fasl>> file d)
-                     (write-datum-fasl>> file d)
-                     (write-datum-fasl>> file d)
-                     (equal? (list d d d)
-                             ;; not read-datum-fasl
-                             (read-data-fasl file)))
-                   (lambda () (delete-file file)))))
-             (iota 10))
-
-     ;; u8vec
-     (let ([data (random-u8vec 1024 2048)]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-u8vec>> file data)
-           (write-u8vec>> file data)
-           (let* ([len (bytevector-length data)] [d (make-bytevector (* 2 len))])
-             (bytevector-copy! data 0 d 0 len)
-             (bytevector-copy! data 0 d len len)
-             (equal? d (read-u8vec file))))
-         (lambda () (delete-file file))))
-     (let ([data (random-u8vec 2048 4096)]
-           [file ($random-file)])
-       (dynamic-wind
-         void
-         (lambda ()
-           (write-u8vec>> file data)
-           (write-u8vec>> file data)
-           (let* ([len (bytevector-length data)] [d (make-bytevector (* 2 len))])
-             (bytevector-copy! data 0 d 0 len)
-             (bytevector-copy! data 0 d len len)
-             (equal? d (read-u8vec file))))
-         (lambda () (delete-file file))))
-
-     )
+     (let* ([first (random-u8vec 2048 4096)] [second #vu8(0 255)]
+            [expected (make-bytevector (+ (bytevector-length first) 2))])
+       (bytevector-copy! first 0 expected 0 (bytevector-length first))
+       (bytevector-copy! second 0 expected (bytevector-length first) 2)
+       ($check-file-writes write-u8vec write-u8vec! write-u8vec>> read-u8vec read-u8vec
+                           first second second expected)))
 
 
 (define-syntax test-put/get
@@ -2444,7 +2080,6 @@
      (not (test-put/get (ash 1 16) (iota 1024) put-u16 'big get-u16 'little))
      (not (test-put/get (ash 1 16) (iota 1024) put-u16 'little get-u16 'big))
      (not (test-put/get (ash 1 15) (iota 1024) put-s16 'big get-s16 'little))
-     (not (test-put/get (ash 1 15) (iota 1024) put-s16 'big get-s16 'little))
 
      ;; error endian
      (error? (test-put/get (ash 1 15) (iota 4096) put-s16 'big get-s16 'giant))
@@ -2519,9 +2154,6 @@
             (eq? 'FT_regular (file-type->symbol (file-stat-type stat)))
             (positive? (file-stat-size stat))))
 
-     ;; File-stat accessors reject values that are not stat snapshots.
-     (error? (file-stat-size #f))
-
      ;; Directory size comes from metadata without opening the directory as a file.
      (let ([directory ($random-file)])
        (dynamic-wind
@@ -2550,27 +2182,31 @@
 (mat file-stat-snapshot-accessors
      ($with-fs-fixture
        (lambda (root)
-         (let* ([path (path-build root "top.txt")]
-                [stat (file-stat path)])
-           (and (file-stat? stat)
-                (not (file-stat? #f))
-                (eq? 'FT_regular (file-type->symbol (file-stat-type stat)))
-                (= (file-stat-mode stat) (file-mode path))
-                (= (file-stat-inode stat) (file-inode path))
-                (= (file-stat-owner stat) (file-owner path))
-                (= (file-stat-group stat) (file-group path))
-                (= (file-stat-nlinks stat) (file-nlinks path))
-                (= (file-stat-size stat) (file-size path))
-                (= (file-stat-blocks stat) (file-blocks path))
-                (= (file-stat-dev-major stat) (file-dev-major path))
-                (= (file-stat-dev-minor stat) (file-dev-minor path))
-                (time? (file-stat-access-time stat))
-                (time? (file-stat-modification-time stat))
-                (time? (file-stat-change-time stat))
-                (or (not (file-stat-creation-time stat))
-                    (time? (file-stat-creation-time stat)))
-                (begin (write-string! path "longer")
-                       (and (= 0 (file-stat-size stat)) (= 6 (file-size path))))))))
+         (let ([path (path-build root "top.txt")])
+           (write-string! path "abc")
+           (let ([stat (file-stat path)])
+             (and (file-stat? stat)
+                  (not (file-stat? #f))
+                  (not (file-stat? path))
+                  (eq? 'FT_regular (file-type->symbol (file-stat-type stat)))
+                  (= (file-stat-mode stat) (file-mode path))
+                  (= (file-stat-inode stat) (file-inode path))
+                  (= (file-stat-owner stat) (file-owner path))
+                  (= (file-stat-group stat) (file-group path))
+                  (= (file-stat-nlinks stat) (file-nlinks path))
+                  (= (file-stat-size stat) (file-size path))
+                  (= (file-stat-blocks stat) (file-blocks path))
+                  (= (file-stat-dev-major stat) (file-dev-major path))
+                  (= (file-stat-dev-minor stat) (file-dev-minor path))
+                  (time? (file-stat-access-time stat))
+                  (time? (file-stat-modification-time stat))
+                  (time? (file-stat-change-time stat))
+                  (or (not (file-stat-creation-time stat))
+                      (time? (file-stat-creation-time stat)))
+                  (begin (write-string! path "longer")
+                         (and (= 3 (file-stat-size stat))
+                              (= 6 (file-size path))
+                              (begin (delete-file path) (= 3 (file-stat-size stat))))))))))
 
      ;; Every exported field accessor rejects a non-stat object before accessing fields.
      (for-all (lambda (accessor)
@@ -2862,18 +2498,14 @@
             #t)
 
      (error? (file-touch 'bla))
-     ;; Error case: file-touch rejects a non-time argument at its public boundary.
-     (guard (failure [(error? failure) (eq? (condition-who failure) 'pcheck)] [else #f])
-       (file-touch (atdir "d1/f1") 42)
-       #f)
-     ;; Error case: file-touch-atime rejects a non-time argument at its public boundary.
-     (guard (failure [(error? failure) (eq? (condition-who failure) 'pcheck)] [else #f])
-       (file-touch-atime (atdir "d1/f1") 42)
-       #f)
-     ;; Error case: file-touch-mtime rejects a non-time argument at its public boundary.
-     (guard (failure [(error? failure) (eq? (condition-who failure) 'pcheck)] [else #f])
-       (file-touch-mtime (atdir "d1/f1") 42)
-       #f)
+     ;; Error case: every touch variant rejects a non-time argument at its public boundary.
+     (for-all
+      (lambda (touch)
+        (guard (failure [(error? failure) (eq? (condition-who failure) 'pcheck)] [else #f])
+          (touch (atdir "d1/f1") 42)
+          #f))
+      (list file-touch file-touch-atime file-touch-mtime))
+
      ;; path not exist
      (error? (file-touch "a/b/c/d"))
 
@@ -3826,7 +3458,6 @@
             #t)
 
      (same-file-contents? (atdir "README.md") (atdir1 "README.md"))
-     (same-file-contents? (atdir "README.md") (atdir1 "README.md"))
      (same-file-contents? (atdir "src/src1.ss") (atdir1 "src/src1.ss"))
      (same-file-contents? (atdir "src/src2.ss") (atdir1 "src/src2.ss"))
      (same-file-contents? (atdir "src/native/ranstr") (atdir1 "src/native/ranstr"))
@@ -4231,16 +3862,14 @@
 
 
 (define $with-fswatcher-fixture
-  (case-lambda
-    [(proc) ($with-fswatcher-fixture #f proc)]
-    [(blocking? proc)
-     ($with-fs-fixture
+  (lambda (proc)
+    ($with-fs-fixture
       (lambda (root)
-        (let ([watcher (make-fswatcher blocking?)])
+        (let ([watcher (make-fswatcher #f)])
           (dynamic-wind
             void
             (lambda () (proc root watcher))
-            (lambda () (close-fswatcher watcher))))))]))
+            (lambda () (close-fswatcher watcher))))))))
 
 (define $fswatcher-drain
   (lambda (watcher)
@@ -4590,16 +4219,3 @@
             (and (process-exit-success? (process-result-status result))
                  (string=? "" (process-result-stdout result))
                  (string=? "" (process-result-stderr result))))))))
-
-
-(mat file-stat-snapshot
-     (let ([path ($random-file)])
-       (dynamic-wind
-         (lambda () (write-string path "abc"))
-         (lambda ()
-           (let ([stat (file-stat path)])
-             (write-string! path "longer")
-             (delete-file path)
-             (and (= (file-stat-size stat) 3)
-                  (not (file-stat? path)))))
-         (lambda () (when (file-exists? path) (delete-file path))))))

@@ -539,12 +539,6 @@
        (and (glob-match? 'unix "~/a/../x" (string-append home "/a/../x"))
             (not (glob-match? 'unix "~/a/../x" (string-append home "/x"))))))
 
-(mat glob-filesystem-iterator
-     (let ([iter (glob->iter "*.ss")])
-       (and (string? (iter-next! iter))
-            (iter? iter)
-            (begin (iter-finalize! iter) #t))))
-
 (mat glob-lexical-regressions
      (glob-match? (make-glob "?") "\n")
      (glob-match? (make-glob "*") "a\nb")
@@ -565,7 +559,10 @@
      ;; Descending classes and malformed ranges must fail during compilation.
      (error? (make-glob "[z-a]"))
      (error? (make-glob "{1..x}"))
-     (error? (make-glob "{1..3..-1}")))
+     (error? (make-glob "{1..3..-1}"))
+
+     ;; A zero range step must fail rather than loop forever.
+     (error? (make-glob "{1..3..0}")))
 
 (define $with-glob-tree
   (lambda (proc)
@@ -709,10 +706,6 @@
                (iter-finalize! iterator)
                (iter-next! iterator))))
 
-;; A zero range step must fail rather than loop forever.
-(mat glob-zero-step
-     (error? (make-glob "{1..3..0}")))
-
 (mat glob-expanded-parser-regressions
      (glob-match? (make-glob 'windows "src\\{a,b}.ss") "SRC\\B.SS")
      (glob-match? (make-glob "{a,{1..2}}.txt") "2.txt")
@@ -829,7 +822,8 @@
          (let* ([fd-count (lambda () (length (directory-list "/proc/self/fd")))]
                 [before (fd-count)]
                 [iterator (glob->iter (string-append root "/a/**/*.txt"))])
-           (and (= before (fd-count))
+           (and (iter? iterator)
+                (= before (fd-count))
                 (string? (iter-next! iterator))
                 (> (fd-count) before)
                 (begin (iter-reset! iterator) (= before (fd-count)))

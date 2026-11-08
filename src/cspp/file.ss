@@ -292,88 +292,79 @@
                                       [else ($err-bad-write-mode who mode)])])
                             ($with-port (open-file-output-port path op (buffer-mode block)
                                                                (if bin? #f (current-transcoder)))
-                              (lambda (p) (writer p)))))])
-                (if (file-exists? path)
-                    (if (eq? mode 'error)
-                        ($err-file-exists who path)
-                        (if (file-regular? path)
-                            (go mode)
-                            ($err-file-not-regular who path)))
-                    (go mode))))))
+                              writer)))])
+                (cond [(not (file-exists? path)) (go mode)]
+                      [(eq? mode 'error) ($err-file-exists who path)]
+                      [(file-regular? path) (go mode)]
+                      [else ($err-file-not-regular who path)])))))
 
-  ;; a newline is added after writing each string
+  ;; A newline is added after writing each string or text datum.
   (define $write-lines
     (lambda (who path mode lines)
       (pcheck ([all-strings? lines])
-              (let ([do-write (lambda (p)
-                                (let loop ([lines lines])
-                                  (unless (null? lines)
-                                    (put-string p (car lines))
-                                    (newline p)
-                                    (loop (cdr lines)))))])
-                ($write-helper who path mode #f do-write)))))
+        ($write-helper who path mode #f
+          (lambda (port)
+            (let loop ([lines lines])
+              (unless (null? lines)
+                (put-string port (car lines))
+                (newline port)
+                (loop (cdr lines)))))))))
+
   (define $write-string
     (lambda (who path mode str)
-      (pcheck-string
-       (str)
-       (let ([do-write (lambda (p)
-                         (put-string p str))])
-         ($write-helper who path mode #f do-write)))))
+      (pcheck-string (str)
+        ($write-helper who path mode #f (lambda (port) (put-string port str))))))
+
   (define $write-chars
     (lambda (who path mode chars)
       (pcheck ([all-chars? chars])
-              (let ([do-write (lambda (p)
-                                (let loop ([chars chars])
-                                  (unless (null? chars)
-                                    (put-char p (car chars))
-                                    (loop (cdr chars)))))])
-                ($write-helper who path mode #f do-write)))))
-  ;; write a list of datum
+        ($write-helper who path mode #f
+          (lambda (port)
+            (let loop ([chars chars])
+              (unless (null? chars)
+                (put-char port (car chars))
+                (loop (cdr chars)))))))))
+
   (define $write-data
     (lambda (who path mode data)
-      (pcheck-list
-       (data)
-       (let ([do-write (lambda (p)
-                         (let loop ([data data])
-                           (unless (null? data)
-                             (put-datum p (car data))
-                             ;; for better readability
-                             (newline p)
-                             (loop (cdr data)))))])
-         ($write-helper who path mode #f do-write)))))
-  ;; write a single datum
+      (pcheck-list (data)
+        ($write-helper who path mode #f
+          (lambda (port)
+            (let loop ([data data])
+              (unless (null? data)
+                (put-datum port (car data))
+                (newline port)
+                (loop (cdr data)))))))))
+
   (define $write-datum
     (lambda (who path mode datum)
       (define writable?
         (lambda (x)
           (not (or (procedure? x) (hashtable? x) (port? x)))))
       (pcheck ([writable? datum])
-              (let ([do-write (lambda (p)
-                                (put-datum p datum)
-                                (newline p))])
-                ($write-helper who path mode #f do-write)))))
-  ;; write a list of datum in fasl format
+        ($write-helper who path mode #f
+          (lambda (port)
+            (put-datum port datum)
+            (newline port))))))
+
   (define $write-data-fasl
     (lambda (who path mode data)
-      (pcheck-list
-       (data)
-       (let ([do-write (lambda (p)
-                         (let loop ([data data])
-                           (unless (null? data)
-                             (fasl-write (car data) p)
-                             (loop (cdr data)))))])
-         ($write-helper who path mode #t do-write)))))
-  ;; write a single datum in fasl format
+      (pcheck-list (data)
+        ($write-helper who path mode #t
+          (lambda (port)
+            (let loop ([data data])
+              (unless (null? data)
+                (fasl-write (car data) port)
+                (loop (cdr data)))))))))
+
   (define $write-datum-fasl
     (lambda (who path mode datum)
-      (let ([do-write (lambda (p) (fasl-write datum p))])
-        ($write-helper who path mode #t do-write))))
+      ($write-helper who path mode #t (lambda (port) (fasl-write datum port)))))
+
   (define $write-u8vec
     (lambda (who path mode u8vec)
-      (pcheck-bytevector
-       (u8vec)
-       (let ([do-write (lambda (p) (put-bytevector p u8vec))])
-         ($write-helper who path mode #t do-write)))))
+      (pcheck-bytevector (u8vec)
+        ($write-helper who path mode #t (lambda (port) (put-bytevector port u8vec))))))
 
   ;; error by default when file already exist
   #|proc:write-lines
@@ -2091,19 +2082,10 @@
        (pcheck ([procedure? pred] [$filename? path] [boolean? follow-link?])
          (let ([res #f])
            (walk-files (lambda (dir dirs files)
-                       (let lp1 ([ds dirs])
-                         (if (null? ds)
-                             (let lp2 ([fs files])
-                               (unless (null? fs)
-                                 (if (pred (car fs))
-                                     (begin (set! res (car fs))
-                                            ;; use #f to end the walk
-                                            #f)
-                                     (lp2 (cdr fs)))))
-                             (if (pred (car ds))
-                                 (begin (set! res (car ds))
-                                        #f)
-                                 (lp1 (cdr ds))))))
+                         (let ([found (or (find pred dirs) (find pred files))])
+                           (if found
+                               (begin (set! res found) #f)
+                               #t)))
                        path follow-link?)
            res))]))
 
@@ -2307,38 +2289,34 @@
 
   (define $link/copy-helper
     (lambda (who link/copy-what overwrite?)
-      (case-lambda
-        [(src dest) (($link/copy-helper who link/copy-what overwrite?) src dest src #f)]
-        [(src dest name-src)
-         (($link/copy-helper who link/copy-what overwrite?) src dest name-src #f)]
-        [(src dest name-src source-path)
-         (if (file-exists? dest #f)
-             (let ([overwrite/error
-                    (lambda (dest)
-                      (if (file-exists? dest #f)
-                          (if overwrite?
-                              (begin
-                                (when (and source-path
-                                           (or ($same-file-entry? who source-path dest)
-                                               ($same-file-entry? who name-src dest)))
-                                  ($err-file who dest "source and destination are the same file"))
-                                ;; Commit only a complete replacement; do not follow dest links.
-                                ($replace-file-entry who dest
-                                  (lambda (temporary) (link/copy-what src temporary))))
-                              ($err-file-exists who dest))
-                          (link/copy-what src dest)))])
-               (if (file-directory? dest #t)
-                   (let* ([basename (or (path-basename
-                                        (if source-path ($parse-file-path who name-src)
-                                            (path-parse 'unix name-src)))
-                                        (errorf who "source has no basename for a directory destination: ~a"
-                                                name-src))]
-                          [newd (path-build dest basename)])
-                     (if (file-directory? newd #t)
-                         ($err-directory-exists who newd)
-                         (overwrite/error newd)))
-                   (overwrite/error dest)))
-             (link/copy-what src dest))])))
+      (lambda (src dest name-src source-path)
+        (if (file-exists? dest #f)
+            (let ([overwrite/error
+                   (lambda (dest)
+                     (if (file-exists? dest #f)
+                         (if overwrite?
+                             (begin
+                               (when (and source-path
+                                          (or ($same-file-entry? who source-path dest)
+                                              ($same-file-entry? who name-src dest)))
+                                 ($err-file who dest "source and destination are the same file"))
+                               ;; Commit only a complete replacement; do not follow dest links.
+                               ($replace-file-entry who dest
+                                 (lambda (temporary) (link/copy-what src temporary))))
+                             ($err-file-exists who dest))
+                         (link/copy-what src dest)))])
+              (if (file-directory? dest #t)
+                  (let* ([basename (or (path-basename
+                                       (if source-path ($parse-file-path who name-src)
+                                           (path-parse 'unix name-src)))
+                                       (errorf who "source has no basename for a directory destination: ~a"
+                                               name-src))]
+                         [newd (path-build dest basename)])
+                    (if (file-directory? newd #t)
+                        ($err-directory-exists who newd)
+                        (overwrite/error newd)))
+                  (overwrite/error dest)))
+            (link/copy-what src dest)))))
 
   ;; Symlinks can also have hard links.
   (define $file-link

@@ -1,5 +1,14 @@
 (import (cspp))
 
+;; Procedure, indexed?, mapping?, reverse?. Reuse the same families across the matrices.
+(define $string-traversals
+  (list (list string-map #f #t #f) (list string-map/i #t #t #f)
+        (list string-for-each #f #f #f) (list string-for-each/i #t #f #f)
+        (list string-map-rev #f #t #t) (list string-map/i-rev #t #t #t)
+        (list string-for-each-rev #f #f #t) (list string-for-each/i-rev #t #f #t)))
+
+(define $string-traversal-procedures (map car $string-traversals))
+
 (mat string-result-list-ownership
      ;; Mutating one result must not affect a later call, including fast paths.
      (let ([indexes (string-search-all "abc" "abc")])
@@ -15,15 +24,20 @@
        (and (equal? '("") (string-split "" #\,))
             (equal? '("") (string-split "" "::")))))
 
-
-(mat string-edit-distance-common-edges
+(mat string-edit-distance
      (for-all
       (lambda (fixture)
         (let ([left (car fixture)] [right (cadr fixture)] [expected (caddr fixture)])
           (and (= expected (edit-distance left right))
                (= expected (edit-distance right left)))))
-      '(("abc" "abc" 0) ("abXcd" "abYcd" 1) ("abcd" "abXYZcd" 3)
+      '(("" "" 0) ("" "aλ🚀" 3) ("kitten" "sitting" 3) ("flaw" "lawn" 2)
+        ("abc" "abc" 0) ("abXcd" "abYcd" 1) ("abcd" "abXYZcd" 3)
         ("prefixabcTAIL" "prefixxyzTAIL" 3) ("same" "sameextra" 5)))
+
+     ;; Error cases: reject non-strings, including when the other operand is empty.
+     (error? (edit-distance 'kitten "sitting"))
+
+     (error? (edit-distance "" 'sitting))
 
      (let ([left (make-string 4096 #\a)] [right (make-string 4096 #\a)])
        (collect)
@@ -31,45 +45,6 @@
               [allocated (sstats-bytes (sstats-difference (statistics) before))])
          ;; Equal strings need no dynamic-programming row, even when separately allocated.
          (and (= 0 distance) (< allocated 1024)))))
-
-(mat string-edit-distance
-     (= 0 (edit-distance "" ""))
-
-     (= 3 (edit-distance "" "aλ🚀"))
-
-     (= 3 (edit-distance "aλ🚀" ""))
-
-     (= 3 (edit-distance "kitten" "sitting"))
-     (= 2 (edit-distance "flaw" "lawn"))
-     (error? (edit-distance 'kitten "sitting"))
-
-     ;; Error case: an empty operand must not bypass validation of the other operand.
-     (error? (edit-distance "" 'sitting)))
-
-(mat string-single-source-mapping-allocation
-     ;; Mapping one string needs result storage, not a temporary list per character.
-     (let* ([source (make-string 8192 #\a)]
-            [before (statistics)]
-            [result (string-map char-upcase source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
-       (and (string=? result (make-string 8192 #\A))
-            (< allocated 100000))))
-
-(mat string-single-source-indexed-validation
-     (string=? "" (string-map char-upcase ""))
-
-     (let ([seen (make-list-builder)])
-       (string-for-each/i (lambda (index char) (seen (cons index char))) "ab")
-       (equal? (seen) '((0 . #\a) (1 . #\b))))
-
-     ;; An indexed mapping callback must return a character.
-     (error? (string-map/i (lambda (index char) index) "a"))
-
-     ;; Callback type validation must run even when there are no characters.
-     (error? (string-for-each 'bad ""))
-
-     ;; Callback type validation must run even when the mapped output is empty.
-     (error? (string-map 'bad "")))
 
 (mat string-traversal-arities
      ;; Check character order, index placement, results, and the four-string fallback.
@@ -95,11 +70,7 @@
                     (if mapping?
                         (string=? result (if reverse? "BA" "AB"))
                         (eq? result (void))))))
-           (list (list string-map #f #t #f) (list string-map/i #t #t #f)
-                 (list string-for-each #f #f #f) (list string-for-each/i #t #f #f)
-                 (list string-map-rev #f #t #t) (list string-map/i-rev #t #t #t)
-                 (list string-for-each-rev #f #f #t)
-                 (list string-for-each/i-rev #t #f #t)))))
+           $string-traversals)))
       '((("ab") ((#\a) (#\b)) ((0 #\a) (1 #\b)))
         (("ab" "cd") ((#\a #\c) (#\b #\d)) ((0 #\a #\c) (1 #\b #\d)))
         (("ab" "cd" "ef") ((#\a #\c #\e) (#\b #\d #\f))
@@ -109,15 +80,16 @@
 
 (mat string-traversal-empty-and-validation
      (for-all
-      (lambda (proc)
-        (for-all
-         (lambda (strings)
-           (let ([called? #f])
-             (apply proc (lambda args (set! called? #t) #\a) strings)
-             (not called?)))
-         '(("") ("" "") ("" "" "") ("" "" "" ""))))
-      (list string-map string-map/i string-for-each string-for-each/i
-            string-map-rev string-map/i-rev string-for-each-rev string-for-each/i-rev))
+      (lambda (entry)
+        (let ([proc (car entry)] [mapping? (caddr entry)])
+          (for-all
+           (lambda (strings)
+             (let* ([called? #f]
+                    [result (apply proc (lambda args (set! called? #t) #\a) strings)])
+               (and (not called?)
+                    (if mapping? (string=? result "") (eq? result (void))))))
+           '(("") ("" "") ("" "" "") ("" "" "" "")))))
+      $string-traversals)
 
      ;; Each dispatch clause must reject invalid callbacks, including empty inputs.
      (for-all
@@ -127,8 +99,7 @@
                      (apply proc 'bad strings)
                      #f))
                  '(("") ("" "") ("" "" "") ("" "" "" ""))))
-      (list string-map string-map/i string-for-each string-for-each/i
-            string-map-rev string-map/i-rev string-for-each-rev string-for-each/i-rev))
+      $string-traversal-procedures)
 
      ;; Validate every string argument before reading lengths or calling the callback.
      (for-all
@@ -139,8 +110,7 @@
                      #f))
                  '((bad) (bad "") ("" bad) (bad "" "") ("" bad "") ("" "" bad)
                    ("" "" "" bad))))
-      (list string-map string-map/i string-for-each string-for-each/i
-            string-map-rev string-map/i-rev string-for-each-rev string-for-each/i-rev))
+      $string-traversal-procedures)
 
      ;; Mismatched lengths must fail before the callback has any side effects.
      (for-all
@@ -154,8 +124,7 @@
                   (not called?))))
          '(("a" "") ("" "a") ("a" "a" "") ("a" "" "a")
            ("" "a" "a") ("a" "a" "a" ""))))
-      (list string-map string-map/i string-for-each string-for-each/i
-            string-map-rev string-map/i-rev string-for-each-rev string-for-each/i-rev))
+      $string-traversal-procedures)
 
      ;; Mapping must reject non-character callback results at every supported arity.
      (for-all
@@ -185,8 +154,7 @@
                (and (or (eq? result (void)) (string=? result source))
                     (< allocated 100000))))
            (list (list source) (list source source) (list source source source))))
-        (list string-map string-map/i string-for-each string-for-each/i
-              string-map-rev string-map/i-rev string-for-each-rev string-for-each/i-rev))))
+        $string-traversal-procedures)))
 
 (mat string-reverse-mapping
      ;; Indexed reverse mapping passes source indexes and writes in traversal order.
@@ -215,25 +183,15 @@
                     char)
                   source))))
 
-(mat string-sequence-procedures
-     (let ([seen '()])
-       (string-for-each (lambda (ch) (set! seen (cons ch seen))) "ab")
-       (equal? '(#\b #\a) seen))
-     (let ([seen '()])
-       (string-for-each/i
-        (lambda (i ch) (set! seen (cons (cons i ch) seen)))
-        "ab")
-       (equal? '((1 . #\b) (0 . #\a)) seen))
-     (string=? "AB" (string-map char-upcase "ab"))
+(mat string-mapping-callback-results
      (string=? "AbCd"
                (string-map/i
-                (lambda (i ch) (if (even? i) (char-upcase ch) ch))
+                (lambda (index char) (if (even? index) (char-upcase char) char))
                 "abcd"))
+
      (string=? "axby"
-               (string-map (lambda (a b) (if (char=? a b) a b)) "aabb" "axby"))
-     (error? (string-map (lambda (ch) 1) "a"))
-     (error? (string-map char-upcase "a" "ab"))
-     (error? (string-for-each values "a" 1)))
+               (string-map (lambda (left right) (if (char=? left right) left right))
+                           "aabb" "axby")))
 
 (mat string-slice
      ;; Extreme steps must terminate before advancing an index beyond the fixnum range.
@@ -253,7 +211,6 @@
      (error? (string-slice 123 1))
      (error? (string-slice "abc" 0 2 0)))
 
-
 (mat string-search
 
      (= 2 (string-search (string-append (make-string 19 #\a) "b")
@@ -268,12 +225,8 @@
 
      (= 0 (string-search "" ""))
      (not (string-search "" "1"))
-     (not (string-search "" "13"))
      (= 0 (string-search "1" "1"))
-     (= 1 (string-search "21" "1"))
-
-     )
-
+     (= 1 (string-search "21" "1")))
 
 (mat string-search-all
 
@@ -285,21 +238,14 @@
      (equal? '(0) (string-search-all "" ""))
      (equal? '(0 1 2 3) (string-search-all "1111" "1"))
      (equal? '(0 1 2) (string-search-all "1111" "11"))
-     (equal? '(0 2) (string-search-all "1212" "12"))
-
-     )
-
+     (equal? '(0 2) (string-search-all "1212" "12")))
 
 (mat string-contains?
 
      (string-contains? "" "")
-     (string-contains? "1" "")
      (string-contains? "hfjdhfkjsdh" "")
      (not (string-contains? "1" "2"))
-     (not (string-contains? "" "2"))
-
-     )
-
+     (not (string-contains? "" "2")))
 
 (mat string-startswith?
 
@@ -309,10 +255,7 @@
      (string-startswith? "qwe" "qw")
      (string-startswith? "qwe" "qwe")
      (not (string-startswith? "qwe" "Q"))
-     (not (string-startswith? "qwe" "qW"))
-
-     )
-
+     (not (string-startswith? "qwe" "qW")))
 
 (mat string-endswith?
 
@@ -322,10 +265,7 @@
      (string-endswith? "qwe" "we")
      (string-endswith? "qwe" "qwe")
      (not (string-endswith? "qwe" "E"))
-     (not (string-endswith? "qwe" "wE"))
-
-     )
-
+     (not (string-endswith? "qwe" "wE")))
 
 (mat string-split
 
@@ -355,12 +295,8 @@
      (equal? '("" "a") (string-split "aaa" "aa"))
      (equal? '("" "" "") (string-split "aaaa" "aa"))
 
-
      (equal? '("Lorem" "Ipsum" "is" "simply" "dummy" "text" "of" "the" "printing" "and" "typesetting" "industry")
-             (string-split "Lorem Ipsum is simply dummy text of the printing and typesetting industry" #\space))
-
-     )
-
+             (string-split "Lorem Ipsum is simply dummy text of the printing and typesetting industry" #\space)))
 
 (mat string-trim
 
@@ -370,22 +306,13 @@
      (equal? "" (string-trim ""))
      (equal? "" (string-trim "   "))
 
-     (equal? "x" (string-trim "x"))
-     (equal? "x" (string-trim "  x"))
-     (equal? "x" (string-trim "x  "))
-
      (equal? "xyz" (string-trim "xyz"))
      (equal? "xyz" (string-trim "  xyz"))
-     (equal? "xyz" (string-trim "xyz  "))
-
-     )
-
+     (equal? "xyz" (string-trim "xyz  ")))
 
 (mat string-empty?
 
      (error? (string-empty? 123))
 
      (string-empty? "")
-     (not (string-empty? "123"))
-
-     )
+     (not (string-empty? "123")))

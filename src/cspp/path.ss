@@ -780,10 +780,6 @@
       (pcheck ([path? path1 path2])
               ($root=? path1 path2))))
 
-  (define $make-relative-like
-    (lambda (flavor components trailing?)
-      ($make-path-object flavor 'relative #f components trailing?)))
-
   #|proc:path-absolute
   The `path-absolute` procedure makes `p` absolute by joining it to absolute
   `base`, then normalizing lexically.
@@ -834,9 +830,9 @@
                   (lambda (base-rest p-rest)
                     (when (and (pair? base-rest) (string=? (car base-rest) ".."))
                       ($err 'path-relative-to "cannot relativize from an unresolved parent path"))
-                    ($make-relative-like ($path-flavor p)
-                                         (append ($make-ups base-rest) p-rest)
-                                         ($path-trailing? p)))))))
+                    ($make-path-object ($path-flavor p) 'relative #f
+                                       (append ($make-ups base-rest) p-rest)
+                                       ($path-trailing? p)))))))
 
   #|proc:path-starts-with-user-home?
   Return whether path object `p` is unrooted and its first component is exactly `~`.
