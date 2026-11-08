@@ -965,6 +965,57 @@
           (file-hidden? (path-build root "top.txt") 'invalid)
           #f))))
 
+(mat file-copy-modes-preserve-inherited-group-bit
+     (let* ([getgroups (foreign-procedure "getgroups" (int u8*) int)]
+            [chown (foreign-procedure "chown" (string int unsigned-32) int)]
+            [count (getgroups 0 (make-bytevector 0))]
+            [groups (make-bytevector (* 4 count))])
+       (unless (= count (getgroups count groups)) (error 'fixture "cannot read groups"))
+       (let ([group (let loop ([index 0])
+                      (and (< index count)
+                           (let ([group (bytevector-u32-native-ref groups (* 4 index))])
+                             (if (= group (getegid)) (loop (+ index 1)) group))))])
+         ;; User namespaces and a distinct supplementary group are needed for this fixture.
+         (or (not group)
+             (not (guard (failure [else #f])
+                    (let ([probe (capture-process "unshare" "--map-root-user" "--map-auto"
+                                                 "--setgroups" "allow" "--keep-caps" "true"
+                                                 :timeout 5000 :stdout capture :stderr capture)])
+                      (process-exit-success? (process-result-status probe)))))
+             ($with-fs-fixture
+              (lambda (root)
+                (unless (= 0 (chown root -1 group)) (error 'fixture "cannot change group"))
+                (chmod root #o2777)
+                (let ([result
+                       (capture-process "unshare" "--map-root-user" "--map-auto"
+                                        "--setgroups" "allow" "--keep-caps"
+                                        "../cspp" "--script=file-mode-process.ss"
+                                        (path-build (current-directory) root)
+                                        :timeout 5000 :stdout capture :stderr capture)])
+                  (and (process-exit-success? (process-result-status result))
+                       (string=? "" (process-result-stdout result))
+                       (string=? "" (process-result-stderr result))))))))))
+
+(mat file-copy-modes-restrictive-directory-aliases
+     (for-all
+      (lambda (copy)
+        (for-all
+         (lambda (mode)
+           ($with-fs-fixture
+            (lambda (root)
+              (let ([source (path-build root "source")]
+                    [dest (path-build root "dest")])
+                (mkdir source)
+                (mkdirs (path-build dest "child"))
+                (dynamic-wind
+                  (lambda () (chmod source mode))
+                  (lambda ()
+                    (copy source (path-build dest "child/.."))
+                    (= mode (file-mode dest)))
+                  (lambda () (chmod source #o700) (chmod dest #o700)))))))
+         '(#o000 #o400 #o2000 #o2400)))
+      (list file-copymode file-copymeta)))
+
 (mat file-copymeta-restrictive-directory-aliases
      (for-all
       (lambda (suffix)

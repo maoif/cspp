@@ -2175,7 +2175,8 @@
 
 
   #|proc:readlink
-  Return the content of a symbolic link.
+  Return the symbolic-link text at path string `path`.
+  Boolean `recursive?` defaults to `#f`.
 
   If `recursive?`, then the dereference continues until a non-symlink target is met,
   and both the target text and the final link's parent directory are returned.
@@ -2471,16 +2472,25 @@
 
 ;;;; copies and moves
 
+  (define $copy-file-mode
+    (let ([copy (foreign-procedure "cspp_file_copy_mode" (string unsigned-32) scheme-object)])
+      (lambda (who path mode)
+        (let ([result (copy path mode)])
+          (when (string? result) ($err-file who path result))))))
+
   #|proc:file-copymode
-  Copy the permission bits from `src` to `dest`.
+  Copy permission bits from path string `src` to path string `dest`.
+  Return unspecified values.
 
   If `src` or `dest` is a symlink, it is always dereferenced.
+  An already matching mode is left unchanged. If the filesystem cannot retain all copied
+  bits, including set-group-ID, raise an I/O error identifying `dest`.
   |#
   (define-who file-copymode
     (lambda (src dest)
       (pcheck ([$filename? src dest] [file-exists? src dest])
               (let ([m (get-mode src #t)])
-                (chmod dest m)))))
+                ($copy-file-mode who dest m)))))
 
 
   #|proc:file-copymeta
@@ -2491,6 +2501,8 @@
   exist. Return unspecified values; ownership, creation times, and xattrs are not copied.
   Timestamps are applied before permission bits, so restrictive directory modes do not
   prevent completing the copy through a pathname such as `directory/.`.
+  An already matching mode is left unchanged. Failure to retain all copied permission bits
+  raises an I/O error identifying `dest`; timestamps may already have been copied.
   |#
   (define-who file-copymeta
     (case-lambda
@@ -2507,7 +2519,7 @@
                  ($file-touch who dest atime mtime follow-link-dest? #f)
                  (when follow-link-dest?
                    ;; if `dest` is a symlink, changing its own mode has no effect
-                   (chmod dest mode))))]))
+                   ($copy-file-mode who dest mode))))]))
 
 
   (define $copy-port
@@ -2634,9 +2646,9 @@
   (define $apply-copy-metadata
     (lambda (who dest stat)
       (let ([link? (eq? (file-type->symbol (file-stat-type stat)) 'FT_symlink)])
-        (unless link? (chmod dest (file-stat-mode stat)))
         ($file-touch who dest (file-stat-access-time stat) (file-stat-modification-time stat)
-                     (not link?) #f))))
+                     (not link?) #f)
+        (unless link? ($copy-file-mode who dest (file-stat-mode stat))))))
 
   (define $copy-tree-file
     (lambda (src dest)
@@ -2785,6 +2797,8 @@
   Optional `copy` has signature `(lambda (source-path destination-path) ...)` and controls
   copying individual files and symlinks, including their metadata; return values are ignored.
   A successful rename bypasses `copy`. Source entries are removed only after copying succeeds.
+  The default copier verifies restored permission bits; failure to retain them raises an I/O
+  error before source removal. An already matching destination mode is left unchanged.
   Moving an entry onto itself raises an error before calling `copy`.
   A trailing separator on a source symlink is ignored: the link itself is moved.
   Filesystem roots and final `.` or `..` components are rejected before any changes.

@@ -21,6 +21,7 @@ ptr cspp_readlink(const char *path);
 ptr cspp_file_symbolic_link(const char *path);
 ptr cspp_file_regular(const char *path);
 ptr cspp_file_expand_pathname(const char *path);
+ptr cspp_file_copy_mode(const char *path, unsigned int mode);
 ptr cspp_realpath(const char *path);
 ptr cspp_link(const char *src, const char *dest);
 ptr cspp_symlink(const char *src, const char *dest);
@@ -171,6 +172,45 @@ ptr cspp_statx(const char *path, int follow_link) {
   return v;
 }
 
+/* O_PATH needs no read access to the entry. Keep that reference for verification:
+ * a successful chmod may remove search permission needed by the original spelling,
+ * and Linux may silently drop SGID outside the caller's groups. Same-file operations
+ * are serialized by the caller, so chmod's pathname still selects this entry. */
+ptr cspp_file_copy_mode(const char *path, unsigned int mode) {
+  char *expanded = expand_pathname(path);
+  if (expanded == NULL) { errno = ENOMEM; return errno_str(); }
+  int fd = open(expanded, O_PATH | O_CLOEXEC);
+  if (fd == -1) {
+    int code = errno;
+    free(expanded);
+    errno = code;
+    return errno_str();
+  }
+  struct statx metadata;
+  int code = 0;
+  if (statx(fd, "", AT_EMPTY_PATH, STATX_MODE, &metadata) == -1) {
+    code = errno;
+  } else if (!(metadata.stx_mask & STATX_MODE)) {
+    code = EOPNOTSUPP;
+  } else if ((metadata.stx_mode & 07777) != mode) {
+    /* Even a redundant chmod can discard inherited SGID. */
+    if (chmod(expanded, (mode_t)mode) == -1) {
+      code = errno;
+    } else if (statx(fd, "", AT_EMPTY_PATH, STATX_MODE, &metadata) == -1) {
+      code = errno;
+    } else if (!(metadata.stx_mask & STATX_MODE)) {
+      code = EOPNOTSUPP;
+    } else if ((metadata.stx_mode & 07777) != mode) {
+      code = EPERM;
+    }
+  }
+  if (close(fd) == -1 && code == 0) code = errno;
+  free(expanded);
+  if (code == 0) return Strue;
+  errno = code;
+  return errno_str();
+}
+
 ptr cspp_realpath(const char *path) {
   char *expanded = expand_pathname(path);
   char *resolved = realpath(expanded, NULL);
@@ -192,11 +232,17 @@ ptr cspp_realpath(const char *path) {
 static ptr file_has_type(const char *path, mode_t type, int follow_link) {
   char *expanded = expand_pathname(path);
   if (expanded == NULL) { errno = ENOMEM; return errno_str(); }
-  struct stat metadata;
-  int result = follow_link ? stat(expanded, &metadata) : lstat(expanded, &metadata);
+  /* Request only the type; unrelated sizes/inodes must not overflow on 32-bit hosts. */
+  struct statx metadata;
+  int result = statx(AT_FDCWD, expanded, follow_link ? 0 : AT_SYMLINK_NOFOLLOW,
+                    STATX_TYPE, &metadata);
   int code = errno;
   free(expanded);
-  if (result == 0) return Sboolean((metadata.st_mode & S_IFMT) == type);
+  if (result == 0) {
+    if (metadata.stx_mask & STATX_TYPE) return Sboolean((metadata.stx_mode & S_IFMT) == type);
+    errno = EOPNOTSUPP;
+    return errno_str();
+  }
   if (code == ENOENT || code == ENOTDIR) return Sfalse;
   errno = code;
   return errno_str();
