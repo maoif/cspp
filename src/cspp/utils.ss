@@ -805,8 +805,10 @@
                      (cons `(,(car flags) . ,mask) e)))))))
       (syntax-case exp ()
         [(_k name (flag mask) ...)
-         (and (identifier? #'name) (andmap identifier? #'(flag ...)))
-         #'(_k name $flag-integer? (flag mask) ...)]
+         (begin
+           (unless (and (identifier? #'name) (andmap identifier? #'(flag ...)))
+             (syntax-error exp "expected a name identifier and (flag-identifier mask) pairs"))
+           #'(_k name $flag-integer? (flag mask) ...))]
         [(_k name mask? (flag mask) ...)
          (and (identifier? #'name) (andmap identifier? #'(flag ...)))
          (begin

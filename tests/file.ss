@@ -242,13 +242,13 @@
 (mat file-copytree-bind-aliases
      ;; Mount namespaces may be disabled by the host; the support process owns its mounts.
      (or (not (guard (failure [else #f])
-                (let ([probe (capture-process "unshare" "--map-root-user" "--mount" "true"
+                (let ([probe (process-capture "unshare" "--map-root-user" "--mount" "true"
                                              :timeout 5000 :stdout capture :stderr capture)])
                   (process-exit-success? (process-result-status probe)))))
          ($with-fs-fixture
           (lambda (root)
             (let ([result
-                   (capture-process "unshare" "--map-root-user" "--mount"
+                   (process-capture "unshare" "--map-root-user" "--mount"
                                     "../cspp" "--script=file-bind-process.ss"
                                     (path-build (current-directory) root)
                                     :timeout 5000 :stdout capture :stderr capture)])
@@ -1378,7 +1378,7 @@
          ;; User namespaces and a distinct supplementary group are needed for this fixture.
          (or (not group)
              (not (guard (failure [else #f])
-                    (let ([probe (capture-process "unshare" "--map-root-user" "--map-auto"
+                    (let ([probe (process-capture "unshare" "--map-root-user" "--map-auto"
                                                  "--setgroups" "allow" "--keep-caps" "true"
                                                  :timeout 5000 :stdout capture :stderr capture)])
                       (process-exit-success? (process-result-status probe)))))
@@ -1387,7 +1387,7 @@
                 (unless (= 0 (chown root -1 group)) (error 'fixture "cannot change group"))
                 (chmod root #o2777)
                 (let ([result
-                       (capture-process "unshare" "--map-root-user" "--map-auto"
+                       (process-capture "unshare" "--map-root-user" "--map-auto"
                                         "--setgroups" "allow" "--keep-caps"
                                         "../cspp" "--script=file-mode-process.ss"
                                         (path-build (current-directory) root)
@@ -3396,7 +3396,7 @@
            (write-string (path-build root "source/file.txt") "contents"))
          (lambda ()
            (let ([result
-                  (capture-process "../cspp" "--script=file-copytree-process.ss"
+                  (process-capture "../cspp" "--script=file-copytree-process.ss"
                                    (string-append (path-build root "source") "/")
                                    (path-build root "destination")
                                    :timeout 5000 :stdout capture :stderr capture)])

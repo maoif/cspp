@@ -155,14 +155,18 @@
      ;; A missing first component must not require quadratic root-extraction allocation.
      (let ([allocated
             (lambda (depth)
-              (let* ([pattern (string-append "glob-absent-prefix-" (number->string (get-process-id))
-                                             (apply string-append (make-list depth "/x")))]
-                     ;; Exclude collection work triggered by unrelated earlier test cases.
-                     [collected (collect)]
-                     [before (statistics)]
-                     [results (glob 'unix pattern)])
-                (and (null? results)
-                     (sstats-bytes (sstats-difference (statistics) before)))))])
+              (let ([pattern (string-append "glob-absent-prefix-" (number->string (get-process-id))
+                                            (apply string-append (make-list depth "/x")))])
+                ;; Take the least of three samples to exclude occasional Chez stack-segment
+                ;; allocations. Collect first to exclude work from earlier test cases too.
+                (let sample ([remaining 3] [least #f])
+                  (collect)
+                  (let* ([before (statistics)] [results (glob 'unix pattern)]
+                         [bytes (sstats-bytes (sstats-difference (statistics) before))]
+                         [least (if least (min least bytes) bytes)])
+                    (and (null? results)
+                         (if (= remaining 1) least
+                             (sample (- remaining 1) least)))))))])
        (let ([short (allocated 32)] [long (allocated 256)])
          (and short long (< long (* 12 short))))))
 
