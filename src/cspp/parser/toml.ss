@@ -168,12 +168,17 @@
                      (mutable-table-set-new! table key child)
                      (navigate-table child (cdr path) missing-kind offset))]
                   [(mutable-table? value)
-                   (navigate-table value (cdr path) missing-kind offset)]
+                   (if (and (eq? missing-kind 'dotted)
+                            (eq? (mutable-table-kind value) 'explicit))
+                       (values #f (issue offset "dotted key cannot extend an explicit table"))
+                       (navigate-table value (cdr path) missing-kind offset))]
                   [(mutable-table-array? value)
                    (let ([latest (latest-array-table value)])
-                     (if latest
-                         (navigate-table latest (cdr path) missing-kind offset)
-                         (values #f (issue offset "array of tables is empty"))))]
+                     (if (eq? missing-kind 'dotted)
+                         (values #f (issue offset "dotted key cannot extend an array of tables"))
+                         (if latest
+                             (navigate-table latest (cdr path) missing-kind offset)
+                             (values #f (issue offset "array of tables is empty")))))]
                   [else
                    (values #f (issue offset "value cannot be extended as a table"))])))))
 
@@ -639,7 +644,7 @@
                     (<fail-with> "invalid TOML time"))))))
 
   (define <offset-seconds>
-    (</> (<as> 0 (<char> #\Z))
+    (</> (<as> 0 (<one-of> "Zz"))
          (<bind> (<~> (<one-of> "+-")
                       (fixed-digits 2) (<char> #\:)
                       (fixed-digits 2))

@@ -6,6 +6,10 @@
       (thunk)
       #f)))
 
+(define parser-review-bytes
+  (lambda bytevectors
+    (u8-list->bytevector (apply append (map bytevector->u8-list bytevectors)))))
+
 (define with-parser-file
   (lambda (bytes procedure)
     (let ([path (format "parser-regression-~a.tmp" (random 999999999))])
@@ -310,5 +314,62 @@
 
      ;; Error case: hexadecimal digits must be exact.
      (error? (hexdigits->num '(1.0 2)))
+
+     )
+
+(mat parser-text-conformance-review
+
+     ;; Error case: dotted keys cannot extend explicit tables or arrays of tables.
+     (for-all
+      (lambda (text) (parser-error? (parser-error-from (lambda () (parse-toml text)))))
+      '("[a.b]\nx=1\n[a]\nb.y=2" "[[a.b]]\n[a]\nb.y=2"))
+
+     (let ([value (toml-table-ref (toml-document-root
+                                  (parse-toml "t=1979-05-27t07:32:00z")) "t")])
+       (and (toml-offset-date-time? value)
+            (= 0 (toml-offset-date-time-offset-seconds value))))
+
+     (for-all
+      (lambda (text) (eqv? -0.0 (json5-document-value (parse-json5 text))))
+      '("-0" "-0x0" "-0X00"))
+
+     (for-all
+      (lambda (character)
+        (let ([value (string #\a character #\b)])
+          (and (string=? value (json5-document-value
+                               (parse-json5 (string-append "'" value "'"))))
+               (string=? value (json5-document-value
+                               (parse-json5 (string-append "\"" value "\"")))))))
+      '(#\x2028 #\x2029))
+
+     (for-all
+      (lambda (source) (string=? "a\nb" (parse-scheme-datum source)))
+      '("\"a\rb\"" "\"a\r\nb\"" "\"a\x85;b\"" "\"a\r\x85;b\"" "\"a\x2028;b\""))
+
+     (equal? '(a . #t) (parse-scheme-datum "(a .#t)"))
+
+     (equal? '(a b) (parse-scheme-datum "(a .(b))"))
+
+     (equal? '(a quote b) (parse-scheme-datum "(a .'b)"))
+
+     (equal? '(a . "x") (parse-scheme-datum "(a .\"x\")"))
+
+     ;; Error case: dot must still have a lexical delimiter.
+     (parser-error? (parser-error-from (lambda () (parse-scheme-datum "(a .b)"))))
+
+     ;; Error case: XML EncName is ASCII even when the document is already decoded.
+     (for-all
+      (lambda (encoding)
+        (parser-error?
+         (parser-error-from
+          (lambda () (parse-xml
+                      (format "<?xml version='1.0' encoding='~a'?><a/>" encoding))))))
+      '("é" "UTF-é"))
+
+     (let* ([text (string-append
+                   "<a" (apply string-append
+                               (map (lambda (i) (format " x~a='v'" i)) (iota 1000))) "/>")]
+            [root (xml-document-root (parse-xml text))])
+       (= 1000 (vector-length (xml-element-attributes root))))
 
      )

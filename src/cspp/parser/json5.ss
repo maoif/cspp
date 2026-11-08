@@ -228,7 +228,8 @@
                            (lambda (character)
                              (and (not (char=? character quote))
                                   (not (char=? character #\\))
-                                  (not (json5-line-terminator? character))))
+                                  (not (char=? character #\newline))
+                                  (not (char=? character #\return))))
                            "invalid unescaped string character")))
                     (<char> quote))))))
 
@@ -282,7 +283,10 @@
 
   (define <json5-decimal>
     (<json5-token>
-     (<map> string->number
+     (<map> (lambda (source)
+              (let ([value (string->number source)])
+                (if (and (zero? value) (char=? (string-ref source 0) #\-))
+                    -0.0 value)))
             (<not-followed-by> <decimal-source> <identifier-part>))))
 
   (define <json5-hexadecimal>
@@ -290,7 +294,7 @@
      (<map> (lambda (value)
               (let ([number (hexdigits->num (caddr value))])
                 (if (char=? (car value) #\-)
-                    (- number)
+                    (if (zero? number) -0.0 (- number))
                     number)))
             (<not-followed-by>
              (<~> (</> (<one-of> "+-") (<result> #\+))

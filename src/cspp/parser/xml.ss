@@ -277,8 +277,15 @@
   (define <encoding-name>
     (<map> (lambda (value)
              (apply string (cons (car value) (cadr value))))
-           (<~> <letter>
-                (<many> (</> <letter> <digit> (<one-of> "._-"))))))
+           (<~> (<satisfy-char> (lambda (character)
+                                  (or (char<=? #\a character #\z)
+                                      (char<=? #\A character #\Z))))
+                (<many> (<satisfy-char>
+                         (lambda (character)
+                           (or (char<=? #\a character #\z)
+                               (char<=? #\A character #\Z)
+                               (char<=? #\0 character #\9)
+                               (memv character '(#\. #\_ #\-)))))))))
 
   (define <encoding-info>
     (<~2> (<string> "encoding") <equals> (<quoted-text> <encoding-name>)))
@@ -316,16 +323,13 @@
 
   (define duplicate-attribute?
     (lambda (attributes)
-      (let loop ([attributes attributes] [name* '()])
-        (cond [(null? attributes) #f]
-              [(exists (lambda (name)
-                         (string=? name
-                                   (xml-attribute-name (car attributes))))
-                       name*)
-               #t]
-              [else
-               (loop (cdr attributes)
-                     (cons (xml-attribute-name (car attributes)) name*))]))))
+      (let ([seen (make-hashtable string-hash string=?)])
+        (let loop ([attributes attributes])
+          (and (pair? attributes)
+               (let ([name (xml-attribute-name (car attributes))])
+                 (if (hashtable-contains? seen name) #t
+                     (begin (hashtable-set! seen name #t)
+                            (loop (cdr attributes))))))))))
 
   (define merge-adjacent-text
     (lambda (nodes)

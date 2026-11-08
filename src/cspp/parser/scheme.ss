@@ -49,7 +49,7 @@
       (define <left-brace>    (<token> (<char> #\{)))
       (define <right-brace>   (<token> (<char> #\})))
       ;; TODO chez allows dot to precede none-digit
-      (define <dot>           (<~> (<char> #\.) (<some> <whitespace>)))
+      (define <dot>           (<token> (<followed-by> (<char> #\.) <boolean/character-delimiter>)))
       (define <left-vector-delim> (<token> (<string> "#(")))
 
       (define <quote>             (<string> "'"))
@@ -158,7 +158,12 @@
                                                  (<as> #\tab       (<char> #\t))
                                                  (<as> #\nul       (<char> #\0)))))
       ;; no inline hex escape
-      (define <s-str-elements> (</> (<none-of> "\"\\") <escape-seq>))
+      (define <s-literal-newline>
+        (<as> #\newline
+              (</> (<string> "\r\n") (<string> "\r\x85;")
+                   (<one-of> "\r\n\x85;\x2028;"))))
+      (define <s-str-elements>
+        (</> <s-literal-newline> (<none-of> "\"\\") <escape-seq>))
       (define <s-string> (<token>
                           (</> (<as> "" (<string> "\"\""))
                                (<as-string>
