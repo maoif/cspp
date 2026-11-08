@@ -13,7 +13,7 @@
 
 (mat parser-wasm-record-writers
 
-     (string=? "#[wasm-limits address-type: i64 minimum: 2 maximum: 9]"
+     (string=? "#[wasm-limits address-type: i64 minimum: 2 maximum: 9 shared?: #f]"
                (format "~s" (make-wasm-limits 'i64 2 9))))
 
 (define parse-binary
@@ -3400,7 +3400,7 @@
      ;; error: the tag attribute must be zero in Core 3.0.
      (error? (parse-binary <wasm-tag-type> #vu8(1 0)))
 
-     ;; error: limits flags outside 0, 1, 4, and 5 are invalid.
+     ;; error: shared limits cannot omit their maximum bound.
      (error? (parse-binary <wasm-limits> #vu8(2 0)))
 
      ;; error: a limits maximum cannot be lower than its minimum.
@@ -4490,7 +4490,8 @@
     (and (wasm-limits? right)
          (eq? (wasm-limits-address-type left) (wasm-limits-address-type right))
          (= (wasm-limits-minimum left) (wasm-limits-minimum right))
-         (equal? (wasm-limits-maximum left) (wasm-limits-maximum right)))))
+         (equal? (wasm-limits-maximum left) (wasm-limits-maximum right))
+         (eq? (wasm-limits-shared? left) (wasm-limits-shared? right)))))
 
 (define wasm-table-type=?
   (lambda (left right)

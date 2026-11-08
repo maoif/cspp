@@ -46,12 +46,12 @@
          (<as> #t (<uimm8> 1))))
 
   (define limits-with-maximum
-    (lambda (address-type)
+    (lambda (address-type shared?)
       (<bind> (<~> <wasm-u64> <wasm-u64>)
               (lambda (bound*)
                 (let ([minimum (car bound*)] [maximum (cadr bound*)])
                   (if (<= minimum maximum)
-                      (<result> (make-wasm-limits address-type minimum maximum))
+                      (<result> (make-wasm-limits address-type minimum maximum shared?))
                       (<fail-with> "WebAssembly limits maximum is below minimum")))))))
 
   (define limits-without-maximum
@@ -188,25 +188,30 @@
            (<~> <wasm-value-type> mutability-parser)))
 
   #|proc:<wasm-limits>
-  The `<wasm-limits>` parser reads i32 or i64 minimum and optional maximum bounds.
+  The `<wasm-limits>` parser reads i32 or i64 minimum and optional maximum bounds. Shared-memory
+  extension flags are supported and require a maximum.
   |#
   (define <wasm-limits>
     (<bind> <u8>
             (lambda (flags)
               (case flags
                 [(#x00) (limits-without-maximum 'i32)]
-                [(#x01) (limits-with-maximum 'i32)]
+                [(#x01) (limits-with-maximum 'i32 #f)]
+                [(#x03) (limits-with-maximum 'i32 #t)]
                 [(#x04) (limits-without-maximum 'i64)]
-                [(#x05) (limits-with-maximum 'i64)]
+                [(#x05) (limits-with-maximum 'i64 #f)]
+                [(#x07) (limits-with-maximum 'i64 #t)]
                 [else (<fail-with> "invalid WebAssembly limits flags")]))))
 
   #|proc:<wasm-table-type>
   The `<wasm-table-type>` parser reads a reference element type and table limits.
   |#
   (define <wasm-table-type>
-    (<map> (lambda (field*)
-             (make-wasm-table-type (car field*) (cadr field*)))
-           (<~> <wasm-reference-type> <wasm-limits>)))
+    (<bind> (<~> <wasm-reference-type> <wasm-limits>)
+            (lambda (fields)
+              (if (wasm-limits-shared? (cadr fields))
+                  (<fail-with> "WebAssembly tables cannot be shared")
+                  (<result> (make-wasm-table-type (car fields) (cadr fields)))))))
 
   #|proc:<wasm-memory-type>
   The `<wasm-memory-type>` parser reads memory limits.

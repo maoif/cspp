@@ -18,7 +18,7 @@
     make-wasm-reference-type wasm-reference-type? wasm-reference-type-nullable?
     wasm-reference-type-heap-type
     make-wasm-limits wasm-limits? wasm-limits-address-type wasm-limits-minimum
-    wasm-limits-maximum
+    wasm-limits-maximum wasm-limits-shared?
     make-wasm-table-type wasm-table-type? wasm-table-type-reference-type
     wasm-table-type-limits
     make-wasm-memory-type wasm-memory-type? wasm-memory-type-limits
@@ -148,7 +148,8 @@
   (define limits-fields?
     (lambda (field*)
       (let ([minimum (vector-ref field* 1)] [maximum (vector-ref field* 2)])
-        (or (not maximum) (>= maximum minimum)))))
+        (and (or (not maximum) (>= maximum minimum))
+             (or (not (vector-ref field* 3)) maximum)))))
 
   (define element-fields?
     (lambda (field*)
@@ -417,10 +418,6 @@
     ([nullable? wasm-reference-type-nullable? $wasm-reference-type-nullable? boolean?]
      [heap-type wasm-reference-type-heap-type $wasm-reference-type-heap-type heap-type?]))
 
-  #|proc:make-wasm-limits
-  Creates limits. `address-type` selects 32- or 64-bit addressing. `minimum` is the required lower
-  bound, and `maximum` is the optional upper bound.
-  |#
   #|proc:wasm-limits?
   Returns whether `object` is limits. `object` is the value to test.
   |#
@@ -433,12 +430,29 @@
   #|proc:wasm-limits-maximum
   Returns the optional maximum of `record`. `record` is limits.
   |#
-  (define-checked-record-type $wasm-limits make-wasm-limits wasm-limits? wasm-limits
+  #|proc:wasm-limits-shared?
+  Returns whether limits `record` describe shared memory.
+  |#
+  (define-checked-record-type $wasm-limits make-checked-wasm-limits wasm-limits? wasm-limits
     $make-wasm-limits $wasm-limits?
     limits-fields?
     ([address-type wasm-limits-address-type $wasm-limits-address-type address-type?]
      [minimum wasm-limits-minimum $wasm-limits-minimum natural?]
-     [maximum wasm-limits-maximum $wasm-limits-maximum optional-natural?]))
+     [maximum wasm-limits-maximum $wasm-limits-maximum optional-natural?]
+     [shared? wasm-limits-shared? $wasm-limits-shared? boolean?]))
+
+  #|proc:make-wasm-limits
+  Creates limits with `address-type` selecting i32 or i64 addressing, natural `minimum`, and
+  optional natural `maximum`. Optional boolean `shared?` defaults to `#f`; shared memory requires
+  a maximum. Returns limits. A supplied maximum must be at least the minimum.
+  |#
+  (define make-wasm-limits
+    (case-lambda
+      [(address-type minimum maximum) (make-wasm-limits address-type minimum maximum #f)]
+      [(address-type minimum maximum shared?)
+       (pcheck ([address-type? address-type] [natural? minimum]
+                [optional-natural? maximum] [boolean? shared?])
+               (make-checked-wasm-limits address-type minimum maximum shared?))]))
 
   #|proc:make-wasm-table-type
   Creates a table type. `reference-type` is its element type and `limits` supplies its bounds.
@@ -454,6 +468,7 @@
   |#
   (define-checked-record-type $wasm-table-type make-wasm-table-type wasm-table-type? wasm-table-type
     $make-wasm-table-type $wasm-table-type?
+    (lambda (fields) (not (wasm-limits-shared? (vector-ref fields 1))))
     ([reference-type wasm-table-type-reference-type $wasm-table-type-reference-type
                      wasm-reference-type?]
      [limits wasm-table-type-limits $wasm-table-type-limits wasm-limits?]))

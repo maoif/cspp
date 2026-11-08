@@ -25,7 +25,7 @@
     make-wasm-reference-type wasm-reference-type? wasm-reference-type-nullable?
     wasm-reference-type-heap-type
     make-wasm-limits wasm-limits? wasm-limits-address-type wasm-limits-minimum
-    wasm-limits-maximum
+    wasm-limits-maximum wasm-limits-shared?
     make-wasm-table-type wasm-table-type? wasm-table-type-reference-type
     wasm-table-type-limits
     make-wasm-memory-type wasm-memory-type? wasm-memory-type-limits
@@ -72,7 +72,7 @@
 
   #|proc:parse-wasm-binary-module
   Parses a WebAssembly Core 3.0 binary module from `input`, a bytevector or regular-file path.
-  The return value is a canonical `wasm-module` record.
+  The return value is a canonical `wasm-module` record. Shared-memory limits are also supported.
   |#
   (define-who parse-wasm-binary-module
     (lambda (input)
@@ -83,7 +83,7 @@
 
   #|proc:parse-wasm-binary-module-file
   Parses a WebAssembly Core 3.0 binary module from regular file `path`. The return value is a
-  canonical `wasm-module` record.
+  canonical `wasm-module` record. Shared-memory limits are also supported.
   |#
   (define-who parse-wasm-binary-module-file
     (lambda (path)
@@ -92,7 +92,7 @@
 
   #|proc:parse-wasm-text-module
   Parses a WebAssembly Core 3.0 text module from source string `text`. The return value is a
-  canonical `wasm-module` record.
+  canonical `wasm-module` record. Shared-memory limits are also supported.
   |#
   (define-who parse-wasm-text-module
     (lambda (text)
@@ -101,7 +101,7 @@
 
   #|proc:parse-wasm-text-module-file
   Parses a WebAssembly Core 3.0 text module from regular-file path `path`. The return value is a
-  canonical `wasm-module` record.
+  canonical `wasm-module` record. Shared-memory limits are also supported.
   |#
   (define-who parse-wasm-text-module-file
     (lambda (path)

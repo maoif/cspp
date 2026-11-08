@@ -197,3 +197,44 @@
       (lambda () (parse-wasm-text-module "(module (@a (; unterminated)))")))
 
      )
+
+(mat wasm-review-shared-memory
+
+     (not (wasm-limits-shared? (make-wasm-limits 'i32 1 2)))
+
+     (wasm-limits-shared? (make-wasm-limits 'i64 1 2 #t))
+
+     (let* ([text (parse-wasm-text-module "(module (memory 1 2 shared))")]
+            [binary (parse-wasm-binary-module
+                     #vu8(0 97 115 109 1 0 0 0 5 4 1 3 1 2))]
+            [text-limits (wasm-memory-type-limits
+                          (wasm-memory-type (vector-ref (wasm-module-memories text) 0)))]
+            [binary-limits (wasm-memory-type-limits
+                            (wasm-memory-type (vector-ref (wasm-module-memories binary) 0)))])
+       (and (wasm-limits-shared? text-limits)
+            (wasm-limits-shared? binary-limits)
+            (= 1 (wasm-limits-minimum binary-limits))
+            (= 2 (wasm-limits-maximum text-limits))))
+
+     (let* ([binary (parse-wasm-binary-module
+                     #vu8(0 97 115 109 1 0 0 0 5 4 1 7 1 2))]
+            [limits (wasm-memory-type-limits
+                     (wasm-memory-type (vector-ref (wasm-module-memories binary) 0)))])
+       (and (wasm-limits-shared? limits) (eq? 'i64 (wasm-limits-address-type limits))))
+
+     ;; Error case: binary shared-memory flags require a maximum bound.
+     (wasm-review-error?
+      (lambda () (wasm-review-binary <wasm-memory-type> #vu8(2 1))))
+
+     ;; Error case: shared limits are not valid table types.
+     (wasm-review-error?
+      (lambda () (wasm-review-binary <wasm-table-type> #vu8(112 3 1 2))))
+
+     ;; Error case: constructor validation rejects shared limits without a maximum.
+     (error? (make-wasm-limits 'i32 1 #f #t))
+
+     ;; Error case: the public table constructor also rejects shared-memory limits.
+     (error? (make-wasm-table-type (make-wasm-reference-type #t 'func)
+                                  (make-wasm-limits 'i32 1 2 #t)))
+
+     )

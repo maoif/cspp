@@ -644,7 +644,8 @@
              (make-wasm-limits
               (wat-limits-syntax-address-type limits)
               (wat-limits-syntax-minimum limits)
-              (wat-limits-syntax-maximum limits)))))))
+              (wat-limits-syntax-maximum limits)
+              (wat-limits-syntax-shared? limits)))))))
 
   (define normalize-global-type
     (lambda (state type)
