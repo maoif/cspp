@@ -16,46 +16,53 @@
   record, otherwise `#f`.
   The `object` parameter is the object to test.
   |#
+  #|record:$mounted-filesystem
+  Mounted-filesystem records hold source, target, type, and option strings from Linux mountinfo.
+  The exported `mounted-filesystem?` predicate accepts any object and returns a boolean.
+  Strings describe a snapshot of the calling process's mount namespace.
+  |#
+  (define-record-type ($mounted-filesystem make-mounted-filesystem mounted-filesystem?)
+    (nongenerative)
+    (fields (immutable source $mounted-filesystem-source)
+            (immutable target $mounted-filesystem-target)
+            (immutable type $mounted-filesystem-type)
+            (immutable options $mounted-filesystem-options)))
+
   #|proc:mounted-filesystem-source
   The `mounted-filesystem-source` procedure returns the source device or pseudo-device of a
   mounted filesystem record.
   The `mount` parameter is a mounted filesystem record returned by `mounted-filesystems`.
   |#
+  (define-who mounted-filesystem-source
+    (lambda (mount)
+      (pcheck-who who ([mounted-filesystem? mount]) ($mounted-filesystem-source mount))))
+
   #|proc:mounted-filesystem-target
   The `mounted-filesystem-target` procedure returns the mount target path of a mounted filesystem
   record.
   The `mount` parameter is a mounted filesystem record returned by `mounted-filesystems`.
   |#
+  (define-who mounted-filesystem-target
+    (lambda (mount)
+      (pcheck-who who ([mounted-filesystem? mount]) ($mounted-filesystem-target mount))))
+
   #|proc:mounted-filesystem-type
   The `mounted-filesystem-type` procedure returns the filesystem type string of a mounted
   filesystem record.
   The `mount` parameter is a mounted filesystem record returned by `mounted-filesystems`.
   |#
+  (define-who mounted-filesystem-type
+    (lambda (mount)
+      (pcheck-who who ([mounted-filesystem? mount]) ($mounted-filesystem-type mount))))
+
   #|proc:mounted-filesystem-options
-  The `mounted-filesystem-options` procedure returns the raw mount options string of a mounted
-  filesystem record.
+  The `mounted-filesystem-options` procedure returns mount and superblock options separated by
+  a space, as reported by Linux mountinfo.
   The `mount` parameter is a mounted filesystem record returned by `mounted-filesystems`.
   |#
-  (define-record-type ($mounted-filesystem make-mounted-filesystem mounted-filesystem?)
-    (nongenerative)
-    (fields (immutable source mounted-filesystem-source)
-            (immutable target mounted-filesystem-target)
-            (immutable type mounted-filesystem-type)
-            (immutable options mounted-filesystem-options)))
-
-  (define $list-ref/default
-    (lambda (items index default)
-      (let loop ([items items] [index index])
-        (cond [(null? items) default]
-              [(fx= index 0) (car items)]
-              [else (loop (cdr items) (fx- index 1))]))))
-
-  (define $list-index-string
-    (lambda (items needle)
-      (let loop ([items items] [index 0])
-        (cond [(null? items) #f]
-              [(string=? (car items) needle) index]
-              [else (loop (cdr items) (fx+ index 1))]))))
+  (define-who mounted-filesystem-options
+    (lambda (mount)
+      (pcheck-who who ([mounted-filesystem? mount]) ($mounted-filesystem-options mount))))
 
   (define $mountinfo-unescape
     (lambda (field)
@@ -77,23 +84,20 @@
   (define $parse-mountinfo-line
     (lambda (line)
       (let* ([fields (string-split line #\space)]
-             [field-count (length fields)]
-             [separator-index ($list-index-string fields "-")])
-        (and separator-index
-             (fx<= 6 separator-index)
-             (fx<= (fx+ separator-index 4) field-count)
-             (let* ([source ($list-ref/default fields (fx+ separator-index 2) "")]
-                    [target ($list-ref/default fields 4 "")]
-                    [type ($list-ref/default fields (fx+ separator-index 1) "")]
-                    [mount-options ($list-ref/default fields 5 "")]
-                    [super-options ($list-ref/default fields (fx+ separator-index 3) "")]
-                    [options (if (string=? super-options "")
-                                 mount-options
-                                 (string-append mount-options " " super-options))])
-               (make-mounted-filesystem ($mountinfo-unescape source)
-                                        ($mountinfo-unescape target)
-                                        type
-                                        options))))))
+             [tail (memp (lambda (field) (string=? field "-")) fields)])
+        (and tail
+             (let ([tail-count (length tail)])
+               (and (fx<= 4 tail-count)
+                    (fx<= 6 (fx- (length fields) tail-count))
+                    (let* ([mount-options (list-ref fields 5)]
+                           [super-options (cadddr tail)]
+                           [options (if (string=? super-options "")
+                                        mount-options
+                                        (string-append mount-options " " super-options))])
+                      (make-mounted-filesystem ($mountinfo-unescape (caddr tail))
+                                               ($mountinfo-unescape (list-ref fields 4))
+                                               (cadr tail)
+                                               options))))))))
 
   (define $read-mounted-filesystems
     (lambda (path)
@@ -109,6 +113,7 @@
   #|proc:mounted-filesystems
   The `mounted-filesystems` procedure returns a list of mounted filesystem records for the current
   process mount namespace.
+  It reads Linux `/proc/self/mountinfo`; an absent file yields an empty list.
   |#
   (define mounted-filesystems
     (lambda ()
@@ -117,4 +122,4 @@
             ($read-mounted-filesystems mountinfo)
             '()))))
 
-  )
+)

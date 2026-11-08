@@ -1,7 +1,16 @@
 (library (cspp system process backend)
-  (export process-result? process-result-status process-result-stdout process-result-stderr process-result-pid process-result-command
-          %run-process %capture-process %run-shell-command %capture-shell-command capture-pipeline)
-  (import (cspp chez) (cspp system common) (cspp system process expert) (cspp utils))
+  ;; Process operations must run outside fibers. Native scope disposal treats scheduler
+  ;; suspension as an exit, and blocking calls occupy the fiber's worker.
+  (export
+          ;; completed command results
+          process-result? process-result-status process-result-stdout process-result-stderr
+          process-result-pid process-result-command
+          process-capture-pipeline
+
+          ;; implementation entry points for command macros
+          %process-run %process-capture %process-run-shell %process-capture-shell)
+  (import (cspp chez) (cspp system common) (cspp system private) (cspp system native)
+          (cspp system process status) (cspp system process private) (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; process result records
@@ -12,66 +21,75 @@
   otherwise `#f`.
   The `object` parameter is the object to test.
   |#
+  #|record:$process-result
+  A process-result record stores completed status, stdout/stderr captures, pid, and command.
+  The exported `process-result?` predicate accepts any object and returns a boolean.
+  Captures are UTF-8 strings or binary bytevectors; uncaptured streams are `#f`.
+  |#
+  (define-record-type ($process-result make-process-result process-result?)
+    (nongenerative)
+    (fields (immutable status $process-result-status)
+            (immutable stdout $process-result-stdout)
+            (immutable stderr $process-result-stderr)
+            (immutable pid $process-result-pid)
+            (immutable command $process-result-command)))
+
   #|proc:process-result-status
   The `process-result-status` procedure returns the process exit-status record stored in `result`.
   The `result` parameter is a process result record.
   |#
+  (define-who process-result-status
+    (lambda (result)
+      (pcheck-who who ([process-result? result]) ($process-result-status result))))
+
   #|proc:process-result-stdout
-  The `process-result-stdout` procedure returns the captured standard output string stored in
-  `result`, or `#f` when output was not requested.
+  The `process-result-stdout` procedure returns captured standard output as a string or bytevector,
+  or `#f` when output was not requested.
   The `result` parameter is a process result record.
   |#
+  (define-who process-result-stdout
+    (lambda (result)
+      (pcheck-who who ([process-result? result]) ($process-result-stdout result))))
+
   #|proc:process-result-stderr
-  The `process-result-stderr` procedure returns the captured standard error string stored in
-  `result`, or `#f` when error output was not requested.
+  The `process-result-stderr` procedure returns captured standard error as a string or bytevector,
+  or `#f` when error output was not requested.
   The `result` parameter is a process result record.
   |#
+  (define-who process-result-stderr
+    (lambda (result)
+      (pcheck-who who ([process-result? result]) ($process-result-stderr result))))
+
   #|proc:process-result-pid
   The `process-result-pid` procedure returns the process id stored in `result`, or `#f` when no
   process id is available.
   The `result` parameter is a process result record.
   |#
+  (define-who process-result-pid
+    (lambda (result)
+      (pcheck-who who ([process-result? result]) ($process-result-pid result))))
+
   #|proc:process-result-command
-  The `process-result-command` procedure returns the shell command string stored in `result`.
+  The `process-result-command` procedure returns the program or shell-command string in `result`.
+  Pipeline results instead store the symbol `pipeline`.
   The `result` parameter is a process result record.
   |#
-  (define-record-type ($process-result make-process-result process-result?)
-    (nongenerative)
-    (fields (immutable status process-result-status)
-            (immutable stdout process-result-stdout)
-            (immutable stderr process-result-stderr)
-            (immutable pid process-result-pid)
-            (immutable command process-result-command)))
+  (define-who process-result-command
+    (lambda (result)
+      (pcheck-who who ([process-result? result]) ($process-result-command result))))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; process backend
 ;;;;===----------------------------------------------------------------------===
 
-  (define $string-list?
-    (lambda (x)
-      (and (list? x) (andmap string? x))))
-
-  (define $option-alist?
-    (lambda (x)
-      (list? x)))
-
-  (define $option-ref
-    (lambda (options key default)
-      (let ([a (assq key options)])
-        (if a (cdr a) default))))
-
   (define $raise-exit-error
-    (lambda (who command status)
-      (raise (make-system-exit-error who
-                                     (format "process exited with status ~a" (process-exit-status-code status))
-                                     `((command . ,command)
-                                       (status-kind . ,(process-exit-status-kind status))
-                                       (status-code . ,(process-exit-status-code status)))))))
-
-  (define $check-status
-    (lambda (who command status)
-      (unless (process-exit-success? status)
-        ($raise-exit-error who command status))))
+    (lambda (who command status result)
+      (let ([context `((command . ,command)
+                       (status-kind . ,(process-exit-status-kind status))
+                       (status-code . ,(process-exit-status-code status)))])
+        (raise (make-system-exit-error who
+                 (format "process exited with status ~a" (process-exit-status-code status))
+                 (if result (cons (cons 'result result) context) context))))))
 
   (define $status-accepted?
     (lambda (status success)
@@ -83,50 +101,32 @@
             [else #f])))
 
   (define $check-accepted-status
-    (lambda (who command status options check?)
+    (lambda (who command status options check? result)
       (let ([success ($option-ref options 'success (if check? '(0) #f))])
         (unless ($status-accepted? status success)
-          ($raise-exit-error who command status)))))
-
-  (define $wait-status->exit-status
-    (lambda (raw)
-      (cond [(fx= (fxand raw #x7f) 0)
-             (make-process-exit-status 'exit (fxsrl raw 8))]
-            [(fx= (fxand raw #x7f) #x7f)
-             (make-process-exit-status 'stopped (fxsrl raw 8))]
-            [else
-             (make-process-exit-status 'signal (fxand raw #x7f))])))
+          ($raise-exit-error who command status result)))))
 
   (define $stdin-payload
     (lambda (options)
       (let ([stdin ($option-ref options 'stdin 'null)])
-        (cond [(or (not stdin) (eq? stdin 'null) (eq? stdin 'inherit)) #f]
+        (cond [(eq? stdin 'inherit) 'inherit]
+              [(or (not stdin) (eq? stdin 'null)) #f]
               [(string? stdin) (string->utf8 stdin)]
               [(bytevector? stdin) stdin]
               [else (errorf 'process "unsupported stdin option: ~a" stdin)]))))
-
-  (define $env-option
-    (lambda (options)
-      (let ([env ($option-ref options 'env #f)])
-        (if env env #f))))
-
-  (define $cwd-option
-    (lambda (options)
-      (let ([cwd ($option-ref options 'cwd #f)])
-        (if cwd cwd ""))))
 
   (define $timeout-option
     (lambda (options)
       (let ([timeout ($option-ref options 'timeout #f)])
         (if timeout timeout -1))))
 
-  (define $capture-stdout?
-    (lambda (options default)
-      (eq? 'capture ($option-ref options 'stdout default))))
-
-  (define $capture-stderr?
-    (lambda (options default)
-      (eq? 'capture ($option-ref options 'stderr default))))
+  ;; Native capture modes: 0 leaves the stream unpiped, 1 retains bytes for a result,
+  ;; and 2 drains the pipe without retaining bytes for a status-only run.
+  (define $capture-mode
+    (lambda (options key default)
+      (if (eq? 'capture ($option-ref options key default))
+          (if (eq? default 'capture) 1 2)
+          0)))
 
   (define $null-stdout?
     (lambda (options)
@@ -140,93 +140,125 @@
     (lambda (options)
       (eq? 'stdout ($option-ref options 'stderr 'inherit))))
 
-  (define $spawn-capture-ffi
-    (foreign-procedure "cspp_spawn_capture"
-                       (ptr ptr string ptr int int int int int int)
-                       ptr))
+  (define $prepare-capture-ffi
+    (foreign-procedure "cspp_process_prepare_capture"
+                       (uptr ptr ptr utf-8 ptr int int int int int int) void))
 
-  (define $spawn-pipeline-capture-ffi
-    (foreign-procedure "cspp_spawn_pipeline_capture" (ptr int) ptr))
+  (define $prepare-pipeline-ffi
+    (foreign-procedure "cspp_process_prepare_pipeline" (uptr ptr int) void))
+
+  (define $decode-output
+    (lambda (bytes options)
+      (let ([encoding ($option-ref options 'encoding 'utf-8)])
+        (if (eq? encoding 'binary) bytes (utf8->string bytes)))))
 
   (define $capture-vector->result
     (lambda (command result options check? who)
       (let* ([pid (vector-ref result 0)]
              [status ($wait-status->exit-status (vector-ref result 1))]
              [stdout-mode ($option-ref options 'stdout 'capture)]
-             [stderr-mode ($option-ref options 'stderr 'capture)])
-        ($check-accepted-status who command status options check?)
-        (make-process-result status
-                             (if (eq? stdout-mode 'capture) (vector-ref result 2) #f)
-                             (if (eq? stderr-mode 'capture) (vector-ref result 3) #f)
-                             pid
-                             command))))
+             [stderr-mode ($option-ref options 'stderr 'capture)]
+             [completed
+               (make-process-result status
+                 (if (eq? stdout-mode 'capture) ($decode-output (vector-ref result 2) options) #f)
+                 (if (eq? stderr-mode 'capture) ($decode-output (vector-ref result 3) options) #f)
+                 pid command)])
+        ($check-accepted-status who command status options check? completed)
+        completed)))
 
   (define $run-vector->status
     (lambda (command result options check? who)
       (let ([status ($wait-status->exit-status (vector-ref result 1))])
-        ($check-accepted-status who command status options check?)
+        ($check-accepted-status who command status options check? #f)
         status)))
 
   (define $spawn-capture
-    (lambda (argv options capture-default)
-      (ffi-result-ref
-       ($spawn-capture-ffi argv
-                           ($env-option options)
-                           ($cwd-option options)
-                           ($stdin-payload options)
-                           (if ($capture-stdout? options capture-default) 1 0)
-                           (if ($capture-stderr? options capture-default) 1 0)
-                           (if ($null-stdout? options) 1 0)
-                           (if ($null-stderr? options) 1 0)
-                           (if ($stderr-to-stdout? options) 1 0)
-                           ($timeout-option options)))))
+    (lambda (who argv options capture-default)
+      ($validate-process-options options #f who)
+      ($call-process-operation who
+        (lambda (handle)
+          ($prepare-capture-ffi handle argv ($option-ref options 'env #f)
+            ($cwd-option options) ($stdin-payload options)
+            ($capture-mode options 'stdout capture-default)
+            ($capture-mode options 'stderr capture-default)
+            (if ($null-stdout? options) 1 0) (if ($null-stderr? options) 1 0)
+            (if ($stderr-to-stdout? options) 1 0) ($timeout-option options)))
+        (lambda (result) result))))
 
-  (define %run-process
-    (lambda (who program arguments options check?)
-      (pcheck ([string? program] [$string-list? arguments] [$option-alist? options] [boolean? check?])
-              ($run-vector->status program
-                                  ($spawn-capture (cons program arguments) options 'inherit)
-                                  options
-                                  check?
-                                  who))))
+  (define $run-command
+    (lambda (who command argv options check?)
+      ($run-vector->status command ($spawn-capture who argv options 'inherit) options check? who)))
 
-  (define %capture-process
-    (lambda (who program arguments options check?)
-      (pcheck ([string? program] [$string-list? arguments] [$option-alist? options] [boolean? check?])
-              ($capture-vector->result program
-                                      ($spawn-capture (cons program arguments) options 'capture)
-                                      options
-                                      check?
-                                      who))))
+  (define $capture-command
+    (lambda (who command argv options check?)
+      ($capture-vector->result command ($spawn-capture who argv options 'capture) options check? who)))
 
-  (define %run-shell-command
-    (lambda (who command options check?)
-      (pcheck ([string? command] [$option-alist? options] [boolean? check?])
-              ($run-vector->status command
-                                  ($spawn-capture (list "sh" "-c" command) options 'inherit)
-                                  options
-                                  check?
-                                  who))))
-
-  (define %capture-shell-command
-    (lambda (who command options check?)
-      (pcheck ([string? command] [$option-alist? options] [boolean? check?])
-              ($capture-vector->result command
-                                      ($spawn-capture (list "sh" "-c" command) options 'capture)
-                                      options
-                                      check?
-                                      who))))
-
-  #|proc:capture-pipeline
-  The `capture-pipeline` procedure runs string-list process specs as a pipeline.
-  The `process-specs` parameter is a list of nonempty string lists.
+  #|proc:%process-run
+  The internal `%process-run` procedure implements direct command forms and returns an exit status.
+  `who` is the error-origin symbol; `program` is a NUL-free executable string; `arguments` is a
+  proper list of NUL-free strings. `options` is the command option alist documented in
+  `process-run`.
+  Boolean `check?` chooses whether exit code zero is required when no `success` option is supplied.
   |#
-  (define capture-pipeline
-    (lambda (process-specs)
-      (pcheck ([list? process-specs])
-              (let ([result (ffi-result-ref ($spawn-pipeline-capture-ffi process-specs -1))])
-                ($capture-vector->result 'pipeline result '((stdout . capture)) #f
-                                        'capture-pipeline)))))
+  (define %process-run
+    (lambda (who program arguments options check?)
+      (pcheck-who who
+        ([symbol? who] [$os-string? program] [$os-string-list? arguments]
+               [list? options] [boolean? check?])
+              ($run-command who program (cons program arguments) options check?))))
 
+  #|proc:%process-capture
+  The internal `%process-capture` procedure runs a direct command and returns a process result.
+  `who` is the error-origin symbol; `program` is a NUL-free executable string; `arguments` is a
+  proper list of NUL-free strings. `options` follows `process-capture`, including stream encoding.
+  Boolean `check?` chooses whether exit code zero is required when `success` is omitted.
+  |#
+  (define %process-capture
+    (lambda (who program arguments options check?)
+      (pcheck-who who
+        ([symbol? who] [$os-string? program] [$os-string-list? arguments]
+               [list? options] [boolean? check?])
+              ($capture-command who program (cons program arguments) options check?))))
+
+  #|proc:%process-run-shell
+  The internal `%process-run-shell` procedure runs `sh -c` and returns an exit status.
+  `who` is the error-origin symbol; `command` is a NUL-free shell-command string.
+  `options` follows `process-run-shell`; boolean `check?` selects the default zero-exit requirement.
+  A supplied `success` option overrides that requirement.
+  |#
+  (define %process-run-shell
+    (lambda (who command options check?)
+      (pcheck-who who
+        ([symbol? who] [$os-string? command] [list? options] [boolean? check?])
+              ($run-command who command (list "sh" "-c" command) options check?))))
+
+  #|proc:%process-capture-shell
+  The internal `%process-capture-shell` procedure runs `sh -c` and returns a process result.
+  `who` is the error-origin symbol; `command` is a NUL-free shell-command string.
+  `options` follows `process-capture-shell`; boolean `check?` selects a default zero-exit check.
+  A supplied `success` option overrides that requirement.
+  |#
+  (define %process-capture-shell
+    (lambda (who command options check?)
+      (pcheck-who who
+        ([symbol? who] [$os-string? command] [list? options] [boolean? check?])
+              ($capture-command who command (list "sh" "-c" command) options check?))))
+
+  #|proc:process-capture-pipeline
+  The `process-capture-pipeline` procedure runs string-list process specs as a pipeline.
+  Do not call this process operation inside a fiber; use a separate Scheme thread.
+  The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
+  Command strings must contain no NUL characters. Returns a process result with captured stdout.
+  Stdin and stderr are inherited. The result's stderr field is `#f`, and its command is `pipeline`.
+  The status and pid belong to the final command; all children are waited for before returning.
+  |#
+  (define-who process-capture-pipeline
+    (lambda (process-specs)
+      (pcheck-who who ([$process-specs? process-specs])
+              (let ([result ($call-process-operation who
+                              (lambda (handle) ($prepare-pipeline-ffi handle process-specs 1))
+                              (lambda (result) result))])
+                ($capture-vector->result 'pipeline result '((stdout . capture) (stderr . inherit)) #f
+                                        'process-capture-pipeline)))))
 
 )

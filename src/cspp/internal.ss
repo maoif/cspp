@@ -1,5 +1,6 @@
 (library (cspp internal)
-  (export todo $construct-name flag->mask $record-type-key $datatype-variant-key)
+  (export todo $construct-name flag->mask $record-type-key $datatype-variant-key
+          $make-list-builder)
   (import (chezscheme))
 
 
@@ -33,13 +34,45 @@
                           (symbol->string (syntax->datum x))))
                     args))))))
 
+  ;; A shared foundation for utils and list; importing either from the other would form a cycle.
+  ;; Each invocation owns its builder state. The public contract is documented in (cspp list).
+  (define $make-list-builder
+    (lambda item*
+      (let ([res item*])
+        (let ([current-cell (if (null? res)
+                                (cons #f '())
+                                (let loop ([res res])
+                                  (if (null? (cdr res))
+                                      res
+                                      (loop (cdr res)))))]
+              [next-cell (cons #f '())])
+          (define add-item!
+            (lambda (item)
+              (if (null? res)
+                  (begin (set-car! current-cell item)
+                         (set! res current-cell))
+                  (begin
+                    (set-car! next-cell item)
+                    (set-cdr! current-cell next-cell)
+                    (set! current-cell next-cell)
+                    (set! next-cell (cons #f '()))))))
+          (rec lb
+            (case-lambda
+              [() res]
+              [(item)
+               (add-item! item)
+               lb]
+              [item*
+               (for-each add-item! item*)
+               lb]))))))
+
   ;; for utils: define-flags
   (define flag->mask
     (lambda (m e)
       (cond
        [(fixnum? m) m]
        [(and (symbol? m) (assq m e)) => cdr]
-       [(and (list? m) (eq? (car m) 'or))
+       [(and (pair? m) (list? m) (eq? (car m) 'or))
         (let f ((ls (cdr m)))
           (if (null? ls)
               0

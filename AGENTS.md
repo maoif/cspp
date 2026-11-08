@@ -33,6 +33,7 @@ E.g.,
 ```
 
 `pcheck` is defined in `(cspp utils)`.
+It should in general ONLY used to check arguments.
 
 Public APIs must have documentation right above the implementation code,
 in this format, for procedures and macros:
@@ -156,6 +157,9 @@ outside Scheme, e.g., in C.
 See existing code for usages of `foreign-procedure`.
 Notice me if you want to use `foreign-callalble`.
 
+Use `__collect_safe` to declare that garbage collection is allowed concurrently with the foreign procedure.
+See ChezScheme doc for details.
+
 ## Docs
 
 TODO
@@ -185,6 +189,7 @@ is set).
 
 When a new lib is written under `src/cspp/`, say, `new-lib`, its import entry can be added in `src/cspp.ss`
 as `(cspp new-lib)`.
+Only add top-level libs in `src/cspp.ss`.
 
 Specifically, `(cspp concurrency fiber)` and `(cspp parser combinator)` are two *experimental* libs that
 are imported but NOT exported, just so they can be compiled when building cspp. A consequence of this is
@@ -192,11 +197,11 @@ that their wpo (whole program optimization) files have to be seperately fed into
 `Makefile` and the resulting `fiber.lib` and `combinator.lib` have to be seperately loaded in `src/cspp.ss` for
 them to be used.
 
-`src/cspp.ss`:
-this file is convenience wrapper that just loads `cspp.lib` and other experimental libs for `cspp` to use.
+`src/cspp-launcher.ss`:
+`cspp` cli template, whose content is filled when building `cspp` executable.
 
 `cspp`:
-a shell script that uses the system ChezScheme executable to load `src/cspp.ss` and make CSPP available.
+a cspp/ChezScheme script that uses the system ChezScheme executable to load `cspp.lib` and make CSPP available.
 
 You as an agent usually do not have to modify `src/cspp.ss` and `cspp`.
 

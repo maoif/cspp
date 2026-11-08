@@ -88,7 +88,7 @@
             (not (contains? sftp " & echo $!"))
             (contains? sftp "CSPP_SFTP_EXAMPLE_STATE")
             (contains? sftp "sftp-ready-path")
-            (contains? sftp "spawn-process")
+            (contains? sftp "process-spawn")
             (contains? sftp "process-running?")
             (contains? sftp "process-terminate")
             (contains? sftp "process-wait"))))

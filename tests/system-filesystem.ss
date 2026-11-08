@@ -1,5 +1,42 @@
 (import (cspp))
 
+(mat filesystem-metadata-access
+
+     ;; Error case: pinning a path must not require read permission or wait for a FIFO peer.
+     (let* ([directory (format "/tmp/cspp-filesystem-access-~a" (getpid))]
+            [file (string-append directory "/file")]
+            [fifo (string-append directory "/fifo")])
+       (dynamic-wind
+         (lambda ()
+           (mkdir directory #o700)
+           (call-with-output-file file (lambda (port) (put-string port "metadata")))
+           (unless (= 0 ((foreign-procedure "mkfifo" (string unsigned-32) int) fifo #o600))
+             (error 'filesystem-metadata-access "cannot create FIFO")))
+         (lambda ()
+           (file-chmod file 0)
+           (file-chmod directory #o100)
+           (let ([expected (filesystem-info-device (filesystem-info "/tmp"))])
+             (for-all
+               (lambda (path) (= expected (filesystem-info-device (filesystem-info path))))
+               (list directory file fifo))))
+         (lambda ()
+           (file-chmod directory #o700)
+           (delete-file file)
+           (delete-file fifo)
+           (delete-directory directory)))))
+
+(mat filesystem-path-contract
+
+     ;; Error case: a NUL suffix must not query the filesystem of a different path.
+     (guard (condition [else #t]) (filesystem-info "/\x0;ignored") #f)
+
+     ;; Error case: native path conversion must preserve Unicode rather than truncate characters.
+     (let ([path (format "/tmp/cspp-filesystem-~a-中文" (getpid))])
+       (dynamic-wind
+         (lambda () (mkdir path))
+         (lambda () (string=? path (filesystem-info-path (filesystem-info path))))
+         (lambda () (delete-directory path)))))
+
 (mat filesystem-info-basic
 
      (let ([info (filesystem-info ".")])

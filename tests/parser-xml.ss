@@ -198,7 +198,7 @@
                          (xml-element-text (xml-child-element-ref first "firstName"))
                          (xml-element-text (xml-child-element-ref last "id")))]
                 [result
-                 (capture-process
+                 (process-capture
                   "xmllint" "--xpath"
                   (string-append
                    "concat(name(/*),'|',count(/*/*),'|',"

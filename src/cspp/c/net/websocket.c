@@ -144,9 +144,10 @@ static atomic_int ws_trace_flag = -1;
 static int ws_trace_enabled(void) {
   int enabled = atomic_load(&ws_trace_flag);
   if (enabled < 0) {
-    const char *value = getenv("CSPP_WS_TRACE");
+    char *value = cspp_environment_copy("CSPP_WS_TRACE");
     int expected = -1;
     enabled = (value != NULL && *value != 0) ? 1 : 0;
+    free(value);
     atomic_compare_exchange_strong(&ws_trace_flag, &expected, enabled);
   }
   return atomic_load(&ws_trace_flag);
@@ -408,9 +409,10 @@ static void initialize_websocket_library(void) {
   {
     /* Publish only private log settings. HTTP or WebSocket may already be
      * servicing contexts, so the shared global log must remain immutable. */
-    const char *level = getenv("CSPP_WS_LOGLEVEL");
+    char *level = cspp_environment_copy("CSPP_WS_LOGLEVEL");
     websocket_log_level = (uint32_t)(level == NULL ? 0 : strtol(level, NULL, 0)) &
                           ~LLLF_LOG_CONTEXT_AWARE;
+    free(level);
   }
   websocket_available_flag = 1;
 }

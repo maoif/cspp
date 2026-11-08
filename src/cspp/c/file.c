@@ -140,8 +140,17 @@ ptr cspp_readlink(const char *path) {
 }
 
 ptr cspp_link(const char *src, const char *dest) {
+  /* Expanding src can permit GC, so snapshot the other FFI string first. */
+  char *owned_dest = strdup(dest);
+  if (owned_dest == NULL) return errno_str();
   char *s = expand_pathname(src);
-  char *d = expand_pathname(dest);
+  char *d = s == NULL ? NULL : expand_pathname(owned_dest);
+  free(owned_dest);
+  if (s == NULL || d == NULL) {
+    free(s);
+    free(d);
+    return errno_str();
+  }
   if (link(s, d) == -1) {
     free(s);
     free(d);
@@ -155,8 +164,17 @@ ptr cspp_link(const char *src, const char *dest) {
 }
 
 ptr cspp_symlink(const char *src, const char *dest) {
+  /* Both path arguments must survive any collection during the first lookup. */
+  char *owned_dest = strdup(dest);
+  if (owned_dest == NULL) return errno_str();
   char *s = expand_pathname(src);
-  char *d = expand_pathname(dest);
+  char *d = s == NULL ? NULL : expand_pathname(owned_dest);
+  free(owned_dest);
+  if (s == NULL || d == NULL) {
+    free(s);
+    free(d);
+    return errno_str();
+  }
   if (symlink(s, d) == -1) {
     free(s);
     free(d);
@@ -170,7 +188,7 @@ ptr cspp_symlink(const char *src, const char *dest) {
 }
 
 ptr cspp_touch(const char *path, ptr atime, ptr mtime, int follow_link) {
-  char *p = expand_pathname(path);
+  /* Decode all Scheme objects before a tilde lookup can deactivate this thread. */
   struct timespec ts[2];
 
   // times are #f if left unchanged
@@ -188,6 +206,8 @@ ptr cspp_touch(const char *path, ptr atime, ptr mtime, int follow_link) {
     ts[1].tv_sec = Sinteger_value(Svector_ref(mtime, 1));
   }
 
+  char *p = expand_pathname(path);
+  if (p == NULL) return errno_str();
   if (utimensat(AT_FDCWD, p, ts, follow_link ? 0 : AT_SYMLINK_NOFOLLOW)) {
     free(p);
     return errno_str();

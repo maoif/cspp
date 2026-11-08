@@ -41,29 +41,25 @@
 ;;;;===----------------------------------------------------------------------===
 
   #|proc:os-error?
-The `os-error?` procedure returns `#t` when its argument is an operating system error condition, otherwise `#f`.
-The `condition` parameter is the object to test.
-|#
-  (define-condition-type &os &error make-os-error os-error?)
-
-  (define $err-os
-    (lambda (who msg)
-      (raise (condition (make-os-error)
-                        (make-who-condition who)
-                        (make-message-condition msg)))))
+  The `os-error?` procedure tests `condition` for a CSPP system error condition.
+  It is a compatibility alias of `system-error?` and returns a boolean.
+  |#
+  (define os-error? system-error?)
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; processes
 ;;;;===----------------------------------------------------------------------===
 
   #|proc:shared-object-list
-The `shared-object-list` procedure returns a list of shared objects currently loaded by the process, in load order.
-|#
+  The `shared-object-list` procedure returns shared objects currently loaded by the process,
+  in load order, as a list of strings. Concurrent loading and collection are supported;
+  native snapshot failures raise a system condition.
+  |#
   (define-who shared-object-list
     (let ([ffi (foreign-procedure "cspp_shared_object_list" () ptr)])
       (lambda ()
-        (let* ([x (ffi)] [rx (reverse x)]
-               [res (if (string=? "" (car rx)) (cdr rx) rx)])
+        (let* ([x (ffi-result-ref (ffi))] [rx (reverse x)]
+               [res (if (and (pair? rx) (string=? "" (car rx))) (cdr rx) rx)])
           res))))
 
   )

@@ -193,7 +193,7 @@
                          (json5-object-ref arguments "class")
                          (if (json5-object-ref breakpoint "experimental") "true" "false"))]
                 [result
-                 (capture-process
+                 (process-capture
                   "jq" "-c"
                   (string-append
                    "[length, .[\"&ap\"].args, .[\"&ap\"].outputs, "

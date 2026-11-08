@@ -1,0 +1,219 @@
+(import (cspp))
+
+(define system-test-root (if (file-exists? "system-native-faults.ss") ".." "."))
+(define system-test-launcher (string-append system-test-root "/cspp"))
+(define system-test-fault-script
+  (string-append "--script=" system-test-root "/tests/system-native-faults.ss"))
+(define system-test-strace?
+  (= 0 (system "strace -qq -o /dev/null true >/dev/null 2>&1")))
+(define system-test-pidfd?
+  (and (foreign-entry? "pidfd_open")
+       (let ([fd ((foreign-procedure "pidfd_open" (int unsigned) int) (getpid) 0)])
+         (and (>= fd 0) (begin ((foreign-procedure "close" (int) int) fd) #t)))))
+
+;; Keep the independent supervisor: CSPP process regressions must not disable its deadline.
+(define run-runtime-cases
+  (lambda (modes)
+    (= 0 (system (format "~a --script=~a/tests/system-runtime-runner.ss ~a"
+                         system-test-launcher system-test-root modes)))))
+
+;; Leave syscall flags and injection settings visible beside each regression.
+(define-syntax run-native-fault-case
+  (syntax-rules ()
+    [(_ mode argument ...)
+     (process-exit-success?
+       (process-run strace argument ...
+         (begin system-test-launcher) (begin system-test-fault-script) mode :timeout 5000))]))
+
+(mat system-tilde-lookup-allows-collection
+
+  ;; Error case: slow account services used by tilde expansion must not stall other threads' GC.
+  (run-runtime-cases "tilde-lookup-gc"))
+
+(mat system-preexec-signal-dispositions
+
+  ;; Error case: a child must not enter Chez's inherited handlers while preparing exec.
+  (if system-test-strace?
+      (run-native-fault-case "preexec-signal"
+          "-f" "-qq" "-e" "trace=close_range"
+          "-e" "inject=close_range:delay_enter=800ms:when=1" "-o" "/dev/null")
+      #t))
+
+(mat system-spawn-interrupts
+
+  ;; Error case: exec setup must return to Scheme and retain ownership across handler escapes.
+  (if system-test-strace?
+      (run-native-fault-case "spawn-interrupt"
+          "-f" "-qq" "-e" "trace=close_range"
+          "-e" "inject=close_range:delay_enter=800ms:when=1" "-o" "/dev/null")
+      #t))
+
+(mat system-resource-acquisition-interrupts
+
+  ;; Error case: resource handoff needs isolation because the old implementation leaves children.
+  (run-runtime-cases "ownership-interrupts handoff-interrupt-depth"))
+
+(mat system-live-wait-notification
+
+  ;; Error case: wait notification must preserve timeout, concurrent reaping, and GC contracts.
+  (run-runtime-cases "wait-notification wait-interrupt pending-wait-interrupt"))
+
+(mat system-native-operation-interrupts
+
+  ;; Error case: synchronous native operations must retain cleanup while servicing Scheme handlers.
+  (run-runtime-cases "native-interrupts native-continuation-lifetime timeout-grace"))
+
+(mat system-live-wait-fallback
+
+  ;; Error case: unavailable pidfds must retain the previous wait behavior.
+  (if system-test-strace?
+      (run-native-fault-case "live-wait"
+          "-qq" "-e" "trace=pidfd_open"
+          "-e" "inject=pidfd_open:error=ENOSYS" "-o" "/dev/null")
+      #t))
+
+(mat system-live-wait-efficiency
+
+  ;; Error case: a supported native exit notification must not wake to reap every few milliseconds.
+  (if (and system-test-pidfd? system-test-strace?)
+      (let ([trace (format "/tmp/cspp-live-wait-~a.trace" (getpid))])
+        (dynamic-wind
+          void
+          (lambda ()
+            (and
+              (run-native-fault-case "live-wait"
+                "-qq" "-e" "trace=wait4" "-o" (begin trace))
+              (< (length (filter (lambda (line) (string-startswith? line "wait4("))
+                                 (read-lines trace))) 10)))
+          (lambda () (when (file-exists? trace) (delete-file trace)))))
+      #t))
+
+(mat system-native-error-details
+
+  ;; Error case: native allocation and localized messages need isolation from the test runner.
+  (run-runtime-cases "native-allocation-errors localized-errors legacy-localized-errors"))
+
+(mat system-pipeline-descriptor-limit
+
+  ;; Error case: pipeline launch must use a bounded number of connection descriptors.
+  (run-runtime-cases "pipeline-low-descriptor-limit"))
+
+(mat system-spawn-without-descriptor-enumeration
+
+  ;; Error case: without reliable descriptor closure, launch must fail rather than inherit handles.
+  (if system-test-strace?
+      (run-native-fault-case "spawn-without-descriptor-enumeration"
+          "-f" "-qq" "-e" "trace=close_range,openat"
+          "-e" "inject=close_range:error=ENOSYS" "-e" "inject=openat:error=ENOENT:when=1"
+          "-o" "/dev/null")
+      #t))
+
+(mat system-pipeline-io-failure-cleanup
+
+  ;; Error case: an I/O error must not wait indefinitely for independent upstream work.
+  (if system-test-strace?
+      (run-native-fault-case "pipeline-io-failure"
+          "-f" "-qq" "-e" "trace=poll"
+          "-e" "inject=poll:error=EIO:when=1" "-o" "/dev/null")
+      #t))
+
+(mat system-pipeline-failure-allows-collection
+
+  ;; Error case: reaping a partially launched pipeline must not stall unrelated collections.
+  (if system-test-strace?
+      (for-all
+        (lambda (mode)
+          (run-native-fault-case (begin mode)
+            "-f" "--quiet=path-resolution,attach,personality,exit"
+            "-e" "trace=wait4" "-e" "inject=wait4:delay_enter=2s:when=1"
+            "-o" "/dev/null"))
+        '("pipeline-run-gc" "pipeline-capture-gc" "pipeline-spawn-gc"))
+      #t))
+
+(mat system-filesystem-query-allows-collection
+
+  ;; Error case: a delayed statfs must allow another thread to complete garbage collection.
+  (if system-test-strace?
+      (run-native-fault-case "filesystem-gc"
+          "-f" "--quiet=path-resolution,attach,personality,exit"
+          "-e" "trace=statfs,fstatfs" "-e" "inject=statfs:delay_enter=2s:when=1"
+          "-e" "inject=fstatfs:delay_enter=2s:when=1"
+          "-o" "/dev/null")
+      #t))
+
+(mat system-filesystem-single-target
+
+  ;; Error case: a symlink replacement must not combine two filesystems in one record.
+  (if (and (file-directory? "/dev/shm") system-test-strace?)
+      (run-native-fault-case "filesystem-snapshot"
+          "-f" "--quiet=path-resolution,attach,personality,exit"
+          "-e" "trace=statfs,fstatfs" "-e" "inject=statfs:delay_exit=1s:when=1"
+          "-e" "inject=fstatfs:delay_exit=1s:when=1"
+          "-o" "/dev/null")
+      #t))
+
+(mat system-procfs-without-mountinfo
+
+  ;; Error case: all metric queries must work without opening the mount table.
+  (if system-test-strace?
+      (run-native-fault-case "procfs-without-mountinfo"
+          "-f" "--quiet=path-resolution,attach,personality,exit"
+          "-P" "/proc/self/mountinfo"
+          "-e" "trace=openat" "-e" "inject=openat:error=EACCES"
+          "-o" "/dev/null")
+      #t))
+
+(mat system-native-host-query-errors
+
+  ;; Error case: unavailable host information must raise rather than return an error as data.
+  (if system-test-strace?
+      (run-native-fault-case "host-query"
+          "-f" "-qq" "-e" "trace=uname" "-e" "inject=uname:error=EPERM"
+          "-o" "/dev/null")
+      #t))
+
+(mat system-native-cleanup-errors
+
+  ;; Error case: retrying an interrupted wait must preserve the original pipeline launch failure.
+  ;; Syscall injection is optional on hosts without strace or permission to trace a child.
+  (if system-test-strace?
+      (for-all
+        (lambda (mode)
+          (run-native-fault-case (begin mode)
+            "-f" "-qq" "-e" "trace=wait4"
+            "-e" "inject=wait4:error=EINTR:when=1" "-o" "/dev/null"))
+        '("pipeline-run" "pipeline-capture" "pipeline-spawn"))
+      #t))
+
+(mat system-runtime-isolation
+
+  ;; Error case: native stalls, crashes, inherited input, and child cleanup need isolation.
+  (run-runtime-cases
+    (string-append "boundaries capture gc inherit wait ports environment-race signals "
+                   "pipeline-contracts vfork-rejected")))
+
+(mat system-loader-concurrency
+
+  ;; Error case: loading new libraries while listing them must not deadlock Chez's runtime.
+  (run-runtime-cases "loader-list-race"))
+
+(mat system-command-exit-notification
+
+  ;; Error case: a status-only command must wake on exit instead of polling empty descriptors.
+  (if (and system-test-pidfd? system-test-strace?)
+      (let ([trace (format "/tmp/cspp-command-wait-~a.trace" (getpid))])
+        (dynamic-wind
+          void
+          (lambda ()
+            (and
+              (run-native-fault-case "command-wait"
+                "-qq" "-e" "trace=pidfd_open,wait4" "-o" (begin trace))
+              (let ([lines (read-lines trace)])
+                (and
+                  (>= (length (filter (lambda (line) (string-startswith? line "pidfd_open("))
+                                      lines)) 4)
+                  ;; Error case: an exited upstream stage must not cause busy waiting.
+                  (< (length (filter (lambda (line) (string-startswith? line "wait4("))
+                                     lines)) 100)))))
+          (lambda () (when (file-exists? trace) (delete-file trace)))))
+      #t))

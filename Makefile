@@ -24,7 +24,7 @@ PACKAGE_DIR ?= $(BUILD_ROOT)/dist
 PACKAGE_COMMIT ?= $(shell git rev-parse HEAD)
 
 SRCS_CSPP := $(shell find src/cspp/   -type f -name '*.ss')
-SRCS_C      := $(shell find src/cspp/c/ -type f -name '*.c' ! -name 'lws_http2_fixture.c' ! -name 'crypto_memory_fixture.c' ! -name '*_unavailable.c')
+SRCS_C      := $(shell find src/cspp/c/ -type f -name '*.c' ! -name '*_fixture.c' ! -name '*_unavailable.c')
 
 include tests/test-files.mk
 

@@ -119,6 +119,8 @@ APIs, assertions in worker threads and fibers, failure propagation, and measurem
 - [Examples and benchmarks](examples/README.md)
 - [Cryptography and API migration](docs/crypto.md)
 - [Command-line parsing](docs/cli.md)
+- [Processes, signals, and system APIs](docs/system.md)
+- [Control and utility APIs](docs/control-utils.md)
 - [HTTP transport support](docs/http-lws.md)
 - [Linux packages and releases](docs/releases.md)
 - [Developer guide](docs/developer-guide.md)

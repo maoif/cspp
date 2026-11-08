@@ -1,5 +1,25 @@
 (import (cspp))
 
+(mat system-user-unicode-context
+
+     ;; Error case: a missing Unicode account name must survive native error-context conversion.
+     (let ([name (format "cspp-no-user-~a-中文" (getpid))])
+       (guard (condition
+                [(system-not-found-error? condition)
+                 (let ([entry (assoc "name" (system-error-context condition))])
+                   (and entry (string=? name (cdr entry))))])
+         (user-ref name)
+         #f)))
+
+(mat system-user-credentials
+
+     (for-all
+       (lambda (entry)
+         (let ([id ((car entry))])
+           (and (natural? id) (= id ((cdr entry))))))
+       (list (cons getuid current-uid) (cons getgid current-gid)
+             (cons geteuid current-euid) (cons getegid current-egid))))
+
 (mat system-user-current
 
      (let ([u (user-ref (getuid))])
@@ -28,20 +48,22 @@
 
      (let ([name (uid->user-name (getuid))])
        (and (string? name)
+            (string=? name (uid->user (getuid)))
             (= (getuid) (user-name->uid name))
             (= (getuid) (user->uid name))))
 
      (let ([name (gid->group-name (getgid))])
        (and (string? name)
+            (string=? name (gid->group (getgid)))
             (= (getgid) (group-name->gid name))
             (= (getgid) (group->gid name))))
 
-     (string? (get-user-dir (getuid)))
-     (string? (get-user-dir (uid->user-name (getuid))))
-     (string? (get-user-shell (getuid)))
-     (string? (get-user-shell (uid->user-name (getuid))))
-     (integer? (get-user-group (getuid)))
-     (integer? (get-user-group (uid->user-name (getuid))))
+     (let* ([uid (getuid)]
+            [name (uid->user-name uid)]
+            [user (user-ref uid)])
+       (and (string=? (unix-user-dir user) (get-user-dir uid) (get-user-dir name))
+            (string=? (unix-user-shell user) (get-user-shell uid) (get-user-shell name))
+            (= (unix-user-gid user) (get-user-group uid) (get-user-group name))))
 
      (user-exists? (getuid))
      (user-exists? (uid->user-name (getuid)))
@@ -68,3 +90,18 @@
      (not (user-exists? "__cspp_user_that_should_not_exist__"))
 
      (not (group-exists? "__cspp_group_that_should_not_exist__")))
+
+(mat system-user-concurrent-lookups
+  ;; Error case: simultaneous NSS lookups must not mix names and numeric identities.
+  (= 0 (system (if (file-exists? "system-user-thread.ss")
+                   "timeout 15 ../cspp --script=system-user-thread.ss"
+                   "timeout 15 ./cspp --script=tests/system-user-thread.ss"))))
+
+(mat system-user-id-validation
+  ;; Error case: inexact or out-of-range IDs must not reach a narrowing foreign call.
+  (error? (user-ref 1.0))
+
+  (error? (group-ref #x100000000))
+
+  ;; Error case: embedded NUL must not truncate an account name.
+  (error? (user-ref "root\x0;ignored")))

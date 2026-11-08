@@ -108,28 +108,37 @@
 
   (define $system-code?
     (lambda (x)
-      (or (integer? x) (eq? x #f))))
+      (or (and (integer? x) (exact? x)) (eq? x #f))))
 
   (define $system-context?
     (lambda (x)
-      (list? x)))
+      (and (list? x) (andmap pair? x))))
+
+  ;; Keep the system hierarchy and standard Chez condition handlers compatible.
+  (define $make-system-condition
+    (lambda (constructor operation code message context)
+      (condition (constructor operation code message context)
+                 (make-who-condition operation)
+                 (make-message-condition message))))
 
   #|proc:make-system-error
   The `make-system-error` procedure constructs a system error condition.
   The `operation` parameter is a symbol naming the operation that failed, or `#f` when unknown.
-  The `code` parameter is an integer error code, or `#f` when no code is available.
+  The `code` parameter is an exact integer error code, or `#f` when no code is available.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
+  The returned condition also supplies standard Chez caller and message components.
   |#
-  (define make-system-error
+  (define-who make-system-error
     (lambda (operation code message context)
-      (pcheck ([$system-operation? operation] [$system-code? code] [string? message] [$system-context? context])
-              (%make-system-error operation code message context))))
+      (pcheck-who who ([$system-operation? operation] [$system-code? code] [string? message] [$system-context? context])
+              ($make-system-condition %make-system-error operation code message context))))
 
   (define $make-special-system-error
-    (lambda (make-condition operation message context)
-      (pcheck ([$system-operation? operation] [string? message] [$system-context? context])
-              (make-condition operation #f message context))))
+    (lambda (who make-condition operation message context)
+      (pcheck-who who
+        ([$system-operation? operation] [string? message] [$system-context? context])
+        ($make-system-condition make-condition operation #f message context))))
 
   #|proc:make-system-unsupported-error
   The `make-system-unsupported-error` procedure constructs a system error condition for an
@@ -137,13 +146,15 @@
   The `operation` parameter is a symbol naming the unsupported operation, or `#f` when unknown.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
+  The returned condition also supplies standard Chez caller and message components.
   |#
   (define make-system-unsupported-error
     (case-lambda
       [(operation message)
        (make-system-unsupported-error operation message '())]
       [(operation message context)
-       ($make-special-system-error %make-system-unsupported-error operation message context)]))
+       ($make-special-system-error 'make-system-unsupported-error
+         %make-system-unsupported-error operation message context)]))
 
   #|proc:make-system-not-found-error
   The `make-system-not-found-error` procedure constructs a system error condition for a missing
@@ -151,44 +162,50 @@
   The `operation` parameter is a symbol naming the operation that failed, or `#f` when unknown.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
+  The returned condition also supplies standard Chez caller and message components.
   |#
   (define make-system-not-found-error
     (case-lambda
       [(operation message)
        (make-system-not-found-error operation message '())]
       [(operation message context)
-       ($make-special-system-error %make-system-not-found-error operation message context)]))
+       ($make-special-system-error 'make-system-not-found-error
+         %make-system-not-found-error operation message context)]))
 
   #|proc:make-system-permission-error
   The `make-system-permission-error` procedure constructs a system error condition for a
   permission failure.
   The `operation` parameter is a symbol naming the operation that failed, or `#f` when unknown.
-  The `code` parameter is an integer error code, or `#f` when no code is available.
+  The `code` parameter is an exact integer error code, or `#f` when no code is available.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
+  The returned condition also supplies standard Chez caller and message components.
   |#
-  (define make-system-permission-error
+  (define-who make-system-permission-error
     (case-lambda
       [(operation message)
        (make-system-permission-error operation #f message '())]
       [(operation message context)
        (make-system-permission-error operation #f message context)]
       [(operation code message context)
-       (pcheck ([$system-operation? operation] [$system-code? code] [string? message] [$system-context? context])
-               (%make-system-permission-error operation code message context))]))
+       (pcheck-who who ([$system-operation? operation] [$system-code? code] [string? message] [$system-context? context])
+               ($make-system-condition %make-system-permission-error
+                 operation code message context))]))
 
   #|proc:make-system-timeout-error
   The `make-system-timeout-error` procedure constructs a system error condition for a timeout.
   The `operation` parameter is a symbol naming the operation that failed, or `#f` when unknown.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
+  The returned condition also supplies standard Chez caller and message components.
   |#
   (define make-system-timeout-error
     (case-lambda
       [(operation message)
        (make-system-timeout-error operation message '())]
       [(operation message context)
-       ($make-special-system-error %make-system-timeout-error operation message context)]))
+       ($make-special-system-error 'make-system-timeout-error
+         %make-system-timeout-error operation message context)]))
 
   #|proc:make-system-exit-error
   The `make-system-exit-error` procedure constructs a system error condition for an unsuccessful
@@ -196,24 +213,28 @@
   The `operation` parameter is a symbol naming the operation that failed, or `#f` when unknown.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
+  The returned condition also supplies standard Chez caller and message components.
   |#
   (define make-system-exit-error
     (case-lambda
       [(operation message)
        (make-system-exit-error operation message '())]
       [(operation message context)
-       ($make-special-system-error %make-system-exit-error operation message context)]))
+       ($make-special-system-error 'make-system-exit-error
+         %make-system-exit-error operation message context)]))
 
   #|proc:raise-system-error
   The `raise-system-error` procedure raises a system error condition.
   The `operation` parameter is a symbol naming the operation that failed, or `#f` when unknown.
-  The `code` parameter is an integer error code, or `#f` when no code is available.
+  The `code` parameter is an exact integer error code, or `#f` when no code is available.
   The `message` parameter is a string describing the failure.
   The `context` parameter is an association list with additional failure details.
   |#
-  (define raise-system-error
+  (define-who raise-system-error
     (lambda (operation code message context)
-      (raise (make-system-error operation code message context))))
+      (pcheck-who who ([$system-operation? operation] [$system-code? code]
+                       [string? message] [$system-context? context])
+        (raise (make-system-error operation code message context)))))
 
   #|proc:raise-system-unsupported
   The `raise-system-unsupported` procedure raises a system error condition for an unsupported
@@ -221,9 +242,10 @@
   The `operation` parameter is a symbol naming the unsupported operation, or `#f` when unknown.
   The `message` parameter is a string describing the failure.
   |#
-  (define raise-system-unsupported
+  (define-who raise-system-unsupported
     (lambda (operation message)
-      (raise (make-system-unsupported-error operation message))))
+      (pcheck-who who ([$system-operation? operation] [string? message])
+        (raise (make-system-unsupported-error operation message)))))
 
 
 )

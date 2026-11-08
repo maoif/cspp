@@ -1766,7 +1766,7 @@
      (guard (failure [else #f])
        ($with-fs-fixture
         (lambda (root)
-          (let ([result (capture-process "../cspp" "--script=fswatcher-blocking-process.ss"
+          (let ([result (process-capture "../cspp" "--script=fswatcher-blocking-process.ss"
                          (string-append root) "zero-timeout" :timeout 30000 :stdout capture :stderr capture)])
             (and (process-exit-success? (process-result-status result))
                  (string=? "" (process-result-stdout result))
@@ -1810,7 +1810,7 @@
      (guard (failure [else #f])
        ($with-fs-fixture
         (lambda (root)
-          (let ([result (capture-process "../cspp" "--script=fswatcher-blocking-process.ss"
+          (let ([result (process-capture "../cspp" "--script=fswatcher-blocking-process.ss"
                          (string-append root) "finite-timeout"
                          :timeout 30000 :stdout capture :stderr capture)])
             (and (process-exit-success? (process-result-status result))
@@ -1822,7 +1822,7 @@
      (guard (failure [else #f])
        ($with-fs-fixture
         (lambda (root)
-          (let ([result (capture-process "../cspp" "--script=fswatcher-blocking-process.ss"
+          (let ([result (process-capture "../cspp" "--script=fswatcher-blocking-process.ss"
                          (string-append root) :timeout 30000 :stdout capture :stderr capture)])
             (and (process-exit-success? (process-result-status result))
                  (string=? "" (process-result-stdout result))

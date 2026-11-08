@@ -4,6 +4,10 @@
           ;; add libs here if you want them auto-compiled when compiling this file,
           ;; but not auto-imported when importing (cspp)
           (cspp optional-library-check)
+          (cspp system private)
+          (cspp system linux os-release)
+          (cspp system process status)
+          (cspp system process private)
           (cspp concurrency fiber)
           (cspp concurrency fiber-net)
           (cspp parser combinator))

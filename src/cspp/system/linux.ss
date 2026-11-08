@@ -19,6 +19,10 @@
           linux-os-release)
   (import (cspp chez)
           (cspp string)
+          (only (cspp file) read-lines)
+          (cspp system private)
+          (cspp system linux os-release)
+          (only (cspp system signal values) $signal-input? $signal-ref)
           (cspp system common)
           (cspp system filesystem)
           (only (cspp system info) system-platform)
@@ -29,14 +33,6 @@
 ;;;; helpers
 ;;;;===----------------------------------------------------------------------===
 
-  (define $signal-input?
-    (lambda (x)
-      (or (signal? x) (symbol? x) (string? x) (integer? x))))
-
-  (define $positive-integer?
-    (lambda (x)
-      (and (integer? x) (> x 0))))
-
   (define $unsupported
     (lambda (who message)
       (raise-system-unsupported who message)))
@@ -46,11 +42,12 @@
       (unless (linux?)
         ($unsupported who "Linux system operation is unsupported on this platform"))))
 
-  (define $ensure-linux-procfs
-    (lambda (who)
+  (define $ensure-linux-procfs-file
+    (lambda (who path)
       ($ensure-linux who)
-      (unless (linux-procfs-mounted?)
-        ($unsupported who "Linux procfs is not mounted"))))
+      ;; Query the requested file each time; mounts can change with the caller's namespace.
+      (unless (file-exists? path)
+        ($unsupported who (format "Linux procfs file is unavailable: ~a" path)))))
 
   (define $read-first-line
     (lambda (path)
@@ -59,26 +56,9 @@
           (let ([line (get-line port)])
             (if (eof-object? line) "" line))))))
 
-  (define $read-lines
-    (lambda (path)
-      (call-with-input-file path
-        (lambda (port)
-          (let loop ([lines '()])
-            (let ([line (get-line port)])
-              (if (eof-object? line)
-                  (reverse lines)
-                  (loop (cons line lines)))))))))
-
-  (define $string-empty?
-    (lambda (str)
-      (fx= 0 (string-length str))))
-
-  (define $remove-empty-strings
-    (lambda (strings)
-      (let loop ([strings strings] [out '()])
-        (cond [(null? strings) (reverse out)]
-              [($string-empty? (car strings)) (loop (cdr strings) out)]
-              [else (loop (cdr strings) (cons (car strings) out))]))))
+  (define $space-fields
+    (let ([nonempty? (p/not string-empty?)])
+      (lambda (text) (filter nonempty? (string-split text #\space)))))
 
   (define $line-key/value
     (lambda (line)
@@ -87,49 +67,21 @@
              (cons (substring line 0 colon)
                    (string-trim (substring line (fx+ colon 1) (string-length line))))))))
 
-  (define $strip-matching-quotes
-    (lambda (str)
-      (let ([len (string-length str)])
-        (if (and (fx>= len 2)
-                 (let ([first (string-ref str 0)]
-                       [last (string-ref str (fx- len 1))])
-                   (or (and (char=? first #\") (char=? last #\"))
-                       (and (char=? first #\') (char=? last #\')))))
-            (substring str 1 (fx- len 1))
-            str))))
-
-  (define $read-os-release
-    (lambda (path)
-      (let loop ([lines ($read-lines path)] [out '()])
-        (cond [(null? lines) (reverse out)]
-              [(or ($string-empty? (car lines))
-                   (char=? #\# (string-ref (car lines) 0)))
-               (loop (cdr lines) out)]
-              [else
-               (let ([equals (string-search (car lines) #\=)])
-                 (if equals
-                     (let ([key (substring (car lines) 0 equals)]
-                           [value (substring (car lines) (fx+ equals 1) (string-length (car lines)))])
-                       (loop (cdr lines)
-                             (cons (cons (string->symbol key)
-                                         ($strip-matching-quotes value))
-                                   out)))
-                     (loop (cdr lines) out)))]))))
-
 ;;;;===----------------------------------------------------------------------===
 ;;;; platform
 ;;;;===----------------------------------------------------------------------===
 
   #|proc:linux?
-The `linux?` procedure returns `#t` when the current platform is Linux, otherwise `#f`.
-|#
+  The `linux?` procedure returns `#t` when the current platform is Linux, otherwise `#f`.
+  |#
   (define linux?
     (lambda ()
       (eq? (system-platform) 'linux)))
 
   #|proc:linux-procfs-mounted?
-The `linux-procfs-mounted?` procedure returns `#t` when Linux procfs appears to be mounted at `/proc`, otherwise `#f`.
-|#
+  The `linux-procfs-mounted?` procedure returns `#t` when Linux procfs appears to be mounted at
+  `/proc`, otherwise `#f`.
+  |#
   (define linux-procfs-mounted?
     (lambda ()
       (and (linux?)
@@ -146,69 +98,78 @@ The `linux-procfs-mounted?` procedure returns `#t` when Linux procfs appears to 
 ;;;;===----------------------------------------------------------------------===
 
   #|proc:linux-mounted-filesystems
-The `linux-mounted-filesystems` procedure returns the list of Linux mounted filesystem records for the current process mount namespace.
-|#
+  The `linux-mounted-filesystems` procedure returns the list of Linux mounted filesystem records for
+  the current process mount namespace.
+  |#
   (define-who linux-mounted-filesystems
     (lambda ()
       ($ensure-linux who)
       (mounted-filesystems)))
 
   #|proc:linux-filesystem-info
-The `linux-filesystem-info` procedure returns filesystem capacity and identity information for `path` on Linux.
-The `path` parameter is a string naming a path on the filesystem to query.
-|#
+  The `linux-filesystem-info` procedure returns filesystem capacity and identity information for
+  `path` on Linux.
+  The `path` parameter is a string without NUL characters naming a path on the filesystem.
+  |#
   (define-who linux-filesystem-info
     (lambda (path)
-      (pcheck ([string? path])
+      (pcheck-who who ([$os-string? path])
               ($ensure-linux who)
               (filesystem-info path))))
 
   #|proc:linux-signal-list
-The `linux-signal-list` procedure returns the known Linux signal records.
-|#
+  The `linux-signal-list` procedure returns the known Linux signal records.
+  |#
   (define-who linux-signal-list
     (lambda ()
       ($ensure-linux who)
       (signal-list)))
 
   #|proc:linux-send-signal
-The `linux-send-signal` procedure sends `sig` to process `pid` on Linux.
-The `pid` parameter is an exact positive integer process ID.
-The `sig` parameter is a signal record, symbol, string, or integer signal number accepted by `signal`.
-|#
+  The `linux-send-signal` procedure sends `sig` to process `pid` on Linux.
+  The `pid` parameter is an exact positive integer process ID.
+  The `sig` parameter is a signal record, symbol, string, or integer signal number accepted by
+  `signal`.
+  |#
   (define-who linux-send-signal
     (lambda (pid sig)
-      (pcheck ([$positive-integer? pid] [$signal-input? sig])
+      (pcheck-who who ([$positive-pid? pid] [$signal-input? sig])
               ($ensure-linux who)
-              (send-signal pid sig))))
+              (send-signal pid ($signal-ref who sig)))))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; procfs and os-release
 ;;;;===----------------------------------------------------------------------===
 
   #|proc:linux-system-uptime
-The `linux-system-uptime` procedure returns the system uptime in seconds from `/proc/uptime`.
-|#
+  The `linux-system-uptime` procedure returns the system uptime in seconds from `/proc/uptime`.
+  It reads the current procfs file directly; an absent file raises a system unsupported condition.
+  |#
   (define-who linux-system-uptime
     (lambda ()
-      ($ensure-linux-procfs who)
-      (let* ([fields ($remove-empty-strings (string-split ($read-first-line "/proc/uptime") #\space))]
+      ($ensure-linux-procfs-file who "/proc/uptime")
+      (let* ([fields ($space-fields ($read-first-line "/proc/uptime"))]
              [uptime (and (pair? fields) (string->number (car fields)))])
         (or uptime
             ($unsupported who "could not parse /proc/uptime")))))
 
   #|proc:linux-memory-info
-The `linux-memory-info` procedure returns memory information from `/proc/meminfo` as an association list.
-Each association has a symbol key from `/proc/meminfo` and a numeric value, usually measured in KiB by Linux.
-|#
+  The `linux-memory-info` procedure returns memory information from `/proc/meminfo` as an
+  association list.
+  Each association has a symbol key preserving the procfs field name and an exact integer value.
+  Linux `kB` values are in KiB; unitless fields such as `HugePages_Total` are counts.
+  Values keep their reported units without conversion. `symbol->string` returns the field name;
+  parentheses in keys such as `Active(anon)` may appear as escapes when Scheme prints the symbol.
+  It reads the current procfs file directly; an absent file raises a system unsupported condition.
+  |#
   (define-who linux-memory-info
     (lambda ()
-      ($ensure-linux-procfs who)
-      (let loop ([lines ($read-lines "/proc/meminfo")] [out '()])
+      ($ensure-linux-procfs-file who "/proc/meminfo")
+      (let loop ([lines (read-lines "/proc/meminfo")] [out '()])
         (cond [(null? lines) (reverse out)]
               [else
                (let* ([entry ($line-key/value (car lines))]
-                      [fields (and entry ($remove-empty-strings (string-split (cdr entry) #\space)))]
+                      [fields (and entry ($space-fields (cdr entry)))]
                       [value (and (pair? fields) (string->number (car fields)))])
                  (loop (cdr lines)
                        (if (and entry value)
@@ -216,12 +177,14 @@ Each association has a symbol key from `/proc/meminfo` and a numeric value, usua
                            out)))]))))
 
   #|proc:linux-load-average
-The `linux-load-average` procedure returns the one-, five-, and fifteen-minute load averages from `/proc/loadavg`.
-|#
+  The `linux-load-average` procedure returns the one-, five-, and fifteen-minute load averages from
+  `/proc/loadavg`.
+  It reads the current procfs file directly; an absent file raises a system unsupported condition.
+  |#
   (define-who linux-load-average
     (lambda ()
-      ($ensure-linux-procfs who)
-      (let* ([fields ($remove-empty-strings (string-split ($read-first-line "/proc/loadavg") #\space))]
+      ($ensure-linux-procfs-file who "/proc/loadavg")
+      (let* ([fields ($space-fields ($read-first-line "/proc/loadavg"))]
              [one (and (pair? fields) (string->number (car fields)))]
              [fields (and (pair? fields) (cdr fields))]
              [five (and (pair? fields) (string->number (car fields)))]
@@ -232,9 +195,11 @@ The `linux-load-average` procedure returns the one-, five-, and fifteen-minute l
             ($unsupported who "could not parse /proc/loadavg")))))
 
   #|proc:linux-os-release
-The `linux-os-release` procedure returns operating-system release fields as an association list.
-Keys are symbols from `/etc/os-release` or `/usr/lib/os-release`, and values are strings.
-|#
+  The `linux-os-release` procedure returns operating-system release fields as an association list.
+  Keys are symbols from `/etc/os-release` or `/usr/lib/os-release`, and values are strings.
+  Shell-style quotes and backslash escapes are decoded without expanding variables or commands.
+  Repeated keys keep their final value; unique keys retain their first-appearance order.
+  |#
   (define-who linux-os-release
     (lambda ()
       ($ensure-linux who)

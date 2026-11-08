@@ -1,0 +1,86 @@
+(library (cspp system linux os-release)
+  (export $read-os-release)
+  (import (cspp chez) (cspp utils) (cspp string) (cspp list)
+          (cspp system private))
+
+  ;; Discard indentation and unescaped trailing whitespace before decoding.
+  ;; An odd run of backslashes quotes the final whitespace character.
+  (define $trim-line
+    (lambda (line)
+      (let ([length (string-length line)])
+        (let start ([first 0])
+          (if (and (fx< first length) (char-whitespace? (string-ref line first)))
+              (start (fx+ first 1))
+              (let end ([last length])
+                (if (and (fx> last first)
+                         (char-whitespace? (string-ref line (fx- last 1))))
+                    (let slashes ([index (fx- last 2)] [count 0])
+                      (if (and (fx>= index first) (char=? #\\ (string-ref line index)))
+                          (slashes (fx- index 1) (fx+ count 1))
+                          (if (fxodd? count)
+                              (substring line first last)
+                              (end (fx- last 1)))))
+                    (substring line first last))))))))
+
+  ;; OS-release permits shell quoting and escaping, but forbids shell expansion.
+  (define $decode-value
+    (lambda (value)
+      (let* ([length (string-length value)]
+             [quote-character (and (fx>= length 2)
+                         (let ([first (string-ref value 0)])
+                           (and (memv first '(#\" #\'))
+                                (char=? first (string-ref value (fx- length 1)))
+                                first)))]
+             [start (if quote-character 1 0)]
+             [end (if quote-character (fx- length 1) length)])
+        (if (or (eqv? quote-character #\') (not (string-search value #\\)))
+            (if quote-character (substring value start end) value)
+            (let ([result (make-string (fx- end start))])
+              (let loop ([index start] [output 0])
+                (if (fx= index end)
+                    (substring result 0 output)
+                    (let* ([character (string-ref value index)]
+                           [next (fx+ index 1)]
+                           [escaped? (and (char=? character #\\) (fx< next end)
+                                          (or (not quote-character)
+                                              (memv (string-ref value next)
+                                                    '(#\" #\\ #\$ #\`))))])
+                      (string-set! result output
+                        (if escaped? (string-ref value next) character))
+                      (loop (if escaped? (fx+ next 1) next) (fx+ output 1))))))))))
+
+  #|proc:$read-os-release
+  The internal `$read-os-release` procedure reads release fields from NUL-free file path `path`.
+  It returns an association list of symbol keys and decoded string values in first-key order.
+  Repeated keys keep only their final assignment, including an empty string value.
+  Blank and comment lines are ignored. Single quotes preserve literal contents; double quotes
+  decode escapes for quotes, backslashes, dollar signs, and backticks. Unquoted escapes quote the
+  following character. No variable expansion or command substitution is performed.
+  Indentation and unescaped trailing whitespace are ignored; escaped trailing whitespace is kept.
+  |#
+  (define-who $read-os-release
+    (lambda (path)
+      (pcheck-who who ([$os-string? path])
+        (call-with-input-file path
+          (lambda (port)
+            (let ([builder (make-list-builder)] [entries (make-eq-hashtable)])
+              (let loop ()
+                (let ([line (get-line port)])
+                  (if (eof-object? line)
+                      (builder)
+                      (let ([line ($trim-line line)])
+                        (unless (or (string-empty? line) (char=? #\# (string-ref line 0)))
+                          (let ([equals (string-search line #\=)])
+                            (when equals
+                              (let* ([key (string->symbol (substring line 0 equals))]
+                                     [value ($decode-value
+                                              (substring line (fx+ equals 1) (string-length line)))]
+                                     [entry (hashtable-ref entries key #f)])
+                                (if entry
+                                    (set-cdr! entry value)
+                                    (let ([entry (cons key value)])
+                                      (hashtable-set! entries key entry)
+                                      (builder entry)))))))
+                        (loop)))))))))))
+
+)

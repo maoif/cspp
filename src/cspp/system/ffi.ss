@@ -23,9 +23,9 @@
   The `result` parameter is a vector tagged with a symbol from a C helper.
   The `ok` tag returns a value; error tags raise system conditions.
   |#
-  (define ffi-result-ref
+  (define-who ffi-result-ref
     (lambda (result)
-      (pcheck ([vector? result])
+      (pcheck-who who ([vector? result])
               (let ([tag (and (fx< 0 (vector-length result)) (vector-ref result 0))])
                 (cond
                   [(and (eq? tag 'ok) (fx= 2 (vector-length result)))
