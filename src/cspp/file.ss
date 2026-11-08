@@ -2130,7 +2130,9 @@
         (let ([result (inspect path)])
           (if (string? result) ($err-file who path result) result)))))
 
-  (define $expand-link-path
+  ;; Expand before decomposing a filesystem pathname. Keep physical dot/parent traversal
+  ;; intact, and protect any literal leading tilde left by the native expansion.
+  (define $expand-file-path
     (let ([expand (foreign-procedure "cspp_file_expand_pathname" (string) scheme-object)])
       (lambda (who path)
         (if (or (fxzero? (string-length path)) (not (char=? (string-ref path 0) #\~)))
@@ -2158,7 +2160,7 @@
           (if (not recursive?)
               (ffi who path)
               (let ([seen (make-hashtable equal-hash equal?)])
-                (let loop ([path ($expand-link-path who path)])
+                (let loop ([path ($expand-file-path who path)])
                   ;; A relative link's target depends on its parent directory.
                   ;; Hard-linked symlinks in different parents need distinct keys.
                   (let* ([parent (let ([parent (path-parent path)])
@@ -2212,23 +2214,27 @@
 
 ;;;; soft and hard links
 
+  (define $parse-file-path
+    (lambda (who path)
+      (path-parse 'unix ($expand-file-path who path))))
+
   (define $parent-directory-name
     (lambda (path)
       (let ([name (path-render (path-drop-basename path))])
         (if (string=? name "") "." name))))
 
   (define $same-file-entry?
-    (lambda (path1 path2)
+    (lambda (who path1 path2)
       ;; Distinct hard links may be replaced, but two names for the same directory
       ;; entry must not delete the source. Do not follow the final symlink.
-      (let ([left (path-parse 'unix path1)] [right (path-parse 'unix path2)])
+      (let ([left ($parse-file-path who path1)] [right ($parse-file-path who path2)])
         (and (equal? (path-basename left) (path-basename right))
              (same-file? ($parent-directory-name left) ($parent-directory-name right))))))
 
   (define $replace-file-entry
     (let ([stage (foreign-procedure "cspp_file_staging_directory" (string) scheme-object)])
       (lambda (who destination create)
-        (let ([directory (stage ($parent-directory-name (path-parse 'unix destination)))])
+        (let ([directory (stage ($parent-directory-name ($parse-file-path who destination)))])
           (when (vector? directory) ($err-file who destination (vector-ref directory 0)))
           (let ([temporary (path-build directory "entry")])
             (dynamic-wind
@@ -2258,8 +2264,8 @@
                           (if overwrite?
                               (begin
                                 (when (and source-path
-                                           (or ($same-file-entry? source-path dest)
-                                               ($same-file-entry? name-src dest)))
+                                           (or ($same-file-entry? who source-path dest)
+                                               ($same-file-entry? who name-src dest)))
                                   ($err-file who dest "source and destination are the same file"))
                                 ;; Commit only a complete replacement; do not follow dest links.
                                 ($replace-file-entry who dest
@@ -2638,7 +2644,7 @@
       (let* ([source ($canonical-file-path who src)]
              [container (if (file-directory? dest)
                             dest
-                            ($parent-directory-name (path-parse 'unix dest)))]
+                            ($parent-directory-name ($parse-file-path who dest)))]
              [destination ($canonical-file-path who container)]
              [relative (path-components (path-relative-to source destination))])
         (not (and (pair? relative) (string=? (car relative) ".."))))))
@@ -2710,7 +2716,7 @@
                  (when ($copytree-destination-inside-source? who src dest)
                    (errorf who "destination cannot be inside the source directory"))
                  (unless (file-directory? dest #t)
-                     (let ([parent ($parent-directory-name (path-parse 'unix dest))])
+                     (let ([parent ($parent-directory-name ($parse-file-path who dest))])
                        (if (file-directory? parent #t)
                            (make-directory src dest)
                            (errorf who "destination's parent directory doesn't exist: ~a"
@@ -2724,6 +2730,7 @@
   `dest` itself is created. A destination within `src` is rejected. A source root symlink is
   followed, but nested directory symlinks are not traversed.
   The containment check also follows symlink aliases of the destination.
+  Containment and parent checks expand home notation without lexical normalization.
   Optional `copy` has signature `(lambda (source-path destination-path) ...)` and copies
   each file or symlink; its return values are ignored. By default `file-copy` preserves
   symlinks. Directory metadata is not copied. Return unspecified values.
@@ -2744,6 +2751,7 @@
 
   (define $removable-entry-path
     (lambda (path)
+      ;; The caller expands home notation before stripping markers or rejecting roots.
       (let* ([parsed (path-with-trailing-directory (path-parse 'unix path) #f)]
              [basename (path-basename parsed)])
         ;; Do not normalize: a parent component after a symlink has physical meaning.
@@ -2752,16 +2760,17 @@
   (define $file-move
     (lambda (who src dest copy copy-tree)
        (pcheck ([$filename? src dest] [procedure? copy])
-               (let ([src (or ($removable-entry-path src)
-                              (errorf who "source must name a removable entry: ~a" src))]
-                     [directory-marked? (and (fx> (string-length src) 0)
-                                             (char=? #\/ (string-ref src
-                                                          (fx1- (string-length src)))))])
+               (let* ([expanded ($expand-file-path who src)]
+                      [directory-marked? (and (fx> (string-length expanded) 0)
+                                              (char=? #\/ (string-ref expanded
+                                                           (fx1- (string-length expanded)))))]
+                      [src (or ($removable-entry-path expanded)
+                               (errorf who "source must name a removable entry: ~a" src))])
                  (unless (file-exists? src #f) ($err-file-not-found who src))
                  (when (and directory-marked? (not (file-symbolic-link? src))
                             (not (file-directory? src)))
                    ($err-file-not-directory who src))
-                 (cond [(and (file-exists? dest #f) ($same-file-entry? src dest))
+                 (cond [(and (file-exists? dest #f) ($same-file-entry? who src dest))
                         ($err-file who dest "source and destination are the same file")]
                        [(and (not (file-exists? dest #f)) ($try-rename-file src dest)) #t]
                        [(and (file-directory? src #f) (not (file-symbolic-link? src)))
@@ -2776,7 +2785,7 @@
                        [else
                         (let* ([container? (file-directory? dest)]
                                [target (if container? (path-build dest (path-last src)) dest)])
-                          (when (and (file-exists? target #f) ($same-file-entry? src target))
+                          (when (and (file-exists? target #f) ($same-file-entry? who src target))
                             ($err-file who target "source and destination are the same file"))
                           (if (and container? (not (file-exists? target #f))
                                    ($try-rename-file src target))
@@ -2802,6 +2811,7 @@
   Moving an entry onto itself raises an error before calling `copy`.
   A trailing separator on a source symlink is ignored: the link itself is moved.
   Filesystem roots and final `.` or `..` components are rejected before any changes.
+  Home notation in `src` is expanded before checking the entry and its trailing separator.
   Existing child directories are not merged recursively, as in `file-copytree`.
   A failed copy can leave a partial destination; the source remains until copying succeeds.
   Return `#t` for a renamed file or moved directory, unspecified values for a copied file.
@@ -2816,6 +2826,7 @@
   Remove a directory, recursively.
   Path string `path` must name a directory, not a symlink, even with trailing separators.
   Filesystem roots and final `.` or `..` components are rejected before removing any contents.
+  Home notation is expanded before these checks and before stripping trailing separators.
 
   If `error?`, an error condition is raised when the procedure fails to remove
   a file or directory.
@@ -2858,7 +2869,7 @@
                         entries)))
                    (attempt (lambda () (delete-directory directory #t)))))
                ;; A trailing slash makes lstat follow the final symlink on POSIX.
-               (let ([entry ($removable-entry-path path)])
+               (let ([entry ($removable-entry-path ($expand-file-path who path))])
                  (cond [(not entry)
                         (if err? (errorf who "path must name a removable directory: ~a" path) #f)]
                        [(not (file-exists? entry #f))
@@ -2890,6 +2901,7 @@
   Create directory path string `path` and any missing intermediate directories.
   Integer `mode` supplies the leaf directory's permission bits from 0 through #o7777;
   the default is #o777. Missing parents use #o777. All creation modes are subject to umask.
+  Home notation is expanded before creating parents, without lexical normalization.
   Terminal `.` components do not change which newly created directory receives `mode`.
   A final directory first created as an intermediate directory in this call also receives
   the leaf mode, subject to the permissions allowed at creation. Parent traversal is physical.
@@ -2902,7 +2914,7 @@
       [(path) (mkdirs path #o777)]
       [(path mode)
        (pcheck ([$filename? path] [$mode-num? mode])
-         (let ([path ($mkdirs-target path)])
+         (let ([path ($mkdirs-target ($expand-file-path who path))])
            (if (file-exists? path)
                (unless (file-directory? path)
                  ($err-file-exists who path))

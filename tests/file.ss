@@ -17,6 +17,192 @@
         (lambda () (proc root))
         (lambda () (when (file-directory? root #f) (file-removetree root)))))))
 
+(define $with-file-home
+  (lambda (home proc)
+    (let ([saved-home (getenv "HOME")])
+      (dynamic-wind
+        (lambda () (putenv "HOME" home))
+        proc
+        (lambda ()
+          (if saved-home (putenv "HOME" saved-home)
+              ((foreign-procedure "unsetenv" (string) int) "HOME")))))))
+
+(mat file-removetree-expanded-home-guards
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([parent (path-build (current-directory) root)]
+               [marker (path-build parent "top.txt")])
+          ;; Error cases: a terminal dot in HOME must reject before removing any contents.
+          ($with-file-home (string-append parent "/.")
+            (lambda ()
+              (and (not (file-removetree "~" #f))
+                   (file-exists? marker)
+                   (guard (failure [(error? failure) (file-exists? marker)])
+                     (file-removetree "~" #t)
+                     #f)))))))
+
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([parent (path-build (current-directory) root)]
+               [link (path-build parent "home-link")]
+               [marker (path-build parent "sub/nested.txt")])
+          (file-symlink "sub" link)
+          ;; Error case: stripping HOME's trailing slash must expose the symlink itself.
+          ($with-file-home (string-append link "/")
+            (lambda ()
+              (and (guard (failure [(error? failure) #t])
+                     (file-removetree "~" #t)
+                     #f)
+                   (file-symbolic-link? link)
+                   (file-exists? marker))))))))
+
+(mat file-move-expanded-home-entry
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([parent (path-build (current-directory) root)]
+               [destination (path-build parent "out")]
+               [marker (path-build parent "sub/nested.txt")])
+          (mkdir destination)
+          ;; Error case: moving a terminal-dot home must reject before copying or deleting.
+          ($with-file-home (path-build parent "sub/.")
+            (lambda ()
+              (and (guard (failure [(error? failure) #t])
+                     (file-move "~" destination)
+                     #f)
+                   (file-exists? marker)
+                   (null? (directory-list destination))))))))
+
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([parent (path-build (current-directory) root)]
+               [link (path-build parent "home-link")]
+               [destination (path-build parent "moved-link")])
+          (file-symlink "sub" link)
+          ($with-file-home (string-append link "/")
+            (lambda ()
+              (file-move "~" destination)
+              (and (not (file-exists? link #f))
+                   (file-symbolic-link? destination)
+                   (string=? "sub" (readlink destination))
+                   (file-exists? (path-build parent "sub/nested.txt")))))))))
+
+(mat file-expanded-home-entry-identity
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([home (path-build (current-directory) (path-build root "top.txt"))])
+          ($with-file-home home
+            (lambda ()
+              ;; Error case: a self move must reject before invoking even an overwriting copier.
+              (let ([calls 0])
+                (and (guard (failure [(error? failure) #t])
+                       (file-move "~" home
+                                  (lambda (from to)
+                                    (set! calls (+ calls 1))
+                                    (file-copy! from to)))
+                       #f)
+                     (= calls 0)
+                     (file-exists? home))))))))
+
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([home (path-build (current-directory) (path-build root "top.txt"))])
+          ($with-file-home home
+            (lambda ()
+              ;; Error case: the overwriting copy must recognize the expanded source entry.
+              (guard (failure [(error? failure) (file-exists? home)])
+                (file-copy! "~" home)
+                #f))))))
+
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([original (current-directory)]
+              [home (path-build (current-directory) (path-build root "sub"))])
+          (dynamic-wind
+            (lambda () (current-directory root) (mkdir "./~"))
+            (lambda ()
+              ($with-file-home home
+                (lambda ()
+                  (file-move "~" "./~")
+                  (and (not (file-exists? home #f))
+                       (file-exists? "./~/nested.txt")))))
+            (lambda () (current-directory original)))))))
+
+(mat file-copytree-expanded-home-containment
+     (for-all
+      (lambda (operation)
+        ($with-fs-fixture
+         (lambda (root)
+           (let* ([parent (path-build (current-directory) root)]
+                  [source (path-build parent "sub")]
+                  [destination (path-build source "new-home")]
+                  [calls 0])
+             ($with-file-home destination
+               (lambda ()
+                 ;; Error case: containment must reject before creating or copying a child.
+                 (and (guard (failure [(error? failure) #t])
+                        (operation source "~"
+                                   (lambda (from to)
+                                     (set! calls (+ calls 1))
+                                     ;; Bound recursion if the containment guard regresses.
+                                     (when (> calls 3) (error 'copy-fixture "recursive copy"))
+                                     (file-copy from to)))
+                        #f)
+                      (= calls 0)
+                      (not (file-exists? destination #f))
+                      (file-exists? (path-build source "nested.txt")))))))))
+      (list file-copytree file-move)))
+
+(mat file-replacement-expanded-home-parent
+     (or (= (geteuid) 0)
+         (for-all
+          (lambda (replace)
+            ($with-fs-fixture
+             (lambda (root)
+               (let* ([original (current-directory)]
+                      [parent (path-build original root)]
+                      [locked (path-build parent "locked")]
+                      [source (path-build parent "top.txt")]
+                      [home (path-build parent "home-file")])
+                 (mkdir locked)
+                 (write-string home "old")
+                 (dynamic-wind
+                   (lambda () (chmod locked #o555) (current-directory locked))
+                   (lambda ()
+                     ($with-file-home home
+                       (lambda ()
+                         ;; Staging belongs in HOME's writable parent, not the unwritable cwd.
+                         (replace source "~")
+                         (and (file-exists? source) (string=? "" (read-string home))))))
+                   (lambda () (current-directory original) (chmod locked #o700)))))))
+          (list file-copy! file-link! file-symlink!))))
+
+(mat mkdirs-expanded-home-parents
+     (for-all
+      (lambda (suffix)
+        ($with-fs-fixture
+         (lambda (root)
+           (let* ([parent (path-build (current-directory) root)]
+                  [home (path-build parent "missing-parent/new-home")])
+             ($with-file-home (string-append home suffix)
+               (lambda ()
+                 (mkdirs "~" #o700)
+                 (and (file-directory? home)
+                      (= #o700 (file-mode home)))))))))
+      '("" "/.")))
+
+(mat mkdirs-home-physical-parents
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([parent (path-build (current-directory) root)]
+               [physical (path-build parent "physical")])
+          (mkdirs (path-build physical "sub"))
+          (file-symlink "physical/sub" (path-build parent "home-alias"))
+          ($with-file-home (path-build parent "home-alias/../new-home")
+            (lambda ()
+              (mkdirs "~" #o700)
+              (and (= #o700 (file-mode (path-build physical "new-home")))
+                   (not (file-exists? (path-build parent "new-home") #f)))))))))
+
 ;; Bounded collection catches accidental dot-entry recursion without hanging.
 (define $fs-take-pass
   (lambda (iterator)
