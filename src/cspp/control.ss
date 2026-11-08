@@ -141,20 +141,19 @@
            (with-syntax ([(slot ...) slots]
                          [([capture expression] ...) bindings]
                          [(argument ...) arguments]
+                         [caller (if (datum ?curried) #'sect+ #'sect)]
                          [(p rest) (generate-temporaries '(proc rest))])
-             (if (datum ?curried)
-                 #`(let ([who 'sect+] [p proc] [capture expression] ...)
-                     (pcheck-who who ([procedure? p])
-                       #,(let gen-lambdas ([slots slots])
+             #`(let ([who 'caller] [p proc] [capture expression] ...)
+                 (pcheck-who who ([procedure? p])
+                   #,(if (datum ?curried)
+                         (let gen-lambdas ([slots slots])
                            (if (null? slots)
                                (if dots?
                                    #'(lambda rest (apply p argument ... rest))
                                    #'(p argument ...))
                                #`(lambda (#,(car slots))
-                                   #,(gen-lambdas (cdr slots)))))))
-                 #`(let ([who 'sect] [p proc] [capture expression] ...)
-                     (pcheck-who who ([procedure? p])
-                       #,(if dots?
+                                   #,(gen-lambdas (cdr slots)))))
+                         (if dots?
                              #'(lambda (slot ... . rest) (apply p argument ... rest))
                              #'(lambda (slot ...) (p argument ...))))))))])))
 

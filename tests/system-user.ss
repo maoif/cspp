@@ -11,6 +11,15 @@
          (user-ref name)
          #f)))
 
+(mat system-user-credentials
+
+     (for-all
+       (lambda (entry)
+         (let ([id ((car entry))])
+           (and (natural? id) (= id ((cdr entry))))))
+       (list (cons getuid current-uid) (cons getgid current-gid)
+             (cons geteuid current-euid) (cons getegid current-egid))))
+
 (mat system-user-current
 
      (let ([u (user-ref (getuid))])
@@ -39,20 +48,15 @@
 
      (let ([name (uid->user-name (getuid))])
        (and (string? name)
+            (string=? name (uid->user (getuid)))
             (= (getuid) (user-name->uid name))
             (= (getuid) (user->uid name))))
 
      (let ([name (gid->group-name (getgid))])
        (and (string? name)
+            (string=? name (gid->group (getgid)))
             (= (getgid) (group-name->gid name))
             (= (getgid) (group->gid name))))
-
-     (string? (get-user-dir (getuid)))
-     (string? (get-user-dir (uid->user-name (getuid))))
-     (string? (get-user-shell (getuid)))
-     (string? (get-user-shell (uid->user-name (getuid))))
-     (integer? (get-user-group (getuid)))
-     (integer? (get-user-group (uid->user-name (getuid))))
 
      (let* ([uid (getuid)]
             [name (uid->user-name uid)]

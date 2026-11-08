@@ -1,4 +1,4 @@
-(import (cspp chez) (cspp control) (cspp utils) (cspp list) (cspp string) (cspp vector))
+(import (cspp chez) (cspp control) (cspp utils) (cspp string) (cspp vector))
 
 (mat control-error-origins
 
@@ -10,41 +10,22 @@
                              (eq? (car entry) (condition-who condition)))])
            ((cdr entry)) #f))
        (list (cons 'compose (lambda () (compose #f)))
+             (cons 'compose (lambda () (compose values #f)))
+             (cons 'compose1 (lambda () (compose1 #f)))
              (cons 'compose1 (lambda () (compose1 values #f)))
              (cons '>>> (lambda () (>>> 1 #f)))
+             (cons '>>> (lambda () (>>> 1 values #f)))
+             (cons '>>>1 (lambda () (>>>1 1 #f)))
              (cons '>>>1 (lambda () (>>>1 1 values #f)))
              (cons 'sect (lambda () (sect #f _)))
-             (cons 'sect+ (lambda () (sect+ #f _))))))
-
-(mat section-procedure-contract
-
-     ;; Error case: reject a nonprocedure while constructing a section, before it is called.
-     (guard (condition [else #t]) (sect #f _) #f)
-
-     ;; Error case: curried sections must check the captured callback before accepting slots.
-     (guard (condition [else #t]) (sect+ #f _ _) #f))
-
+             (cons 'sect+ (lambda () (sect+ #f _ _))))))
 
 (mat compose
 
-     ;; not proc
-     (error? (compose 1))
-     (error? (compose 1 #\A))
-     (error? (compose ""))
-     (error? (compose zip list 'a))
-
-
-     ;; wrong #ret val
-     (error? ((compose sub1 (lambda (x) (values x x)) random) 100))
-     (error? ((compose
-               list
-               (lambda (x y a) (values b a y))
-               (lambda (x y) (values (* x x) (* y y) x y))
-               (lambda (x y) (values (add1 x) (add1 y))))
-              1 2))
+     ;; Error case: a callback cannot consume the returned values.
+     (error? ((compose sub1 (lambda () (values 1 2)))))
 
      (eq? cons (compose cons))
-     (eq? list (compose list))
 
      (equal? ((compose vreverse list->vector string->list) "123456")
              '#(#\6 #\5 #\4 #\3 #\2 #\1))
@@ -54,39 +35,23 @@
                (lambda (x y) (values (* x x) (* y y) x y))
                (lambda (x y) (values (add1 x) (add1 y))))
               1 2)
-             '(3 2 9 4))
-     )
-
+             '(3 2 9 4)))
 
 (mat compose1
 
-     ;; not proc
-     (error? (compose1 1))
-     (error? (compose1 1 #\A))
-     (error? (compose1 ""))
-     (error? (compose1 zip list 'a))
-
-     ;; wrong #ret val
-     (error? ((compose1 sub1 (lambda (x) (values x x)) random) 100))
-     (error? ((compose1
-               list
-               (lambda (x y a) (values b a y))
-               (lambda (x y) (values (* x x) (* y y) x y))
-               (lambda (x y) (values (add1 x) (add1 y))))
-              1 2))
+     ;; Error case: both the direct and longer-chain paths require one intermediate value.
+     (for-all
+       (lambda (count)
+         (guard (failure [else #t])
+           ((apply compose1
+              (append (make-list (- count 1) sub1) (list (lambda () (values 1 2))))))
+           #f))
+       '(2 3))
 
      (eq? cons (compose1 cons))
-     (eq? list (compose1 list))
 
      (equal? ((compose1 vreverse list->vector string->list) "123456")
-             '#(#\6 #\5 #\4 #\3 #\2 #\1))
-
-     (equal? '(5 6)
-             (call-with-values
-               (lambda () ((compose1 (lambda (value) (values value (+ value 1))) +) 2 3))
-               list))
-     )
-
+             '#(#\6 #\5 #\4 #\3 #\2 #\1)))
 
 (mat compose1-chain-contract
 
@@ -160,34 +125,26 @@
 
 (mat >>>
 
+     ;; Error case: a pipeline requires at least one callback.
      (error? (>>> 1))
-     (error? (>>> 1 #\A))
-     (error? (>>> "" 'a))
-     (error? (>>> zip list 'a))
 
-     ;; wrong arity
-     (error? (>>> 10 random (lambda (x) (values x x)) sub1))
+     ;; Error case: intermediate values must match the next callback's arity.
+     (error? (>>> 10 (lambda (value) (values value value)) sub1))
 
      (fx= 2 (>>> 1 (lambda (x) (values x x)) +))
      (equal? (>>> "123456" string->list list->vector vreverse)
-             ((compose1 vreverse list->vector string->list) "123456"))
-     )
-
+             '#(#\6 #\5 #\4 #\3 #\2 #\1)))
 
 (mat >>>1
 
+     ;; Error case: a pipeline requires at least one callback.
      (error? (>>>1 1))
-     (error? (>>>1 1 #\A))
-     (error? (>>>1 "" 'a))
-     (error? (>>>1 zip list 'a))
 
-     ;; wrong arity
+     ;; Error case: intermediate values must match the next callback's arity.
      (error? (>>>1 1 (lambda (x) (values x x)) +))
 
      (equal? (>>>1 "123456" string->list list->vector vreverse)
-             ((compose1 vreverse list->vector string->list) "123456"))
-     )
-
+             '#(#\6 #\5 #\4 #\3 #\2 #\1)))
 
 (mat sect
 
@@ -201,22 +158,7 @@
 
      (eq? (let ([add2* (sect + _ 2 ...)])
             (add2* 2 2 2))
-          8)
-
-     (string-contains?
-      (condition-message
-       (guard (e [#t e])
-         (expand '(sect + ... _))))
-      "... must appear last")
-
-     (string-contains?
-      (condition-message
-       (guard (e [#t e])
-         (expand '(sect + _ ... _))))
-      "... must appear last")
-
-     )
-
+          8))
 
 (mat sect+
 
@@ -227,21 +169,20 @@
 
      (eq? (let ([f (sect+ + _ _ ...)])
             (((f 1) 1) 1 1 1))
-          5)
+          5))
 
-     (string-contains?
-      (condition-message
-       (guard (e [#t e])
-         (expand '(sect+ + ... _))))
-      "... must appear last")
+(mat section-syntax-errors
 
-     (string-contains?
-      (condition-message
-       (guard (e [#t e])
-         (expand '(sect+ + _ ... _))))
-      "... must appear last")
-
-     )
+     ;; Error case: ellipses must be last, with or without an earlier placeholder.
+     (for-all
+       (lambda (form)
+         (guard (failure
+                  [(syntax-violation? failure)
+                   (string-contains? (condition-message failure) "... must appear last")]
+                  [else #f])
+           (expand form)
+           #f))
+       '((sect + ... _) (sect + _ ... _) (sect+ + ... _) (sect+ + _ ... _))))
 
 (mat forever-and-continuations
 

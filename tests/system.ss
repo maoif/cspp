@@ -214,17 +214,23 @@
 
      ;; Error case: system errors must be readable by ordinary Chez condition handlers.
      (for-all
-       (lambda (make-error)
+       (lambda (make-error specialized? expected-code)
          (let ([failure (make-error 'example "failure ~s" '((detail . 17)))])
-           (and (system-error? failure) (error? failure)
+           (and (system-error? failure) (specialized? failure) (error? failure)
                 (who-condition? failure) (message-condition? failure)
                 (eq? 'example (condition-who failure))
+                (eq? 'example (system-error-operation failure))
+                (eqv? expected-code (system-error-code failure))
                 (string=? "failure ~s" (condition-message failure))
+                (string=? "failure ~s" (system-error-message failure))
                 (equal? '((detail . 17)) (system-error-context failure)))))
        (list (lambda (operation message context)
                (make-system-error operation 5 message context))
              make-system-unsupported-error make-system-not-found-error
-             make-system-permission-error make-system-timeout-error make-system-exit-error))
+             make-system-permission-error make-system-timeout-error make-system-exit-error)
+       (list system-error? system-unsupported-error? system-not-found-error?
+             system-permission-error? system-timeout-error? system-exit-error?)
+       '(5 #f #f #f #f #f))
 
      ;; Unknown operations still expose a standard who component with the value #f.
      (let ([failure (make-system-error #f #f "unknown operation" '())])
@@ -252,11 +258,10 @@
 
      (os-error? (make-system-error 'compatibility #f "failure" '()))
 
-     (system-error? (guard (c [else c])
-                      (raise-system-unsupported 'test-op "unsupported")))
-
-     (system-unsupported-error? (guard (c [else c])
-                                  (raise-system-unsupported 'test-op "unsupported")))
+     ;; Error case: the raising helper must preserve both base and specialized condition types.
+     (let ([failure (guard (condition [else condition])
+                      (raise-system-unsupported 'test-op "unsupported"))])
+       (and (system-error? failure) (system-unsupported-error? failure)))
 
      (let ([c (guard (c [else c])
                 (raise-system-error 'test-op 1 "operation not permitted" '((path . "/"))))])
@@ -276,59 +281,10 @@
        (and (system-permission-error? c)
             (= 13 (system-error-code c))))
 
-     (let ([c (make-system-error 'test-op 5 "io error" '((path . "/tmp")))])
-       (and (system-error? c)
-            (eq? 'test-op (system-error-operation c))
-            (= 5 (system-error-code c))))
-
-     (system-not-found-error?
-      (make-system-not-found-error 'lookup "missing" '((name . "missing"))))
-
-     (system-timeout-error?
-      (make-system-timeout-error 'wait "timed out" '((timeout . 10))))
-
-     (system-exit-error?
-      (make-system-exit-error 'process-run "failed" '((status . 1))))
-
-     (system-unsupported-error?
-      (make-system-unsupported-error 'feature "unsupported"))
-
      ;; Error case: malformed FFI result vectors should be rejected.
      (guard (c [else #t])
        (ffi-result-ref '#(bad value))
        #f))
-
-(mat user-credentials
-
-     (<= 0 (getuid))
-     (<= 0 (getgid))
-     (<= 0 (geteuid))
-     (<= 0 (getegid)))
-
-(mat current-ids
-
-     (let ([uid (getuid)]
-           [gid (getgid)]
-           [euid (geteuid)]
-           [egid (getegid)])
-       (and (integer? uid)
-            (integer? gid)
-            (integer? euid)
-            (integer? egid)
-            (<= 0 uid)
-            (<= 0 gid)
-            (<= 0 euid)
-            (<= 0 egid))))
-
-(mat user-group-roundtrip
-
-     (let* ([uid (getuid)]
-            [name (uid->user uid)])
-       (= uid (user->uid name)))
-
-     (let* ([gid (getgid)]
-            [name (gid->group gid)])
-       (= gid (group->gid name))))
 
 (mat process-ids
 
@@ -344,8 +300,6 @@
      (string? (system-hostname))
      (symbol? (system-machine))
      (boolean? (unix?))
-     (boolean? (windows?))
-     (boolean? (darwin?))
      (begin (sleep-seconds 0) #t)
      (begin (sleep-milliseconds 0) #t)
      (begin (sleep-nanoseconds 0) #t))

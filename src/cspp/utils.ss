@@ -162,13 +162,13 @@
 
   ;; just by default test for openness
   (define input-binary-port?
-    (lambda (port) (and (input-port? port) (binary-port? port) (not (port-closed? port)))))
+    (lambda (port) (and (open-binary-port? port) (input-port? port))))
   (define input-textual-port?
-    (lambda (port) (and (input-port? port) (textual-port? port) (not (port-closed? port)))))
+    (lambda (port) (and (open-textual-port? port) (input-port? port))))
   (define output-binary-port?
-    (lambda (port) (and (output-port? port) (binary-port? port) (not (port-closed? port)))))
+    (lambda (port) (and (open-binary-port? port) (output-port? port))))
   (define output-textual-port?
-    (lambda (port) (and (output-port? port) (textual-port? port) (not (port-closed? port)))))
+    (lambda (port) (and (open-textual-port? port) (output-port? port))))
 
   #|proc:natural?
   The `natural?` procedure returns whether `object` is an exact nonnegative integer.

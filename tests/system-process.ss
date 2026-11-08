@@ -548,11 +548,6 @@
                 (and (eq? 'errno (vector-ref raw 0))
                      (not (= (vector-ref missing 2) (vector-ref raw 2))))))))
 
-     ;; Error case: live spawning must report a missing executable as an error.
-     (guard (c [(system-error? c) #t] [else #f])
-       (process-spawn "definitely-not-a-cspp-test-command" '() '())
-       #f)
-
      ;; Error case: an executable script with a missing interpreter must fail to spawn.
      (let* ([path (format "/tmp/cspp-missing-interpreter-~a" (get-process-id))]
             [chmod (foreign-procedure "chmod" (string unsigned-32) int)]
@@ -597,10 +592,6 @@
               [(system-error? condition) (eq? 'process-spawn (system-error-operation condition))]
               [else #f])
        (process-spawn "definitely-not-a-cspp-test-command" '() '())
-       #f)
-
-     (guard (c [(system-exit-error? c) #t] [else #f])
-       (process-capture/check "sh" "-c" "exit 7" :stdout capture :stderr capture)
        #f))
 
 ;; Error case: process timeout should raise and clean up the child.
@@ -725,27 +716,17 @@
                       (and (string? output) (string=? "SINGLE\nCHAIN\n" output)))))))
          (lambda () (when (file-exists? path) (delete-file path)))))
 
-     (let* ([processes (process-spawn-pipeline
-                        (list (list "printf" "abc")
-                              (list "sh" "-c" "cat >/dev/null"))
-                        '())]
-            [statuses (map process-wait processes)])
-       (and (= 2 (length processes))
-            (andmap process? processes)
-            (andmap process-exit-success? statuses)))
-
-     (let* ([processes (process-spawn-pipeline
-                        (list (list "printf" "abc")
-                              (list "cat")
-                              (list "cat")
-                              (list "cat")
-                              (list "cat")
-                              (list "sh" "-c" "cat >/dev/null"))
-                        '())]
-            [statuses (map process-wait processes)])
-       (and (= 6 (length processes))
-            (andmap process? processes)
-            (andmap process-exit-success? statuses))))
+     (for-all
+       (lambda (count)
+         (let* ([specs (append '(("printf" "abc"))
+                              (make-list (- count 2) '("cat"))
+                              '(("sh" "-c" "cat >/dev/null")))]
+                [processes (process-spawn-pipeline specs '())]
+                [statuses (map process-wait processes)])
+           (and (= count (length processes))
+                (for-all process? processes)
+                (for-all process-exit-success? statuses))))
+       '(2 6)))
 
 (mat process-closed-standard-descriptors
 

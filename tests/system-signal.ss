@@ -2,17 +2,13 @@
 
 (mat signal-parse
 
-     (signal? (signal term))
-     (signal? (signal "TERM"))
-     (signal? (signal "SIGTERM"))
-     (signal? (signal 15))
-     (signal? (string->signal "sigterm"))
-     (= (signal-number (signal term))
-        (signal-number (signal "TERM")))
-     (= (signal-number (signal term))
-        (signal-number (signal 15)))
-     (eq? 'term (signal-name (string->signal "TERM")))
-     (string? (signal->string (signal term))))
+     (for-all
+       (lambda (spec)
+         (let ([sig (signal spec)])
+           (and (signal? sig) (= 15 (signal-number sig))
+                (eq? 'term (signal-name sig))
+                (string=? "SIGTERM" (signal->string sig)))))
+       (list term "TERM" "SIGTERM" 15 (string->signal "sigterm"))))
 
 (mat signal-list-basic
 
@@ -101,23 +97,16 @@
 
 (mat signal-mask-validation
 
-     ;; Error case: SIGKILL and SIGSTOP cannot be masked, unmasked, or waited for.
+     ;; Error case: unmaskable and runtime fault signals cannot be masked or consumed.
      (for-all
-       (lambda (name)
-         (and (guard (c [else #t]) (signal-block! (list name)) #f)
-              (guard (c [else #t]) (signal-unblock! (list name)) #f)
-              (guard (c [else #t]) (signal-mask-set! (list name)) #f)
-              (guard (c [else #t]) (wait-signal (list name)) #f)))
-       '(kill stop))
-
-     ;; Error case: synchronous crash signals remain available to Chez's native handlers.
-     (for-all
-       (lambda (name)
-         (and (guard (c [else #t]) (signal-block! (list name)) #f)
-              (guard (c [else #t]) (signal-mask-set! (list name)) #f)
-              (guard (c [else #t]) (signal-unblock! (list name)) #f)
-              (guard (c [else #t]) (wait-signal (list name)) #f)))
-       '(segv bus ill fpe))
+       (lambda (operation)
+         (for-all
+           (lambda (name)
+             (guard (failure [else (system-error? failure)])
+               (operation (list name))
+               #f))
+           '(kill stop segv bus ill fpe)))
+       (list signal-block! signal-unblock! signal-mask-set! wait-signal))
 
      ;; Error case: a wait requires a nonempty set that is already blocked in this thread.
      (and (guard (c [else #t]) (wait-signal '()) #f)

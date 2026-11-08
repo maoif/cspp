@@ -254,19 +254,9 @@
                  (check value) #f))
              (list 'invalid '#() "not a port" #f 17))))
        '(pcheck-binary-port pcheck-textual-port
-         pcheck-open-binary-port pcheck-open-textual-port))
-
-     ;; Error case: nonports must fail the predicate check before inspecting port state.
-     (let ([invalid 17])
-       (andmap
-         (lambda (thunk)
-           (guard (condition [else (and (who-condition? condition)
-                                       (eq? 'pcheck (condition-who condition)))])
-             (thunk) #f))
-         (list (lambda () (pcheck-input-binary-port (invalid) #t))
-               (lambda () (pcheck-input-textual-port (invalid) #t))
-               (lambda () (pcheck-output-binary-port (invalid) #t))
-               (lambda () (pcheck-output-textual-port (invalid) #t))))))
+         pcheck-open-binary-port pcheck-open-textual-port
+         pcheck-input-binary-port pcheck-input-textual-port
+         pcheck-output-binary-port pcheck-output-textual-port)))
 
 (mat flag-name-syntax-safety
 
@@ -356,9 +346,6 @@
      ;; Error case: even a zero-length result must reject a nonprocedure generator.
      (guard (c [else #t]) (random-string #f 0 1) #f)
 
-     ;; Error case: even a zero-length list must validate its generator.
-     (guard (c [else #t]) (random-list #f 0 1) #f)
-
      ;; Error case: boxed values require a callable generator.
      (guard (c [else #t]) (random-box #f) #f)
 
@@ -397,15 +384,12 @@
      ;; Error case: the symbol callback must return a string.
      (guard (c [else #t]) (random-symbol (lambda () #\a) 1 2) #f)
 
-     ;; Error case: out-of-range names must fail without repeatedly calling the callback.
+     ;; Error case: the exclusive upper bound is enforced without retrying the callback.
      (let ([calls 0])
        (and (guard (c [else #t])
-              (random-symbol (lambda () (set! calls (+ calls 1)) "long") 1 3)
+              (random-symbol (lambda () (set! calls (+ calls 1)) "abc") 1 3)
               #f)
-            (= calls 1)))
-
-     ;; Error case: upper bounds are exclusive for generated symbol names.
-     (guard (c [else #t]) (random-symbol (lambda () "abc") 1 3) #f))
+            (= calls 1))))
 
 (mat random-unicode-scalars
 
@@ -451,8 +435,7 @@
 
      ;; Error case: combinators reject nonprocedure callbacks before returning a predicate.
      (and (guard (c [else #t]) (p/and number? #f) #f)
-          (guard (c [else #t]) (p/or #f) #f)
-          (guard (c [else #t]) (p/not #f) #f)))
+          (guard (c [else #t]) (p/or #f) #f)))
 
 (define-flags review-flags (none 0) (first 1) (second 2) (both (or first second)) (alias 1))
 

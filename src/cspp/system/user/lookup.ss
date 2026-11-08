@@ -53,22 +53,12 @@
 
   (define mk-unix-user
     (lambda (v)
-      (let ([name   ($getpw-name v)]
-            [passwd ($getpw-passwd v)]
-            [uid    ($getpw-uid v)]
-            [gid    ($getpw-gid v)]
-            [gecos  ($getpw-gecos v)]
-            [dir    ($getpw-dir v)]
-            [shell  ($getpw-shell v)])
-        (make-unix-user name passwd uid gid gecos dir shell))))
+      (make-unix-user ($getpw-name v) ($getpw-passwd v) ($getpw-uid v) ($getpw-gid v)
+                      ($getpw-gecos v) ($getpw-dir v) ($getpw-shell v))))
 
   (define mk-unix-group
     (lambda (v)
-      (let ([name   ($getgr-name v)]
-            [passwd ($getgr-passwd v)]
-            [gid    ($getgr-gid v)]
-            [mems   ($getgr-mems v)])
-        (make-unix-group name passwd gid mems))))
+      (make-unix-group ($getgr-name v) ($getgr-passwd v) ($getgr-gid v) ($getgr-mems v))))
 
   #|proc:user-ref
   The `user-ref` procedure returns a Unix user record for `id`.
