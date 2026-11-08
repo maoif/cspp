@@ -4,6 +4,7 @@
   (import (cspp chez)
           (cspp path)
           (cspp file)
+          (cspp private file)
           (cspp iter)
           (cspp regex)
           (only (cspp string) string-search string-map)
@@ -742,15 +743,14 @@
           (lambda (name type)
             (case type
               [(FT_dir) #t]
-              [(FT_unknown) (file-directory? name follow-link?)]
-              [(FT_symlink) (and follow-link? (file-directory? name #t))]
+              [(FT_unknown) (eq? ($file-type 'glob name follow-link?) 'FT_dir)]
+              [(FT_symlink) (and follow-link? (eq? ($file-type 'glob name #t) 'FT_dir))]
               [else #f])))
         (define eligible?
           (lambda (name type)
             (if (eq? type 'FT_unknown)
-                (and (file-exists? name #f)
-                     (or include-directories? (file-symbolic-link? name)
-                         (not (file-directory? name #f))))
+                (let ([type ($file-type 'glob name #f)])
+                  (and type (or include-directories? (not (eq? type 'FT_dir)))))
                 (or include-directories? (not (eq? type 'FT_dir))))))
         (make-iter
          (lambda ()
@@ -802,8 +802,7 @@
                                       ;; Dot traversal still descends through the parent.
                                       (when (and (directory? name type)
                                                  (or (null? next)
-                                                     (file-directory? ($physical child)
-                                                                      follow-link?)))
+                                                     (directory? ($physical child) 'FT_unknown)))
                                         ;; An explicit parent consumes a pattern component,
                                         ;; so the old descent chain is no longer a cycle guard.
                                         ;; Subsequent recursive scans build a fresh chain.
@@ -822,7 +821,7 @@
                                         ;; A terminal globstar also accepts this entry itself.
                                         (when (or (null? next)
                                                   (and (not (car next)) (null? (cdr next)))
-                                                  (file-directory? ($physical child) follow-link?))
+                                                  (directory? ($physical child) 'FT_unknown))
                                           (set! stack (cons (vector 'node child next
                                                                      (if (and follow-link? (pair? next))
                                                                          (cons (identity name) ancestors)

@@ -27,6 +27,70 @@
           (if saved-home (putenv "HOME" saved-home)
               ((foreign-procedure "unsetenv" (string) int) "HOME")))))))
 
+(mat file-hidden-expanded-home
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([parent (path-build (current-directory) root)]
+               [hidden (path-build parent ".hidden")]
+               [visible (path-build parent "visible")]
+               [link (path-build parent "link")])
+          (mkdir hidden)
+          (file-touch visible)
+          (file-symlink ".hidden" link)
+          (and (for-all
+                (lambda (suffix)
+                  ($with-file-home (string-append hidden suffix)
+                    (lambda () (and (file-hidden? "~") (file-hidden? "~" #f)))))
+                '("" "/"))
+               ($with-file-home visible
+                 (lambda () (and (not (file-hidden? "~")) (not (file-hidden? "~" #f)))))
+               ($with-file-home link
+                 (lambda () (and (file-hidden? "~") (not (file-hidden? "~" #f))))))))))
+
+(mat file-traversal-inspection-errors
+     (or (= (geteuid) 0)
+         ($with-fs-fixture
+          (lambda (root)
+            (let ([blocked (path-build root "blocked")])
+              (mkdirs (path-build blocked "child"))
+              (file-touch (path-build blocked "child/payload"))
+              (dynamic-wind
+                (lambda () (chmod blocked #o400))
+                (lambda ()
+                  ;; Error cases: readable entries cannot be classified through this parent.
+                  ;; Run also with DT_UNKNOWN to check metadata fallback and stream cleanup.
+                  (let ([before (length (directory-list "/proc/self/fd"))])
+                    (and (for-all
+                          (lambda (traverse)
+                            (guard (failure [(i/o-error? failure) #t] [else #f])
+                              (traverse)
+                              #f))
+                          (list (lambda () (walk-files (lambda args #t) blocked))
+                                (lambda ()
+                                  (let ([iterator (fs->iter blocked)])
+                                    (dynamic-wind void (lambda () (iter->list iterator))
+                                                  (lambda () (iter-finalize! iterator)))))
+                                (lambda () (glob* (string-append blocked "/**") #f #t 'empty))))
+                         (= before (length (directory-list "/proc/self/fd"))))))
+                (lambda () (chmod blocked #o700))))))))
+
+(mat file-copytree-bind-aliases
+     ;; Mount namespaces may be disabled by the host; the support process owns its mounts.
+     (or (not (guard (failure [else #f])
+                (let ([probe (capture-process "unshare" "--map-root-user" "--mount" "true"
+                                             :timeout 5000 :stdout capture :stderr capture)])
+                  (process-exit-success? (process-result-status probe)))))
+         ($with-fs-fixture
+          (lambda (root)
+            (let ([result
+                   (capture-process "unshare" "--map-root-user" "--mount"
+                                    "../cspp" "--script=file-bind-process.ss"
+                                    (path-build (current-directory) root)
+                                    :timeout 5000 :stdout capture :stderr capture)])
+              (and (process-exit-success? (process-result-status result))
+                   (string=? "" (process-result-stdout result))
+                   (string=? "" (process-result-stderr result))))))))
+
 (mat file-removetree-expanded-home-guards
      ($with-fs-fixture
       (lambda (root)
@@ -1321,8 +1385,11 @@
               (let ([entries (out)])
                 (and (fs-directory? directory)
                      (not (fs-directory-closed? directory))
-                     (equal? '("sub" . FT_dir) (assoc "sub" entries))
-                     (equal? '("top.txt" . FT_regular) (assoc "top.txt" entries))
+                     ;; Filesystems may omit entry types; traversal inspects those on demand.
+                     (let ([entry (assoc "sub" entries)])
+                       (and entry (memq (cdr entry) '(FT_dir FT_unknown))))
+                     (let ([entry (assoc "top.txt" entries)])
+                       (and entry (memq (cdr entry) '(FT_regular FT_unknown))))
                      (not (fs-read-directory directory))
                      (eq? directory (fs-close-directory directory))
                      (fs-directory-closed? directory)

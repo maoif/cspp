@@ -50,6 +50,7 @@
           make-i/o-file-not-directory-error i/o-file-not-directory-error?)
   (import (cspp chez)
           (cspp private os)
+          (cspp private file)
           (cspp path)
           (cspp internal)
           (cspp utils)
@@ -1218,10 +1219,10 @@
               directory)))
 
   (define $fs-entry-directory?
-    (lambda (path type follow-link?)
+    (lambda (who path type follow-link?)
       (or (eq? type 'FT_dir)
-          (and (eq? type 'FT_unknown) (file-directory? path follow-link?))
-          (and (eq? type 'FT_symlink) follow-link? (file-directory? path #t)))))
+          (and (or (eq? type 'FT_unknown) (and (eq? type 'FT_symlink) follow-link?))
+               (eq? ($file-type who path follow-link?) 'FT_dir)))))
 
   ;; Use the checked native stream for every traversal, including eager walkers.
   ;; Chez directory-list replaces invalid UTF-8 and strips a leading UTF-8 BOM.
@@ -1255,7 +1256,8 @@
       (let ([directories (make-list-builder)] [files (make-list-builder)])
         (for-each
          (lambda (entry)
-           ((if ($fs-entry-directory? (car entry) (cdr entry) follow-link?) directories files)
+           ((if ($fs-entry-directory? 'walk-files (car entry) (cdr entry) follow-link?)
+                directories files)
             (car entry)))
          ($directory-entries path))
         (values (directories) (files)))))
@@ -1339,7 +1341,7 @@
                                      [else
                                       (let* ([child (path-build root (car entry))]
                                              [directory? ($fs-entry-directory?
-                                                          child (cdr entry) follow-link?)])
+                                                          'fs->iter child (cdr entry) follow-link?)])
                                         (if directory?
                                             (begin
                                               (set! stack
@@ -1639,12 +1641,13 @@
                            [(lambda (x) (file-exists? x follow-link?)) path])
                           (cond
                            [(unix?)
-                            (let ([path (let ([p (if (and follow-link? (file-symbolic-link? path)) (readlink2 path #t) path)])
-                                          (if (file-directory? p follow-link?)
-                                              (path-last (path-parent (string-append p (string (directory-separator)))))
-                                              (path-last p)))])
-                              (and (not (string=? path ".")) (not (string=? path ".."))
-                                   (char=? #\. (string-ref path 0))))]
+                            (let* ([expanded ($expand-file-path who path)]
+                                   [selected (if (and follow-link?
+                                                      (file-symbolic-link? expanded))
+                                                 (readlink2 expanded #t) expanded)]
+                                   [basename (path-basename (path-parse 'unix selected))])
+                              (and basename (not (member basename '("." "..")))
+                                   (char=? #\. (string-ref basename 0))))]
                            [else (todo who)]))]))
 
   #|proc:file-special?
@@ -1832,7 +1835,7 @@
                       [u (filter-mode umode 1)]
                       [g (filter-mode gmode 2)]
                       [o (filter-mode omode 3)])
-                 (chmod path (symbols->file-mode s u g o))))]))
+                 ($copy-file-mode who path (symbols->file-mode s u g o))))]))
 
 
   #|proc:file-chmod
@@ -1873,6 +1876,8 @@
   For example, '(- x) removes the execution bit; '(+ w x) adds the write and execution bit.
   Nothing happens when trying to remove a bit that's not set or
   when trying to add a bit that already exists.
+  Symbolic requests leave an already matching mode unchanged. If a changed mode cannot retain
+  all requested bits, raise an I/O error; the filesystem may already have applied some changes.
   |#
   (define-who file-chmod
     (lambda (path mode . rest)
@@ -2647,7 +2652,28 @@
                             ($parent-directory-name ($parse-file-path who dest)))]
              [destination ($canonical-file-path who container)]
              [relative (path-components (path-relative-to source destination))])
-        (not (and (pair? relative) (string=? (car relative) ".."))))))
+        (or (not (and (pair? relative) (string=? (car relative) "..")))
+            ;; realpath does not collapse bind mounts. Inspect the source before creating
+            ;; anything, comparing the destination container with every source directory.
+            ;; Track mount views separately: one inode can expose different child mounts.
+            (let ([target ($file-identity container #t)]
+                  [visited (make-hashtable equal-hash equal?)])
+              (let scan ([directory src])
+                (let* ([identity ($file-identity directory #t)]
+                       [mount ($file-mount-id who directory)] [key (cons mount identity)])
+                  (cond [(equal? identity target) #t]
+                        [(hashtable-contains? visited key)
+                         ;; Older kernels can inspect ordinary trees, but cannot prove that
+                         ;; repeated aliases have the same view without a mount ID.
+                         (unless mount
+                           ($err-file who directory "mount identity is unavailable for alias"))
+                         #f]
+                        [else
+                         (hashtable-set! visited key #t)
+                         (exists (lambda (entry)
+                                   (and ($fs-entry-directory? who (car entry) (cdr entry) #f)
+                                        (scan (car entry))))
+                                 ($directory-entries directory))]))))))))
 
   (define $apply-copy-metadata
     (lambda (who dest stat)
@@ -2729,7 +2755,10 @@
   An existing `dest` receives the contents directly; otherwise its parent must exist and
   `dest` itself is created. A destination within `src` is rejected. A source root symlink is
   followed, but nested directory symlinks are not traversed.
-  The containment check also follows symlink aliases of the destination.
+  The containment check follows symlink and bind-mount aliases of the destination.
+  Source directories are inspected before creating destination entries.
+  Repeated directory aliases require Linux mount IDs; unavailable mount IDs raise an error
+  when the check cannot distinguish their views.
   Containment and parent checks expand home notation without lexical normalization.
   Optional `copy` has signature `(lambda (source-path destination-path) ...)` and copies
   each file or symlink; its return values are ignored. By default `file-copy` preserves
@@ -2863,7 +2892,7 @@
                           (attempt
                            (lambda ()
                              (let ([child (car entry)])
-                               (if ($fs-entry-directory? child (cdr entry) #f)
+                               (if ($fs-entry-directory? who child (cdr entry) #f)
                                    (remove-tree child)
                                    (delete-file child #t))))))
                         entries)))

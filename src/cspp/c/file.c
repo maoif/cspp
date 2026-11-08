@@ -20,6 +20,8 @@ ptr cspp_statx(const char *path, int follow_link);
 ptr cspp_readlink(const char *path);
 ptr cspp_file_symbolic_link(const char *path);
 ptr cspp_file_regular(const char *path);
+ptr cspp_file_type(const char *path, int follow_link);
+ptr cspp_file_mount_id(const char *path);
 ptr cspp_file_expand_pathname(const char *path);
 ptr cspp_file_copy_mode(const char *path, unsigned int mode);
 ptr cspp_realpath(const char *path);
@@ -229,7 +231,7 @@ ptr cspp_realpath(const char *path) {
 }
 
 /* Missing entries are ordinary false results; failed inspection must propagate. */
-static ptr file_has_type(const char *path, mode_t type, int follow_link) {
+ptr cspp_file_type(const char *path, int follow_link) {
   char *expanded = expand_pathname(path);
   if (expanded == NULL) { errno = ENOMEM; return errno_str(); }
   /* Request only the type; unrelated sizes/inodes must not overflow on 32-bit hosts. */
@@ -239,7 +241,7 @@ static ptr file_has_type(const char *path, mode_t type, int follow_link) {
   int code = errno;
   free(expanded);
   if (result == 0) {
-    if (metadata.stx_mask & STATX_TYPE) return Sboolean((metadata.stx_mode & S_IFMT) == type);
+    if (metadata.stx_mask & STATX_TYPE) return Sfixnum(metadata.stx_mode & S_IFMT);
     errno = EOPNOTSUPP;
     return errno_str();
   }
@@ -249,11 +251,32 @@ static ptr file_has_type(const char *path, mode_t type, int follow_link) {
 }
 
 ptr cspp_file_symbolic_link(const char *path) {
-  return file_has_type(path, S_IFLNK, 0);
+  ptr result = cspp_file_type(path, 0);
+  return Sfixnump(result) ? Sboolean(Sfixnum_value(result) == S_IFLNK) : result;
 }
 
 ptr cspp_file_regular(const char *path) {
-  return file_has_type(path, S_IFREG, 1);
+  ptr result = cspp_file_type(path, 1);
+  return Sfixnump(result) ? Sboolean(Sfixnum_value(result) == S_IFREG) : result;
+}
+
+/* A bind mount can expose different child mounts for the same directory inode. */
+ptr cspp_file_mount_id(const char *path) {
+#ifdef STATX_MNT_ID
+  char *expanded = expand_pathname(path);
+  if (expanded == NULL) { errno = ENOMEM; return errno_str(); }
+  struct statx metadata;
+  int result = statx(AT_FDCWD, expanded, 0, STATX_MNT_ID, &metadata);
+  int code = errno;
+  free(expanded);
+  if (result == 0)
+    return metadata.stx_mask & STATX_MNT_ID ? Sunsigned64(metadata.stx_mnt_id) : Sfalse;
+  errno = code;
+  return errno_str();
+#else
+  (void)path;
+  return Sfalse;
+#endif
 }
 
 /* Expand the input's home base without resolving links or normalizing parents. */

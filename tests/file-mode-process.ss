@@ -15,6 +15,27 @@
   (error 'file-mode-test "fixture did not inherit set-group-ID"))
 
 (for-each
+ (lambda (change name)
+   (let ([entry (path-build root name)])
+     (mkdir entry #o755)
+     (change entry)
+     (unless (= #o2755 (file-mode entry))
+       (error 'file-mode-test "symbolic no-op lost set-group-ID" name))))
+ (list (lambda (entry) (file-chmod entry #f))
+       (lambda (entry) (file-chmod-u entry '(+ r)))
+       (lambda (entry) (file-chmod-g entry '(- w)))
+       (lambda (entry) (file-chmod-a entry '(+ r))))
+ '("unchanged" "add-existing" "remove-absent" "all-existing"))
+
+(let ([entry (path-build root "change-user")])
+  (mkdir entry #o755)
+  ;; Error case: changing user bits must preserve omitted SGID or report failure.
+  (unless (guard (failure [(i/o-filename-error? failure) #t])
+            (file-chmod-u entry '(- w))
+            (= #o2555 (file-mode entry)))
+    (error 'file-mode-test "symbolic change silently lost set-group-ID")))
+
+(for-each
  (lambda (copy name)
    (let ([unchanged (path-build root (string-append name "-unchanged"))]
          [changed (path-build root (string-append name "-changed"))])
