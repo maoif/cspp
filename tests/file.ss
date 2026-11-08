@@ -2382,6 +2382,68 @@
 
 
 
+(mat readlink-recursive-home-symlink
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([parent (path-build (current-directory) root)]
+               [target (path-build parent "real")]
+               [home (path-build parent "home-alias")]
+               [saved-home (getenv "HOME")]
+               [stamp (make-time 'time-utc 123456789 1000000000)])
+          (mkdir target)
+          (file-symlink "real" home)
+          (dynamic-wind
+            (lambda () (putenv "HOME" home))
+            (lambda ()
+              (and (string=? "real" (readlink "~"))
+                   (string=? target (readlink2 "~" #t))
+                   (let-values ([(text directory) (readlink "~" #t)])
+                     (and (string=? "real" text) (string=? parent directory)))
+                   (begin (file-touch "~" stamp) #t)
+                   (time=? stamp (file-modification-time target))
+                   (not (file-exists? (path-build target "real") #f))))
+            (lambda ()
+              (if saved-home (putenv "HOME" saved-home)
+                  ((foreign-procedure "unsetenv" (string) int) "HOME"))))))))
+
+(mat readlink-recursive-dangling-home-symlink
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([parent (path-build (current-directory) root)]
+               [home (path-build parent "home-alias")]
+               [saved-home (getenv "HOME")])
+          (file-symlink "missing" home)
+          (dynamic-wind
+            (lambda () (putenv "HOME" home))
+            (lambda ()
+              (and (string=? (path-build parent "missing") (readlink2 "~" #t))
+                   (let-values ([(text directory) (readlink "~" #t)])
+                     (and (string=? "missing" text) (string=? parent directory)))))
+            (lambda ()
+              (if saved-home (putenv "HOME" saved-home)
+                  ((foreign-procedure "unsetenv" (string) int) "HOME"))))))))
+
+(mat readlink-recursive-home-physical-parents
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([parent (path-build (current-directory) root)]
+               [physical (path-build parent "other")]
+               [lexical-parent (path-build parent "alias/..")]
+               [saved-home (getenv "HOME")])
+          (mkdirs (path-build physical "sub"))
+          (mkdir (path-build physical "real"))
+          (file-symlink "other/sub" (path-build parent "alias"))
+          (file-symlink "real" (path-build physical "home"))
+          (dynamic-wind
+            (lambda () (putenv "HOME" (path-build lexical-parent "home")))
+            (lambda ()
+              (let ([resolved (readlink2 "~" #t)])
+                (and (string=? (path-build lexical-parent "real") resolved)
+                     (same-file? resolved (path-build physical "real")))))
+            (lambda ()
+              (if saved-home (putenv "HOME" saved-home)
+                  ((foreign-procedure "unsetenv" (string) int) "HOME"))))))))
+
 (mat readlink-recursive-intermediate-cycle
      ($with-fs-fixture
       (lambda (root)

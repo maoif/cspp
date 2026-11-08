@@ -19,6 +19,7 @@
 ptr cspp_statx(const char *path, int follow_link);
 ptr cspp_readlink(const char *path);
 ptr cspp_file_symbolic_link(const char *path);
+ptr cspp_file_expand_pathname(const char *path);
 ptr cspp_realpath(const char *path);
 ptr cspp_link(const char *src, const char *dest);
 ptr cspp_symlink(const char *src, const char *dest);
@@ -198,6 +199,18 @@ ptr cspp_file_symbolic_link(const char *path) {
   if (code == ENOENT || code == ENOTDIR) return Sfalse;
   errno = code;
   return errno_str();
+}
+
+/* Expand the input's home base without resolving links or normalizing parents. */
+ptr cspp_file_expand_pathname(const char *path) {
+  char *expanded = expand_pathname(path);
+  if (expanded == NULL) { errno = ENOMEM; return errno_str_vector(); }
+  size_t length = strlen(expanded);
+  ptr result = filesystem_utf8_valid(expanded, length)
+                 ? Sstring_utf8(expanded, (iptr)length)
+                 : Smake_vector(1, filesystem_utf8_error());
+  free(expanded);
+  return result;
 }
 
 ptr cspp_readlink(const char *path) {

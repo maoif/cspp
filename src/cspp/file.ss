@@ -2123,6 +2123,20 @@
         (let ([result (inspect path)])
           (if (string? result) ($err-file who path result) result)))))
 
+  (define $expand-link-path
+    (let ([expand (foreign-procedure "cspp_file_expand_pathname" (string) scheme-object)])
+      (lambda (who path)
+        (if (or (fxzero? (string-length path)) (not (char=? (string-ref path 0) #\~)))
+            path
+            (let ([expanded (expand path)])
+              (when (vector? expanded) ($err-file who path (vector-ref expanded 0)))
+              ;; An unknown user or relative HOME can leave a literal leading tilde.
+              ;; Protect it from another home expansion during subsequent native calls.
+              (if (and (fx> (string-length expanded) 0)
+                       (char=? (string-ref expanded 0) #\~))
+                  (path-build "." expanded)
+                  expanded))))))
+
   (define $readlink
     (let ([ffi (let ([ffi-readlink (foreign-procedure "cspp_readlink" (string) scheme-object)])
                  (lambda (who path)
@@ -2137,7 +2151,7 @@
           (if (not recursive?)
               (ffi who path)
               (let ([seen (make-hashtable equal-hash equal?)])
-                (let loop ([path path])
+                (let loop ([path ($expand-link-path who path)])
                   ;; A relative link's target depends on its parent directory.
                   ;; Hard-linked symlinks in different parents need distinct keys.
                   (let* ([parent (let ([parent (path-parent path)])
@@ -2159,6 +2173,8 @@
   If `recursive?`, then the dereference continues until a non-symlink target is met,
   and both the target text and the final link's parent directory are returned.
   A bare link uses `.` as its parent, so joining preserves literal leading tildes.
+  A leading tilde in the input pathname is expanded before determining that parent.
+  Symbolic-link target text is never home-expanded or lexically normalized.
   Missing targets terminate resolution. Inspection failures, including intermediate cycles
   and inaccessible directories, raise an I/O error.
 
@@ -2171,9 +2187,9 @@
   #|proc:readlink2
   Return the symlink text at path string `path` when boolean `recursive?` is false or omitted.
   When true, resolve the link chain and return the final target pathname. Absolute targets
-  retain their root; relative targets use the final link's parent directory without lexical
-  normalization or home expansion. Missing targets terminate resolution. A cycle or a target
-  inspection failure raises an error.
+  retain their root; relative targets use the final link's parent directory. A leading tilde
+  in `path` is expanded first; target text is not home-expanded or lexically normalized.
+  Missing targets terminate resolution. A cycle or a target inspection failure raises an error.
   |#
   (define-who readlink2
     (case-lambda [(path) ($readlink who path #f)]
