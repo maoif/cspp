@@ -1,5 +1,5 @@
 (library (cspp private file)
-  (export $file-type $file-mount-id)
+  (export $file-type $file-mount-id $file-view-key $file-view-seen?)
   (import (chezscheme) (cspp utils))
 
   #|proc:$file-type
@@ -34,4 +34,28 @@
             (if (string? result)
                 (raise (condition (make-who-condition who) (make-i/o-filename-error path)
                                   (make-message-condition result)))
-                result)))))))
+                result))))))
+
+  #|proc:$file-view-key
+  Combine the mount ID of directory pathname `path` with its device/inode list `identity`.
+  Return a key distinguishing mount views of the same directory, with `#f` as its first
+  element when mount IDs are unavailable. Lookup errors are attributed to symbol `who`.
+  |#
+  (define $file-view-key
+    (lambda (who path identity)
+      (pcheck ([symbol? who] [string? path] [list? identity])
+        (cons ($file-mount-id who path) identity))))
+
+  #|proc:$file-view-seen?
+  Return whether directory view key `view` occurs in ancestor key list `ancestors`.
+  A repeated key without a mount ID cannot prove a cycle and raises an I/O filename error
+  for pathname `path`, attributed to symbol `who`, instead of silently skipping a view.
+  |#
+  (define $file-view-seen?
+    (lambda (who path view ancestors)
+      (pcheck ([symbol? who] [string? path] [pair? view] [list? ancestors])
+        (and (member view ancestors)
+             (if (car view) #t
+                 (raise (condition (make-who-condition who) (make-i/o-filename-error path)
+                                   (make-message-condition
+                                    "mount identity is unavailable for alias")))))))))

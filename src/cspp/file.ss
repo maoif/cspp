@@ -1268,6 +1268,10 @@
         (list (file-stat-dev-major stat) (file-stat-dev-minor stat)
               (file-stat-inode stat)))))
 
+  (define $directory-view
+    (lambda (who path)
+      ($file-view-key who path ($file-identity path #t))))
+
   #|proc:fs->iter
   Return an iterator lazily traversing directory `path`, including the root itself.
   `follow-link?` (default `#f`) enables symlink descent with directory cycle detection.
@@ -1276,6 +1280,8 @@
   open on demand and close on exhaustion, reset, errors, or `iter-finalize!`.
   Reset starts a fresh pass over the current filesystem. Linux is required.
   Distinct directory aliases are traversed separately; only ancestor cycles are skipped.
+  Cycle checks distinguish Linux mount views. If mount IDs are unavailable, an ambiguous
+  repeated directory identity raises an I/O error instead of omitting its descendants.
   A root symlink is followed even when `follow-link?` is `#f`; that flag controls descendants.
   Input and yielded path strings do not share storage with the iterator's traversal state.
   For a relative `path`, keep the process current directory unchanged from the first advance
@@ -1319,9 +1325,10 @@
                                    [root (vector-ref frame 0)]
                                    [directory (vector-ref frame 1)])
                               (if (not directory)
-                                  (let ([identity (and follow-link? ($file-identity root #t))]
+                                  (let ([identity (and follow-link? ($directory-view 'fs->iter root))]
                                         [ancestors (vector-ref frame 2)])
-                                    (if (and identity (member identity ancestors))
+                                    (if (and identity
+                                             ($file-view-seen? 'fs->iter root identity ancestors))
                                         (begin
                                           (set! stack (cdr stack))
                                           (string-copy root))
@@ -1950,6 +1957,8 @@
   If `follow-link?` is #f (the default), symlinks to directories are not followed
   and are therefore regarded as files. A symlink supplied as the root is always followed.
   When following links, distinct aliases are visited separately while ancestor cycles are skipped.
+  Cycle checks distinguish Linux mount views. If mount IDs are unavailable, an ambiguous
+  repeated directory identity raises an I/O error instead of omitting its descendants.
 
   If `top-down?` is #t (the default), the tree is traversed in a top-down manner,
   descending into each directory as deep as possible.
@@ -1978,8 +1987,8 @@
                      (if (not follow-link?)
                          ;; A callback may replace a listed directory with a link.
                          (and (not (file-symbolic-link? directory)) ancestors)
-                         (let ([identity ($file-identity directory #t)])
-                           (and (not (member identity ancestors))
+                         (let ([identity ($directory-view who directory)])
+                           (and (not ($file-view-seen? who directory identity ancestors))
                                 (cons identity ancestors))))))
                  (define walk-top-down
                    (lambda (directory ancestors)
@@ -2011,7 +2020,7 @@
                                     (visit (cdr remaining))]
                                    [else #f]))])))))
                  ;; The supplied root is followed even when descendant links are disabled.
-                 (let ([ancestors (if follow-link? (list ($file-identity path #t)) '())])
+                 (let ([ancestors (if follow-link? (list ($directory-view who path)) '())])
                    (if top-down?
                        (walk-top-down path ancestors)
                        (walk-bottom-up path ancestors)))))]))
@@ -2167,11 +2176,11 @@
               (let ([seen (make-hashtable equal-hash equal?)])
                 (let loop ([path ($expand-file-path who path)])
                   ;; A relative link's target depends on its parent directory.
-                  ;; Hard-linked symlinks in different parents need distinct keys.
+                  ;; Hard-linked symlinks and distinct mount views need separate contexts.
                   (let* ([parent (let ([parent (path-parent path)])
                                    (if (string=? parent "") "." parent))]
                          [identity (list ($file-identity path #f)
-                                         ($file-identity parent #t))])
+                                         ($directory-view who parent))])
                     (when (hashtable-contains? seen identity)
                       (errorf who "symlink cycle detected at: ~a" path))
                     (hashtable-set! seen identity #t)
@@ -2190,6 +2199,8 @@
   A bare link uses `.` as its parent, so joining preserves literal leading tildes.
   A leading tilde in the input pathname is expanded before determining that parent.
   Symbolic-link target text is never home-expanded or lexically normalized.
+  Cycle detection includes the parent directory's mount view, so finite chains through
+  different bind mounts can resolve even when their link and parent inodes match.
   Missing targets terminate resolution. Inspection failures, including intermediate cycles
   and inaccessible directories, raise an I/O error.
 
@@ -2278,7 +2289,9 @@
                               ($err-file-exists who dest))
                           (link/copy-what src dest)))])
                (if (file-directory? dest #t)
-                   (let* ([basename (or (path-basename (path-parse 'unix name-src))
+                   (let* ([basename (or (path-basename
+                                        (if source-path ($parse-file-path who name-src)
+                                            (path-parse 'unix name-src)))
                                         (errorf who "source has no basename for a directory destination: ~a"
                                                 name-src))]
                           [newd (path-build dest basename)])
@@ -2308,6 +2321,7 @@
   Symlinks are followed recursively if `follow-link?` is #t.
   If destination string `dest` names a directory or a symlink to one, create the link
   inside it using `src`'s basename. Otherwise `dest` names the new entry. Return unspecified values.
+  Home notation is expanded before choosing the source basename.
   Native creation failures raise I/O errors identifying the attempted destination pathname.
   |#
   (define-who file-link
@@ -2340,15 +2354,30 @@
                               ($file-link who src dest #t)))]))
 
 
+  (define $symlink-entry
+    (let ([create (foreign-procedure "cspp_symlink" (string string) scheme-object)])
+      (lambda (who src dest)
+        (let ([result (create src dest)])
+          (when (string? result) ($err-file who dest result))))))
+
   (define $file-symlink
     (lambda (who src dest overwrite?)
-      (let* ([$symlink (let ([ffi (foreign-procedure "cspp_symlink" (string string) scheme-object)])
-                         (lambda (src dest)
-                           (let ([x (ffi src dest)])
-                             (when (string? x)
-                               ($err-file who dest x)))))]
-             [link ($link/copy-helper who $symlink overwrite?)])
+      (let ([link ($link/copy-helper who
+                                   (lambda (src dest) ($symlink-entry who src dest)) overwrite?)])
         (link src dest src #f))))
+
+  ;; A declaration names one exact entry, never a directory container. Stage a
+  ;; replacement symlink so a creation failure leaves the previous entry intact.
+  (define $file-tree-symlink
+    (lambda (who src dest overwrite?)
+      (pcheck ([$filename? src dest])
+        (if (file-exists? dest #f)
+            (cond [(not overwrite?) ($err-file-exists who dest)]
+                  [(file-directory? dest #f) ($err-directory-exists who dest)]
+                  [else
+                   ($replace-file-entry who dest
+                     (lambda (temporary) ($symlink-entry who src temporary)))])
+            ($symlink-entry who src dest)))))
 
 
   #|proc:file-symlink
@@ -2598,6 +2627,7 @@
   `follow-link?`: copy the symlink per se or copy the file it points to (default: #t).
   If destination string `dest` names a directory or a symlink to one, copy inside it using
   `src`'s basename. Otherwise `dest` names the new entry. Metadata is not copied.
+  Home notation is expanded before choosing the source basename.
   Return unspecified values.
   |#
   (define-who file-copy
@@ -2643,7 +2673,7 @@
               (path-parse 'unix result))))))
 
   (define $copytree-destination-inside-source?
-    (lambda (who src dest)
+    (lambda (who src dest snapshots)
       ;; Resolve existing directories before lexical comparison: normalizing first
       ;; would change the meaning of .. after a symlink.
       (let* ([source ($canonical-file-path who src)]
@@ -2670,6 +2700,10 @@
                          #f]
                         [else
                          (hashtable-set! visited key #t)
+                         ;; Keep the first snapshot of each underlying directory. Reading
+                         ;; any of its mount views can change the shared access timestamp.
+                         (when (and snapshots (not (hashtable-contains? snapshots identity)))
+                           (hashtable-set! snapshots identity (file-stat directory)))
                          (exists (lambda (entry)
                                    (and ($fs-entry-directory? who (car entry) (cdr entry) #f)
                                         (scan (car entry))))
@@ -2711,11 +2745,15 @@
     (lambda (who src dest copy preserve-metadata?)
        (pcheck ([$filename? src dest] [file-directory? src] [procedure? copy])
                (let* ([source-path ($absolute-file-path src)]
+                      [snapshots (and preserve-metadata? (make-hashtable equal-hash equal?))]
                       [metadata '()]
                       [remember-directory
                        (lambda (source target)
                          (when preserve-metadata?
-                           (set! metadata (cons (cons target (file-stat source)) metadata))))]
+                           (set! metadata
+                                 (cons (cons target
+                                             (hashtable-ref snapshots ($file-identity source #t) #f))
+                                       metadata))))]
                       [make-directory
                        (lambda (source target)
                          (remember-directory source target)
@@ -2739,7 +2777,7 @@
                                                                  (copy f newd)))
                                                              files))
                                                  src #f #t))])
-                 (when ($copytree-destination-inside-source? who src dest)
+                 (when ($copytree-destination-inside-source? who src dest snapshots)
                    (errorf who "destination cannot be inside the source directory"))
                  (unless (file-directory? dest #t)
                      (let ([parent ($parent-directory-name ($parse-file-path who dest))])
@@ -2830,7 +2868,8 @@
   When copying is necessary, the default preserves permission bits and access/modification
   times, but not ownership, hard-link relationships, or extended attributes.
   Source directory metadata is applied only to newly created destination directories, before
-  source removal. Existing merge roots keep their permissions and do not receive source
+  source removal. Original directory timestamps are captured before preflight enumeration.
+  Existing merge roots keep their permissions and do not receive source
   timestamps; ordinary filesystem activity may update their timestamps.
   Optional `copy` has signature `(lambda (source-path destination-path) ...)` and controls
   copying individual files and symlinks, including their metadata; return values are ignored.
@@ -3003,6 +3042,8 @@
   Permission bits (mode) of each kind of file can be set individually.
   They can be in either octal mode or symbolic mode.
   Directory modes are applied after constructing their children, allowing read-only trees.
+  Symlink declarations name exact entries. Overwrite mode replaces an existing file or
+  symlink itself, including a symlink to a directory; a real directory is rejected.
   A file declaration without content touches the entry, preserving existing bytes in overwrite
   mode. Use `(text "")` to explicitly truncate a file to empty contents.
   If mode is not given, default mode is applied.
@@ -3084,9 +3125,7 @@
              (eq? 'symlink (datum ty))
              #`(let ([v e])
                  (if (string? v)
-                     #,(if overwrite?
-                           #`(file-symlink! v #,path)
-                           #`(file-symlink  v #,path))
+                     ($file-tree-symlink '#,who v #,path #,overwrite?)
                      (errorf '#,who "fail to create symlink at ~a, not a valid path: ~a" #,path v)))]
             [_ (syntax-violation 'define-file-tree
                                  "invalid file type:" decl)])))
@@ -3165,9 +3204,7 @@
                                     (unless (string? p)
                                       (errorf '#,who "fail to create symlink at ~a, target not valid: ~a" p p))
                                     (let ([target (path-build #,pdir p)])
-                                      #,(if overwrite?
-                                            #'(file-symlink! s target)
-                                            #'(file-symlink  s target))))]
+                                      ($file-tree-symlink '#,who s target #,overwrite?)))]
                                [_ (syntax-violation 'define-file-tree
                                                     "invalid file/directory declaration:" decl)]))
                            decl*))))

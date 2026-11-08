@@ -722,8 +722,9 @@
         (define identity
           (lambda (name)
             (let ([stat (file-stat name)])
-              (list (file-stat-dev-major stat) (file-stat-dev-minor stat)
-                    (file-stat-inode stat)))))
+              ($file-view-key 'glob name
+                              (list (file-stat-dev-major stat) (file-stat-dev-minor stat)
+                                    (file-stat-inode stat))))))
         (define open-scan
           (lambda (path cs ancestors separator type)
             (let ([name ($physical path)])
@@ -732,7 +733,7 @@
                       [literal? (and (car cs) (component-literal (car cs)))])
                   ;; A finite literal prefix may explicitly revisit a directory.
                   ;; Its ancestors still constrain any later wildcard descent.
-                  (if (and id (not literal?) (member id ancestors)) #f
+                  (if (and id (not literal?) ($file-view-seen? 'glob name id ancestors)) #f
                     (let ([directory (fs-open-directory name)])
                       (set! stack
                             (cons (vector 'scan path cs
@@ -919,7 +920,9 @@
   Optional `flavor` follows the host OS: `'windows` on Windows, `'unix`
   elsewhere.
   Boolean `follow-link?` permits descending into symlinked directories with
-  cycle detection that counts literal and wildcard directory ancestors. An explicit
+  cycle detection that counts literal and wildcard directory ancestors. Each directory's
+  mount view is part of its identity. If mount IDs are unavailable, ambiguous
+  repeated identities raise an I/O error rather than silently omitting descendants. An explicit
   parent component starts a new descent chain. A terminal `**` may match a cycle symlink itself
   without traversing it. Boolean `include-directories?` includes directories;
   files and symlinks are always eligible. `unmatched` is `'empty` to return `()`

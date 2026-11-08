@@ -27,6 +27,93 @@
           (if saved-home (putenv "HOME" saved-home)
               ((foreign-procedure "unsetenv" (string) int) "HOME")))))))
 
+(mat file-copy-link-expanded-source-basename
+     (for-all
+      (lambda (operation)
+        ($with-fs-fixture
+         (lambda (root)
+           (let* ([parent (path-build (current-directory) root)]
+                  [home (path-build parent "home-link")]
+                  [destination (path-build parent "destination")])
+             (file-symlink "sub" home)
+             (mkdir destination)
+             ($with-file-home home
+               (lambda ()
+                 (operation "~" destination #f)
+                 (and (equal? '("home-link") (directory-list destination))
+                      (string=? "sub" (readlink (path-build destination "home-link"))))))))))
+      (list file-copy file-copy! file-link file-link!)))
+
+(mat file-move-directory-original-access-times
+     (for-all
+      (lambda (existing-destination?)
+        ($with-fs-fixture
+         (lambda (root)
+           (let* ([source (path-build root "source")]
+                  [child (path-build source "child")]
+                  [destination (path-build root "destination")]
+                  [stamp (make-time 'time-utc 123000000 1000000000)])
+             (mkdirs (path-build child "deeper"))
+             (write-string (path-build child "deeper/payload") "preserved")
+             (when existing-destination? (mkdir destination))
+             (for-each (lambda (path) (file-touch path stamp))
+                       (list source child (path-build child "deeper")))
+             (file-move source destination)
+             (and (not (file-exists? source #f))
+                  (time=? stamp (file-access-time (path-build destination "child")))
+                  (time=? stamp (file-access-time (path-build destination "child/deeper")))
+                  (or existing-destination?
+                      (time=? stamp (file-access-time destination))))))))
+      '(#t #f)))
+
+(mat file-tree-symlink-exact-entry
+     (let ()
+       (define-file-tree explicit-link (file "entry" (symlink "payload")))
+       (define-file-tree shorthand-link (symlink "payload" "entry"))
+       (for-all
+        (lambda (create)
+          ($with-fs-fixture
+           (lambda (root)
+             (let ([tree (path-build root "tree")]
+                   [outside (path-build root "outside")])
+               (mkdir tree)
+               (mkdir outside)
+               (write-string (path-build tree "payload") "target")
+               (write-string (path-build outside "payload") "unrelated contents")
+               (file-symlink "../outside" (path-build tree "entry"))
+               (create tree)
+               (and (string=? "payload" (readlink (path-build tree "entry")))
+                    (string=? "unrelated contents" (read-string (path-build outside "payload"))))))))
+        (list create-explicit-link! create-shorthand-link!)))
+
+     (let ()
+       (define-file-tree explicit-link (file "entry" (symlink "payload")))
+       (define-file-tree shorthand-link (symlink "payload" "entry"))
+       (for-all
+        (lambda (create)
+          ($with-fs-fixture
+           (lambda (root)
+             (let ([tree (path-build root "tree")])
+               (mkdirs (path-build tree "entry"))
+               (write-string (path-build tree "entry/payload") "unchanged")
+               ;; Error case: a real directory cannot become a declared symlink.
+               (and (guard (failure [(error? failure) #t]) (create tree) #f)
+                    (file-directory? (path-build tree "entry") #f)
+                    (string=? "unchanged" (read-string (path-build tree "entry/payload"))))))))
+        (list create-explicit-link! create-shorthand-link!)))
+
+     (let ()
+       (define-file-tree collision
+         (dir "entry" (file "payload" (text "unchanged")))
+         (symlink "payload" "entry"))
+       ($with-fs-fixture
+        (lambda (root)
+          (let ([tree (path-build root "tree")])
+            ;; Error case: non-overwrite declarations must reject an earlier directory too.
+            (and (guard (failure [(error? failure) #t]) (create-collision tree) #f)
+                 (file-directory? (path-build tree "entry") #f)
+                 (string=? "unchanged" (read-string (path-build tree "entry/payload")))))))))
+
 (mat file-hidden-expanded-home
      ($with-fs-fixture
       (lambda (root)

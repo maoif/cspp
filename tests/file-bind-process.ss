@@ -83,3 +83,98 @@
             (unless (= 0 (unmount path 2)) (error 'file-bind-test "cannot unmount view")))
           mounts)))))
  (list view-a view-b))
+
+;; Nonrecursive bind mounts expose finite, distinct views of the same backing directory.
+(define finite (path-build root "finite"))
+(define finite-backing (path-build finite "backing"))
+(define finite-view (path-build finite "view"))
+(define finite-child (path-build finite-view "child"))
+(define finite-leaf (path-build finite-child "child"))
+(mkdirs (path-build finite-backing "child"))
+(mkdir finite-view)
+(file-symlink "child/link" (path-build finite-backing "link"))
+(write-string (path-build finite-backing "child/link") "finite payload")
+
+(let ([mounts '()])
+  (define bind
+    (lambda (from to)
+      (unless (= 0 (mount-bind from to "" #x1000 0))
+        (error 'file-bind-test "cannot mount finite view"))
+      (set! mounts (cons to mounts))))
+  (dynamic-wind
+    void
+    (lambda ()
+      (bind finite-backing finite-view)
+      (bind finite-backing finite-child)
+      (let ([link (path-build finite-view "link")]
+            [leaf (path-build finite-leaf "link")]
+            [copied (path-build finite "copy")]
+            ;; Hard links must stay within one mount, even when devices match.
+            [linked (path-build finite-leaf "hard-link")])
+        (unless (and (same-file? finite-view finite-child)
+                     (string=? "finite payload" (read-string link))
+                     (same-file? leaf (readlink2 link #t)))
+          (error 'file-bind-test "finite symlink chain was rejected"))
+        (let-values ([(text parent) (readlink link #t)])
+          (unless (same-file? leaf (path-build parent text))
+            (error 'file-bind-test "recursive readlink lost its mount context")))
+        (file-copy link copied)
+        (file-link link linked)
+        (unless (and (string=? "finite payload" (read-string copied))
+                     (same-file? leaf linked))
+          (error 'file-bind-test "finite link chain cannot be copied or linked")))
+      (for-each
+       (lambda (top-down?)
+         (let ([visited (make-list-builder)])
+           (walk-files (lambda (directory directories files) (visited directory) #t)
+                       finite-view #t top-down?)
+           (unless (equal? (sort string<? (visited))
+                           (sort string<? (list finite-view finite-child finite-leaf)))
+             (error 'file-bind-test "walk skipped a finite mount view")))
+         (let ([iterator (fs->iter finite-view #t top-down?)])
+           (dynamic-wind
+             void
+             (lambda ()
+               (unless (member (path-build finite-leaf "link") (iter->list iterator))
+                 (error 'file-bind-test "iterator skipped a finite mount view")))
+             (lambda () (iter-finalize! iterator)))))
+       '(#f #t))
+      (for-each
+       (lambda (flavor)
+         (unless (equal? (glob* flavor (path-build finite-view "**") #f #t 'empty)
+                         (glob* flavor (path-build finite-view "**") #t #t 'empty))
+           (error 'file-bind-test "glob skipped a finite mount view" flavor)))
+       '(unix windows)))
+    (lambda ()
+      (for-each
+       (lambda (path)
+         (unless (= 0 (unmount path 2)) (error 'file-bind-test "cannot unmount finite view")))
+       mounts))))
+
+;; A missing destination on another filesystem must use the metadata-preserving fallback.
+(define move-source (path-build root "move-source"))
+(define move-volume (path-build root "move-volume"))
+(define move-target (path-build move-volume "moved"))
+(define stamp (make-time 'time-utc 123000000 1000000000))
+(mkdirs (path-build move-source "child/deeper"))
+(write-string (path-build move-source "child/deeper/payload") "move payload")
+(mkdir move-volume)
+(for-each (lambda (path) (file-touch path stamp))
+          (list move-source (path-build move-source "child")
+                (path-build move-source "child/deeper")))
+(unless (= 0 (mount-bind "" move-volume "tmpfs" 0 0))
+  (error 'file-bind-test "cannot mount move destination"))
+(dynamic-wind
+  void
+  (lambda ()
+    (file-move move-source move-target)
+    (unless (and (not (file-exists? move-source #f))
+                 (for-all (lambda (path) (time=? stamp (file-access-time path)))
+                          (list move-target (path-build move-target "child")
+                                (path-build move-target "child/deeper")))
+                 (string=? "move payload"
+                           (read-string (path-build move-target "child/deeper/payload"))))
+      (error 'file-bind-test "cross-device move lost original directory timestamps")))
+  (lambda ()
+    (unless (= 0 (unmount move-volume 2))
+      (error 'file-bind-test "cannot unmount move destination"))))
