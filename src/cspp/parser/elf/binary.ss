@@ -2,6 +2,7 @@
   (export parser-elf)
   (import (cspp chez)
           (cspp parser combinator)
+          (cspp parser private)
           (cspp parser elf types)
           (cspp parser elf validate))
 
@@ -17,23 +18,26 @@
         (bytevector-copy! bytes offset result 0 size)
         result)))
 
-  (define strict-utf8->string
+  ;; ELF names are byte sequences. Preserve UTF-8 where valid and map invalid bytes
+  ;; one-to-one into characters; the original string-table bytes remain available.
+  (define decode-elf-name
     (lambda (bytes)
-      (bytevector->string
-       bytes
-       (make-transcoder (utf-8-codec)
-                        (eol-style none)
-                        (error-handling-mode raise)))))
+      (guard (condition
+              [else
+               (let* ([length (bytevector-length bytes)] [text (make-string length)])
+                 (do ([i 0 (fx1+ i)]) ((fx= i length) text)
+                   (string-set! text i (integer->char (bytevector-u8-ref bytes i)))))])
+        (parser-decode-bytes bytes 'utf-8))))
 
   (define nul-string
     (lambda (bytes index)
-      (and (< index (bytevector-length bytes))
-           (let loop ([end index])
-             (cond [(= end (bytevector-length bytes)) #f]
-                   [(zero? (bytevector-u8-ref bytes end))
-                    (guard (condition [else #f])
-                      (strict-utf8->string (copy-range bytes index (- end index))))]
-                   [else (loop (+ end 1))])))))
+      (if (and (zero? index) (zero? (bytevector-length bytes))) ""
+          (and (< index (bytevector-length bytes))
+               (let loop ([end index])
+                 (cond [(= end (bytevector-length bytes)) #f]
+                       [(zero? (bytevector-u8-ref bytes end))
+                        (decode-elf-name (copy-range bytes index (- end index)))]
+                       [else (loop (fx1+ end))]))))))
 
   (define rebuild-section-header
     (lambda (header name)
@@ -111,7 +115,10 @@
                                          (symbol-entry-parser class endianness-name))
                               count))]
                     [result (make-vector count)])
-               (and parsed (or (not xindices) (= count (vector-length xindices)))
+               (and parsed (> count 0)
+                    (<= 1 (elf-section-header-info header) count)
+                    (or (not xindices)
+                        (and (vector? xindices) (= count (vector-length xindices))))
                     (let loop ([i 0])
                       (if (= i count)
                           (make-elf-symbol-table result)
@@ -129,8 +136,18 @@
                         [valid-index?
                          (and section-index
                               (or (< section-index section-count)
-                                  (<= #xff00 section-index #xfffe)))])
-                   (and name valid-index? (not unused-extension?)
+                                  (and (not extended?)
+                                       (<= #xff00 section-index #xfffe))))]
+                        [local? (zero? (ash (parsed-symbol-info symbol) -4))]
+                        [first-valid?
+                         (or (not (zero? i))
+                             (and (zero? name-index) (zero? raw-index)
+                                  (zero? (parsed-symbol-info symbol))
+                                  (zero? (parsed-symbol-other symbol))
+                                  (zero? (parsed-symbol-value symbol))
+                                  (zero? (parsed-symbol-size symbol))))])
+                   (and name valid-index? (not unused-extension?) first-valid?
+                        (eq? local? (< i (elf-section-header-info header)))
                         (begin
                           (vector-set!
                            result i
@@ -194,12 +211,12 @@
                   (unless (or (zero? name-size) terminated?)
                     (errorf 'note-parser "unterminated ELF note name"))
                   (make-elf-note
-                   (strict-utf8->string (copy-range raw-name 0 name-length)) type
+                   (decode-elf-name (copy-range raw-name 0 name-length)) type
                    (list-ref field* 2))))
               (<~> (<u8vec> name-size)
-                   (<skip> (<uimm8> 0) name-padding)
+                   (<skip> <u8> name-padding)
                    (<u8vec> descriptor-size)
-                   (<skip> (<uimm8> 0) descriptor-padding)))))))))
+                   (<skip> <u8> descriptor-padding)))))))))
 
   (define decode-notes
     (lambda (bytes endianness-name)
@@ -222,20 +239,21 @@
 
   (define symbol-xindices
     (lambda (symbol-index headers raw-sections endianness-name expected-count)
+      ;; Absent and invalid companions must remain distinct: invalid cannot bypass checks.
       (let loop ([i 0] [found #f])
-        (if (= i (vector-length headers))
-            found
+        (if (= i (vector-length headers)) found
             (let ([header (vector-ref headers i)])
               (if (and (= 18 (elf-section-header-type header))
                        (= symbol-index (elf-section-header-link header)))
-                  (and (not found)
-                       (= 4 (elf-section-header-entry-size header))
-                       (= (* expected-count 4)
-                          (bytevector-length (vector-ref raw-sections i)))
-                       (let ([index* (parse-word-vector
+                  (if (or found
+                          (not (= 4 (elf-section-header-entry-size header)))
+                          (not (= (* expected-count 4)
+                                  (bytevector-length (vector-ref raw-sections i)))))
+                      'invalid
+                      (let ([indices (parse-word-vector
                                       (vector-ref raw-sections i) 4 endianness-name)])
-                         (and index* (loop (+ i 1) index*))))
-                  (loop (+ i 1) found)))))))
+                        (if indices (loop (fx1+ i) indices) 'invalid)))
+                  (loop (fx1+ i) found)))))))
 
   (define hash-table-parser
     (lambda (endianness-name)
@@ -302,23 +320,38 @@
                          (= word (elf-section-header-entry-size header)))
                      (let ([entry* (parse-word-vector raw word endianness-name)])
                        (and entry* (make-elf-relr-table entry*))))]
-          [(5) (and (linked-section-type? all-headers link '(2 11))
-                    (or (zero? (elf-section-header-entry-size header))
-                        (= 4 (elf-section-header-entry-size header)))
-                    (parse-bounded-content raw (hash-table-parser endianness-name)))]
-          [(17) (and (linked-section-type? all-headers link '(2 11))
-                     (>= size 4) (zero? (modulo size 4))
-                     (or (zero? (elf-section-header-entry-size header))
-                         (= 4 (elf-section-header-entry-size header)))
-                     (parse-bounded-content
-                      raw
-                      (<map>
-                       (lambda (field*)
-                         (make-elf-group-section
-                          (car field*) (list->vector (cadr field*))))
-                       (<~> (unsigned-parser 4 endianness-name)
-                            (<rep> (unsigned-parser 4 endianness-name)
-                                   (- (/ size 4) 1))))))]
+          [(5)
+           (and (linked-section-type? all-headers link '(2 11))
+                (or (zero? (elf-section-header-entry-size header))
+                    (= 4 (elf-section-header-entry-size header)))
+                (let* ([count (symbol-table-entry-count
+                               class (vector-ref all-headers link) linked)]
+                       [table (parse-bounded-content raw (hash-table-parser endianness-name))])
+                  (and count table (= count (vector-length (elf-hash-table-chains table)))
+                       (for-all (lambda (index) (< index count))
+                                (vector->list (elf-hash-table-buckets table)))
+                       (for-all (lambda (index) (< index count))
+                                (vector->list (elf-hash-table-chains table)))
+                       table)))]
+          [(17)
+           (and (linked-section-type? all-headers link '(2 11))
+                (>= size 4) (zero? (modulo size 4))
+                (or (zero? (elf-section-header-entry-size header))
+                    (= 4 (elf-section-header-entry-size header)))
+                (let* ([count (symbol-table-entry-count
+                               class (vector-ref all-headers link) linked)]
+                       [table (parse-bounded-content
+                               raw
+                               (<map> (lambda (fields)
+                                        (make-elf-group-section
+                                         (car fields) (list->vector (cadr fields))))
+                                      (<~> (unsigned-parser 4 endianness-name)
+                                           (<rep> (unsigned-parser 4 endianness-name)
+                                                  (fx1- (/ size 4))))))])
+                  (and count (< (elf-section-header-info header) count) table
+                       (for-all (lambda (index) (< 0 index (vector-length all-headers)))
+                                (vector->list (elf-group-section-members table)))
+                       table)))]
           [(18) (and (linked-section-type? all-headers link '(2 11))
                      (= 4 (elf-section-header-entry-size header))
                      (let ([symbol-count
@@ -475,11 +508,11 @@
                      [memory-size (elf-program-header-memory-size raw)]
                      [alignment (elf-program-header-alignment raw)])
                 (cond
-                  [(not (elf-range-valid? file-offset file-size length))
+                  [(and (not (zero? type)) (not (elf-range-valid? file-offset file-size length)))
                    (values #f (issue file-offset "segment exceeds input"))]
                   [(and (= type 1) (> file-size memory-size))
                    (values #f (issue at "load segment file size exceeds memory size"))]
-                  [(not (elf-power-of-two? alignment))
+                  [(and (not (zero? type)) (not (elf-power-of-two? alignment)))
                    (values #f (issue at "invalid segment alignment"))]
                   [(and (= type 1) (> alignment 1)
                         (not (= (modulo file-offset alignment)
@@ -491,7 +524,8 @@
                     (make-elf-program-header
                      type (elf-program-header-flags raw) file-offset virtual-address
                      (elf-program-header-physical-address raw) file-size memory-size alignment
-                     (copy-range bytes file-offset file-size)))
+                     (if (zero? type) (make-bytevector 0)
+                         (copy-range bytes file-offset file-size))))
                    (loop (+ index 1))])))))))
 
   (define build-sections
@@ -509,6 +543,9 @@
                      [file-offset (elf-section-header-offset section)]
                      [size (elf-section-header-size section)])
                 (cond
+                  [(zero? (elf-section-header-type section))
+                   (vector-set! raw-sections index (make-bytevector 0))
+                   (loop (fx1+ index))]
                   [(not (elf-power-of-two?
                          (elf-section-header-address-alignment section)))
                    (values #f (issue at "invalid section alignment"))]
@@ -538,7 +575,7 @@
              [shstrndx (if (= raw-shstrndx #xffff)
                            (elf-section-header-link zero)
                            raw-shstrndx)])
-        (if (and (> shnum 0) (>= shstrndx shnum))
+        (if (and (not (zero? shstrndx)) (>= shstrndx shnum))
             (problem-parser
              (issue (+ (decoded-elf-header-sizes-at header) 10)
                     "invalid section-name table index")
@@ -665,9 +702,8 @@
           [(and name-bytes
                 (not (= 3 (elf-section-header-type (vector-ref headers shstrndx)))))
            (values #f (issue shoff "section-name table is not a string table"))]
-          [(and name-bytes
-                (or (zero? (bytevector-length name-bytes))
-                    (not (zero? (bytevector-u8-ref name-bytes 0)))
+          [(and name-bytes (> (bytevector-length name-bytes) 0)
+                (or (not (zero? (bytevector-u8-ref name-bytes 0)))
                     (not (zero? (bytevector-u8-ref
                                  name-bytes (- (bytevector-length name-bytes) 1))))))
            (values #f (issue (elf-section-header-offset (vector-ref headers shstrndx))
@@ -687,7 +723,8 @@
                     #f)
                    (let* ([old-header (vector-ref headers i)]
                           [name-index (elf-section-header-name-index old-header)]
-                          [name (if name-bytes (nul-string name-bytes name-index) "")])
+                          [name (if (and name-bytes (not (zero? (elf-section-header-type old-header))))
+                                    (nul-string name-bytes name-index) "")])
                      (if (not name)
                          (values #f
                                  (issue (elf-section-header-offset

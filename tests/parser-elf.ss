@@ -237,6 +237,10 @@
       (set-elf-section! bytes class endianness table-offset 1 3 128 3 0 0)
       (set-elf-section! bytes class endianness table-offset 2 2 144 (* 2 symbol-size)
                         1 symbol-size)
+      ;; Symbol zero is local; symbol one is the first nonlocal entry.
+      (bytevector-u32-set! bytes
+                           (+ table-offset (* 2 (if elf64? 64 40)) (if elf64? 44 28))
+                           1 endianness)
       (set-elf-section! bytes class endianness table-offset 3 19 208 (* 2 word) 0 word)
       (set-elf-section! bytes class endianness table-offset 4 5 240 20 2 4)
       (set-elf-section! bytes class endianness table-offset 5 17 272 8 2 4)
@@ -462,22 +466,20 @@
      ;; error: a relocation table must link to a symbol table.
      (error? (parse-elf (rich-elf-with-u32 (+ 512 (* 5 64) 40) 2)))
 
-     ;; error: note name padding bytes must be zero.
-     (error?
+     ;; Note padding aligns fields but has no required byte value.
+     (elf-file?
       (let ([bytes (rich-elf-with-u32 272 2)])
         (bytevector-u8-set! bytes 284 (char->integer #\G))
         (bytevector-u8-set! bytes 285 0)
         (bytevector-u8-set! bytes 286 1)
         (parse-elf bytes)))
 
-     ;; error: malformed UTF-8 in a note name must retain the section byte offset.
-     (guard (condition
-             [(parser-error? condition) (= 272 (parser-error-offset condition))]
-             [else #f])
-       (let ([bytes (rich-elf64le)])
-         (bytevector-u8-set! bytes 284 #xff)
-         (parse-elf bytes)
-         #f))
+     (let* ([bytes (rich-elf64le)]
+            [unused (bytevector-u8-set! bytes 284 #xff)]
+            [file (parse-elf bytes)]
+            [notes (elf-note-table-notes
+                    (elf-section-content (vector-ref (elf-file-sections file) 4)))])
+       (string=? "\xff;NU" (elf-note-name (vector-ref notes 0))))
 
      ;; error: the section-header table must fit in the input.
      (error? (parse-elf (rich-elf-with-u64 40 800)))
@@ -588,3 +590,5 @@
      (error? (parse-elf (elf32be-with-section-zero 0 1 0 0 2 0)))
 
      )
+
+(include "parser-elf-review.ss")

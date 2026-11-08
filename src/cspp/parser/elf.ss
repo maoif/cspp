@@ -99,6 +99,9 @@
 
   #|proc:parse-elf
   The `parse-elf` procedure decodes ELF bytevector `input` and returns an `elf-file` record.
+  Names decode as strict UTF-8 with every scalar retained, including U+FEFF. If a name is
+  invalid UTF-8, each byte maps to the character with the same code point. The string-table
+  records retain the original bytes independently of this display-oriented name decoding.
   |#
   (define parse-elf
     (lambda (input)
@@ -107,7 +110,7 @@
 
   #|proc:parse-elf-file
   The `parse-elf-file` procedure decodes the ELF file at string `path` and returns an `elf-file`
-  record.
+  record. Name decoding follows `parse-elf`: UTF-8 where valid, otherwise one character per byte.
   |#
   (define parse-elf-file
     (lambda (path)

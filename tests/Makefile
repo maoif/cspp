@@ -117,6 +117,8 @@ crypto-hardening.so: crypto-input-process.py crypto-input-process.ss
 parser.so parser-csv.so parser-json5.so parser-xml.so parser-toml.so parser-elf.so \
 parser-wasm.so: parser-external-tools.ss
 
+parser-elf.so: parser-elf-review.ss $(wildcard data/elf-review/*.elf)
+
 parser-wasm.so: parser-wasm-review.ss data/wasm-core3.wat data/wasm-core3.wasm
 
 system-runtime-suite.so: system-runtime.ss system-runtime-runner.ss system-lookup-fixture.so \
