@@ -264,9 +264,9 @@
        ($with-port (open-file-input-port path)
          (lambda (p) (fasl-read p))))))
   #|proc:read-u8vec
-  The `read-u8vec` procedure reads the binary file at `path` as a bytevector.
+  The `read-u8vec` procedure reads the binary file at `path` and returns its contents as a
+  bytevector, including an empty bytevector when the file is empty.
   The `path` parameter is the filesystem path string to read.
-  An empty file returns an empty bytevector.
   |#
   (define read-u8vec
     (lambda (path)

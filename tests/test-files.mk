@@ -16,7 +16,9 @@ SRCS_TEST := test.ss examples.ss benchmarks.ss record.ss datatype.ss match.ss fo
              optional-library.ss net-loader.ss uuid.ss \
              protobuf.ss protobuf-codegen.ss \
              $(NET_TESTS) \
-             parser.ss net-errors.ss net-address.ss net-dns.ss net-ip.ss net-docs.ss \
+             parser.ss parser-regressions.ss parser-csv.ss parser-json5.ss parser-xml.ss \
+             parser-toml.ss parser-elf.ss parser-wasm.ss \
+             net-errors.ss net-address.ss net-dns.ss net-ip.ss net-docs.ss \
              net-socket-datagram.ss net-uri.ss
 
 SRCS_NON_NET_TEST := $(filter-out net-%.ss,$(SRCS_TEST))

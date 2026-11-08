@@ -184,6 +184,7 @@
            (<~1> (<char> quote)
                  (<many>
                   (</> <reference>
+                       (<as> #\space (<one-of> "\t\n\r"))
                        (<satisfy-char>
                         (lambda (character)
                           (and (xml-character? character)
@@ -328,17 +329,29 @@
 
   (define merge-adjacent-text
     (lambda (nodes)
-      (let loop ([nodes nodes] [result '()])
-        (cond [(null? nodes) (reverse result)]
-              [(and (xml-text? (car nodes))
-                    (pair? result)
-                    (xml-text? (car result)))
-               (loop (cdr nodes)
-                     (cons (make-xml-text
-                            (string-append (xml-text-value (car result))
-                                           (xml-text-value (car nodes))))
-                           (cdr result)))]
-              [else (loop (cdr nodes) (cons (car nodes) result))]))))
+      (let ([builder (make-list-builder)])
+        (let loop ([nodes nodes])
+          (cond [(null? nodes) (builder)]
+                [(xml-text? (car nodes))
+                 ;; Size each text run first, then copy each fragment exactly once.
+                 (let scan ([end (cdr nodes)]
+                            [length (string-length (xml-text-value (car nodes)))])
+                   (if (and (pair? end) (xml-text? (car end)))
+                       (scan (cdr end)
+                             (fx+ length (string-length (xml-text-value (car end)))))
+                       (begin
+                         (if (eq? end (cdr nodes))
+                             (builder (car nodes))
+                             (let ([text (make-string length)])
+                               (let copy ([parts nodes] [offset 0])
+                                 (unless (eq? parts end)
+                                   (let* ([part (xml-text-value (car parts))]
+                                          [size (string-length part)])
+                                     (string-copy! part 0 text offset size)
+                                     (copy (cdr parts) (fx+ offset size)))))
+                               (builder (make-xml-text text))))
+                         (loop end))))]
+                [else (builder (car nodes)) (loop (cdr nodes))])))))
 
   (define <reference-text>
     (<map> (lambda (character)
@@ -529,7 +542,8 @@
 
   #|proc:parse-xml
   The `parse-xml` procedure parses XML 1.0 string `text` and returns an `xml-document`.
-  Document type declarations and declared general entities are not supported.
+  Document type declarations and declared general entities are not supported. Error offsets
+  refer to text after CR and CRLF are normalized to LF; lines and columns are zero-based.
   |#
   (define parse-xml
     (lambda (text)
@@ -539,13 +553,16 @@
   #|proc:parse-xml-file
   The `parse-xml-file` procedure parses the regular XML file at string `path` and returns an
   `xml-document`. Document type declarations and declared general entities are not supported.
+  Syntax failures raise `&parser-error` with `path` as the source and offsets in newline-normalized
+  text. File, decoding, and encoding-declaration conflicts propagate as non-parser exceptions.
   |#
   (define parse-xml-file
     (lambda (path)
       (pcheck ([file-regular? path])
               (let-values ([(text encoding)
                             (decode-xml-bytevector (read-u8vec path))])
-                (let* ([document (parse-xml text)]
+                (let* ([document (run-textual-parser/source
+                                  parser-xml (normalize-xml-newlines text) path)]
                        [declaration (xml-document-declaration document)]
                        [declared (and declaration
                                       (xml-declaration-encoding declaration))])

@@ -247,15 +247,20 @@
   (define <decimal-digits>
     (<as-string> (<some> <digit>)))
 
+  (define <decimal-integer>
+    (</> (<string> "0")
+         (<map> (lambda (value) (apply string (cons (car value) (cadr value))))
+                (<~> (<one-of> "123456789") (<many> <digit>)))))
+
   (define <decimal-base>
     (</> (<map> (lambda (value)
                   (string-append (car value) "." (caddr value)))
-                (<~> <decimal-digits> (<char> #\.)
+                (<~> <decimal-integer> (<char> #\.)
                      (<as-string> (<many> <digit>))))
          (<map> (lambda (value)
                   (string-append "." (cadr value)))
                 (<~> (<char> #\.) <decimal-digits>))
-         <decimal-digits>))
+         <decimal-integer>))
 
   (define <decimal-exponent>
     (<map> (lambda (value)

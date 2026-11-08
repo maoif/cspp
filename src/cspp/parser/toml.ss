@@ -157,24 +157,22 @@
            (car (mutable-table-array-tables table-array)))))
 
   (define navigate-table
-    (lambda (table path missing-kind require-existing? offset)
+    (lambda (table path missing-kind offset)
       (if (null? path)
           (values table #f)
           (let* ([key (car path)]
                  [missing (list 'missing)]
                  [value (mutable-table-ref table key missing)])
             (cond [(eq? value missing)
-                   (if require-existing?
-                       (values #f (issue offset "array table parent does not exist"))
-                       (let ([child (make-empty-mutable-table missing-kind)])
-                         (mutable-table-set-new! table key child)
-                         (navigate-table child (cdr path) missing-kind #f offset)))]
+                   (let ([child (make-empty-mutable-table missing-kind)])
+                     (mutable-table-set-new! table key child)
+                     (navigate-table child (cdr path) missing-kind offset))]
                   [(mutable-table? value)
-                   (navigate-table value (cdr path) missing-kind #f offset)]
+                   (navigate-table value (cdr path) missing-kind offset)]
                   [(mutable-table-array? value)
                    (let ([latest (latest-array-table value)])
                      (if latest
-                         (navigate-table latest (cdr path) missing-kind #f offset)
+                         (navigate-table latest (cdr path) missing-kind offset)
                          (values #f (issue offset "array of tables is empty"))))]
                   [else
                    (values #f (issue offset "value cannot be extended as a table"))])))))
@@ -186,7 +184,7 @@
              [key (list-last path)]
              [offset (key-value-event-offset event)])
         (let-values ([(parent problem)
-                      (navigate-table table parent-path 'dotted #f offset)])
+                      (navigate-table table parent-path 'dotted offset)])
           (cond [problem problem]
                 [(mutable-table-contains? parent key)
                  (issue offset "TOML key is already defined")]
@@ -201,7 +199,7 @@
              [key (list-last path)]
              [offset (table-event-offset event)])
         (let-values ([(parent problem)
-                      (navigate-table root parent-path 'implicit #f offset)])
+                      (navigate-table root parent-path 'implicit offset)])
           (if problem
               (values #f problem)
               (let* ([missing (list 'missing)]
@@ -228,8 +226,7 @@
              [key (list-last path)]
              [offset (array-table-event-offset event)])
         (let-values ([(parent problem)
-                      (navigate-table root parent-path 'implicit
-                                      (pair? parent-path) offset)])
+                      (navigate-table root parent-path 'implicit offset)])
           (if problem
               (values #f problem)
               (let* ([missing (list 'missing)]
@@ -472,7 +469,12 @@
 
   (define <bare-key>
     (<as-string>
-     (<some> (</> <letter> <digit> (<one-of> "_-")))))
+     (<some> (<satisfy-char>
+               (lambda (character)
+                 (or (char<=? #\a character #\z)
+                     (char<=? #\A character #\Z)
+                     (char<=? #\0 character #\9)
+                     (memv character '(#\_ #\-))))))))
 
   (define <simple-key>
     (</> <basic-string> <literal-string> <bare-key>))
@@ -758,8 +760,10 @@
 
   (define <document-events>
     (<map> (lambda (values) (filter (lambda (value) value) values))
-           (<~ (<many> (</> <blank-line> <final-comment-line> <statement-line>))
-               <eof>)))
+           (<~0> (<many-until>
+                  (</> <blank-line> <final-comment-line> (~> <ws> <statement-line>))
+                  (<~> <ws> <eof>))
+                 <ws> <eof>)))
 
   (define parser-toml
     (begin
@@ -803,11 +807,13 @@
 
   #|proc:parse-toml-file
   The `parse-toml-file` procedure parses the regular UTF-8 TOML file at string `path` and returns
-  a `toml-document`.
+  a `toml-document`. Syntax failures raise `&parser-error` with `path` as the source. File and
+  UTF-8 decoding exceptions propagate as non-parser exceptions.
   |#
   (define parse-toml-file
     (lambda (path)
       (pcheck ([file-regular? path])
-              (parse-toml (decode-toml-bytevector (read-u8vec path))))))
+              (run-textual-parser/source
+               parser-toml (decode-toml-bytevector (read-u8vec path)) path))))
 
   )

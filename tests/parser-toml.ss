@@ -230,8 +230,10 @@
      ;; error: a table cannot become an array of tables.
      (error? (parse-toml "[a]\n[[a]]"))
 
-     ;; error: a nested array of tables requires an existing array parent.
-     (error? (parse-toml "[[a.b]]\nx=1"))
+     ;; An ordinary table parent is created implicitly for a nested array of tables.
+     (let* ([root (toml-document-root (parse-toml "[[a.b]]\nx=1"))]
+            [array (toml-table-ref (toml-table-ref root "a") "b")])
+       (= 1 (toml-table-ref (vector-ref (toml-array-elements array) 0) "x")))
 
      )
 

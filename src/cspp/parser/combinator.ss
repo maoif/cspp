@@ -69,6 +69,19 @@
 
 
 #|
+Independent parses may share a parser across threads. Each invocation owns its input cursor and
+result builders. Callers must synchronize mutation of shared input, callback state, and values
+returned by `<result>` or `<as>`. Complete lazy-parser installation before concurrent parsing;
+synchronize any later replacement with all parses using that lazy parser.
+
+Fiber safety is not guaranteed. Resuming a continuation captured in a parser callback has
+undefined behavior. Backtracking and lookahead restore the input cursor only: mutations by
+callbacks to caller-owned state are not rolled back. Callbacks may run in unsuccessful branches.
+
+Text positions use zero-based character offsets, lines, and columns. CR, LF, U+2028, and U+2029
+start a new line; CRLF counts as one line break, even across primitive parser boundaries.
+Binary positions use zero-based byte offsets and have no line or column.
+
 For simplicity, "PC" in the following documentation means "parser combinator".
 |#
 
@@ -263,6 +276,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   The `run-textual-parser/source` procedure runs textual `parser` over string `input`.
   The `source` parameter is `#f` or a string used in displayed parser errors. The
   optional `state` parameter is passed through to state-aware parser combinators.
+  Returns the parse value, or raises `&parser-error` on syntax failure. Independent parses may
+  share `parser` across threads. Fiber safety is not guaranteed; callback continuation resumption
+  is undefined. Shared mutable input, state, and callback results require caller synchronization.
   |#
   (define-who run-textual-parser/source
     (case-lambda
@@ -275,6 +291,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   The `run-binary-parser/source` procedure runs binary `parser` over bytevector `input`.
   The `source` parameter is `#f` or a string used in displayed parser errors. The
   optional `state` parameter is passed through to state-aware parser combinators.
+  Returns the parse value, or raises `&parser-error` on syntax failure. Independent parses may
+  share `parser` across threads. Fiber safety is not guaranteed; callback continuation resumption
+  is undefined. Shared mutable input, state, and callback results require caller synchronization.
   |#
   (define-who run-binary-parser/source
     (case-lambda
@@ -288,7 +307,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   The `run-textual-parser` procedure runs textual `parser` over string `input` and
   returns the parse value. Optional `state` is passed to state-aware combinators and
   defaults to `#f`.
-  If the parse process fails, an error with condition type &parser-error is raised.
+  If parsing fails, an error with condition type `&parser-error` is raised. Independent parses may
+  share `parser` across threads. Fiber safety is not guaranteed; callback continuation resumption
+  is undefined. Shared mutable input, state, and callback results require caller synchronization.
   |#
   (define-who run-textual-parser
     (case-lambda
@@ -302,7 +323,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   The `run-binary-parser` procedure runs binary `parser` over bytevector `input` and
   returns the parse value. Optional `state` is passed to state-aware combinators and
   defaults to `#f`.
-  If the parse process fails, an error with condition type &parser-error is raised.
+  If parsing fails, an error with condition type `&parser-error` is raised. Independent parses may
+  share `parser` across threads. Fiber safety is not guaranteed; callback continuation resumption
+  is undefined. Shared mutable input, state, and callback results require caller synchronization.
   |#
   (define-who run-binary-parser
     (case-lambda
@@ -316,7 +339,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   The `parse-textual-file` procedure runs textual `parser` over the regular text file at
   string `path` and returns the parse value. Optional `state` is passed to state-aware
   combinators and defaults to `#f`.
-  If the parse process fails, an error with condition type &parser-error is raised.
+  If parsing fails, an error with condition type `&parser-error` is raised. Independent parses may
+  share `parser` across threads. Fiber safety is not guaranteed; callback continuation resumption
+  is undefined. Shared mutable input, state, and callback results require caller synchronization.
   |#
   (define-who parse-textual-file
     (case-lambda
@@ -331,7 +356,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   The `parse-binary-file` procedure runs binary `parser` over the regular binary file at
   string `path` and returns the parse value. Optional `state` is passed to state-aware
   combinators and defaults to `#f`.
-  If the parse process fails, an error with condition type &parser-error is raised.
+  If parsing fails, an error with condition type `&parser-error` is raised. Independent parses may
+  share `parser` across threads. Fiber safety is not guaranteed; callback continuation resumption
+  is undefined. Shared mutable input, state, and callback results require caller synchronization.
   |#
   (define-who parse-binary-file
     (case-lambda
@@ -384,7 +411,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   #|macro:declare-lazy-parser
   The `declare-lazy-parser` macro defines `name` as a lazy parser whose body can be
-  installed or replaced with `install-lazy-parser!`.
+  installed or replaced with `install-lazy-parser!`. Install before sharing the parser across
+  threads; synchronize later replacements with all parses that use it.
   |#
   (define-syntax declare-lazy-parser
     (lambda (stx)
@@ -402,7 +430,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   #|proc:install-lazy-parser!
   The `install-lazy-parser!` procedure installs the body of `parser` in lazy parser
-  `target`. A later call can replace the installed body.
+  `target` and returns unspecified values. A later call can replace the installed body. Complete
+  installation before concurrent parsing, or synchronize replacement with all affected parses.
   |#
   (define-who (install-lazy-parser! target parser)
     (pcheck ([lazy-parser? target] [parser? parser])
@@ -410,7 +439,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   #|macro:define-parser
   The `define-parser` macro defines parser `name` with body expression `body`. Within
-  `body`, `inp`, `state`, and `lvl` are the current input, parser state, and nesting level.
+  `body`, `inp`, `state`, and `lvl` are the current input, caller-supplied state, and nesting level.
+  The body must return three values: `#t`, the parse value, and the resulting input on success;
+  or `#f`, `#f`, and a failure on failure. Delegate to `parser-call` and existing combinators to
+  preserve this protocol. Input cursors and intermediate mutable values must belong to the
+  invocation. Fiber safety is not guaranteed; callback continuation resumption is undefined.
   |#
   (define-syntax define-parser
     (lambda (stx)
@@ -424,7 +457,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                (make-parser (lambda (inp state lvl) body))))])))
 
   #|macro:parser-call
-  The `parser-call` macro invokes `parser` with `input`, `state`, and nesting `level`.
+  The `parser-call` macro invokes `parser` with its input cursor `input`, caller-supplied `state`,
+  and fixnum nesting `level`. It returns the three values described by `define-parser`.
   |#
   (define-syntax parser-call
     (lambda (stx)
@@ -469,15 +503,27 @@ For simplicity, "PC" in the following documentation means "parser combinator".
          (binary-input-data inp))]
        [else (assert-unreachable)])))
 
+  ;; The index addresses the character being consumed in the original string. Looking
+  ;; behind it makes CRLF handling independent of parser boundaries and backtracking.
+  (define text-line-break?
+    (lambda (text index character)
+      (or (char=? character #\return)
+          (char=? character #\x2028)
+          (char=? character #\x2029)
+          (and (char=? character #\newline)
+               (or (fxzero? index)
+                   (not (char=? (string-ref text (fx1- index)) #\return)))))))
+
   (define scan-text-position
     (lambda (str start target line col)
       (let loop ([i start] [line line] [col col])
         (if (fx= i target)
             (values line col)
             (let ([c (string-ref str i)])
-              (if (char=? c #\newline)
-                  (loop (fx1+ i) (fx1+ line) 0)
-                  (loop (fx1+ i) line (fx1+ col))))))))
+              (cond [(text-line-break? str i c)
+                     (loop (fx1+ i) (fx1+ line) 0)]
+                    [(char=? c #\newline) (loop (fx1+ i) line 0)]
+                    [else (loop (fx1+ i) line (fx1+ col))]))))))
 
   (define recompute-text-position
     (lambda (str target)
@@ -628,13 +674,15 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                        [else (input-pos-set! inp (min len (+ pos n)))])))]))
 
   (define update-line/col!
-    (lambda (inp c)
+    (lambda (inp character)
       (let ([line (textual-input-line inp)]
-            [col  (textual-input-col  inp)])
-        (if (char=? c #\newline)
-            (begin (textual-input-line-set! inp (fx1+ line))
-                   (textual-input-col-set!  inp 0))
-            (textual-input-col-set! inp (fx1+ col))))))
+            [column (textual-input-col inp)]
+            [index (fx1- (input-pos inp))])
+        (cond [(text-line-break? (textual-input-str inp) index character)
+               (textual-input-line-set! inp (fx1+ line))
+               (textual-input-col-set! inp 0)]
+              [(char=? character #\newline) (textual-input-col-set! inp 0)]
+              [else (textual-input-col-set! inp (fx1+ column))]))))
 
   (define end-of-input?
     (lambda (inp)
@@ -682,9 +730,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                   (values #t line col)
                   (let ([c1 (string-ref str i)] [c2 (string-ref substr j)])
                     (if (char=? c1 c2)
-                        (if (char=? c1 #\newline)
-                            (loop (fx1+ i) (fx1+ j) (fx1+ line) 0)
-                            (loop (fx1+ i) (fx1+ j) line        (fx1+ col)))
+                        (cond [(text-line-break? str i c1)
+                               (loop (fx1+ i) (fx1+ j) (fx1+ line) 0)]
+                              [(char=? c1 #\newline)
+                               (loop (fx1+ i) (fx1+ j) line 0)]
+                              [else (loop (fx1+ i) (fx1+ j) line (fx1+ col))])
                         (values #f #f #f))))))))
       (let ([len (input-len inp)] [pos (input-pos inp)] [strlen (string-length str)])
         (if (< (+ pos strlen -1) len)
@@ -1246,63 +1296,271 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   ;; TODO maybe merge the two gen macros
   ;; TODO rename these since they also change the inp state
   ;; try match and return an arbirary value
+  #|parser:<u8>
+  The `<u8>` parser reads a 8-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u8>  peek-u8 'u8 1)
+  #|parser:<u16>
+  The `<u16>` parser reads a 16-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u16> peek-u16le 'u16 2)
+  #|parser:<u32>
+  The `<u32>` parser reads a 32-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u32> peek-u32le 'u32 4)
+  #|parser:<u64>
+  The `<u64>` parser reads a 64-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u64> peek-u64le 'u64 8)
+  #|parser:<s8>
+  The `<s8>` parser reads a 8-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s8>  peek-s8 's8 1)
+  #|parser:<s16>
+  The `<s16>` parser reads a 16-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s16> peek-s16le 's16 2)
+  #|parser:<s32>
+  The `<s32>` parser reads a 32-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s32> peek-s32le 's32 4)
+  #|parser:<s64>
+  The `<s64>` parser reads a 64-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s64> peek-s64le 's64 8)
+  #|parser:<f32>
+  The `<f32>` parser reads a 32-bit IEEE-754 floating-point number in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <f32> peek-f32le 'f32 4)
+  #|parser:<f64>
+  The `<f64>` parser reads a 64-bit IEEE-754 floating-point number in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <f64> peek-f64le 'f64 8)
 
+  #|parser:<u16le>
+  The `<u16le>` parser reads a 16-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u16le> peek-u16le 'u16le 2)
+  #|parser:<u32le>
+  The `<u32le>` parser reads a 32-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u32le> peek-u32le 'u32le 4)
+  #|parser:<u64le>
+  The `<u64le>` parser reads a 64-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u64le> peek-u64le 'u64le 8)
+  #|parser:<s16le>
+  The `<s16le>` parser reads a 16-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s16le> peek-s16le 's16le 2)
+  #|parser:<s32le>
+  The `<s32le>` parser reads a 32-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s32le> peek-s32le 's32le 4)
+  #|parser:<s64le>
+  The `<s64le>` parser reads a 64-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s64le> peek-s64le 's64le 8)
+  #|parser:<f32le>
+  The `<f32le>` parser reads a 32-bit IEEE-754 floating-point number in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <f32le> peek-f32le 'f32le 4)
+  #|parser:<f64le>
+  The `<f64le>` parser reads a 64-bit IEEE-754 floating-point number in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <f64le> peek-f64le 'f64le 8)
 
+  #|parser:<u16be>
+  The `<u16be>` parser reads a 16-bit unsigned integer in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u16be> peek-u16be 'u16be 2)
+  #|parser:<u32be>
+  The `<u32be>` parser reads a 32-bit unsigned integer in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u32be> peek-u32be 'u32be 4)
+  #|parser:<u64be>
+  The `<u64be>` parser reads a 64-bit unsigned integer in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u64be> peek-u64be 'u64be 8)
+  #|parser:<s16be>
+  The `<s16be>` parser reads a 16-bit signed integer in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s16be> peek-s16be 's16be 2)
+  #|parser:<s32be>
+  The `<s32be>` parser reads a 32-bit signed integer in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s32be> peek-s32be 's32be 4)
+  #|parser:<s64be>
+  The `<s64be>` parser reads a 64-bit signed integer in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s64be> peek-s64be 's64be 8)
+  #|parser:<f32be>
+  The `<f32be>` parser reads a 32-bit IEEE-754 floating-point number in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <f32be> peek-f32be 'f32be 4)
+  #|parser:<f64be>
+  The `<f64be>` parser reads a 64-bit IEEE-754 floating-point number in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <f64be> peek-f64be 'f64be 8)
 
   ;; try match a given immediate value
+  #|proc:<uimm8>
+  The `<uimm8>` procedure takes 8-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm8>  peek-u8!    u8? 1)
+  #|proc:<uimm16>
+  The `<uimm16>` procedure takes 16-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm16> peek-u16le! u16? 2)
+  #|proc:<uimm32>
+  The `<uimm32>` procedure takes 32-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm32> peek-u32le! u32? 4)
+  #|proc:<uimm64>
+  The `<uimm64>` procedure takes 64-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm64> peek-u64le! u64? 8)
+  #|proc:<simm8>
+  The `<simm8>` procedure takes 8-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm8>  peek-s8!    s8? 1)
+  #|proc:<simm16>
+  The `<simm16>` procedure takes 16-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm16> peek-s16le! s16? 2)
+  #|proc:<simm32>
+  The `<simm32>` procedure takes 32-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm32> peek-s32le! s32? 4)
+  #|proc:<simm64>
+  The `<simm64>` procedure takes 64-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm64> peek-s64le! s64? 8)
+  #|proc:<fimm32>
+  The `<fimm32>` procedure takes 32-bit flonum other than NaN `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <fimm32> peek-f32le! f32? 4)
+  #|proc:<fimm64>
+  The `<fimm64>` procedure takes 64-bit flonum other than NaN `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <fimm64> peek-f64le! f64? 8)
 
+  #|proc:<uimm16le>
+  The `<uimm16le>` procedure takes 16-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm16le> peek-u16le! u16? 2)
+  #|proc:<uimm32le>
+  The `<uimm32le>` procedure takes 32-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm32le> peek-u32le! u32? 4)
+  #|proc:<uimm64le>
+  The `<uimm64le>` procedure takes 64-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm64le> peek-u64le! u64? 8)
+  #|proc:<simm16le>
+  The `<simm16le>` procedure takes 16-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm16le> peek-s16le! s16? 2)
+  #|proc:<simm32le>
+  The `<simm32le>` procedure takes 32-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm32le> peek-s32le! s32? 4)
+  #|proc:<simm64le>
+  The `<simm64le>` procedure takes 64-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm64le> peek-s64le! s64? 8)
+  #|proc:<fimm32le>
+  The `<fimm32le>` procedure takes 32-bit flonum other than NaN `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <fimm32le> peek-f32le! f32? 4)
+  #|proc:<fimm64le>
+  The `<fimm64le>` procedure takes 64-bit flonum other than NaN `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <fimm64le> peek-f64le! f64? 8)
 
+  #|proc:<uimm16be>
+  The `<uimm16be>` procedure takes 16-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm16be> peek-u16be! u16? 2)
+  #|proc:<uimm32be>
+  The `<uimm32be>` procedure takes 32-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm32be> peek-u32be! u32? 4)
+  #|proc:<uimm64be>
+  The `<uimm64be>` procedure takes 64-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm64be> peek-u64be! u64? 8)
+  #|proc:<simm16be>
+  The `<simm16be>` procedure takes 16-bit signed integer `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm16be> peek-s16be! s16? 2)
+  #|proc:<simm32be>
+  The `<simm32be>` procedure takes 32-bit signed integer `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm32be> peek-s32be! s32? 4)
+  #|proc:<simm64be>
+  The `<simm64be>` procedure takes 64-bit signed integer `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm64be> peek-s64be! s64? 8)
+  #|proc:<fimm32be>
+  The `<fimm32be>` procedure takes 32-bit flonum other than NaN `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <fimm32be> peek-f32be! f32? 4)
+  #|proc:<fimm64be>
+  The `<fimm64be>` procedure takes 64-bit flonum other than NaN `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <fimm64be> peek-f64be! f64? 8)
 
 
@@ -1683,8 +1941,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   #|proc:<map-st>
   The `<map-st>` procedure takes `mapper` and `parser`. The `mapper` procedure must have
-  signature `(Any Any -> Any)` for a parse value and parser state. When `parser`
-  succeeds, the returned parser applies `mapper`.
+  signature `(Any Any -> Any)` for a parse value and parser state. When `parser` succeeds, the
+  returned parser applies `mapper` and returns its value. State mutations are not rolled back
+  when an enclosing parser backtracks or performs lookahead.
   |#
   (define-who (<map-st> mapper parser)
     (pcheck ([procedure? mapper] [parser? parser])
@@ -1719,7 +1978,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   #|proc:<bind-st>
   The `<bind-st>` procedure takes `parser` and `binder`. The `binder` procedure must have
   signature `(Any Any -> Parser)` for a parse value and parser state. When `parser`
-  succeeds, the returned parser applies `binder` and runs the resulting parser.
+  succeeds, the returned parser applies `binder` and returns the value from the resulting parser.
+  State mutations are not rolled back by backtracking or lookahead.
   |#
   (define-who (<bind-st> parser binder)
     (pcheck ([parser? parser] [procedure? binder])

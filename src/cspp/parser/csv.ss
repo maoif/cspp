@@ -81,9 +81,10 @@
              (make-parsed-csv-field
               (cadr value)
               (or (pair? (car value)) (pair? (caddr value)))))
-           (<~> (<many> (<char> #\space))
-                (<escaped-field> delimiter)
-                (<many> (<char> #\space)))))
+           (let ([padding (if (char=? delimiter #\space)
+                              (<result> '())
+                              (<many> (<char> #\space)))])
+             (<~> padding (<escaped-field> delimiter) padding))))
 
   (define (<field> delimiter)
     (</> (<quoted-field> delimiter)
