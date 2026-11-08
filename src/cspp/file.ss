@@ -2489,6 +2489,8 @@
   which entry supplies or receives timestamps. Permission bits always come from the source
   target and are read and copied only when `follow-link-dest?` is true. Both selected entries must
   exist. Return unspecified values; ownership, creation times, and xattrs are not copied.
+  Timestamps are applied before permission bits, so restrictive directory modes do not
+  prevent completing the copy through a pathname such as `directory/.`.
   |#
   (define-who file-copymeta
     (case-lambda
@@ -2499,12 +2501,13 @@
                 [(lambda (x) (file-exists? x follow-link-dest?)) dest])
                (let* ([st (file-stat src follow-link-src?)]
                       [atime (file-stat-access-time st)]
-                      [mtime (file-stat-modification-time st)])
+                      [mtime (file-stat-modification-time st)]
+                      [mode (and follow-link-dest? (get-mode src #t))])
                  ;; TODO xattrs
+                 ($file-touch who dest atime mtime follow-link-dest? #f)
                  (when follow-link-dest?
                    ;; if `dest` is a symlink, changing its own mode has no effect
-                   (chmod dest (get-mode src #t)))
-                 ($file-touch who dest atime mtime follow-link-dest? #f)))]))
+                   (chmod dest mode))))]))
 
 
   (define $copy-port

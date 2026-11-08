@@ -965,6 +965,41 @@
           (file-hidden? (path-build root "top.txt") 'invalid)
           #f))))
 
+(mat file-copymeta-restrictive-directory-aliases
+     (for-all
+      (lambda (suffix)
+        ($with-fs-fixture
+         (lambda (root)
+           (let ([source (path-build root "source")]
+                 [dest (path-build root "dest")]
+                 [stamp (make-time 'time-utc 123456789 1000000000)])
+             (mkdir source)
+             (mkdirs (path-build dest "child"))
+             (file-touch source stamp)
+             (dynamic-wind
+               (lambda () (chmod source #o000))
+               (lambda ()
+                 (file-copymeta source (string-append dest suffix))
+                 (and (= #o000 (file-mode dest))
+                      (time=? stamp (file-access-time dest))
+                      (time=? stamp (file-modification-time dest))))
+               (lambda () (chmod source #o700) (chmod dest #o700)))))))
+      '("" "/" "/." "/./" "/child/..")))
+
+(mat file-copymeta-validates-mode-before-touching-destination
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([source (path-build root "dangling")]
+               [dest (path-build root "top.txt")]
+               [stamp (make-time 'time-utc 0 1000000000)])
+          (file-symlink "missing" source)
+          (file-touch dest stamp)
+          ;; Error case: a dangling mode source must fail before changing destination timestamps.
+          (and (guard (failure [(error? failure) #t])
+                 (file-copymeta source dest #f #t) #f)
+               (time=? stamp (file-access-time dest))
+               (time=? stamp (file-modification-time dest)))))))
+
 (mat file-copymeta-no-follow-dangling-links
      ($with-fs-fixture
       (lambda (root)
