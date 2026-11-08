@@ -27,6 +27,84 @@
           (if saved-home (putenv "HOME" saved-home)
               ((foreign-procedure "unsetenv" (string) int) "HOME")))))))
 
+(mat read-data-text-eof-marker
+     (let ([path ($random-file)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (write-data path (list 'before (eof-object) 'after))
+           (equal? '(before) (read-data path)))
+         (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat read-data-fasl-stored-eof
+     (for-all
+      (lambda (data)
+        (let ([path ($random-file)])
+          (dynamic-wind
+            void
+            (lambda ()
+              (write-data-fasl path data)
+              (equal? data (read-data-fasl path)))
+            (lambda () (when (file-exists? path) (delete-file path))))))
+      (list '() (list (eof-object)) (list 'before (eof-object))
+            (list 'before (eof-object) 'after)
+            (list (eof-object) (eof-object) 'after)
+            (list (list (eof-object)) 'after)))
+
+     (let ([path ($random-file)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (write-data-fasl path (list 'before (eof-object)))
+           (write-u8vec>> path #vu8(0))
+           ;; Error case: a stored EOF must not hide a malformed subsequent fasl record.
+           (guard (failure [else #t]) (read-data-fasl path) #f))
+         (lambda () (when (file-exists? path) (delete-file path)))))
+
+     (let ([path ($random-file)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (write-data-fasl path (list (eof-object) 'after))
+           (let* ([bytes (read-u8vec path)]
+                  [truncated (make-bytevector (- (bytevector-length bytes) 1))])
+             (bytevector-copy! bytes 0 truncated 0 (bytevector-length truncated))
+             (write-u8vec! path truncated))
+           ;; Error case: a stored EOF must not hide a truncated subsequent fasl record.
+           (guard (failure [else #t]) (read-data-fasl path) #f))
+         (lambda () (when (file-exists? path) (delete-file path))))))
+
+(mat read-data-fasl-empty-groups
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([text (path-build root "empty-text")]
+              [header (path-build root "header")]
+              [data (path-build root "data")])
+          (write-string text "")
+          (fasl-file text header)
+          ;; Chez's native decoder requires a terminator for an empty FASL group.
+          (write-u8vec>> header #vu8(127))
+          (and (null? (read-data-fasl header))
+               (begin
+                 (write-data-fasl data (list 'before (eof-object)))
+                 (write-u8vec>> data (read-u8vec header))
+                 (write-data-fasl>> data (list 'after))
+                 (equal? (list 'before (eof-object) 'after) (read-data-fasl data))))))))
+
+(mat read-data-fasl-truncated-compressed-record
+     (let ([path ($random-file)])
+       (dynamic-wind
+         void
+         (lambda ()
+           (write-data-fasl path (list (make-string 1000 #\x)))
+           (let* ([bytes (read-u8vec path)]
+                  [truncated (make-bytevector (- (bytevector-length bytes) 2))])
+             (bytevector-copy! bytes 0 truncated 0 (bytevector-length truncated))
+             (write-u8vec! path truncated))
+           ;; Error case: inspecting EOF must not bypass native compressed-record validation.
+           (guard (failure [else #t]) (read-data-fasl path) #f))
+         (lambda () (when (file-exists? path) (delete-file path))))))
+
 (mat file-copy-link-expanded-source-basename
      (for-all
       (lambda (operation)

@@ -177,6 +177,8 @@
   #|proc:read-data
   The `read-data` procedure reads datums from `path` and returns them as a list.
   The `path` parameter is the filesystem path string to read.
+  A top-level `#!eof` datum terminates reading, as with Chez `load`; it and any following
+  datums are excluded. An empty file returns `()`.
   |#
   (define read-data
     (lambda (path)
@@ -199,9 +201,46 @@
       (pcheck ([$filename? path] [file-regular? path])
        ($with-port (open-input-file path)
          (lambda (p) (get-datum p))))))
+  ;; Identify whether the next native read will decode a datum or only consume framing.
+  ;; Chez uses byte 0 for a header and 127 for a group terminator. Headers contain the
+  ;; seven-byte magic suffix, two base-128 integers, and a parenthesized boot-file list.
+  ;; fasl-read validates the full representation. Rewind after inspection to clear the
+  ;; port buffer: byte lookahead selects a different Chez decoding path.
+  (define $fasl-datum?
+    (lambda (port)
+      (define byte
+        (lambda ()
+          (let ([value (get-u8 port)])
+            (when (eof-object? value)
+              (errorf 'read-data-fasl "unexpected EOF in FASL header"))
+            value)))
+      (define skip-integer
+        (lambda () (when (fxlogbit? 7 (byte)) (skip-integer))))
+      (let ([start (port-position port)])
+        (dynamic-wind
+          void
+          (lambda ()
+            (let loop ()
+              (let ([type (get-u8 port)])
+                (cond [(or (eof-object? type) (eqv? type 127)) #f]
+                      [(eqv? type 0)
+                       (do ([index 0 (fx1+ index)]) ((fx= index 7)) (byte))
+                       (skip-integer)
+                       (skip-integer)
+                       (unless (fx= (byte) 40)
+                         (errorf 'read-data-fasl "invalid FASL header boot-file list"))
+                       (let skip-boot-files ()
+                         (unless (fx= (byte) 41) (skip-boot-files)))
+                       (loop)]
+                      [else #t]))))
+          (lambda () (set-port-position! port start))))))
+
   #|proc:read-data-fasl
   The `read-data-fasl` procedure reads fasl datums from `path` as a list.
   The `path` parameter is the filesystem path string to read.
+  Return all datums in order, including serialized EOF objects, stopping at physical EOF.
+  FASL group headers and terminators are excluded; later groups are still read.
+  An empty file returns `()`. Malformed or truncated fasl data raises an error.
   |#
   (define read-data-fasl
     (lambda (path)
@@ -210,11 +249,11 @@
          (lambda (p)
            (let ([lb (make-list-builder)])
              (let loop ()
-               (let ([x (fasl-read p)])
-                 (if (eof-object? x)
-                     (lb)
-                     (begin (lb x)
-                            (loop)))))))))))
+               (let* ([start (port-position p)]
+                      [datum? ($fasl-datum? p)]
+                      [datum (fasl-read p)])
+                 (when datum? (lb datum))
+                 (if (= start (port-position p)) (lb) (loop))))))))))
   #|proc:read-datum-fasl
   The `read-datum-fasl` procedure reads one fasl datum from `path`.
   The `path` parameter is the filesystem path string to read.
