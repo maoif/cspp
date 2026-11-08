@@ -1704,15 +1704,22 @@
                                 (bytevector=? left-buffer right-buffer)
                                 (loop))))))])))))
 
+  (define $file-regular?
+    (let ([inspect (foreign-procedure "cspp_file_regular" (string) scheme-object)])
+      (lambda (who path)
+        (let ([result (inspect path)])
+          (if (string? result) ($err-file who path result) result)))))
+
   #|proc:same-file-contents?
   Return whether regular files named by path strings `path1` and `path2` have equal byte contents.
   Symlinks are always followed. Return `#f` for a missing or nonregular entry.
-  Compare with bounded reusable buffers; filesystem and read errors propagate.
+  Compare with bounded reusable buffers; lookup failures other than a missing path and
+  all read errors propagate.
   |#
   (define-who same-file-contents?
     (lambda (path1 path2)
       (pcheck ([$filename? path1 path2])
-              (if (and (file-regular? path1 #t) (file-regular? path2 #t))
+              (if (and ($file-regular? who path1) ($file-regular? who path2))
                   ($with-port (open-file-input-port path1)
                     (lambda (p1)
                       ($with-port (open-file-input-port path2)

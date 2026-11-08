@@ -803,6 +803,44 @@
                  (equal? '(#f #f #f) (file-map (lambda (path) #f) root))
                  (null? (file-find-all (lambda (path) #f) root))))))))
 
+(mat same-file-contents-propagates-lookup-errors
+     ($with-fs-fixture
+      (lambda (root)
+        (let ([loop-path (path-build root "cycle")]
+              [regular (path-build root "top.txt")])
+          (file-symlink "cycle" loop-path)
+          ;; Error cases: a cycle cannot establish that either operand is nonregular.
+          (for-all
+           (lambda (paths)
+             (guard (failure
+                     [(i/o-filename-error? failure)
+                      (string=? loop-path (i/o-error-filename failure))]
+                     [else #f])
+               (apply same-file-contents? paths)
+               #f))
+           (list (list loop-path regular) (list regular loop-path))))))
+
+     ($with-fs-fixture
+      (lambda (root)
+        (let* ([directory (path-build root "sub")]
+               [blocked (path-build directory "nested.txt")]
+               [regular (path-build root "top.txt")])
+          (dynamic-wind
+            (lambda () (chmod directory #o000))
+            (lambda ()
+              ;; Error cases: failed lookup through an unsearchable directory must propagate.
+              (or (= 0 (geteuid))
+                  (for-all
+                   (lambda (paths)
+                     (guard (failure
+                             [(i/o-filename-error? failure)
+                              (string=? blocked (i/o-error-filename failure))]
+                             [else #f])
+                       (apply same-file-contents? paths)
+                       #f))
+                   (list (list blocked regular) (list regular blocked)))))
+            (lambda () (chmod directory #o700)))))))
+
 (mat file-readlink-text-only
      ($with-fs-fixture
       (lambda (root)

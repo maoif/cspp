@@ -19,6 +19,7 @@
 ptr cspp_statx(const char *path, int follow_link);
 ptr cspp_readlink(const char *path);
 ptr cspp_file_symbolic_link(const char *path);
+ptr cspp_file_regular(const char *path);
 ptr cspp_file_expand_pathname(const char *path);
 ptr cspp_realpath(const char *path);
 ptr cspp_link(const char *src, const char *dest);
@@ -187,18 +188,26 @@ ptr cspp_realpath(const char *path) {
   return result;
 }
 
-/* A missing target is allowed during recursive readlink; failed inspection is not. */
-ptr cspp_file_symbolic_link(const char *path) {
+/* Missing entries are ordinary false results; failed inspection must propagate. */
+static ptr file_has_type(const char *path, mode_t type, int follow_link) {
   char *expanded = expand_pathname(path);
   if (expanded == NULL) { errno = ENOMEM; return errno_str(); }
   struct stat metadata;
-  int result = lstat(expanded, &metadata);
+  int result = follow_link ? stat(expanded, &metadata) : lstat(expanded, &metadata);
   int code = errno;
   free(expanded);
-  if (result == 0) return Sboolean(S_ISLNK(metadata.st_mode));
+  if (result == 0) return Sboolean((metadata.st_mode & S_IFMT) == type);
   if (code == ENOENT || code == ENOTDIR) return Sfalse;
   errno = code;
   return errno_str();
+}
+
+ptr cspp_file_symbolic_link(const char *path) {
+  return file_has_type(path, S_IFLNK, 0);
+}
+
+ptr cspp_file_regular(const char *path) {
+  return file_has_type(path, S_IFREG, 1);
 }
 
 /* Expand the input's home base without resolving links or normalizing parents. */
