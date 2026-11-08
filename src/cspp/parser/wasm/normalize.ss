@@ -468,8 +468,14 @@
              [shape (wasm-opcode-immediate-shape descriptor)]
              [immediate* (wat-instruction-syntax-immediates instruction)])
         (case shape
-          [(none i32 i64 f32 f64 vector-bytes shuffle-bytes lane-index)
-           immediate*]
+          [(none f32 f64 vector-bytes shuffle-bytes lane-index) immediate*]
+          [(i32 i64)
+           ;; WAT integer literals are unsigned bit patterns; binary constants are signed.
+           (let* ([width (if (eq? shape 'i32) 32 64)]
+                  [value (vector-ref immediate* 0)])
+             (vector (if (logbit? (fx1- width) value)
+                         (- value (ash 1 width))
+                         value)))]
           [(block-type try-table)
            (vector (normalize-block-type state (vector-ref immediate* 0)))]
           [(label-index)
@@ -574,7 +580,7 @@
                                  (resolve-reference
                                   state 'tag (wat-catch-syntax-tag catch)))
                             (resolve-label (wat-catch-syntax-label catch)
-                                           nested-label*)))
+                                           label*)))
                          alternate-syntax)])])
            (make-wasm-instruction
             (wat-instruction-syntax-mnemonic instruction)

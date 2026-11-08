@@ -115,7 +115,7 @@ crypto-hardening.so: crypto-continuation-process.py crypto-continuation-process.
 crypto-hardening.so: crypto-input-process.py crypto-input-process.ss
 
 parser.so parser-csv.so parser-json5.so parser-xml.so parser-toml.so parser-elf.so \
-parser-wasm.so: parser-external-tools.ss
+parser-wasm.so: parser-external-tools.ss parser-wasm-review.ss
 
 parser-wasm.so: data/wasm-core3.wat data/wasm-core3.wasm
 

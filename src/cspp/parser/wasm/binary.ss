@@ -88,41 +88,36 @@
   (define local-declaration-parser
     (<~> <wasm-u32> <wasm-value-type>))
 
-  ;; Code bodies carry their own size so the local declaration and expression are bounded together.
+  ;; Code bodies carry their own size so locals and the expression are bounded together.
   (define code-parser
     (<bind> <wasm-u32>
             (lambda (size)
-              (<bounded> size
-                         (<map> (lambda (fields)
-                                 (let* ([declaration* (car fields)]
-                                         [body (cadr fields)]
-                                         [local-count
-                                          (let loop ([index 0] [count 0])
-                                            (if (= index (vector-length declaration*))
-                                                count
-                                                (loop (fx1+ index)
-                                                      (+ count
-                                                         (car (vector-ref declaration* index))))))]
-                                         [locals (make-vector local-count)])
-                                    (let loop ([declaration-index 0]
-                                               [next 0])
-                                      (if (= declaration-index (vector-length declaration*))
-                                          (vector locals body)
-                                          (let* ([declaration
-                                                  (vector-ref declaration*
-                                                              declaration-index)]
-                                                 [count (car declaration)]
-                                                 [value-type (cadr declaration)])
-                                            (let fill ([local-index 0])
-                                              (if (= local-index count)
-                                                  (loop (fx1+ declaration-index)
-                                                        (+ next count))
-                                                  (begin
-                                                    (vector-set! locals (+ next local-index)
-                                                                 value-type)
-                                                    (fill (fx1+ local-index))))))))))
-                                (<~> (<wasm-vector> local-declaration-parser)
-                                     <wasm-expression>))))))
+              (<bounded>
+               size
+               (<bind>
+                (<~> (<wasm-vector> local-declaration-parser) <wasm-expression>)
+                (lambda (fields)
+                  (let* ([declarations (car fields)]
+                         [body (cadr fields)]
+                         [count (let loop ([index 0] [count 0])
+                                  (if (= index (vector-length declarations)) count
+                                      (loop (fx1+ index)
+                                            (+ count (car (vector-ref declarations index))))))])
+                    (if (>= count (ash 1 32))
+                        (<fail-with> "WebAssembly function has too many locals")
+                        (let ([locals (make-vector count)])
+                          (let loop ([index 0] [next 0])
+                            (if (= index (vector-length declarations))
+                                (<result> (vector locals body))
+                                (let* ([declaration (vector-ref declarations index)]
+                                       [count (car declaration)]
+                                       [type (cadr declaration)])
+                                  (let fill ([local-index 0])
+                                    (if (= local-index count)
+                                        (loop (fx1+ index) (+ next count))
+                                        (begin
+                                          (vector-set! locals (+ next local-index) type)
+                                          (fill (fx1+ local-index)))))))))))))))))
 
   (define element-kind-parser (<uimm8> 0))
 

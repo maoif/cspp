@@ -61,14 +61,12 @@
                                [else (<result> next-value)])))))])
           (next 0 0 0)))))
 
-  ;; Kept separate so every floating parser constructs its bytevector before reading it.
+  ;; Direct slices avoid an intermediate list and still belong to each invocation.
   (define float-parser
     (lambda (width size ref)
-      (<map> (lambda (byte*)
-               (make-wasm-float
-                width
-                (ref (u8-list->bytevector byte*) 0 (endianness little))))
-             (<rep> <u8> size))))
+      (<map> (lambda (bytes)
+               (make-wasm-float width (ref bytes 0 (endianness little))))
+             (<u8vec> size))))
 
   (define strict-utf8->string
     (lambda (bytes)
@@ -118,8 +116,7 @@
   |#
   (define <wasm-byte-vector>
     (<bind> <wasm-u32>
-            (lambda (length)
-              (<map> u8-list->bytevector (<rep> <u8> length)))))
+            (lambda (length) (<u8vec> length))))
 
   #|proc:<wasm-name>
   The `<wasm-name>` parser reads a length-prefixed, strictly valid UTF-8 string.

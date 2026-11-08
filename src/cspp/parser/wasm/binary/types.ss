@@ -11,29 +11,25 @@
           (cspp parser wasm binary values)
           (cspp parser wasm types))
 
-  (define abstract-heap-type
-    (lambda (value)
-      (case value
-        [(-22) 'array]
-        [(-21) 'struct]
-        [(-20) 'i31]
-        [(-19) 'eq]
-        [(-18) 'any]
-        [(-17) 'extern]
-        [(-16) 'func]
-        [(-23) 'none]
-        [(-24) 'nofunc]
-        [(-25) 'noextern]
-        [(-26) 'exn]
-        [(-27) 'noexn]
-        [else #f])))
+  ;; Abstract heap types are single-byte terminals in the final Core 3.0 grammar.
+  (define abstract-heap-type-parser
+    (<bind> <u8>
+            (lambda (byte)
+              (let ([type (case byte
+                            [(#x69) 'exn] [(#x6a) 'array] [(#x6b) 'struct]
+                            [(#x6c) 'i31] [(#x6d) 'eq] [(#x6e) 'any]
+                            [(#x6f) 'extern] [(#x70) 'func] [(#x71) 'none]
+                            [(#x72) 'noextern] [(#x73) 'nofunc] [(#x74) 'noexn]
+                            [else #f])])
+                (if type (<result> type)
+                    (<fail-with> "undefined WebAssembly abstract heap type"))))))
 
   (define heap-type-parser
-    (<bind> <wasm-s33>
-            (lambda (value)
-              (cond [(>= value 0) (<result> value)]
-                    [(abstract-heap-type value) => <result>]
-                    [else (<fail-with> "undefined WebAssembly heap type")]))))
+    (</> abstract-heap-type-parser
+         (<bind> <wasm-s33>
+                 (lambda (value)
+                   (if (>= value 0) (<result> value)
+                       (<fail-with> "undefined WebAssembly heap type"))))))
 
   (define nullable-reference
     (lambda (heap-type)
@@ -43,12 +39,7 @@
     (lambda (heap-type)
       (make-wasm-reference-type #f heap-type)))
 
-  (define shorthand-heap-type-parser
-    (<bind> heap-type-parser
-            (lambda (heap-type)
-              (if (symbol? heap-type)
-                  (<result> heap-type)
-                  (<fail-with> "concrete reference type requires ref encoding")))))
+  (define shorthand-heap-type-parser abstract-heap-type-parser)
 
   (define mutability-parser
     (</> (<as> #f (<uimm8> 0))

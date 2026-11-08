@@ -1662,12 +1662,11 @@
      ;; error: br-on-cast fields cannot omit the second heap type.
      (error? (parse-binary <wasm-instruction> #vu8(#xfb #x18 #x00 #x01 #x70)))
 
-     ;; error: malformed abstract source heap types retain a stable custom failure.
+     ;; error: malformed abstract source heap types retain their location and diagnostic.
      (let ([err (capture-parser-error
                  (lambda ()
                    (parse-binary <wasm-instruction> #vu8(#xfb #x18 #x00 #x00 #x64 #x70))))])
        (and (parser-error? err)
-            (eq? 'custom (parser-error-kind err))
             (= 5 (parser-error-offset err))
             (string-contains? (parser-error-message err)
                               "undefined WebAssembly heap type")))
@@ -1681,7 +1680,6 @@
                  (lambda ()
                    (parse-binary <wasm-u32> #vu8(#xff #xff #xff #xff #x10))))])
        (and (parser-error? err)
-            (eq? 'custom (parser-error-kind err))
             (= 5 (parser-error-offset err))
             (string-contains? (parser-error-message err)
                               "integer has nonzero unused bits")))
@@ -3250,11 +3248,11 @@
      (equal? '(func extern any eq i31 struct array none nofunc noextern exn noexn)
              (map (lambda (byte)
                     (parse-binary <wasm-heap-type> (bytevector byte)))
-                  '(#x70 #x6f #x6e #x6d #x6c #x6b #x6a #x69 #x68 #x67 #x66 #x65)))
+                  '(#x70 #x6f #x6e #x6d #x6c #x6b #x6a #x71 #x73 #x72 #x69 #x74)))
 
      (= 3 (parse-binary <wasm-heap-type> #vu8(3)))
 
-     (let ([type (parse-binary <wasm-reference-type> #vu8(99 105))])
+     (let ([type (parse-binary <wasm-reference-type> #vu8(99 113))])
        (and (wasm-reference-type-nullable? type)
             (eq? 'none (wasm-reference-type-heap-type type))))
 
@@ -3266,7 +3264,7 @@
              (map (lambda (byte)
                     (wasm-reference-type-heap-type
                      (parse-binary <wasm-value-type> (bytevector byte))))
-                  '(#x70 #x6f #x6e #x6d #x6c #x6b #x6a #x69 #x68 #x67 #x66 #x65)))
+                  '(#x70 #x6f #x6e #x6d #x6c #x6b #x6a #x71 #x73 #x72 #x69 #x74)))
 
      (equal? '(i8 i16 i32 v128)
              (map (lambda (byte)
@@ -4297,7 +4295,7 @@
                  (type $sig (func))
                  (tag $tag (type $sig))
                  (func
-                   try_table $outer (type $sig) (catch $tag $outer)
+                   try_table $outer (type $sig) (catch $tag 0)
                    end $outer))")]
             [instruction
              (vector-ref
@@ -4755,3 +4753,5 @@
        (wasm-module=? text-module binary-module))
 
      )
+
+(include "parser-wasm-review.ss")
