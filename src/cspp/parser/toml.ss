@@ -171,7 +171,11 @@
                    (if (and (eq? missing-kind 'dotted)
                             (eq? (mutable-table-kind value) 'explicit))
                        (values #f (issue offset "dotted key cannot extend an explicit table"))
-                       (navigate-table value (cdr path) missing-kind offset))]
+                       (begin
+                         (when (and (eq? missing-kind 'dotted)
+                                    (eq? (mutable-table-kind value) 'implicit))
+                           (mutable-table-kind-set! value 'dotted))
+                         (navigate-table value (cdr path) missing-kind offset)))]
                   [(mutable-table-array? value)
                    (let ([latest (latest-array-table value)])
                      (if (eq? missing-kind 'dotted)

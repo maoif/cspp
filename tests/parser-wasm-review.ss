@@ -238,3 +238,19 @@
                                   (make-wasm-limits 'i32 1 2 #t)))
 
      )
+
+(mat wasm-review-annotation-lexical-boundaries
+
+     ;; Error case: a top-level annotation requires a nonempty identifier.
+     (for-all
+      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      '("(module (@))" "(module (@ ))" "(module (@\"\"))"))
+
+     ;; Error case: unquoted annotation tokens are ASCII, even in otherwise ignored contents.
+     (for-all
+      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      '("(module (@a Heiße))" "(module (@a 😀))"))
+
+     (wasm-module? (parse-wasm-text-module "(module (@a \"Heiße 😀\" (@)))"))
+
+     )

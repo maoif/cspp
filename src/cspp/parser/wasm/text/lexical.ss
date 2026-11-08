@@ -196,7 +196,7 @@
     (<satisfy-char>
      (lambda (character)
        (and (or (wat-whitespace-character? character)
-                (and (char>=? character #\space) (not (char=? character #\delete))))
+                (char<=? #\space character #\x7e))
             (not (memv character (list #\( wat-close-parenthesis wat-double-quote)))))
      "invalid annotation character"))
 
@@ -229,9 +229,11 @@
        (<~1> (<string> "(@")
              (<bind> <wat-annotation-id>
                      (lambda (identifier)
-                       (if (string=? identifier "custom")
-                           (<fail-with> "custom annotation is not trivia")
-                           (<result> identifier))))
+                       (cond [(zero? (string-length identifier))
+                              (<fail-with> "annotation identifier cannot be empty")]
+                             [(string=? identifier "custom")
+                              (<fail-with> "custom annotation is not trivia")]
+                             [else (<result> identifier)])))
              (<many> <wat-annotation-content>)
              (<char> wat-close-parenthesis)))
       (<bind> (<~1> (<char> wat-double-quote)

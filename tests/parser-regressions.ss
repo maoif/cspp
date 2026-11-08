@@ -409,3 +409,17 @@
        (string=? "\xfeff;A" (wasm-export-name export)))
 
      )
+
+(mat parser-toml-implicit-dotted-review
+
+     ;; Error case: traversing an implicit parent with a dotted key defines that parent.
+     (parser-error?
+      (parser-error-from
+       (lambda () (parse-toml "[a.b.c]\nx=1\n[a]\nb.d=2\n[a.b]\ny=3"))))
+
+     (let* ([root (toml-document-root (parse-toml "[a.b.c]\nx=1\n[a]\nb.d=2"))]
+            [a (toml-table-ref root "a")]
+            [b (toml-table-ref a "b")])
+       (= 2 (toml-table-ref b "d")))
+
+     )
