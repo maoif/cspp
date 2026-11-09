@@ -240,23 +240,30 @@
                           (loop (+ i 1)))))))))))))
 
   (define relocation-entry-parser
-    (lambda (class endianness-name addends?)
+    (lambda (bytes class endianness-name machine addends?)
       (let* ([word (if (eq? class 'elf32) 4 8)]
              [<word> (unsigned-parser word endianness-name)]
-             [<sword> (signed-parser word endianness-name)])
+             [<sword> (signed-parser word endianness-name)]
+             [mips64el? (and (eq? class 'elf64) (eq? endianness-name 'little)
+                             (= machine 8))])
         (<map>
          (lambda (field*)
-           (let ([offset (list-ref field* 0)]
-                 [info (list-ref field* 1)])
+           (let ([position (car field*)] [offset (cadr field*)] [info (caddr field*)])
+             ;; MIPS64EL stores a little-endian symbol followed by big-endian type bytes.
+             ;; Preserve the raw info word and decode its fields with the ABI's byte orders.
              (make-elf-relocation
               offset info
-              (if (eq? class 'elf32) (ash info -8) (ash info -32))
-              (if (eq? class 'elf32) (logand info #xff) (logand info #xffffffff))
-              (and addends? (list-ref field* 2)))))
-         (if addends? (<~> <word> <word> <sword>) (<~> <word> <word>))))))
+              (if mips64el?
+                  (bytevector-u32-ref bytes (+ position 8) (endianness little))
+                  (if (eq? class 'elf32) (ash info -8) (ash info -32)))
+              (if mips64el?
+                  (bytevector-u32-ref bytes (+ position 12) (endianness big))
+                  (if (eq? class 'elf32) (logand info #xff) (logand info #xffffffff)))
+              (and addends? (list-ref field* 3)))))
+         (if addends? (<~> <pos> <word> <word> <sword>) (<~> <pos> <word> <word>))))))
 
   (define decode-relocations
-    (lambda (bytes class endianness-name header addends?)
+    (lambda (bytes class endianness-name machine header addends?)
       (let* ([standard (case class [(elf32) (if addends? 12 8)]
                                    [else (if addends? 24 16)])]
              [entry-size (elf-section-header-entry-size header)]
@@ -268,7 +275,7 @@
                      bytes
                      (vector-parser
                       (<bounded> entry-size
-                                 (relocation-entry-parser class endianness-name addends?))
+                                 (relocation-entry-parser bytes class endianness-name machine addends?))
                       (/ size entry-size)))])
                (and result (make-elf-relocation-table result addends?)))))))
 
@@ -368,7 +375,8 @@
                    (loop (+ i 1))))))))
 
   (define decode-section-content
-    (lambda (raw class endianness-name section-index header all-headers raw-sections alignment)
+    (lambda (raw class endianness-name machine section-index header all-headers raw-sections
+             alignment)
       (let* ([type (elf-section-header-type header)]
              [size (bytevector-length raw)]
              [word (if (eq? class 'elf32) 4 8)]
@@ -396,7 +404,7 @@
                              class (vector-ref all-headers link) (vector-ref raw-sections link)))]
                        [relocations (and symbol-count
                                          (decode-relocations
-                                          raw class endianness-name header (= type 4)))])
+                                          raw class endianness-name machine header (= type 4)))])
                   (and relocations
                        (relocation-symbols-valid? relocations symbol-count)
                        relocations)))]
@@ -906,7 +914,7 @@
                          (let* ([header (rebuild-section-header old-header name)]
                                 [content
                                  (decode-section-content
-                                  (vector-ref raw-sections i) class endianness-name i header headers
+                                  (vector-ref raw-sections i) class endianness-name machine i header headers
                                   raw-sections
                                   (section-content-alignment bytes class endianness-name header))])
                            (vector-set! headers i header)

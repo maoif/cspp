@@ -634,3 +634,41 @@
             [bytes (parse-wat-lexeme <wat-string> source)]
             [allocated (sstats-bytes (sstats-difference (statistics) before))])
        (and (bytevector=? bytes (make-bytevector count 97)) (< allocated 6000000))))
+
+(mat wasm-review-bounded-integer-cost
+
+     ;; Error case: an overflowing decimal token is scanned without growing an unbounded bignum.
+     (let* ([source (make-string 16000 #\9)]
+            [before (statistics)]
+            [err (capture-parser-error (lambda () (run-textual-parser <wat-u32> source)))]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (parser-error? err) (= 16000 (parser-error-offset err)) (< allocated 12000000)))
+
+     (= 1 (run-textual-parser <wat-u32> (string-append (make-string 16000 #\0) "1")))
+
+     (equal? '(4294967295 18446744073709551615 2147483648 9223372036854775808)
+             (list (run-textual-parser <wat-u32> "4_294_967_295")
+                   (run-textual-parser <wat-u64> "0xffff_ffff_ffff_ffff")
+                   (run-textual-parser <wat-i32> "-2_147_483_648")
+                   (run-textual-parser <wat-i64> "-0x8000_0000_0000_0000")))
+
+     ;; Error cases: signed and unsigned limits still reject overflow at their own boundaries.
+     (for-all
+      (lambda (case)
+        (parser-error?
+         (capture-parser-error (lambda () (run-textual-parser (car case) (cdr case))))))
+      (list (cons <wat-u32> "4294967296") (cons <wat-u64> "0x10000000000000000")
+            (cons <wat-i32> "-2147483649") (cons <wat-i64> "-9223372036854775809"))))
+
+(mat wasm-review-long-type-signatures
+
+     (let* ([fixed (apply string-append (make-list 64 " i32"))]
+            [module (parse-wasm-text-module
+                     (string-append
+                      "(module (type (struct)) (type (struct))"
+                      "(func (param" fixed " (ref 0)))"
+                      "(func (param" fixed " (ref 1)))"
+                      "(func (param" fixed " (ref 0))))"))]
+            [functions (wasm-module-functions module)])
+       (and (= 4 (vector-length (wasm-module-types module)))
+            (equal? '(2 3 2) (map wasm-function-type-index (vector->list functions))))))

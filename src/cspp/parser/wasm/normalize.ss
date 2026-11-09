@@ -2,6 +2,7 @@
   (export normalize-wat-module)
   (import (cspp chez)
           (only (cspp list) make-list-builder)
+          (only (cspp vector) vfold-left)
           (cspp parser wasm opcodes)
           (cspp parser wasm types)
           (cspp parser wasm validate)
@@ -154,7 +155,7 @@
         (make-normalization-state
          field* namespaces field-indices field-namespaces
          (make-list-builder) (make-vector 16 #f) 0
-         (make-hashtable equal-hash equal?) (make-eq-hashtable) (make-list-builder)))))
+         (make-hashtable function-type-hash equal?) (make-eq-hashtable) (make-list-builder)))))
 
   (define resolve-reference
     (lambda (state kind reference)
@@ -335,6 +336,18 @@
               value)))
       (cons (vector-map* value-key (wasm-function-type-parameters type))
             (vector-map* value-key (wasm-function-type-results type)))))
+
+  ;; equal-hash bounds its traversal, so hash every component of these flat signature keys.
+  (define function-type-hash
+    (lambda (key)
+      (define mix
+        (lambda (hash value)
+          (fxlogand (most-positive-fixnum)
+                    (fx+/wraparound (fx*/wraparound hash 31) (equal-hash value)))))
+      (define hash-vector
+        (lambda (hash types)
+          (vfold-left mix (mix hash (vector-length types)) types)))
+      (hash-vector (hash-vector 0 (car key)) (cdr key))))
 
   (define append-type!
     (lambda (state subtype singular?)

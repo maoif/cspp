@@ -160,3 +160,25 @@ for elf64 in (False, True):
             variant_elf('symbolless-' + ('rela-' if addends else 'rel-') + tag,
                         [dict(type=4 if addends else 9, align=8 if elf64 else 4,
                               entsize=len(payload), data=payload)], elf64, endian, filetype=3)
+
+# MIPS64EL r_info contains a little-endian symbol followed by big-endian type bytes.
+for endian in ('<', '>'):
+    for addends in (False, True):
+        for symbol, relocation_type, label in ((1, 18, 'ordinary'), (1, 0, 'none'),
+                                               (1, 0x01020304, 'compound'), (2, 18, 'bad-symbol')):
+            info = (struct.pack('<I', symbol) + struct.pack('>I', relocation_type)
+                    if endian == '<' else struct.pack('>Q', (symbol << 32) | relocation_type))
+            payload = struct.pack(endian + 'Q', 0x1000) + info
+            if addends:
+                payload += struct.pack(endian + 'q', -4)
+            name = ('mips-' + ('rela-' if addends else 'rel-') + label +
+                    ('-64le' if endian == '<' else '-64be'))
+            variant_elf(name, [dict(type=3, data=b'\0x\0'),
+                              dict(type=2, data=b'\0'*24 + struct.pack(endian + 'IBBHQQ',
+                                   1, 0x10, 0, 0, 0, 0), link=1, info=1, entsize=24, align=8),
+                              dict(type=4 if addends else 9, data=payload, link=2,
+                                   entsize=len(payload), align=8)], endian=endian)
+            path = out / (name + '.elf')
+            data = bytearray(path.read_bytes())
+            struct.pack_into(endian + 'H', data, 18, 8)  # EM_MIPS
+            path.write_bytes(data)

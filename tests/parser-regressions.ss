@@ -536,3 +536,44 @@
                   '("+0" "-1" "12")))
 
      (not (run-textual-parser (<as-integer> (<result> '())) "")))
+
+(mat parser-nested-choice-diagnostics
+
+     ;; Error case: nested choices retain ordered expectations without copying every suffix.
+     (let* ([count 500]
+            [alternatives (map (lambda (i) (<string> (format "keyword~a" i))) (iota count))]
+            [reversed (reverse alternatives)]
+            [parser (fold-right (lambda (parser rest) (</> parser rest))
+                                (car reversed) (reverse (cdr reversed)))]
+            [before (statistics)]
+            [err (parser-error-from (lambda () (run-textual-parser parser "x")))]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= count (length (parser-error-expected err)))
+            (equal? '("keyword0" "keyword1") (list-head (parser-error-expected err) 2))
+            (string=? "keyword499" (list-last (parser-error-expected err)))
+            (< allocated 5000000)))
+
+     ;; Error case: a single surviving nested choice keeps its expectations and custom message.
+     (let ([err (parser-error-from
+                 (lambda ()
+                   (run-textual-parser
+                    (</> (<char> #\z)
+                         (</> (~> (<char> #\a) (<string> "x"))
+                              (~> (<char> #\a) (<fail-with> "inside")))) "ab")))])
+       (and (= 1 (parser-error-offset err))
+            (equal? '("x") (parser-error-expected err))
+            (string=? "<fail-with>: inside" (parser-error-message err))
+            (= 2 (length (parser-error-causes err))))))
+
+(mat parser-nested-choice-message-order
+
+     ;; Error case: nested custom messages are deduplicated in first-occurrence order.
+     (let ([err (parser-error-from
+                 (lambda ()
+                   (run-textual-parser
+                    (</> (<fail-with> "first")
+                         (</> (<fail-with> "second") (<fail-with> "first"))
+                         (<fail-with> "third")) "")))])
+       (and (string=? "<fail-with>: first; <fail-with>: second; <fail-with>: third"
+                      (parser-error-message err))
+            (= 3 (length (parser-error-causes err))))))

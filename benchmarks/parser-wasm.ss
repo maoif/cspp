@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp parser wasm text) (cspp parser wasm normalize))
 (load "benchmarks/common.ss")
 
 ;; Run from the repository root: ./cspp --script=benchmarks/parser-wasm.ss
@@ -45,8 +45,35 @@
                (wasm-function-type-index
                 (vector-ref (wasm-module-functions module) (fx1- count)))))))))
 
+(define measure-long-implicit-types
+  (lambda (count)
+    (let* ([fixed (apply string-append (make-list 64 " i32"))]
+           [source (string-append
+                    "(module " (apply string-append (make-list count "(type (struct))"))
+                    (apply string-append
+                           (map (lambda (index)
+                                  (format "(func (param~a (ref ~a)))" fixed index))
+                                (iota count))) ")")]
+           ;; Isolate signature interning from textual parsing for this workload.
+           [syntax (run-textual-parser parser-wat-module-syntax source)])
+      (collect)
+      (let* ([before (statistics)] [started (real-time)]
+             [module (normalize-wat-module syntax)]
+             [elapsed (- (real-time) started)]
+             [allocated (sstats-bytes (sstats-difference (statistics) before))])
+        (unless (and (wasm-module? module)
+                     (= (* 2 count) (vector-length (wasm-module-types module)))
+                     (= count (vector-length (wasm-module-functions module)))
+                     (= (- (* 2 count) 1)
+                        (wasm-function-type-index
+                         (vector-ref (wasm-module-functions module) (- count 1)))))
+          (error 'parser-wasm-benchmark "incorrect long-signature result" count))
+        (map (lambda (value) (format "~a" value))
+             (list "Long signatures (normalize)" count allocated elapsed))))))
+
 (benchmark-print-table!
  "WAT allocation scaling"
  '(("workload" . left) ("count" . right) ("allocated bytes" . right) ("elapsed ms" . right))
  (append (map measure-folded '(1000 2000 4000 8000))
-         (map measure-implicit-types '(1000 2000 4000 8000))))
+         (map measure-implicit-types '(1000 2000 4000 8000))
+         (map measure-long-implicit-types '(250 500 1000 2000))))

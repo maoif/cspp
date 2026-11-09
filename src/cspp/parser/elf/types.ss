@@ -542,8 +542,10 @@
   The `record` parameter is an ELF relocation record.
   |#
   #|proc:elf-relocation-info
-  The `elf-relocation-info` procedure returns the `info` field of `record`.
-  The `record` parameter is an ELF relocation record.
+  The `elf-relocation-info` procedure returns the raw `info` word of ELF relocation `record`.
+  Parsers interpret this word using the file's declared byte order. Machine-specific field
+  layouts, including MIPS64EL, are decoded separately by `elf-relocation-symbol-index` and
+  `elf-relocation-type`.
   |#
   #|proc:elf-relocation-symbol-index
   The `elf-relocation-symbol-index` procedure returns the `symbol-index` field of `record`.

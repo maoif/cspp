@@ -127,6 +127,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
             (immutable context)
             (immutable causes)))
 
+  ;; Keep failed alternatives as a tree; summarize their diagnostics only at the runner.
+  (define-record-type parser-choice-failure
+    (parent parser-failure)
+    (fields))
+
   (define parser-position-offset<?
     (lambda (a b)
       (< (parser-position-offset a) (parser-position-offset b))))
@@ -241,7 +246,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   (define parser-failure->condition
     (lambda (who failure)
-      (let* ([failure (ensure-parser-failure failure #f)]
+      (let* ([failure (summarize-parser-failure (ensure-parser-failure failure #f))]
              [position (parser-failure-position failure)]
              [message (parser-failure-message* failure)])
         (%make-parser-error who
@@ -615,7 +620,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   (define parser-failure-add-context
     (lambda (failure context)
       (let ([failure (ensure-parser-failure failure #f)])
-        (make-parser-failure (parser-failure-kind failure)
+        ((if (parser-choice-failure? failure) make-parser-choice-failure make-parser-failure)
+                             (parser-failure-kind failure)
                              (parser-failure-message failure)
                              (parser-failure-position failure)
                              (parser-failure-expected failure)
@@ -632,28 +638,38 @@ For simplicity, "PC" in the following documentation means "parser combinator".
             [(null? (cdr failure*))
              (parser-failure-add-context (car failure*) '</>)]
             [else
-             (let ([first (car failure*)]
-                   [expected (make-unique-builder)]
-                   [messages (make-unique-builder)])
-               (for-each
-                (lambda (failure)
-                  (for-each expected (parser-failure-expected failure))
-                  (let ([message (parser-failure-message failure)])
-                    (when message (messages message))))
-                failure*)
-               (let ([messages (messages)])
-                 (make-parser-failure 'expected
-                                      (and (pair? messages)
-                                           (apply string-append
-                                                  (cons (car messages)
-                                                        (map (lambda (message)
-                                                               (string-append "; " message))
-                                                             (cdr messages)))))
-                                      (parser-failure-position first)
-                                      (expected)
-                                      (parser-failure-found first)
-                                      '(</>)
-                                      failure*)))])))
+             (let ([first (car failure*)])
+               (make-parser-choice-failure
+                'expected #f (parser-failure-position first) '()
+                (parser-failure-found first) '(</>) failure*))])))
+
+  (define summarize-parser-failure
+    (lambda (failure)
+      (if (not (parser-choice-failure? failure))
+          failure
+          (let ([expected (make-unique-builder)] [messages (make-unique-builder)])
+            ;; Each choice and leaf is visited once, in original alternative order.
+            (let loop ([pending (list failure)])
+              (unless (null? pending)
+                (let ([current (car pending)])
+                  (if (parser-choice-failure? current)
+                      (loop (append (parser-failure-causes current) (cdr pending)))
+                      (begin
+                        (for-each expected (parser-failure-expected current))
+                        (let ([message (parser-failure-message current)])
+                          (when message (messages message)))
+                        (loop (cdr pending)))))))
+            (let ([messages (messages)])
+              (make-parser-failure
+               (parser-failure-kind failure)
+               (and (pair? messages)
+                    (apply string-append
+                           (cons (car messages)
+                                 (map (lambda (message) (string-append "; " message))
+                                      (cdr messages)))))
+               (parser-failure-position failure) (expected)
+               (parser-failure-found failure) (parser-failure-context failure)
+               (parser-failure-causes failure)))))))
 
   (define ensure-parser-failure
     (case-lambda
@@ -1886,7 +1902,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   #|proc:</>
   The `</>` procedure takes zero or more parsers and returns a left-biased choice parser.
   The returned parser tries each parser from left to right. If no parser is supplied, the
-  returned parser always fails.
+  returned parser always fails. Failures at the farthest position combine expected tokens and
+  custom messages in first-occurrence order, including across nested choices.
   |#
   (define (</> . parser*)
     (pcheck ([all-parsers? parser*])

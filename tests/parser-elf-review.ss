@@ -242,3 +242,39 @@
             (elf-review-file name)
             #f))
         '("compressed-bad-size" "compressed-bad-truncated" "compressed-bad-trailing"))))
+
+(mat parser-elf-mips-relocations
+
+     (for-all
+      (lambda (tag)
+        (for-all
+         (lambda (kind)
+           (for-all
+            (lambda (case)
+              (let* ([sections (elf-file-sections
+                                (elf-review-file
+                                 (string-append "mips-" kind (car case) tag)))]
+                     [table (elf-section-content (vector-ref sections 3))]
+                     [entry (vector-ref (elf-relocation-table-relocations table) 0)])
+                (and (= 1 (elf-relocation-symbol-index entry))
+                     (= (cadr case) (elf-relocation-type entry))
+                     (= #x1000 (elf-relocation-offset entry))
+                     (= (if (string=? tag "-64le") (caddr case) (cadddr case))
+                        (elf-relocation-info entry))
+                     (equal? (if (string=? kind "rela-") -4 #f)
+                             (elf-relocation-addend entry)))))
+            '(("ordinary" 18 #x1200000000000001 #x100000012)
+              ("none" 0 1 #x100000000)
+              ("compound" #x01020304 #x0403020100000001 #x101020304))))
+         '("rel-" "rela-")))
+      '("-64le" "-64be"))
+
+     ;; Error case: the decoded MIPS symbol must still be inside its linked symbol table.
+     (for-all
+      (lambda (tag)
+        (for-all (lambda (kind)
+                   (guard (err [(parser-error? err) #t])
+                     (elf-review-file (string-append "mips-" kind "bad-symbol" tag))
+                     #f))
+                 '("rel-" "rela-")))
+      '("-64le" "-64be")))

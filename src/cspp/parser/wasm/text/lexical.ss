@@ -34,16 +34,21 @@
   (define wat-close-parenthesis (integer->char #x29))
 
   (define digit-sequence-parser
-    (lambda (digit-parser radix)
-      (<map> (lambda (value)
-               (let ([digits (cons (car value) (cadr value))])
-                 (cons (fold-left (lambda (number digit)
-                                    (+ (* number radix) digit))
-                                  0 digits)
-                       (length digits))))
-             (<~> digit-parser
-                  (<many> (</> digit-parser
-                               (~> (<char> #\_) digit-parser)))))))
+    (case-lambda
+      [(digit-parser radix) (digit-sequence-parser digit-parser radix #f)]
+      [(digit-parser radix limit)
+       (let ([accumulate
+              (if limit
+                  ;; Keep scanning after overflow without allocating larger exact integers.
+                  (lambda (number digit)
+                    (if (> number limit) number (+ (* number radix) digit)))
+                  (lambda (number digit) (+ (* number radix) digit)))])
+         (<map> (lambda (value)
+                  (let ([digits (cons (car value) (cadr value))])
+                    (cons (fold-left accumulate 0 digits) (length digits))))
+                (<~> digit-parser
+                     (<many> (</> digit-parser
+                                  (~> (<char> #\_) digit-parser))))))]))
 
   (define <wat-hexadecimal-digits> (digit-sequence-parser <digit16> 16))
 
@@ -303,9 +308,11 @@
 
   (define <wat-decimal-digits> (digit-sequence-parser <digit10> 10))
 
-  (define <wat-natural-source>
-    (</> (~> (<string> "0x") <wat-hexadecimal-digits>)
-         <wat-decimal-digits>))
+  (define bounded-natural-source
+    (lambda (width)
+      (let ([limit (- (ash 1 width) 1)])
+        (</> (~> (<string> "0x") (digit-sequence-parser <digit16> 16 limit))
+             (digit-sequence-parser <digit10> 10 limit)))))
 
   (define <wat-sign>
     (<optional> (<one-of> "+-")))
@@ -317,7 +324,7 @@
 
   (define bounded-natural-parser
     (lambda (width)
-      (<bind> <wat-natural-source>
+      (<bind> (bounded-natural-source width)
               (lambda (source)
                 (let ([value (car source)])
                   (if (< value (ash 1 width))
@@ -326,7 +333,7 @@
 
   (define modular-integer-parser
     (lambda (width)
-      (<bind> (signed-magnitude-parser <wat-natural-source>)
+      (<bind> (signed-magnitude-parser (bounded-natural-source width))
               (lambda (source)
                 (let* ([sign (car source)]
                        [magnitude (cadr source)]

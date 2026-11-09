@@ -1,6 +1,7 @@
 (import (cspp)
         (cspp parser combinator)
-        (cspp parser wasm binary values))
+        (cspp parser wasm binary values)
+        (cspp parser wasm text lexical))
 (load "benchmarks/common.ss")
 
 ;; Run from the repository root: ./cspp --script=benchmarks/parser.ss
@@ -68,6 +69,33 @@
          (and (parser-error? condition)
               (= count (length (parser-error-expected condition)))))))))
 
+(define measure-nested-choice-failure
+  (lambda (count)
+    (let* ([alternatives (map (lambda (index) (<string> (format "keyword~a" index)))
+                              (iota count))]
+           [reversed (reverse alternatives)]
+           [parser (fold-right (lambda (parser rest) (</> parser rest))
+                               (car reversed) (reverse (cdr reversed)))])
+      (measure-parser
+       "Nested choice failure" count
+       (lambda ()
+         (guard (condition [(parser-error? condition) condition])
+           (run-textual-parser parser "x")))
+       (lambda (condition)
+         (and (parser-error? condition)
+              (= count (length (parser-error-expected condition)))))))))
+
+(define measure-bounded-integer-overflow
+  (lambda (count)
+    (let ([source (make-string count #\9)])
+      (measure-parser
+       "WAT oversized u32" count
+       (lambda ()
+         (guard (condition [(parser-error? condition) condition])
+           (run-textual-parser <wat-u32> source)))
+       (lambda (condition)
+         (and (parser-error? condition) (= count (parser-error-offset condition))))))))
+
 (define measure-signed-integers
   (lambda (count)
     (let ([bytes (make-bytevector (* count 5) 255)] [parser (<rep> <wasm-s32> count)])
@@ -115,6 +143,8 @@
          (map measure-zero-float '(10000 100000 1000000))
          (measure-byte-vectors)
          (map measure-choice-failure '(1000 2000 4000 8000))
+         (map measure-nested-choice-failure '(1000 2000 4000 8000))
+         (map measure-bounded-integer-overflow '(1000 2000 4000 8000 16000))
          (list (measure-signed-integers 100000))
          (map measure-elf-completion '(1048576 8388608 67108864))
          (map measure-wat-string '(8192 32768 131072 262144))
