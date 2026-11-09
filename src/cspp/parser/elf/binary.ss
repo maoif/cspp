@@ -3,6 +3,7 @@
   (import (cspp chez)
           (cspp parser combinator)
           (cspp parser private)
+          (cspp optional-library-check)
           (cspp parser elf types)
           (cspp parser elf validate))
 
@@ -17,6 +18,80 @@
       (let ([result (make-bytevector size)])
         (bytevector-copy! bytes offset result 0 size)
         result)))
+
+  ;; Reuse the native zlib stream without making the ELF parser depend on networking.
+  (define zlib-stream-open
+    (foreign-procedure "cspp_zlib_stream_open" (int int) uptr))
+  (define zlib-stream-process
+    (foreign-procedure "cspp_zlib_stream_process"
+                       (uptr scheme-object int int int int) scheme-object))
+  (define zlib-stream-close
+    (foreign-procedure "cspp_zlib_stream_close" (uptr) void))
+
+  (define inflate-section
+    (lambda (raw start size)
+      (require-optional-library 'parse-elf 'zlib)
+      (let ([handle (zlib-stream-open 0 0)])
+        (and (not (zero? handle))
+             (dynamic-wind
+               void
+               (lambda ()
+                 ;; A spare byte distinguishes a full output buffer from exact stream completion.
+                 (let ([answer (zlib-stream-process handle raw start (bytevector-length raw)
+                                                    1 (+ size 1))])
+                   (and (vector? answer) (= 2 (vector-length answer))
+                        (bytevector? (vector-ref answer 0)) (vector-ref answer 1)
+                        (= size (bytevector-length (vector-ref answer 0)))
+                        (vector-ref answer 0))))
+               (lambda () (zlib-stream-close handle)))))))
+
+  (define decompress-section
+    (lambda (raw class endianness-name type header)
+      (let* ([offset (elf-section-header-offset header)]
+             [elf64? (eq? class 'elf64)]
+             [header-size (if elf64? 24 12)]
+             [endian (if (eq? endianness-name 'little)
+                         (endianness little) (endianness big))]
+             [reject (lambda (message) (values #f (issue offset message)))])
+        (cond
+          [(= 8 (elf-section-header-type header))
+           (reject "NOBITS sections cannot be compressed")]
+          [(and (memv type '(2 3)) (logbit? 1 (elf-section-header-flags header)))
+           (reject "allocated sections cannot be compressed in executable or shared files")]
+          [(< (bytevector-length raw) header-size)
+           (reject "truncated ELF compression header")]
+          [else
+           (let* ([ref (if elf64? bytevector-u64-ref bytevector-u32-ref)]
+                  [method (bytevector-u32-ref raw 0 endian)]
+                  [size (ref raw (if elf64? 8 4) endian)]
+                  [alignment (ref raw (if elf64? 16 8) endian)])
+             (cond
+               [(and elf64? (not (zero? (bytevector-u32-ref raw 4 endian))))
+                (reject "nonzero reserved ELF compression field")]
+               [(not (= method 1))
+                (reject (format "unsupported ELF compression method ~a" method))]
+               [(not (elf-power-of-two? alignment))
+                (reject "invalid decompressed ELF section alignment")]
+               ;; The existing native stream interface uses signed 32-bit lengths.
+               [(or (> size #x7ffffffe) (> (bytevector-length raw) #x7fffffff))
+                (reject "compressed ELF section exceeds the zlib decoder size limit")]
+               [else
+                (let ([decoded (inflate-section raw header-size size)])
+                  (if decoded (values decoded #f)
+                      (reject "invalid ELF zlib stream or decompressed size")))]))]))))
+
+  (define section-content-alignment
+    (lambda (bytes class endianness-name header)
+      (if (and (not (zero? (elf-section-header-type header)))
+               (logbit? 11 (elf-section-header-flags header)))
+          ;; The compression header was already validated while decoding the section bytes.
+          (let ([endian (if (eq? endianness-name 'little)
+                            (endianness little) (endianness big))]
+                [offset (elf-section-header-offset header)])
+            (if (eq? class 'elf64)
+                (bytevector-u64-ref bytes (+ offset 16) endian)
+                (bytevector-u32-ref bytes (+ offset 8) endian)))
+          (elf-section-header-address-alignment header))))
 
   ;; ELF names are byte sequences. Preserve UTF-8 where valid and map invalid bytes
   ;; one-to-one into characters; the original string-table bytes remain available.
@@ -198,7 +273,7 @@
                (and result (make-elf-relocation-table result addends?)))))))
 
   (define note-parser
-    (lambda (endianness-name)
+    (lambda (endianness-name alignment)
       (let ([<word> (unsigned-parser 4 endianness-name)])
         (<bind>
          (<~> <word> <word> <word>)
@@ -206,8 +281,8 @@
            (let* ([name-size (list-ref header* 0)]
                   [descriptor-size (list-ref header* 1)]
                   [type (list-ref header* 2)]
-                  [name-padding (modulo (- name-size) 4)]
-                  [descriptor-padding (modulo (- descriptor-size) 4)])
+                  [name-padding (modulo (- (+ 12 name-size)) alignment)]
+                  [descriptor-padding (modulo (- descriptor-size) alignment)])
              (<map>
               (lambda (field*)
                 (let* ([raw-name (list-ref field* 0)]
@@ -226,9 +301,10 @@
                    (<skip> <u8> descriptor-padding)))))))))
 
   (define decode-notes
-    (lambda (bytes endianness-name)
+    (lambda (bytes endianness-name alignment)
       (let ([note* (parse-bounded-content
-                    bytes (<map> list->vector (<many> (note-parser endianness-name))))])
+                    bytes (<map> list->vector
+                                (<many> (note-parser endianness-name (max 4 alignment)))))])
         (and note* (make-elf-note-table note*)))))
 
   (define linked-section-type?
@@ -292,7 +368,7 @@
                    (loop (+ i 1))))))))
 
   (define decode-section-content
-    (lambda (raw class endianness-name section-index header all-headers raw-sections)
+    (lambda (raw class endianness-name section-index header all-headers raw-sections alignment)
       (let* ([type (elf-section-header-type header)]
              [size (bytevector-length raw)]
              [word (if (eq? class 'elf32) 4 8)]
@@ -384,7 +460,7 @@
                                         (dynamic-entry-parser word endianness-name))
                              (/ size (* 2 word))))])
                       (and entry* (make-elf-dynamic-table entry*))))]
-          [(7) (decode-notes raw endianness-name)]
+          [(7) (decode-notes raw endianness-name alignment)]
           [else (make-elf-raw-section raw)]))))
 
   (define <elf-class>
@@ -561,35 +637,52 @@
   (define section-group-problem
     (lambda (type sections)
       (let ([owners (make-vector (vector-length sections) #f)])
-        (let loop ([index 0])
-          (and (fx< index (vector-length sections))
-               (let* ([section (vector-ref sections index)]
-                      [header (elf-section-header section)]
-                      [content (elf-section-content section)])
-                 (if (elf-group-section? content)
-                     (if (not (= type 1))
-                         (issue (elf-section-header-offset header)
-                                "section groups require a relocatable object")
-                         (let ([members (elf-group-section-members content)])
-                           (or
-                            (let member-loop ([member-index 0])
-                              (and (fx< member-index (vector-length members))
-                                   (let* ([member (vector-ref members member-index)]
-                                          [owner (vector-ref owners member)]
-                                          [member-header
-                                           (elf-section-header (vector-ref sections member))])
-                                     (cond
-                                       [(not (logbit? 9 (elf-section-header-flags member-header)))
-                                        (issue (elf-section-header-offset header)
-                                               "section-group member lacks SHF_GROUP")]
-                                       [(and owner (not (= owner index)))
-                                        (issue (elf-section-header-offset header)
-                                               "section belongs to multiple groups")]
-                                       [else
-                                        (vector-set! owners member index)
-                                        (member-loop (fx1+ member-index))]))))
-                            (loop (fx1+ index)))))
-                     (loop (fx1+ index)))))))))
+        (or
+         (let loop ([index 0])
+           (and (fx< index (vector-length sections))
+                (let* ([section (vector-ref sections index)]
+                       [header (elf-section-header section)]
+                       [content (elf-section-content section)])
+                  (if (elf-group-section? content)
+                      (if (not (= type 1))
+                          (issue (elf-section-header-offset header)
+                                 "section groups require a relocatable object")
+                          (let ([members (elf-group-section-members content)])
+                            (or
+                             (let member-loop ([member-index 0])
+                               (and (fx< member-index (vector-length members))
+                                    (let* ([member (vector-ref members member-index)]
+                                           [owner (vector-ref owners member)]
+                                           [member-header
+                                            (elf-section-header (vector-ref sections member))])
+                                      (cond
+                                        [(<= member index)
+                                         (issue (elf-section-header-offset header)
+                                                "section-group header must precede its members")]
+                                        [(not (logbit? 9 (elf-section-header-flags member-header)))
+                                         (issue (elf-section-header-offset header)
+                                                "section-group member lacks SHF_GROUP")]
+                                        [(and owner (not (= owner index)))
+                                         (issue (elf-section-header-offset header)
+                                                "section belongs to multiple groups")]
+                                        [else
+                                         (vector-set! owners member index)
+                                         (member-loop (fx1+ member-index))]))))
+                             (loop (fx1+ index)))))
+                      (loop (fx1+ index))))))
+         (let loop ([index 0])
+           (and (fx< index (vector-length sections))
+                (let ([header (elf-section-header (vector-ref sections index))])
+                  (if (and (not (zero? (elf-section-header-type header)))
+                           (logbit? 9 (elf-section-header-flags header)))
+                      (cond [(not (= type 1))
+                             (issue (elf-section-header-offset header)
+                                    "SHF_GROUP requires a relocatable object")]
+                            [(not (vector-ref owners index))
+                             (issue (elf-section-header-offset header)
+                                    "SHF_GROUP section has no group")]
+                            [else (loop (fx1+ index))])
+                      (loop (fx1+ index))))))))))
 
   (define build-sections
     (lambda (bytes header headers)
@@ -616,11 +709,20 @@
                         (not (elf-range-valid? file-offset size length)))
                    (values #f (issue file-offset "section exceeds input"))]
                   [else
-                   (vector-set! raw-sections index
-                                (if (memv (elf-section-header-type section) '(0 8))
-                                    (make-bytevector 0)
-                                    (copy-range bytes file-offset size)))
-                   (loop (+ index 1))])))))))
+                   (let* ([raw (if (= 8 (elf-section-header-type section))
+                                   (make-bytevector 0)
+                                   (copy-range bytes file-offset size))])
+                     (let-values ([(content problem)
+                                   (if (logbit? 11 (elf-section-header-flags section))
+                                       (decompress-section
+                                        raw (decoded-elf-header-class header)
+                                        (decoded-elf-header-endianness-name header)
+                                        (decoded-elf-header-type header) section)
+                                       (values raw #f))])
+                       (if problem (values #f problem)
+                           (begin
+                             (vector-set! raw-sections index content)
+                             (loop (fx1+ index))))))])))))))
 
   (define elf-layout-parser
     (lambda (bytes length header zero)
@@ -786,7 +888,8 @@
                       problem))
                    (let* ([old-header (vector-ref headers i)]
                           [name-index (elf-section-header-name-index old-header)]
-                          [name (if (and name-bytes (not (zero? (elf-section-header-type old-header))))
+                          [name (if (and name-bytes
+                                         (not (zero? (elf-section-header-type old-header))))
                                     (nul-string name-bytes name-index) "")])
                      (if (not name)
                          (values #f
@@ -797,7 +900,8 @@
                                 [content
                                  (decode-section-content
                                   (vector-ref raw-sections i) class endianness-name i header headers
-                                  raw-sections)])
+                                  raw-sections
+                                  (section-content-alignment bytes class endianness-name header))])
                            (vector-set! headers i header)
                            (if content
                                (begin

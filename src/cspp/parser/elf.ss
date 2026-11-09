@@ -102,6 +102,10 @@
   Names decode as strict UTF-8 with every scalar retained, including U+FEFF. If a name is
   invalid UTF-8, each byte maps to the character with the same code point. The string-table
   records retain the original bytes independently of this display-oriented name decoding.
+  Compressed sections use zlib; contents and linked names are decoded while headers retain
+  physical file sizes, offsets, and flags. Unsupported methods and malformed streams raise
+  `&parser-error`. Compressed input lengths must fit signed 32 bits, and decoded sizes must
+  be less than 2^31 - 1 bytes. Missing optional zlib support raises a dependency error.
   |#
   (define parse-elf
     (lambda (input)
@@ -110,7 +114,7 @@
 
   #|proc:parse-elf-file
   The `parse-elf-file` procedure decodes the ELF file at string `path` and returns an `elf-file`
-  record. Name decoding follows `parse-elf`: UTF-8 where valid, otherwise one character per byte.
+  record. Name decoding and compressed-section support follow `parse-elf`.
   |#
   (define parse-elf-file
     (lambda (path)

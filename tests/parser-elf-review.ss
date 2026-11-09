@@ -35,6 +35,12 @@
        (and (= 0 (elf-section-header-type (elf-section-header section)))
             (elf-raw-section? (elf-section-content section))))
 
+     ;; Inactive-section flags and offsets remain undefined, including SHF_COMPRESSED.
+     (let ([bytes (read-u8vec "data/elf-review/nonfirst-null.elf")])
+       (bytevector-u64-set! bytes (+ 128 8) #x800 (endianness little))
+       (elf-raw-section?
+        (elf-section-content (vector-ref (elf-file-sections (parse-elf bytes)) 1))))
+
      (let* ([sections (elf-file-sections (elf-review-file "note-padding"))]
             [note (vector-ref (elf-note-table-notes
                               (elf-section-content (vector-ref sections 1))) 0)])
@@ -123,3 +129,86 @@
 
      ;; Error case: reserved section-name indices require SHN_XINDEX.
      (error? (parse-elf (elf-reserved-header #t))))
+
+(mat parser-elf-group-order
+
+     ;; Error case: a group section header must precede every member header.
+     (error? (elf-review-file "group-after-member"))
+
+     ;; Error case: a section marked SHF_GROUP must have a referring group.
+     (error? (elf-review-file "group-orphan"))
+
+     ;; Error case: SHF_GROUP is restricted to relocatable objects, even without a group table.
+     (error? (elf-review-file "group-orphan-executable")))
+
+(mat parser-elf-note-alignment
+
+     (for-all
+      (lambda (name)
+        (let* ([sections (elf-file-sections (elf-review-file name))]
+               [notes (elf-note-table-notes (elf-section-content (vector-ref sections 1)))])
+          (and (= 1 (vector-length notes))
+               (string=? "ABCD" (elf-note-name (vector-ref notes 0)))
+               (equal? #vu8(88) (elf-note-descriptor (vector-ref notes 0))))))
+      '("note-align4-32le" "note-align4-32be" "note-align4-64le" "note-align4-64be"
+        "note-align8-64le" "note-align8-64be"))
+
+     ;; Error case: an eight-aligned note must include all of its final padding.
+     (error? (elf-review-file "note-short8-64le"))
+
+     ;; Error case: big-endian notes obey the same eight-byte padding rule.
+     (error? (elf-review-file "note-short8-64be")))
+
+(mat parser-elf-compressed-sections
+
+     (mat-requires (zlib)
+       (for-all
+        (lambda (name)
+          (let* ([sections (elf-file-sections (elf-review-file name))]
+                 [section (vector-ref sections 1)])
+            (and (equal? #vu8(0 120 0) (elf-string-table-bytes (elf-section-content section)))
+                 ;; Public headers retain the compressed flag and physical file size.
+                 (logbit? 11 (elf-section-header-flags (elf-section-header section)))
+                 (> (elf-section-header-size (elf-section-header section)) 3))))
+        '("compressed-strings-32le" "compressed-strings-32be"
+          "compressed-strings-64le" "compressed-strings-64be" "compressed-alloc")))
+
+     (mat-requires (zlib)
+       (let* ([sections (elf-file-sections (elf-review-file "compressed-symbol-strings"))]
+              [symbols (elf-symbol-table-symbols (elf-section-content (vector-ref sections 2)))])
+         (string=? "x" (elf-symbol-name (vector-ref symbols 1)))))
+
+     (mat-requires (zlib)
+       (let ([sections (elf-file-sections (elf-review-file "compressed-section-names"))])
+         (string=? ".text" (elf-section-header-name
+                            (elf-section-header (vector-ref sections 2))))))
+
+     (mat-requires (zlib)
+       (let ([sections (elf-file-sections (elf-review-file "compressed-empty"))])
+         (equal? #vu8() (elf-string-table-bytes
+                        (elf-section-content (vector-ref sections 1))))))
+
+     (mat-requires (zlib)
+       (let* ([sections (elf-file-sections (elf-review-file "compressed-note"))]
+              [notes (elf-note-table-notes (elf-section-content (vector-ref sections 1)))])
+         (and (= 1 (vector-length notes))
+              (equal? #vu8(88) (elf-note-descriptor (vector-ref notes 0))))))
+
+     ;; Error cases: invalid metadata and unsupported methods fail without needing zlib.
+     (for-all
+      (lambda (name)
+        (guard (err [(parser-error? err) #t] [else #f])
+          (elf-review-file name)
+          #f))
+      '("compressed-bad-method" "compressed-bad-alignment" "compressed-bad-header"
+        "compressed-bad-huge-size" "compressed-bad-reserved"
+        "compressed-alloc-exec" "compressed-alloc-shared" "compressed-nobits"))
+
+     ;; Error cases: incomplete streams, trailing bytes, and a mismatched decoded size fail.
+     (mat-requires (zlib)
+       (for-all
+        (lambda (name)
+          (guard (err [(parser-error? err) #t] [else #f])
+            (elf-review-file name)
+            #f))
+        '("compressed-bad-size" "compressed-bad-truncated" "compressed-bad-trailing"))))

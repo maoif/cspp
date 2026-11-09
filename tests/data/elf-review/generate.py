@@ -1,5 +1,6 @@
 from pathlib import Path
 import struct
+import zlib
 out=Path(__file__).resolve().parent
 def elf(name, sections=(), names=0, ph=None, shstr=None):
     n=1+len(sections) if sections else 0
@@ -63,3 +64,88 @@ struct.pack_into('<Q', b, 192 + 24, first_offset)
 p.write_bytes(b)
 struct.pack_into('<I', b, 192 + 4, 8)
 (out / 'nobits-overlap.elf').write_bytes(b)
+
+# Fourth-pass fixtures use explicit class, byte order, and physical section alignment.
+def variant_elf(name, sections, elf64=True, endian='<', filetype=1, names=0):
+    header_size, section_size = (64, 64) if elf64 else (52, 40)
+    data = bytearray(header_size + section_size * (len(sections) + 1))
+    ident = b'\x7fELF' + bytes([2 if elf64 else 1, 1 if endian == '<' else 2, 1]) + b'\0'*9
+    header_format = '16sHHIQQQIHHHHHH' if elf64 else '16sHHIIIIIHHHHHH'
+    struct.pack_into(endian + header_format, data, 0, ident, filetype, 62 if elf64 else 3,
+                     1, 0, 0, header_size, 0, header_size, 56 if elf64 else 32, 0,
+                     section_size, len(sections) + 1, names)
+    for index, section in enumerate(sections, 1):
+        alignment = section.get('align', 1)
+        data.extend(b'\0' * (-len(data) % alignment))
+        offset = len(data)
+        payload = section.get('data', b'')
+        data.extend(payload)
+        fields = (section.get('name', 0), section['type'], section.get('flags', 0), 0,
+                  offset, len(payload), section.get('link', 0), section.get('info', 0),
+                  alignment, section.get('entsize', 0))
+        struct.pack_into(endian + ('IIQQQQIIQQ' if elf64 else 'IIIIIIIIII'), data,
+                         header_size + section_size * index, *fields)
+    (out / (name + '.elf')).write_bytes(data)
+
+# Error cases: flagged orphan sections and a group header following its member.
+variant_elf('group-orphan', [dict(type=1, flags=0x200)])
+variant_elf('group-orphan-executable', [dict(type=1, flags=0x200)], filetype=2)
+variant_elf('group-after-member', prefix + [dict(type=1, flags=0x200),
+            dict(group, data=struct.pack('<II', 1, 3))])
+
+for elf64 in (False, True):
+    for endian in ('<', '>'):
+        tag = ('64' if elf64 else '32') + ('le' if endian == '<' else 'be')
+        header_format = 'IIQQ' if elf64 else 'III'
+        def compressed(payload, alignment=1, method=1, size=None):
+            fields = (method, 0, len(payload) if size is None else size, alignment) if elf64 else (
+                method, len(payload) if size is None else size, alignment)
+            return struct.pack(endian + header_format, *fields) + zlib.compress(payload)
+        variant_elf('compressed-strings-' + tag,
+                    [dict(type=3, flags=0x800, align=8, data=compressed(b'\0x\0'))],
+                    elf64, endian)
+        for alignment in ((4, 8) if elf64 else (4,)):
+            # A five-byte owner forces padding based on the full twelve-byte note header.
+            note = struct.pack(endian + 'III', 5, 1, 1) + b'ABCD\0'
+            note += b'\xff' * (-len(note) % alignment)
+            note += b'X' + b'\xff' * (-1 % alignment)
+            variant_elf('note-align' + str(alignment) + '-' + tag,
+                        [dict(type=7, align=alignment, data=note)], elf64, endian)
+            if alignment == 8:
+                # Error case: omit the final four padding bytes of an eight-aligned note.
+                variant_elf('note-short8-' + tag,
+                            [dict(type=7, align=8, data=struct.pack(endian + 'III', 2, 1, 1)
+                                  + b'A\0\0\0X\0\0\0')], elf64, endian)
+        if elf64 and endian == '<':
+            strings = dict(type=3, flags=0x800, align=8, data=compressed(b'\0x\0'))
+            variant_elf('compressed-symbol-strings', [strings, prefix[1]])
+            variant_elf('compressed-section-names',
+                        [dict(strings, data=compressed(b'\0.text\0')),
+                         dict(type=1, name=1)], names=1)
+            variant_elf('compressed-empty', [dict(strings, data=compressed(b''))])
+            # The compression header records logical alignment independently of file alignment.
+            note = struct.pack('<III', 2, 1, 1) + b'A\0\0\0X\0\0\0'
+            variant_elf('compressed-note',
+                        [dict(type=7, flags=0x800, align=8, data=compressed(note, 4))])
+            for label, payload in [
+                ('method', compressed(b'\0', method=2)),
+                ('size', compressed(b'\0x\0', size=4)),
+                ('alignment', compressed(b'\0', alignment=3)),
+                ('truncated', compressed(b'\0')[:-1]),
+                ('trailing', compressed(b'\0') + b'x'),
+                ('header', b'\0'*12),
+                ('huge-size', compressed(b'\0', size=2**63)),
+            ]:
+                # Error case: each malformed compression header or stream is rejected.
+                variant_elf('compressed-bad-' + label, [dict(strings, data=payload)])
+            # Compressed allocated sections are allowed in relocatable files.
+            variant_elf('compressed-alloc', [dict(strings, flags=0x802)])
+            # Error cases: allocated compression is forbidden in executables/shared files.
+            variant_elf('compressed-alloc-exec', [dict(strings, flags=0x802)], filetype=2)
+            variant_elf('compressed-alloc-shared', [dict(strings, flags=0x802)], filetype=3)
+            # Error case: no SHT_NOBITS section can carry SHF_COMPRESSED.
+            variant_elf('compressed-nobits', [dict(strings, type=8)])
+            # Error case: Elf64_Chdr's reserved field is zero.
+            payload = bytearray(compressed(b'\0'))
+            struct.pack_into('<I', payload, 4, 1)
+            variant_elf('compressed-bad-reserved', [dict(strings, data=payload)])
