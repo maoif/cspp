@@ -29,6 +29,13 @@
                    (string-set! text i (integer->char (bytevector-u8-ref bytes i)))))])
         (parser-decode-bytes bytes 'utf-8))))
 
+  (define valid-string-table?
+    (lambda (bytes)
+      (let ([length (bytevector-length bytes)])
+        (or (zero? length)
+            (and (zero? (bytevector-u8-ref bytes 0))
+                 (zero? (bytevector-u8-ref bytes (fx1- length))))))))
+
   (define nul-string
     (lambda (bytes index)
       (if (and (zero? index) (zero? (bytevector-length bytes))) ""
@@ -293,7 +300,7 @@
              [linked (and (< link (vector-length all-headers))
                           (vector-ref raw-sections link))])
         (case type
-          [(3) (make-elf-string-table raw)]
+          [(3) (and (valid-string-table? raw) (make-elf-string-table raw))]
           [(2 11)
            (and (linked-section-type? all-headers link '(3))
                 (let ([count (symbol-table-entry-count class header raw)])
@@ -480,6 +487,10 @@
                     (not (zero? (decoded-elf-header-shoff header))))
                 (not (= standard-section (decoded-elf-header-shentsize header))))
            (issue (+ sizes-at 6) "invalid section-header entry size")]
+          [(>= (decoded-elf-header-raw-shnum header) #xff00)
+           (issue (+ sizes-at 8) "reserved direct section count")]
+          [(<= #xff00 (decoded-elf-header-raw-shstrndx header) #xfffe)
+           (issue (+ sizes-at 10) "reserved direct section-name index")]
           [else #f]))))
 
   (define table-parser
@@ -528,6 +539,58 @@
                          (copy-range bytes file-offset file-size))))
                    (loop (+ index 1))])))))))
 
+  ;; Section ranges are independent of program segments, which may legitimately overlap.
+  (define section-overlap-problem
+    (lambda (headers)
+      (let ([backed
+             (list-sort
+              (lambda (left right)
+                (< (elf-section-header-offset left) (elf-section-header-offset right)))
+              (filter
+               (lambda (header)
+                 (and (not (memv (elf-section-header-type header) '(0 8)))
+                      (positive? (elf-section-header-size header))))
+               (vector->list headers)))])
+        (let loop ([remaining backed] [end 0])
+          (and (pair? remaining)
+               (let* ([header (car remaining)] [start (elf-section-header-offset header)])
+                 (if (< start end)
+                     (issue start "overlapping file-backed sections")
+                     (loop (cdr remaining) (+ start (elf-section-header-size header))))))))))
+
+  (define section-group-problem
+    (lambda (type sections)
+      (let ([owners (make-vector (vector-length sections) #f)])
+        (let loop ([index 0])
+          (and (fx< index (vector-length sections))
+               (let* ([section (vector-ref sections index)]
+                      [header (elf-section-header section)]
+                      [content (elf-section-content section)])
+                 (if (elf-group-section? content)
+                     (if (not (= type 1))
+                         (issue (elf-section-header-offset header)
+                                "section groups require a relocatable object")
+                         (let ([members (elf-group-section-members content)])
+                           (or
+                            (let member-loop ([member-index 0])
+                              (and (fx< member-index (vector-length members))
+                                   (let* ([member (vector-ref members member-index)]
+                                          [owner (vector-ref owners member)]
+                                          [member-header
+                                           (elf-section-header (vector-ref sections member))])
+                                     (cond
+                                       [(not (logbit? 9 (elf-section-header-flags member-header)))
+                                        (issue (elf-section-header-offset header)
+                                               "section-group member lacks SHF_GROUP")]
+                                       [(and owner (not (= owner index)))
+                                        (issue (elf-section-header-offset header)
+                                               "section belongs to multiple groups")]
+                                       [else
+                                        (vector-set! owners member index)
+                                        (member-loop (fx1+ member-index))]))))
+                            (loop (fx1+ index)))))
+                     (loop (fx1+ index)))))))))
+
   (define build-sections
     (lambda (bytes header headers)
       (let* ([length (bytevector-length bytes)]
@@ -537,7 +600,7 @@
              [entry-size (decoded-elf-header-shentsize header)])
         (let loop ([index 0])
           (if (= index count)
-              (values raw-sections #f)
+              (values raw-sections (section-overlap-problem headers))
               (let* ([section (vector-ref headers index)]
                      [at (+ table-offset (* index entry-size))]
                      [file-offset (elf-section-header-offset section)]
@@ -702,25 +765,25 @@
           [(and name-bytes
                 (not (= 3 (elf-section-header-type (vector-ref headers shstrndx)))))
            (values #f (issue shoff "section-name table is not a string table"))]
-          [(and name-bytes (> (bytevector-length name-bytes) 0)
-                (or (not (zero? (bytevector-u8-ref name-bytes 0)))
-                    (not (zero? (bytevector-u8-ref
-                                 name-bytes (- (bytevector-length name-bytes) 1))))))
+          [(and name-bytes (not (valid-string-table? name-bytes)))
            (values #f (issue (elf-section-header-offset (vector-ref headers shstrndx))
                              "invalid section-name string table"))]
           [else
            (let ([sections (make-vector shnum)])
              (let loop ([i 0])
                (if (= i shnum)
-                   (values
-                    (make-elf-file
-                     (make-elf-identification
-                      class endianness-name 1 (bytevector-u8-ref bytes 7)
-                      (bytevector-u8-ref bytes 8))
-                     (make-elf-header type machine version entry phoff shoff flags header-size
-                                      phentsize phnum shentsize shnum shstrndx)
-                     programs sections)
-                    #f)
+                   (let ([problem (section-group-problem type sections)])
+                     (values
+                      (and (not problem)
+                           (make-elf-file
+                            (make-elf-identification
+                             class endianness-name 1 (bytevector-u8-ref bytes 7)
+                             (bytevector-u8-ref bytes 8))
+                            (make-elf-header
+                             type machine version entry phoff shoff flags header-size
+                             phentsize phnum shentsize shnum shstrndx)
+                            programs sections))
+                      problem))
                    (let* ([old-header (vector-ref headers i)]
                           [name-index (elf-section-header-name-index old-header)]
                           [name (if (and name-bytes (not (zero? (elf-section-header-type old-header))))

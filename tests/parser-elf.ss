@@ -194,6 +194,8 @@
            [bytes (make-bytevector 1400 0)]
            [header (minimal-elf class endianness-name)])
       (bytevector-copy! header 0 bytes 0 (bytevector-length header))
+      ;; Section groups belong to ET_REL objects and their members carry SHF_GROUP.
+      (bytevector-u16-set! bytes 16 1 endianness)
       (if elf64?
           (bytevector-u64-set! bytes 40 table-offset endianness)
           (bytevector-u32-set! bytes 32 table-offset endianness))
@@ -250,6 +252,8 @@
       (set-elf-section! bytes class endianness table-offset 9 6 400 (* 4 word) 1
                         (* 2 word))
       (set-elf-section! bytes class endianness table-offset 10 18 480 8 2 4)
+      (set-elf-word! bytes (+ table-offset (* 6 (if elf64? 64 40)) 8)
+                     word #x200 endianness)
       bytes)))
 
 (define typed-elf-with-section-size

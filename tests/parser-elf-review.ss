@@ -79,3 +79,47 @@
         (parse-elf bytes)))
 
      )
+
+(define elf-reserved-header
+  (lambda (name-index?)
+    (let* ([count (if name-index? #xff01 #xff00)]
+           [bytes (make-bytevector (+ 64 (* count 64)) 0)]
+           [little (endianness little)])
+      (bytevector-copy! (minimal-elf64le) 0 bytes 0 64)
+      (bytevector-u64-set! bytes 40 64 little)
+      (bytevector-u16-set! bytes 60 (if name-index? 0 count) little)
+      (when name-index?
+        (bytevector-u64-set! bytes (+ 64 32) count little)
+        (bytevector-u16-set! bytes 62 #xff00 little)
+        (bytevector-u32-set! bytes (+ 64 (* #xff00 64) 4) 3 little))
+      bytes)))
+
+(mat parser-elf-section-relationships
+
+     (elf-file? (elf-review-file "group-valid"))
+
+     (elf-file? (elf-review-file "nobits-overlap"))
+
+     ;; Error case: ordinary string tables must start with NUL.
+     (error? (elf-review-file "string-table-missing-first-nul"))
+
+     ;; Error case: ordinary string tables must end with NUL.
+     (error? (elf-review-file "string-table-missing-last-nul"))
+
+     ;; Error case: every section-group member must carry SHF_GROUP.
+     (error? (elf-review-file "group-missing-member-flag"))
+
+     ;; Error case: the same section cannot belong to two distinct groups.
+     (error? (elf-review-file "group-multiple-membership"))
+
+     ;; Error case: section groups occur only in relocatable objects.
+     (error? (elf-review-file "group-in-executable"))
+
+     ;; Error case: nonempty file-backed section ranges cannot overlap.
+     (error? (elf-review-file "overlapping-sections"))
+
+     ;; Error case: reserved section counts require extended encoding.
+     (error? (parse-elf (elf-reserved-header #f)))
+
+     ;; Error case: reserved section-name indices require SHN_XINDEX.
+     (error? (parse-elf (elf-reserved-header #t))))

@@ -37,3 +37,29 @@ elf('utf8-section',sections=[dict(type=3,data=b'\0\xc3\xa9\0'),dict(type=1,name=
 elf('empty-symbol-strings',sections=[dict(type=3,data=b''),dict(type=2,data=b'\0'*24,link=1,info=1,entsize=24,align=8)])
 # Inactive sections do not have meaningful name indices either.
 p=out/'nonfirst-null.elf'; b=bytearray(p.read_bytes());struct.pack_into('<I',b,128,999);p.write_bytes(b)
+
+# Every nonempty string table, including a symbol-name table, has NUL boundaries.
+elf('string-table-missing-first-nul', sections=[dict(type=3, data=b'x\0')])
+elf('string-table-missing-last-nul', sections=[dict(type=3, data=b'\0x')])
+prefix = [dict(type=3, data=b'\0x\0'),
+          dict(type=2, data=syms, link=1, info=1, entsize=24, align=8)]
+group = dict(type=17, data=struct.pack('<II', 1, 4), link=2, info=1, entsize=4, align=4)
+elf('group-missing-member-flag', sections=prefix + [group, dict(type=1)])
+elf('group-valid', sections=prefix + [group, dict(type=1, flags=0x200)])
+elf('group-in-executable', sections=prefix + [group, dict(type=1, flags=0x200)])
+p = out / 'group-in-executable.elf'
+b = bytearray(p.read_bytes())
+struct.pack_into('<H', b, 16, 2)
+p.write_bytes(b)
+# Two distinct groups cannot claim the same member section.
+group5 = dict(group, data=struct.pack('<II', 1, 5))
+elf('group-multiple-membership', sections=prefix + [group5, group5, dict(type=1, flags=0x200)])
+# Sections cannot share file-backed bytes. NOBITS describes memory only.
+elf('overlapping-sections', sections=[dict(type=1, data=b'abc'), dict(type=1, data=b'def')])
+p = out / 'overlapping-sections.elf'
+b = bytearray(p.read_bytes())
+first_offset = struct.unpack_from('<Q', b, 128 + 24)[0]
+struct.pack_into('<Q', b, 192 + 24, first_offset)
+p.write_bytes(b)
+struct.pack_into('<I', b, 192 + 4, 8)
+(out / 'nobits-overlap.elf').write_bytes(b)
