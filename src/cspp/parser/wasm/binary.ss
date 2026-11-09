@@ -270,6 +270,28 @@
                               (vector-ref code 1)))
                 (loop (fx1+ index))))))))
 
+  (define vector-any?
+    (lambda (predicate values)
+      (let loop ([index 0])
+        (and (fx< index (vector-length values))
+             (or (predicate (vector-ref values index)) (loop (fx1+ index)))))))
+
+  (define expression-uses-data-index?
+    (lambda (instructions)
+      (vector-any?
+       (lambda (instruction)
+         (let ([mnemonic (wasm-instruction-mnemonic instruction)])
+           (or (memq mnemonic '(memory.init data.drop array.new-data array.init-data))
+               (expression-uses-data-index? (wasm-instruction-body instruction))
+               ;; Other structured alternates contain catch clauses, not instructions.
+               (and (eq? mnemonic 'if)
+                    (expression-uses-data-index? (wasm-instruction-alternate instruction))))))
+       instructions)))
+
+  (define code-uses-data-index?
+    (lambda (code)
+      (vector-any? (lambda (body) (expression-uses-data-index? (vector-ref body 1))) code)))
+
   (define assemble-module
     (lambda (section*)
       (let ([section-offset* (make-vector 14 #f)])
@@ -295,6 +317,10 @@
                     (vector-ref section-offset* 11)
                     8)
                 "WebAssembly data count does not match data section"))]
+             [(and (not data-count) (code-uses-data-index? code))
+              (issue-parser
+               (make-wasm-issue (or (vector-ref section-offset* 10) 8)
+                                "WebAssembly data-index instructions require a data-count section"))]
              [else
               (<result>
                (make-wasm-module

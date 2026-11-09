@@ -333,7 +333,7 @@
      (let* ([expression
              (parse-wat-lexeme
               <wat-expression>
-              "(block nop (nop)) (i32.add i32.const 1 (i32.const 2))")]
+              "(block nop (nop)) (i32.add (i32.const 1) (i32.const 2))")]
             [block (vector-ref expression 0)])
        (and (= 4 (vector-length expression))
             (= 2 (vector-length (wat-instruction-syntax-body block)))
@@ -4194,8 +4194,8 @@
      (let* ([module
              (parse-wasm-text-module
               "(module
-                 (func $later (param i32) (result i32) local.get 0)
                  (import \"env\" \"first\" (func $first (param i32) (result i32)))
+                 (func $later (param i32) (result i32) local.get 0)
                  (func $again (param i32) (result i32)
                    (i32.add (call $later (local.get 0)) (call $first (local.get 0))))
                  (export \"later\" (func $later)))")]
@@ -4241,8 +4241,8 @@
      (let* ([module
              (parse-wasm-text-module
               "(module
-                 (func (result i32) i32.const 0)
-                 (import \"env\" \"later\" (func (param i64))))")]
+                 (import \"env\" \"later\" (func (param i64)))
+                 (func (result i32) i32.const 0))")]
             [type* (wasm-module-types module)]
             [first
              (wasm-subtype-composite-type
@@ -4250,8 +4250,8 @@
             [second
              (wasm-subtype-composite-type
               (vector-ref (wasm-recursive-type-subtypes (vector-ref type* 1)) 0))])
-       (and (equal? '#(i32) (wasm-function-type-results first))
-            (equal? '#(i64) (wasm-function-type-parameters second))))
+       (and (equal? '#(i64) (wasm-function-type-parameters first))
+            (equal? '#(i32) (wasm-function-type-results second))))
 
      (let* ([module
              (parse-wasm-text-module

@@ -254,3 +254,213 @@
      (wasm-module? (parse-wasm-text-module "(module (@a \"Heiße 😀\" (@)))"))
 
      )
+
+(mat wasm-review-mixed-and-folded-instructions
+
+     (for-all
+      (lambda (text)
+        (let* ([module (parse-wasm-text-module text)]
+               [body (wasm-function-body (vector-ref (wasm-module-functions module) 0))]
+               [control (vector-ref body (fx1- (vector-length body)))])
+          (eq? 'nop (wasm-instruction-mnemonic
+                     (vector-ref (wasm-instruction-body control) 0)))))
+      '("(module (func block (nop) end))"
+        "(module (func loop (nop) end))"
+        "(module (func i32.const 0 if (nop) else (nop) end))"
+        "(module (func try_table (nop) end))"))
+
+     (let* ([module (parse-wasm-text-module
+                     "(module (func (i32.add (i32.const 1) (i32.eqz (i32.const 0)))))")]
+            [body (wasm-function-body (vector-ref (wasm-module-functions module) 0))])
+       (equal? '(i32.const i32.const i32.eqz i32.add)
+               (map wasm-instruction-mnemonic (vector->list body))))
+
+     ;; Error cases: operands of a folded instruction must themselves be folded.
+     (for-all
+      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      '("(module (func (drop i32.const 0)))"
+        "(module (func (if i32.const 0 (then))))"))
+
+     ;; Error cases: end/else delimit control syntax and cannot be folded instructions.
+     (for-all
+      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      '("(module (func (end)))" "(module (func (else)))"))
+
+     ;; Error cases: canonical hyphens are not WAT's underscore mnemonic spellings.
+     (for-all
+      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      '("(module (func block i32.const 0 br-if 0 end))"
+        "(module (memory 1) (func (i32.load8-s (i32.const 0))))")))
+
+(mat wasm-review-source-abbreviations
+
+     (= 0 (vector-length
+           (wasm-struct-type-fields
+            (wasm-subtype-composite-type
+             (vector-ref (wasm-recursive-type-subtypes
+                          (vector-ref (wasm-module-types
+                                       (parse-wasm-text-module
+                                        "(module (type (struct (field))))")) 0)) 0)))))
+
+     (= 1 (vector-length (wasm-module-functions (parse-wasm-text-module "(func)"))))
+
+     (= 0 (vector-length (wasm-module-functions (parse-wasm-text-module ";; empty"))))
+
+     ;; Error case: omitting the wrapper does not admit WebAssembly script commands.
+     (wasm-review-error? (lambda () (parse-wasm-text-module "(func) (invoke \"f\")"))))
+
+(mat wasm-review-bare-module-file
+
+     (with-temporary-wat
+      "(func) (func)"
+      (lambda (path)
+        (= 2 (vector-length (wasm-module-functions (parse-wasm-text-module-file path)))))))
+
+(mat wasm-review-anonymous-type-uses
+
+     ;; Error cases: block and indirect-call signatures do not bind local parameter names.
+     (for-all
+      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      '("(module (func block (param $x i32) drop end))"
+        "(module (func loop (param $x i32) drop end))"
+        "(module (func if (param $x i32) drop end))"
+        "(module (table 0 funcref) (func call_indirect (param $x i32)))"
+        "(module (table 0 funcref) (func return_call_indirect (param $x i32)))")))
+
+(mat wasm-review-import-order
+
+     (wasm-module?
+      (parse-wasm-text-module
+       "(module (data \"\") (type (func)) (import \"m\" \"f\" (func)))"))
+
+     ;; Error cases: explicit and inline imports must precede entity definitions.
+     (for-all
+      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      '("(module (func) (import \"m\" \"f\" (func)))"
+        "(module (func) (func (import \"m\" \"f\")))"
+        "(module (table 0 funcref) (import \"m\" \"f\" (func)))"
+        "(module (memory 0) (import \"m\" \"f\" (func)))"
+        "(module (global i32 i32.const 0) (import \"m\" \"f\" (func)))"
+        "(module (tag) (import \"m\" \"f\" (func)))")))
+
+(mat wasm-review-inline-type-targets
+
+     ;; Error cases: an inline signature needs an existing function target after expansion.
+     (for-all
+      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      '("(module (func (type 0) (param i32)))"
+        "(module (type (struct)) (func (type 0) (param i32)))"
+        "(module (func (type 1) (param i32)) (func (param f32)))"
+        "(module (func (type 0) (param i32)) (func (param f32)))"))
+
+     (let* ([module (parse-wasm-text-module
+                     "(module (func (type 0) (param i32)) (func (param i32)))")]
+            [functions (wasm-module-functions module)])
+       (and (= 1 (vector-length (wasm-module-types module)))
+            (equal? '(0 0) (map wasm-function-type-index (vector->list functions)))))
+
+     ;; The indexed signature can name a type introduced by a later instruction signature.
+     (let ([module (parse-wasm-text-module
+                    "(module (func (type 1) (param i32)) (func block (param i32) end))")])
+       (and (= 2 (vector-length (wasm-module-types module)))
+            (= 1 (wasm-function-type-index (vector-ref (wasm-module-functions module) 0)))))
+
+     ;; Structurally equal reference signatures reuse the earliest explicit function type.
+     (let ([module
+            (parse-wasm-text-module
+             "(module (type (struct))
+                (type (func (param (ref null 0))))
+                (type (func (param (ref null 0))))
+                (func (param (ref null 0))) (func (param (ref null 0))))")])
+       (and (= 3 (vector-length (wasm-module-types module)))
+            (equal? '(1 1)
+                    (map wasm-function-type-index
+                         (vector->list (wasm-module-functions module)))))))
+
+(define wasm-review-data-module
+  (lambda (instructions count?)
+    (let ([body (append-bytevectors #vu8(0) instructions #vu8(#x0b))])
+      (make-wasm-module-bytes
+       ;; One function type and one mutable i32 array type.
+       (make-wasm-section-bytes 1 #vu8(2 #x60 0 0 #x5e #x7f 1))
+       (make-wasm-section-bytes 3 #vu8(1 0))
+       (make-wasm-section-bytes 5 #vu8(1 0 0))
+       (if count? (make-wasm-section-bytes 12 #vu8(1)) #vu8())
+       (make-wasm-section-bytes
+        10 (append-bytevectors #vu8(1) (encode-wasm-u32 (bytevector-length body)) body))
+       (make-wasm-section-bytes 11 #vu8(1 1 0))))))
+
+(define wasm-review-data-instructions
+  (list
+   #vu8(#x41 0 #x41 0 #x41 0 #xfc 8 0 0) ; memory.init
+   #vu8(#xfc 9 0) ; data.drop
+   #vu8(#x41 0 #x41 0 #xfb 9 1 0 #x1a) ; array.new_data, drop
+   #vu8(#xd0 1 #x41 0 #x41 0 #x41 0 #xfb 18 1 0) ; array.init_data
+   #vu8(2 #x40 #xfc 9 0 #x0b) ; block containing data.drop
+   #vu8(3 #x40 #xfc 9 0 #x0b) ; loop containing data.drop
+   #vu8(#x41 0 4 #x40 5 #xfc 9 0 #x0b) ; if alternate containing data.drop
+   #vu8(#x1f #x40 0 #xfc 9 0 #x0b))) ; try_table containing data.drop
+
+(mat wasm-review-required-data-count
+
+     (for-all
+      (lambda (instructions)
+        (wasm-module? (parse-wasm-binary-module (wasm-review-data-module instructions #t))))
+      wasm-review-data-instructions)
+
+     ;; Error cases: data-index instructions need data-count, including nested bodies/alternates.
+     (for-all
+      (lambda (instructions)
+        (wasm-review-error?
+         (lambda () (parse-wasm-binary-module (wasm-review-data-module instructions #f)))))
+      wasm-review-data-instructions)
+
+     ;; Ordinary code and a data section do not themselves require a data-count declaration.
+     (wasm-module? (parse-wasm-binary-module (wasm-review-data-module #vu8(1) #f))))
+
+(mat wasm-review-implicit-type-eligibility
+
+     (for-all
+      (lambda (case)
+        (let ([module (parse-wasm-text-module (car case))])
+          (and (= (cadr case)
+                  (wasm-function-type-index (vector-ref (wasm-module-functions module) 0)))
+               (= (caddr case) (vector-length (wasm-module-types module))))))
+      '(("(module (type (func)) (func))" 0 1)
+        ("(module (rec (type (func))) (func))" 0 1)
+        ("(module (type (sub final (func))) (func))" 0 1)
+        ("(module (type (sub (func))) (func))" 1 2)
+        ("(module (rec (type (func)) (type (func))) (func))" 2 2)
+        ("(module (type $b (sub (func))) (type (sub final $b (func))) (func))" 2 3))))
+
+(mat wasm-review-implicit-type-source-order
+
+     (let* ([module
+             (parse-wasm-text-module
+              "(module (func i32.const 0 block (param i32) drop end) (func (param f32)))")]
+            [functions (wasm-module-functions module)]
+            [block (vector-ref (wasm-function-body (vector-ref functions 0)) 1)])
+       (and (equal? '(0 2) (map wasm-function-type-index (vector->list functions)))
+            (= 1 (wasm-block-type-value (vector-ref (wasm-instruction-immediates block) 0)))))
+
+     (let* ([module
+             (parse-wasm-text-module
+              "(module (func i32.const 0 block (param i32) drop
+                 f32.const 0 block (param f32) drop end end))")]
+            [outer (vector-ref (wasm-function-body
+                                (vector-ref (wasm-module-functions module) 0)) 1)]
+            [inner (vector-ref (wasm-instruction-body outer) 2)])
+       (and (= 1 (wasm-block-type-value (vector-ref (wasm-instruction-immediates outer) 0)))
+            (= 2 (wasm-block-type-value (vector-ref (wasm-instruction-immediates inner) 0)))))
+
+     ;; Folded headers precede their operands in source, although execution order is reversed.
+     (let* ([module
+             (parse-wasm-text-module
+              "(module (table 0 funcref) (func f32.const 0
+                 (call_indirect (param i32)
+                   (block (param f32) (result i32) drop i32.const 0) (i32.const 0))))")]
+            [body (wasm-function-body (vector-ref (wasm-module-functions module) 0))]
+            [block (vector-ref body 1)]
+            [call (vector-ref body 3)])
+       (and (= 1 (vector-ref (wasm-instruction-immediates call) 0))
+            (= 2 (wasm-block-type-value (vector-ref (wasm-instruction-immediates block) 0))))))

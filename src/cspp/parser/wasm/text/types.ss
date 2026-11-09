@@ -61,7 +61,7 @@
     <wat-storage-type> <wat-field-type> <wat-function-type> <wat-struct-type>
     <wat-array-type> <wat-composite-type> <wat-subtype> <wat-type-definition>
     <wat-recursive-type>
-    <wat-type-use> <wat-block-type> <wat-limits> <wat-global-type>
+    <wat-type-use> <wat-anonymous-type-use> <wat-block-type> <wat-limits> <wat-global-type>
     <wat-table-type> <wat-memory-type> <wat-tag-type>)
   (import (cspp chez)
           (cspp parser combinator)
@@ -413,7 +413,7 @@
     (<map> (lambda (value)
              (let ([pos (car value)])
                (map (lambda (type) (make-wat-binding pos #f type)) (cadr value))))
-           (<~0> (<~> (wat-head "field") (<some> <wat-field-type>))
+           (<~0> (<~> (wat-head "field") (<many> <wat-field-type>))
                  wat-close)))
 
   (define struct-field (</> named-struct-field unnamed-struct-field))
@@ -509,19 +509,29 @@
   (define explicit-type-index
     (wat-parenthesized "type" <wat-index-reference>))
 
+  (define type-use-parser
+    (lambda (parameters)
+      (<map> (lambda (value)
+               (let ([parameter* (apply append (caddr value))]
+                     [result* (apply append (cadddr value))])
+                 (make-wat-type-use
+                  (car value) (optional-value (cadr value))
+                  (list->immutable-vector parameter*)
+                  (list->immutable-vector result*))))
+             (<~> <pos> (<optional> explicit-type-index)
+                  (<many> parameters) (<many> result-clause)))))
+
   #|proc:<wat-type-use>
-  The `<wat-type-use>` parser reads an optional type index and inline function signature.
+  The `<wat-type-use>` parser reads an optional type index and inline function signature,
+  retaining parameter bindings for function declarations.
   |#
-  (define <wat-type-use>
-    (<map> (lambda (value)
-             (let ([parameter* (apply append (caddr value))]
-                   [result* (apply append (cadddr value))])
-               (make-wat-type-use
-                (car value) (optional-value (cadr value))
-                (list->immutable-vector parameter*)
-                (list->immutable-vector result*))))
-           (<~> <pos> (<optional> explicit-type-index)
-                (<many> parameter-clause) (<many> result-clause))))
+  (define <wat-type-use> (type-use-parser parameter-clause))
+
+  #|proc:<wat-anonymous-type-use>
+  The `<wat-anonymous-type-use>` parser reads an optional type index and an inline signature
+  without parameter names, returning type-use syntax for instruction signatures.
+  |#
+  (define <wat-anonymous-type-use> (type-use-parser unnamed-parameter-clause))
 
   #|proc:<wat-block-type>
   The `<wat-block-type>` parser reads an optional indexed or inline block signature.
@@ -529,7 +539,7 @@
   (define <wat-block-type>
     (<map> (lambda (type-use)
              (make-wat-block-type-syntax (wat-type-use-pos type-use) type-use))
-           <wat-type-use>))
+           <wat-anonymous-type-use>))
 
   (define limits-parser
     (lambda (pos address-type bound-parser)

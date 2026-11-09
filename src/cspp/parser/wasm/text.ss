@@ -548,7 +548,8 @@
 
   #|proc:parser-wat-module-syntax
   The `parser-wat-module-syntax` parser reads exactly one Core 3.0 text module and returns an
-  internal positioned module syntax record. Trailing WebAssembly script commands are rejected.
+  internal positioned module syntax record. Source files may omit the module wrapper.
+  Trailing WebAssembly script commands are rejected.
   |#
   (define parser-wat-module-syntax
     (<map>
@@ -556,10 +557,11 @@
        (make-wat-module (car value) (optional-value (cadr value))
                         (anchor-custom-fields (caddr value))))
      (<~1> <wat-trivia>
-            (<~0> (<~> (wat-field-head "module")
-                       (<optional> <wat-identifier>)
-                       (<many-until> module-field wat-close))
-                  wat-close <eof>))))
+            (</> (<~0> (<~> (wat-field-head "module")
+                             (<optional> <wat-identifier>)
+                             (<many-until> module-field wat-close))
+                        wat-close <eof>)
+                 (<~0> (<~> <pos> (<result> #f) (<many> module-field)) <eof>)))))
 
   #|proc:parser-wat-module
   The `parser-wat-module` parser reads exactly one Core 3.0 text module and returns its canonical

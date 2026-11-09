@@ -95,7 +95,7 @@
       (or (char<=? #\0 character #\9)
           (char<=? #\a character #\z)
           (char<=? #\A character #\Z)
-          (memv character '(#\. #\_ #\-)))))
+          (memv character '(#\. #\_)))))
 
   (define <wat-instruction-token>
     (<wat-token>
@@ -176,7 +176,7 @@
        (make-immutable-vector (cadr value)
                               (optional-value (car value)
                                               (make-wat-index-reference 0 0))))
-     (<~> (<optional> <wat-index-reference>) <wat-type-use>)))
+     (<~> (<optional> <wat-index-reference>) <wat-anonymous-type-use>)))
 
   (define named-attribute
     (lambda (name parser)
@@ -413,11 +413,26 @@
                (<fail-with> "structured instruction labels do not match")))))))
 
   (declare-lazy-parser <wat-flat-instruction>)
-  (declare-lazy-parser <wat-folded-list>)
+  (declare-lazy-parser <wat-folded-node>)
+  (declare-lazy-parser <wat-sequence-node>)
+
+  ;; Keep only direct operand nodes while parsing, then emit execution order once per body.
+  (define instruction-list
+    (lambda (roots)
+      (let ([builder (make-list-builder)])
+        (define emit!
+          (lambda (instruction)
+            (vector-for-each emit! (wat-instruction-syntax-operands instruction))
+            (builder instruction)))
+        (for-each emit! roots)
+        (builder))))
+
+  (define instruction-vector
+    (lambda (roots) (list->immutable-vector (instruction-list roots))))
 
   (define flat-sequence-before
     (lambda (terminator)
-      (<many-until> <wat-flat-instruction> terminator)))
+      (<map> instruction-list (<many-until> <wat-sequence-node> terminator))))
 
   (define make-instruction
     (lambda (pos descriptor immediates body alternate operands label)
@@ -538,13 +553,10 @@
        (immediate-parser descriptor)
        (lambda (immediates)
          (<map>
-          (lambda (operand**)
-            (let* ([operand* (flatten-lists operand**)]
-                   [node (make-instruction
-                          pos descriptor immediates empty-vector #f
-                          (list->immutable-vector operand*) #f)])
-              (append operand* (list node))))
-          (<many-until> <wat-folded-list> wat-close))))))
+          (lambda (operands)
+            (make-instruction pos descriptor immediates empty-vector #f
+                              (list->immutable-vector operands) #f))
+          (<many-until> <wat-folded-node> wat-close))))))
 
   (define folded-block-after
     (lambda (pos descriptor)
@@ -552,13 +564,12 @@
        (<~> (<optional> <wat-identifier>) <wat-block-type>)
        (lambda (header)
          (<map>
-          (lambda (body*)
-            (list
-             (make-instruction
-              pos descriptor (make-immutable-vector (cadr header))
-              (list->immutable-vector (flatten-lists body*)) #f empty-vector
-              (optional-value (car header) #f))))
-          (<many-until> <wat-folded-list> wat-close))))))
+          (lambda (body)
+            (make-instruction
+             pos descriptor (make-immutable-vector (cadr header))
+             (instruction-vector body) #f empty-vector
+             (optional-value (car header) #f)))
+          (<many-until> <wat-sequence-node> wat-close))))))
 
   (define folded-try-after
     (lambda (pos descriptor)
@@ -567,42 +578,31 @@
             (<many> try-catch-clause))
        (lambda (header)
          (<map>
-          (lambda (body*)
-            (list
-             (make-instruction
-              pos descriptor
-              (make-immutable-vector (cadr header))
-              (list->immutable-vector (flatten-lists body*))
-              (list->immutable-vector (caddr header)) empty-vector
-              (optional-value (car header) #f))))
-          (<many-until> <wat-folded-list> wat-close))))))
+          (lambda (body)
+            (make-instruction
+             pos descriptor (make-immutable-vector (cadr header))
+             (instruction-vector body)
+             (list->immutable-vector (caddr header)) empty-vector
+             (optional-value (car header) #f)))
+          (<many-until> <wat-sequence-node> wat-close))))))
 
   (define folded-branch
     (lambda (keyword)
-      (parenthesized keyword (<many> <wat-folded-list>))))
+      (parenthesized keyword (<map> instruction-vector (<many> <wat-sequence-node>)))))
 
   (define folded-if-after
     (lambda (pos descriptor)
-      (<bind>
-       (<~> (<optional> <wat-identifier>) <wat-block-type>
-            (<many> <wat-folded-list>)
-            (folded-branch "then")
-            (<optional> (folded-branch "else")))
+      (<map>
        (lambda (value)
-         (<result>
-          (let* ([operand* (flatten-lists (caddr value))]
-                 [body (flatten-lists (cadddr value))]
-                 [alternate-source (car (cddddr value))]
-                 [alternate (if (null? alternate-source)
-                                '()
-                                (flatten-lists alternate-source))]
-                 [node
-                  (make-instruction
-                   pos descriptor (make-immutable-vector (cadr value))
-                   (list->immutable-vector body) (list->immutable-vector alternate)
-                   (list->immutable-vector operand*)
-                   (optional-value (car value) #f))])
-            (append operand* (list node))))))))
+         (make-instruction
+          pos descriptor (make-immutable-vector (cadr value))
+          (cadddr value) (optional-value (car (cddddr value)) empty-vector)
+          (list->immutable-vector (caddr value))
+          (optional-value (car value) #f)))
+       (<~> (<optional> <wat-identifier>) <wat-block-type>
+            (<many> <wat-folded-node>)
+            (folded-branch "then")
+            (<optional> (folded-branch "else"))))))
 
   (define folded-after
     (lambda (pos descriptor)
@@ -610,7 +610,10 @@
         [(block loop) (folded-block-after pos descriptor)]
         [(try-table) (folded-try-after pos descriptor)]
         [(if) (folded-if-after pos descriptor)]
-        [else (folded-simple-after pos descriptor)])))
+        [else
+         (if (memq (wasm-opcode-mnemonic descriptor) '(else end))
+             (<fail-with> "reserved structured terminator")
+             (folded-simple-after pos descriptor))])))
 
   (define flat-parser
     (<bind> (<~> <pos> descriptor-parser)
@@ -625,30 +628,28 @@
 
   #|proc:<wat-instruction>
   The `<wat-instruction>` parser reads one flat Core 3.0 WAT instruction and returns positioned
-  instruction syntax. Structured instructions include their nested bodies.
+  instruction syntax. Structured bodies accept mixed flat and folded instructions.
   |#
   (define <wat-instruction>
     (begin
       (install-lazy-parser! <wat-flat-instruction> flat-parser)
-      (install-lazy-parser!
-       <wat-folded-list>
-       (</> (<map> list <wat-flat-instruction>) folded-parser))
+      (install-lazy-parser! <wat-folded-node> folded-parser)
+      (install-lazy-parser! <wat-sequence-node> (</> <wat-flat-instruction> <wat-folded-node>))
       flat-parser))
 
   #|proc:<wat-folded-instruction>
   The `<wat-folded-instruction>` parser reads one folded Core 3.0 WAT instruction and returns its
-  operands followed by its containing instruction as a list.
+  operands followed by its containing instruction as a list. Each syntax node retains only its
+  direct nested operands, avoiding copies of descendant prefixes.
   |#
-  (define <wat-folded-instruction> folded-parser)
+  (define <wat-folded-instruction>
+    (<map> (lambda (instruction) (instruction-list (list instruction))) folded-parser))
 
   #|proc:<wat-expression>
   The `<wat-expression>` parser reads flat and folded Core 3.0 WAT instructions and returns one
-  immutable vector in execution order.
+  immutable vector in execution order. Each syntax node retains its direct nested operands.
   |#
   (define <wat-expression>
-    (<map> (lambda (instruction**)
-             (list->immutable-vector (flatten-lists instruction**)))
-           (<many> (</> (<map> list <wat-instruction>)
-                        <wat-folded-instruction>))))
+    (<map> instruction-vector (<many> <wat-sequence-node>)))
 
   )

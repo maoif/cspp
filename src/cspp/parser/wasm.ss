@@ -91,8 +91,8 @@
               (parse-binary-file <wasm-binary-module> path))))
 
   #|proc:parse-wasm-text-module
-  Parses a WebAssembly Core 3.0 text module from source string `text`. The return value is a
-  canonical `wasm-module` record. Shared-memory limits are also supported.
+  Parses a WebAssembly Core 3.0 text module from source string `text`, with or without its
+  outer module wrapper. Returns a canonical `wasm-module` record, supporting shared memory.
   |#
   (define-who parse-wasm-text-module
     (lambda (text)
@@ -100,8 +100,8 @@
               (run-textual-parser parser-wat-module text))))
 
   #|proc:parse-wasm-text-module-file
-  Parses a WebAssembly Core 3.0 text module from regular-file path `path`. The return value is a
-  canonical `wasm-module` record. Shared-memory limits are also supported.
+  Parses a WebAssembly Core 3.0 text module from regular-file path `path`, with or without its
+  outer module wrapper. Returns a canonical `wasm-module` record, supporting shared memory.
   |#
   (define-who parse-wasm-text-module-file
     (lambda (path)

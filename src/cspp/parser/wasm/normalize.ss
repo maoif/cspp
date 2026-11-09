@@ -16,7 +16,8 @@
 
   (define-record-type normalization-state
     (fields fields namespaces field-indices field-namespaces
-            (mutable type-groups) (mutable type-catalog)))
+            type-groups (mutable type-catalog) (mutable type-count)
+            function-types resolved-type-uses deferred-type-uses))
 
   (define vector-map*
     (lambda (procedure vector)
@@ -120,12 +121,27 @@
          field*)
         table)))
 
+  (define check-import-order!
+    (lambda (fields)
+      (let loop ([index 0] [defined? #f])
+        (unless (fx= index (vector-length fields))
+          (let* ([field (vector-ref fields index)] [imported? (imported-field? field)])
+            (when (and imported? defined?)
+              (normalization-error (wat-module-field-pos field)
+                                   "WebAssembly imports must precede entity definitions"))
+            (loop (fx1+ index)
+                  (or defined?
+                      (and (not imported?)
+                           (memq (field-entity-kind field)
+                                 '(function table memory global tag))))))))))
+
   (define build-state
     (lambda (module)
       (let* ([field* (wat-module-fields module)]
              [namespaces (make-eq-hashtable)]
              [field-indices (make-eq-hashtable)]
              [field-namespaces (make-eq-hashtable)])
+        (check-import-order! field*)
         (hashtable-set! namespaces 'type (build-type-namespace! field*))
         (for-each
          (lambda (kind)
@@ -136,7 +152,9 @@
                 (build-entity-namespace! field* kind field-indices))))
          '(function table memory global tag element data))
         (make-normalization-state
-         field* namespaces field-indices field-namespaces '() '#()))))
+         field* namespaces field-indices field-namespaces
+         (make-list-builder) (make-vector 16 #f) 0
+         (make-hashtable equal-hash equal?) (make-eq-hashtable) (make-list-builder)))))
 
   (define resolve-reference
     (lambda (state kind reference)
@@ -230,8 +248,7 @@
 
   (define normalize-explicit-types!
     (lambda (state)
-      (let ([group-builder (make-list-builder)]
-            [catalog-builder (make-list-builder)] [type-index 0])
+      (let ([group-builder (normalization-state-type-groups state)] [type-index 0])
         (vector-for-each
          (lambda (field)
            (when (eq? 'recursive-type (wat-module-field-kind field))
@@ -249,17 +266,18 @@
                            state (wat-subtype-syntax-composite-type syntax)
                            type-index))])
                     (subtype-builder subtype)
-                    (catalog-builder subtype)
+                    (append-type!
+                     state subtype
+                     (= 1 (vector-length
+                           (wat-recursive-type-syntax-subtypes
+                            (wat-module-field-data field)))))
                     (set! type-index (fx1+ type-index))))
                 (wat-recursive-type-syntax-subtypes
                  (wat-module-field-data field)))
                (group-builder
                 (make-wasm-recursive-type
                  (list->immutable-vector (subtype-builder)))))))
-         (normalization-state-fields state))
-        (normalization-state-type-groups-set! state (group-builder))
-        (normalization-state-type-catalog-set!
-         state (list->immutable-vector (catalog-builder))))))
+         (normalization-state-fields state)))))
 
   (define value-type=?
     (lambda (left right)
@@ -290,7 +308,7 @@
   (define function-type-at
     (lambda (state index offset)
       (let ([catalog (normalization-state-type-catalog state)])
-        (if (< index (vector-length catalog))
+        (if (< index (normalization-state-type-count state))
             (let ([composite (wasm-subtype-composite-type
                               (vector-ref catalog index))])
               (if (wasm-function-type? composite)
@@ -302,34 +320,56 @@
   (define known-function-type-at
     (lambda (state index)
       (let ([catalog (normalization-state-type-catalog state)])
-        (and (< index (vector-length catalog))
+        (and (< index (normalization-state-type-count state))
              (let ([composite
                     (wasm-subtype-composite-type (vector-ref catalog index))])
                (and (wasm-function-type? composite) composite))))))
 
+  ;; Structural keys keep reference-type signatures comparable across distinct records.
+  (define function-type-key
+    (lambda (type)
+      (define value-key
+        (lambda (value)
+          (if (wasm-reference-type? value)
+              (cons (wasm-reference-type-nullable? value) (wasm-reference-type-heap-type value))
+              value)))
+      (cons (vector-map* value-key (wasm-function-type-parameters type))
+            (vector-map* value-key (wasm-function-type-results type)))))
+
+  (define append-type!
+    (lambda (state subtype singular?)
+      (let* ([index (normalization-state-type-count state)]
+             [catalog (normalization-state-type-catalog state)]
+             [type (wasm-subtype-composite-type subtype)])
+        (when (fx= index (vector-length catalog))
+          (let ([grown (make-vector (fx* 2 (vector-length catalog)) #f)])
+            (vector-copy! catalog 0 grown 0 index)
+            (normalization-state-type-catalog-set! state grown)
+            (set! catalog grown)))
+        (vector-set! catalog index subtype)
+        (normalization-state-type-count-set! state (fx1+ index))
+        ;; Type-use abbreviations match only singular final function types without supertypes.
+        (when (and singular? (wasm-subtype-final? subtype)
+                   (zero? (vector-length (wasm-subtype-supertypes subtype)))
+                   (wasm-function-type? type))
+          (let ([key (function-type-key type)]
+                [signatures (normalization-state-function-types state)])
+            ;; Preserve the earliest explicit or implicit match, including index zero.
+            (unless (hashtable-contains? signatures key)
+              (hashtable-set! signatures key index))))
+        index)))
+
   (define append-implicit-function-type!
     (lambda (state type)
-      (let* ([index (vector-length (normalization-state-type-catalog state))]
-             [subtype (make-wasm-subtype #t '#() type)]
-             [group (make-wasm-recursive-type (vector subtype))])
-        (normalization-state-type-groups-set!
-         state (append (normalization-state-type-groups state) (list group)))
-        (normalization-state-type-catalog-set!
-         state (vector-append (normalization-state-type-catalog state)
-                              (vector subtype)))
+      (let* ([subtype (make-wasm-subtype #t '#() type)]
+             [index (append-type! state subtype #t)])
+        ((normalization-state-type-groups state)
+         (make-wasm-recursive-type (vector subtype)))
         index)))
 
   (define find-function-type
     (lambda (state type)
-      (let ([catalog (normalization-state-type-catalog state)])
-        (let loop ([index 0])
-          (cond [(fx= index (vector-length catalog)) #f]
-                [(let ([composite
-                        (wasm-subtype-composite-type (vector-ref catalog index))])
-                   (and (wasm-function-type? composite)
-                        (function-type=? composite type)))
-                 index]
-                [else (loop (fx1+ index))])))))
+      (hashtable-ref (normalization-state-function-types state) (function-type-key type) #f)))
 
   (define type-use-signature
     (lambda (state type-use)
@@ -342,47 +382,74 @@
 
   (define resolve-type-use
     (lambda (state type-use)
-      (let* ([signature (type-use-signature state type-use)]
-             [reference (wat-type-use-index type-use)])
-        (if reference
-            (let* ([index (resolve-reference state 'type reference)]
-                   [numeric? (natural? (wat-index-reference-value reference))]
-                   [explicit (if numeric?
-                                 (known-function-type-at state index)
-                                 (function-type-at
-                                  state index (wat-type-use-pos type-use)))]
+      (let ([resolved (normalization-state-resolved-type-uses state)])
+        (or (hashtable-ref resolved type-use #f)
+            (let* ([signature (type-use-signature state type-use)]
+                   [reference (wat-type-use-index type-use)]
+                   [offset (wat-type-use-pos type-use)]
                    [inline?
-                    (or (positive? (vector-length
-                                    (wasm-function-type-parameters signature)))
-                        (positive? (vector-length
-                                    (wasm-function-type-results signature))))])
-              (when (and inline? explicit
-                         (not (function-type=? explicit signature)))
-                (normalization-error
-                 (wat-type-use-pos type-use)
-                 "inline WebAssembly signature conflicts with its type use"))
-              index)
-            (let ([index (find-function-type state signature)])
-              (or index (append-implicit-function-type! state signature)))))))
+                    (or (positive? (vector-length (wasm-function-type-parameters signature)))
+                        (positive? (vector-length (wasm-function-type-results signature))))]
+                   [index
+                    (if reference
+                        (let ([index (resolve-reference state 'type reference)])
+                          (if inline?
+                              ;; Numeric references may name types generated by later fields or bodies.
+                              ((normalization-state-deferred-type-uses state)
+                               (list index signature offset))
+                              (unless (natural? (wat-index-reference-value reference))
+                                (function-type-at state index offset)))
+                          index)
+                        (or (find-function-type state signature)
+                            (append-implicit-function-type! state signature)))])
+              (hashtable-set! resolved type-use index)
+              index)))))
 
-  (define field-type-use
-    (lambda (field)
-      (let ([kind (wat-module-field-kind field)]
-            [data (wat-module-field-data field)])
-        (cond [(eq? kind 'function) (vector-ref data 0)]
-              [(eq? kind 'tag) data]
-              [(and (eq? kind 'import)
-                    (memq (vector-ref data 2) '(function tag)))
-               (vector-ref data 3)]
-              [else #f]))))
+  (define check-deferred-type-uses!
+    (lambda (state)
+      (for-each
+       (lambda (use)
+         (unless (function-type=? (function-type-at state (car use) (caddr use)) (cadr use))
+           (normalization-error
+            (caddr use) "inline WebAssembly signature conflicts with its type use")))
+       ((normalization-state-deferred-type-uses state)))))
 
   (define intern-implicit-types!
     (lambda (state)
-      (vector-for-each
-       (lambda (field)
-         (let ([type-use (field-type-use field)])
-           (when type-use (resolve-type-use state type-use))))
-       (normalization-state-fields state))))
+      (let ([uses (make-list-builder)])
+        (define visit
+          (lambda (syntax)
+            (cond
+              [(wat-type-use? syntax) (uses syntax)]
+              [(wat-block-type-syntax? syntax)
+               (let ([use (wat-block-type-syntax-type-use syntax)])
+                 (when (or (wat-type-use-index use)
+                           (positive? (vector-length (wat-type-use-parameters use)))
+                           (> (vector-length (wat-type-use-results use)) 1))
+                   (uses use)))]
+              [(wat-instruction-syntax? syntax)
+               (visit (wat-instruction-syntax-immediates syntax))
+               (visit (wat-instruction-syntax-body syntax))
+               (visit (wat-instruction-syntax-alternate syntax))]
+              [(wat-inline-abbreviation? syntax)
+               (visit (wat-inline-abbreviation-data syntax))]
+              [(wat-element-segment-syntax? syntax)
+               (visit (wat-element-segment-syntax-offset syntax))
+               (visit (wat-element-segment-syntax-items syntax))]
+              [(wat-data-segment-syntax? syntax)
+               (visit (wat-data-segment-syntax-offset syntax))]
+              [(vector? syntax) (vector-for-each visit syntax)])))
+        (vector-for-each
+         (lambda (field)
+           (visit (wat-module-field-data field))
+           (visit (wat-module-field-abbreviation field)))
+         (normalization-state-fields state))
+        ;; Execution vectors contain each operand once; do not revisit retained operand trees.
+        ;; Sort source offsets because folded headers precede their operands in source order.
+        (for-each
+         (lambda (use) (resolve-type-use state use))
+         (list-sort (lambda (left right) (< (wat-type-use-pos left) (wat-type-use-pos right)))
+                    (uses))))))
 
   (define normalize-block-type
     (lambda (state syntax)
@@ -926,7 +993,7 @@
                (append-inline-exports! field export-builder state))))
          (normalization-state-fields state))
         (make-wasm-module
-         (list->immutable-vector (normalization-state-type-groups state))
+         (list->immutable-vector ((normalization-state-type-groups state)))
          (list->immutable-vector (import-builder))
          (list->immutable-vector (function-builder))
          (list->immutable-vector (table-builder))
@@ -949,6 +1016,8 @@
                 (let ([state (build-state module)])
                   (normalize-explicit-types! state)
                   (intern-implicit-types! state)
-                  (assemble-module state))))))
+                  (let ([module (assemble-module state)])
+                    (check-deferred-type-uses! state)
+                    module))))))
 
   )
