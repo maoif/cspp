@@ -206,7 +206,7 @@
   (define segment-offset (</> offset-clause direct-offset))
 
   (define default-function-reference-type
-    (make-wasm-reference-type #t 'func))
+    (make-wasm-reference-type #f 'func))
 
   (define typed-element-items
     (<map> (lambda (value)
@@ -219,10 +219,17 @@
              (make-immutable-vector
               default-function-reference-type 'indexes
               (list->immutable-vector (cadr value))))
-           (<~> (<optional> (<wat-keyword> "func"))
+           (<~> (<wat-keyword> "func")
                 (<many> <wat-index-reference>))))
 
   (define element-items (</> typed-element-items indexed-element-items))
+
+  (define legacy-element-items
+    (</> element-items
+         (<map> (lambda (indexes)
+                  (make-immutable-vector default-function-reference-type 'indexes
+                                         (list->immutable-vector indexes)))
+                (<many> <wat-index-reference>))))
 
   (define function-field
     (<bind>
@@ -423,23 +430,24 @@
     (</> declarative-element-prefix active-element-prefix passive-element-prefix))
 
   (define element-field
-    (<map>
+    (<bind>
+     (<~> (wat-field-head "elem") (<optional> <wat-identifier>) element-prefix)
      (lambda (value)
-       (let ([pos (car value)]
-             [id (optional-value (cadr value))]
-             [prefix (caddr value)]
-             [items (cadddr value)])
-         (field-result
-          pos 'element id #f #f '()
-          (make-wat-inline-abbreviation
-           pos 'element
-           (make-wat-element-segment-syntax
-            pos (vector-ref prefix 0) (vector-ref prefix 1)
-            (vector-ref prefix 2) #f (vector-ref items 0)
-            (vector-ref items 1) (vector-ref items 2))))))
-     (<~0> (<~> (wat-field-head "elem")
-                (<optional> <wat-identifier>) element-prefix element-items)
-            wat-close)))
+       (let ([pos (car value)] [id (optional-value (cadr value))] [prefix (caddr value)])
+         (<map>
+          (lambda (items)
+            (field-result
+             pos 'element id #f #f '()
+             (make-wat-inline-abbreviation
+              pos 'element
+              (make-wat-element-segment-syntax
+               pos (vector-ref prefix 0) (vector-ref prefix 1)
+               (vector-ref prefix 2) #f (vector-ref items 0)
+               (vector-ref items 1) (vector-ref items 2)))))
+          (<~0> (if (and (eq? 'active (vector-ref prefix 0))
+                         (not (vector-ref prefix 1)))
+                    legacy-element-items element-items)
+                 wat-close))))))
 
   (define active-data-prefix
     (<map> (lambda (value)
@@ -476,10 +484,11 @@
      </>
      (map (lambda (entry)
             (<as> (cdr entry) (<wat-keyword> (car entry))))
-          '(("type" . type) ("import" . import) ("function" . function)
+          '(("type" . type) ("import" . import) ("func" . function)
             ("table" . table) ("memory" . memory) ("tag" . tag)
             ("global" . global) ("export" . export) ("start" . start)
-            ("elem" . element) ("code" . code) ("data" . data)))))
+            ("elem" . element) ("datacount" . data-count) ("code" . code) ("data" . data)
+            ("first" . type) ("last" . data)))))
 
   (define custom-anchor
     (</> (<map> (lambda (section) (cons 'after section))
@@ -499,7 +508,7 @@
            (cadr value) (list->immutable-vector (cadddr value))
            (make-wat-custom-placement pos before after))
           #f '() #f)))
-     (<~0> (<~> (wat-field-head "@custom")
+     (<~0> (<~> (<~0> <pos> (<wat-annotation-head> "custom"))
                 <wat-name> (<optional> custom-anchor) (<many> <wat-string>))
             wat-close)))
 

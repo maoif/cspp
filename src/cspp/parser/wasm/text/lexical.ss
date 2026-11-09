@@ -1,6 +1,6 @@
 (library (cspp parser wasm text lexical)
-  (export <wat-trivia> <wat-token> <wat-keyword> <wat-identifier>
-          <wat-string> <wat-name> <wat-u32> <wat-u64> <wat-i32> <wat-i64>
+  (export <wat-trivia> <wat-token> <wat-keyword> <wat-identifier> <wat-annotation-head>
+          <wat-string> <wat-name> <wat-u32> <wat-u64> <wat-i8> <wat-i16> <wat-i32> <wat-i64>
           <wat-f32> <wat-f64>)
   (import (cspp chez)
           (cspp parser combinator)
@@ -266,6 +266,18 @@
   (define <wat-name>
     (<wat-token> <wat-name-raw>))
 
+  #|proc:<wat-annotation-head>
+  The `<wat-annotation-head>` procedure takes nonempty string `name`. It returns a parser for
+  the opening parenthesis and annotation ID denoting `name`, allowing bare and quoted IDs.
+  The parser returns the decoded ID and consumes following trivia, leaving the annotation body.
+  |#
+  (define (<wat-annotation-head> name)
+    (pcheck ([(lambda (value) (and (string? value) (positive? (string-length value)))) name])
+            (<~1> (<string> "(@")
+                  (<satisfy> <wat-annotation-id> (lambda (id) (string=? name id))
+                             "unexpected annotation identifier")
+                  <wat-trivia>)))
+
   #|proc:<wat-identifier>
   The `<wat-identifier>` parser reads a dollar sign and a bare identifier or nonempty quoted
   UTF-8 name. It returns the decoded identifier prefixed by a dollar sign and consumes trivia.
@@ -336,6 +348,20 @@
   unsigned 64-bit integer and consumes following trivia.
   |#
   (define <wat-u64> (numeric-token-parser (bounded-natural-parser 64)))
+
+  #|proc:<wat-i8>
+  The `<wat-i8>` parser reads an eight-bit integer spelling for a SIMD lane. Signed negative
+  spellings must fit the signed range; nonnegative spellings may use all eight bits.
+  It returns the value modulo 256 and consumes following trivia.
+  |#
+  (define <wat-i8> (numeric-token-parser (modular-integer-parser 8)))
+
+  #|proc:<wat-i16>
+  The `<wat-i16>` parser reads a sixteen-bit integer spelling for a SIMD lane. Signed negative
+  spellings must fit the signed range; nonnegative spellings may use all sixteen bits.
+  It returns the value modulo 65536 and consumes following trivia.
+  |#
+  (define <wat-i16> (numeric-token-parser (modular-integer-parser 16)))
 
   #|proc:<wat-i32>
   The `<wat-i32>` parser reads a signed decimal or hexadecimal 32-bit integer. It returns the

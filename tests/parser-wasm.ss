@@ -676,7 +676,7 @@
 
      (let ([module
             (run-textual-parser parser-wat-module-syntax
-                                "(module (elem) (data))")])
+                                "(module (elem func) (data))")])
        (= 2 (vector-length (wat-module-fields module))))
 
      ;; error: an element segment cannot contain an untyped reserved token.
@@ -3847,13 +3847,13 @@
             (= 9 (parser-error-offset error))
             (= 0 (parser-error-line error))
             (= 9 (parser-error-column error))
-            (equal? '("@custom" "rec" "type" "import" "func" "table" "memory"
+            (equal? '("(@" "rec" "type" "import" "func" "table" "memory"
                       "global" "tag" "export" "start" "elem" "data")
                     (parser-error-expected error))
             (char=? (integer->char #x3b) (parser-error-found error))
             (string=?
              (string-append
-              "<string>:1:10: expected \"@custom\", \"rec\", \"type\", \"import\", "
+              "<string>:1:10: expected \"(@\", \"rec\", \"type\", \"import\", "
               "\"func\", \"table\", \"memory\", \"global\", \"tag\", \"export\", "
               "\"start\", \"elem\", or \"data\", got #\\;")
              (parser-error->string error))))

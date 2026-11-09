@@ -124,7 +124,7 @@
   (define function-element-parser
     (<map> (lambda (fields)
              (make-wasm-element 'active
-                                (make-wasm-reference-type #t 'func)
+                                (make-wasm-reference-type #f 'func)
                                 0
                                 (cadr fields)
                                 (function-index-initializers (caddr fields))))
@@ -133,7 +133,7 @@
   (define passive-function-element-parser
     (<map> (lambda (fields)
              (make-wasm-element 'passive
-                                (make-wasm-reference-type #t 'func)
+                                (make-wasm-reference-type #f 'func)
                                 #f #f
                                 (function-index-initializers (cadr fields))))
            (<~> element-kind-parser (<wasm-vector> <wasm-u32>))))
@@ -141,7 +141,7 @@
   (define explicit-function-element-parser
     (<map> (lambda (fields)
              (make-wasm-element 'active
-                                (make-wasm-reference-type #t 'func)
+                                (make-wasm-reference-type #f 'func)
                                 (car fields) (cadr fields)
                                 (function-index-initializers (cadddr fields))))
            (<~> <wasm-u32> <wasm-expression> element-kind-parser
@@ -150,7 +150,7 @@
   (define declarative-function-element-parser
     (<map> (lambda (fields)
              (make-wasm-element 'declarative
-                                (make-wasm-reference-type #t 'func)
+                                (make-wasm-reference-type #f 'func)
                                 #f #f
                                 (function-index-initializers (cadr fields))))
            (<~> element-kind-parser (<wasm-vector> <wasm-u32>))))

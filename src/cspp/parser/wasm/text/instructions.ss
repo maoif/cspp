@@ -298,18 +298,6 @@
            (<result> (make-immutable-vector (apply bytevector lane*)))
            (<fail-with> "invalid WebAssembly shuffle lane")))))
 
-  (define integer-lane-parser
-    (lambda (width parser-width parser)
-      (<bind>
-       parser
-       (lambda (value)
-         (let ([limit (expt 2 width)]
-               [negative-limit (- (expt 2 parser-width)
-                                  (expt 2 (fx1- width)))])
-           (if (or (< value limit) (>= value negative-limit))
-               (<result> (logand value (- limit 1)))
-               (<fail-with> "WebAssembly vector lane is out of range")))))))
-
   (define vector-lanes-immediate
     (lambda (lane-parser lane-count lane-width lane-bits)
       (<map>
@@ -332,10 +320,10 @@
   (define vector-immediate
     (</> (<~1> (<wat-keyword> "i8x16")
                 (vector-lanes-immediate
-                 (integer-lane-parser 8 32 <wat-i32>) 16 1 values))
+                 <wat-i8> 16 1 values))
          (<~1> (<wat-keyword> "i16x8")
                 (vector-lanes-immediate
-                 (integer-lane-parser 16 32 <wat-i32>) 8 2 values))
+                 <wat-i16> 8 2 values))
          (<~1> (<wat-keyword> "i32x4")
                 (vector-lanes-immediate <wat-i32> 4 4 values))
          (<~1> (<wat-keyword> "i64x2")

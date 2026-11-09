@@ -464,3 +464,128 @@
             [call (vector-ref body 3)])
        (and (= 1 (vector-ref (wasm-instruction-immediates call) 0))
             (= 2 (wasm-block-type-value (vector-ref (wasm-instruction-immediates block) 0))))))
+
+(define wasm-review-element-type
+  (lambda (module)
+    (wasm-element-reference-type (vector-ref (wasm-module-elements module) 0))))
+
+(mat wasm-review-indexed-element-types
+
+     (for-all
+      (lambda (source)
+        (let ([type (wasm-review-element-type (parse-wasm-text-module source))])
+          (and (not (wasm-reference-type-nullable? type))
+               (eq? 'func (wasm-reference-type-heap-type type)))))
+      '("(module (elem func))"
+        "(module (elem declare func))"
+        "(module (elem (i32.const 0)))"
+        "(module (elem (table 0) (i32.const 0) func))"))
+
+     (for-all
+      (lambda (payload)
+        (not (wasm-reference-type-nullable?
+              (wasm-review-element-type
+               (parse-wasm-binary-module
+                (make-wasm-module-bytes (make-wasm-section-bytes 9 payload)))))))
+      '(#vu8(1 0 65 0 11 0) #vu8(1 1 0 0)
+        #vu8(1 2 0 65 0 11 0 0) #vu8(1 3 0 0)))
+
+     ;; Expression-list flag 4 has a nullable default, unlike indexed lists.
+     (wasm-reference-type-nullable?
+      (wasm-review-element-type
+       (parse-wasm-binary-module
+        (make-wasm-module-bytes (make-wasm-section-bytes 9 #vu8(1 4 65 0 11 0)))))))
+
+(mat wasm-review-element-keyword
+
+     ;; Error case: a passive indexed list requires func, even when empty.
+     (wasm-review-error? (lambda () (parse-wasm-text-module "(module (elem))")))
+
+     ;; Error case: a declarative indexed list requires func.
+     (wasm-review-error?
+      (lambda () (parse-wasm-text-module "(module (elem declare 0))")))
+
+     ;; Error case: an explicit table use disables the legacy omission of func.
+     (wasm-review-error?
+      (lambda () (parse-wasm-text-module
+                  "(module (elem (table 0) (i32.const 0) 0))")))
+
+     (wasm-module? (parse-wasm-text-module "(module (elem (i32.const 0) 0))"))
+
+     (wasm-module? (parse-wasm-text-module "(module (elem (offset i32.const 0)))")))
+
+(define wasm-review-lanes
+  (lambda (shape lane count)
+    (format "(module (func v128.const ~a ~a~a drop))"
+            shape lane (apply string-append (make-list (fx1- count) " 0")))))
+
+(mat wasm-review-narrow-lanes
+
+     ;; Error cases: wide positive decimal/hex literals cannot masquerade as negative lanes.
+     (for-all
+      (lambda (lane)
+        (wasm-review-error?
+         (lambda () (parse-wasm-text-module (wasm-review-lanes "i8x16" lane 16)))))
+      '("4294967295" "+4294967295" "0xffffff80" "256" "-129"))
+
+     ;; Error cases: the same source-sign loss affects sixteen-bit lane validation.
+     (for-all
+      (lambda (lane)
+        (wasm-review-error?
+         (lambda () (parse-wasm-text-module (wasm-review-lanes "i16x8" lane 8)))))
+      '("4294967295" "0xffff8000" "65536" "-32769"))
+
+     (for-all
+      (lambda (case)
+        (let* ([module (parse-wasm-text-module
+                        (wasm-review-lanes (car case) (cadr case) (caddr case)))]
+               [body (wasm-function-body (vector-ref (wasm-module-functions module) 0))]
+               [bytes (vector-ref (wasm-instruction-immediates (vector-ref body 0)) 0)])
+          (= (cadddr case)
+             (if (= 16 (caddr case)) (bytevector-u8-ref bytes 0)
+                 (bytevector-u16-ref bytes 0 (endianness little))))))
+      '(("i8x16" "-128" 16 128) ("i8x16" "255" 16 255)
+        ("i16x8" "-32768" 8 32768) ("i16x8" "65535" 8 65535))))
+
+(define wasm-review-custom
+  (lambda (source)
+    (vector-ref (wasm-module-custom-sections (parse-wasm-text-module source)) 0)))
+
+(mat wasm-review-custom-annotation-names
+
+     (for-all
+      (lambda (source)
+        (let ([custom (wasm-review-custom source)])
+          (and (string=? "x" (wasm-custom-section-name custom))
+               (equal? #vu8(121) (wasm-custom-section-bytes custom)))))
+      '("(module (@custom \"x\" \"y\"))"
+        "(module (@\"custom\" \"x\" \"y\"))"
+        "(module (@\"cu\\73tom\" \"x\" \"y\"))"
+        "(module (@custom\"x\" \"y\"))"))
+
+     ;; Error case: an annotation head has no space between its opening parenthesis and @.
+     (wasm-review-error?
+      (lambda () (parse-wasm-text-module "(module ( @custom \"x\"))"))))
+
+(mat wasm-review-custom-anchors
+
+     (for-all
+      (lambda (case)
+        (eq? (cadr case)
+             (wasm-custom-section-after-section (wasm-review-custom (car case)))))
+      '(("(module (func) (@custom \"x\" (after func)))" function)
+        ("(module (func data.drop 0) (data \"x\")
+            (@custom \"x\" (after datacount)))" data-count)
+        ("(module (func) (@custom \"x\" (before first)))" #f)
+        ("(module (func) (@custom \"x\" (after first)))" type)
+        ("(module (data \"x\") (@custom \"x\" (after last)))" data)
+        ("(module (data \"x\") (@custom \"x\" (before last)))" code)
+        ("(module (func data.drop 0) (data \"x\")
+            (@custom \"x\" (before code)))" data-count)
+        ("(module (func data.drop 0) (data \"x\")
+            (@custom \"x\" (before datacount)))" element)))
+
+     ;; Error case: function is an internal section name, not the WAT anchor spelling func.
+     (wasm-review-error?
+      (lambda () (parse-wasm-text-module
+                  "(module (func) (@custom \"x\" (after function)))"))))

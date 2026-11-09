@@ -880,7 +880,8 @@
       (case section
         [(type) #f] [(import) 'type] [(function) 'import] [(table) 'function]
         [(memory) 'table] [(tag) 'memory] [(global) 'tag] [(export) 'global]
-        [(start) 'export] [(element) 'start] [(code) 'element] [(data) 'code]
+        [(start) 'export] [(element) 'start] [(data-count) 'element]
+        [(code) 'data-count] [(data) 'code]
         [else #f])))
 
   (define normalize-custom-section
