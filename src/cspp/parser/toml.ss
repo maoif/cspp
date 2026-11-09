@@ -597,7 +597,7 @@
     (lambda (hour minute second)
       (and (<= 0 hour 23)
            (<= 0 minute 59)
-           (<= 0 second 59))))
+           (<= 0 second 60))))
 
   (define fraction->nanoseconds
     (lambda (digits)

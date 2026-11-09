@@ -149,8 +149,8 @@
      ;; error: a minute must be between 0 and 59.
      (error? (parse-toml "t=12:60"))
 
-     ;; error: a second must be between 0 and 59.
-     (error? (parse-toml "t=12:00:60"))
+     ;; error: a second cannot exceed the leap-second value 60.
+     (error? (parse-toml "t=12:00:61"))
 
      ;; error: an offset hour must be between 0 and 23.
      (error? (parse-toml "t=1979-05-27T07:32+24:00"))
@@ -301,3 +301,19 @@
       (with-temporary-toml-bytes (bytevector #xc3 #x28) parse-toml-file))
 
      )
+
+(mat parse-toml-leap-seconds
+
+     (let ([value (toml-value "t=2016-12-31T23:59:60Z" "t")])
+       (and (= 60 (toml-offset-date-time-second value))
+            (= 0 (toml-offset-date-time-offset-seconds value))))
+
+     (let ([value (toml-value "t=2017-01-01T00:59:60.125+01:00" "t")])
+       (and (= 60 (toml-offset-date-time-second value))
+            (= 125000000 (toml-offset-date-time-nanosecond value))
+            (= 3600 (toml-offset-date-time-offset-seconds value))))
+
+     (= 60 (toml-local-date-time-second
+            (toml-value "t=2016-12-31T23:59:60" "t")))
+
+     (= 60 (toml-local-time-second (toml-value "t=23:59:60" "t"))))
