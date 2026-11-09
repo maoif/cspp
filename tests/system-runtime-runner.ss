@@ -21,11 +21,15 @@
 
 (define run-case
   (lambda (mode)
-    (let ([command (format "exec ~a setsid ~a --script=~a ~a"
-                           (if (string=? mode "tilde-lookup-gc")
+    (let* ([fixture (cond [(string=? mode "tilde-lookup-gc") "system-lookup-fixture.so"]
+                          [(string=? mode "native-allocation-errors")
+                           "system-allocation-fixture.so"]
+                          [else #f])]
+           [command (format "exec ~a setsid ~a --script=~a ~a"
+                           (if fixture
                                (string-append "env LD_PRELOAD="
                                  (shell-quote
-                                   (path-build test-root "tests/system-lookup-fixture.so")))
+                                   (path-build test-root (string-append "tests/" fixture))))
                                "")
                            (shell-quote (path-build test-root "cspp"))
                            (shell-quote (path-build test-root "tests/system-runtime.ss"))
@@ -36,7 +40,9 @@
           (lambda ()
             (put-bytevector input (string->utf8 "inherited-input"))
             (close-output-port input)
-            (let ([status (make-bytevector 4 0)] [deadline (+ (clock-ms) 15000)])
+            ;; The loader stress case can approach 15 seconds under user-mode emulation.
+            (let ([status (make-bytevector 4 0)]
+                  [deadline (+ (clock-ms) (if (string=? mode "loader-list-race") 30000 15000))])
               (let loop ()
                 (let ([result (native-wait pid status 1)])
                   (cond

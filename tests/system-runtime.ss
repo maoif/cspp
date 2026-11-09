@@ -356,32 +356,25 @@
 
   [(native-allocation-errors)
    ;; Error case: failed native argument copies must preserve ENOMEM, not report invalid arguments.
-   (let* ([argument (make-string 30000000 #\a)]
-          [original (make-bytevector 16 0)] [limited (make-bytevector 16 0)]
-          [get-limit (foreign-procedure "getrlimit" (int u8*) int)]
-          [set-limit (foreign-procedure "setrlimit" (int u8*) int)]
-          [page-size ((foreign-procedure "getpagesize" () int))]
-          [pages (call-with-input-file "/proc/self/statm"
-                   (lambda (port)
-                     (string->number (car (string-split (get-line port) #\space)))))]
-          [codes #f])
-     (check (= 0 (get-limit 9 original)))
-     (bytevector-copy! original 0 limited 0 16)
-     (bytevector-u64-native-set! limited 0 (+ (* pages page-size) 4194304))
-     (dynamic-wind
-       (lambda () (check (= 0 (set-limit 9 limited))))
-       (lambda ()
-         (set! codes
-           (map
-             (lambda (thunk)
-               (guard (failure [(system-error? failure) (system-error-code failure)])
-                 (thunk)
-                 #f))
-             (list (lambda () (process-wait (process-spawn "/bin/true" (list argument) '())))
-                   (lambda () (process-capture /bin/true (begin argument)))
-                   (lambda () (process-run-pipeline (list (list "/bin/true" argument))))))))
-       (lambda () (check (= 0 (set-limit 9 original)))))
-     (check (equal? '(12 12 12) codes)))]
+   ;; Address-space limits do not reliably constrain guest allocations under user-mode emulation.
+   (load-shared-object (getenv "LD_PRELOAD"))
+   (let ([argument (make-string 1024 #\a)]
+         [arm (foreign-procedure "cspp_allocation_fixture_arm" (size_t) void)]
+         [failed (foreign-procedure "cspp_allocation_fixture_failed" () int)])
+     (for-each
+       (lambda (thunk)
+         (dynamic-wind
+           ;; Native UTF-8 copies reserve four bytes per Scheme character and one terminator.
+           (lambda () (arm 4097))
+           (lambda ()
+             (check (guard (failure [(system-error? failure) (= 12 (system-error-code failure))])
+                      (thunk)
+                      #f))
+             (check (= 1 (failed))))
+           (lambda () (arm 0))))
+       (list (lambda () (process-wait (process-spawn "/bin/true" (list argument) '())))
+             (lambda () (process-capture /bin/true (begin argument)))
+             (lambda () (process-run-pipeline (list (list "/bin/true" argument)))))))]
 
   [(localized-errors)
    ;; Error case: UTF-8 native messages must be decoded rather than widened byte by byte.
