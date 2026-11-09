@@ -972,31 +972,35 @@
                (= #o6044 (file-mode path)))))))
 
 (mat file-removetree-best-effort
-     ($with-fs-fixture
-      (lambda (root)
-        (let ([blocked (path-build root "blocked")])
-          (mkdir blocked)
-          (write-string (path-build blocked "keep") "keep")
-          (dynamic-wind
-            (lambda () (file-chmod blocked #o000))
-            (lambda ()
-              ;; Error case: an inaccessible subtree must not prevent sibling removals.
-              (and (eq? #f (file-removetree root #f))
-                   (not (file-exists? (path-build root "top.txt")))
-                   (not (file-exists? (path-build root "sub")))
-                   (file-directory? blocked #f)))
-            (lambda () (when (file-directory? blocked #f) (file-chmod blocked #o700)))))))
+     ;; Root can bypass mode bits, so these permission failures require a non-root user.
+     (or (= (geteuid) 0)
+         ($with-fs-fixture
+          (lambda (root)
+            (let ([blocked (path-build root "blocked")])
+              (mkdir blocked)
+              (write-string (path-build blocked "keep") "keep")
+              (dynamic-wind
+                (lambda () (file-chmod blocked #o000))
+                (lambda ()
+                  ;; Error case: an inaccessible subtree must not prevent sibling removals.
+                  (and (eq? #f (file-removetree root #f))
+                       (not (file-exists? (path-build root "top.txt")))
+                       (not (file-exists? (path-build root "sub")))
+                       (file-directory? blocked #f)))
+                (lambda ()
+                  (when (file-directory? blocked #f) (file-chmod blocked #o700))))))))
 
-     ($with-fs-fixture
-      (lambda (root)
-        (let ([sub (path-build root "sub")])
-          (dynamic-wind
-            (lambda () (file-chmod sub #o555))
-            (lambda ()
-              ;; Error case: failed unlinks must be reflected in the boolean result.
-              (and (eq? #f (file-removetree sub #f))
-                   (file-exists? (path-build sub "nested.txt"))))
-            (lambda () (file-chmod sub #o700))))))
+     (or (= (geteuid) 0)
+         ($with-fs-fixture
+          (lambda (root)
+            (let ([sub (path-build root "sub")])
+              (dynamic-wind
+                (lambda () (file-chmod sub #o555))
+                (lambda ()
+                  ;; Error case: failed unlinks must be reflected in the boolean result.
+                  (and (eq? #f (file-removetree sub #f))
+                       (file-exists? (path-build sub "nested.txt"))))
+                (lambda () (file-chmod sub #o700)))))))
 
      ($with-fs-fixture
       (lambda (root)
