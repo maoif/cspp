@@ -1077,6 +1077,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
       [(who msg)
        (define-parser msg-f-parser
          (let ([msg (format "~a: ~a (~a/~a)" who msg (input-pos inp) (input-len inp))])
+           (println msg)
            (values #f msg (parser-failure-custom inp msg))))
        msg-f-parser]))
 
@@ -1679,9 +1680,10 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:<sleb128>
-  The `<sleb128>` procedure takes positive fixnum `bit-length`.
-  It returns a binary parser that reads a signed LEB128-encoded integer.
-  The parser interprets the sign bit using `bit-length` bits.
+  The `<sleb128>` procedure takes positive fixnum `bit-length` and returns a binary parser
+  for signed LEB128 integers in that width. At most `ceiling(bit-length / 7)` bytes are
+  accepted, and unused high bits in the final byte must match the sign bit. Sign padding
+  within this byte limit is permitted. The parser returns the decoded signed integer.
   |#
   (define-who (<sleb128> bit-length)
     (pcheck ([sleb128-len? bit-length])
@@ -1689,14 +1691,24 @@ For simplicity, "PC" in the following documentation means "parser combinator".
               (let loop ([shift 0] [n 0])
                 (let ([b (peek-u8 inp)])
                   (if b
-                      (let* ([bits (fxlogand b #x7f)] [cont (fxsrl (fxlogand b #x80) 7)]
+                      (let* ([bits (fxlogand b #x7f)]
+                             [continued? (logbit? 7 b)]
+                             [used-bits (min 7 (- bit-length shift))]
+                             [unused-mask (fxlogxor #x7f (fx1- (fxsll 1 used-bits)))]
+                             [negative? (logbit? (fx1- used-bits) bits)]
                              [n (+ n (ash bits shift))])
-                        (if (fx= cont 0)
-                            (let ([res (if (and (fx< shift bit-length) (logbit? 6 b))
-                                           (logor n (ash -1 (fx+ 7 shift)))
-                                           n)])
-                              (values #t res inp))
-                            (loop (fx+ shift 7) n)))
+                        (cond
+                          [(and continued? (<= (- bit-length shift) 7))
+                           (values #f #f
+                                   (parser-failure-custom inp "signed LEB128 is too long"))]
+                          [(not (= (fxlogand bits unused-mask)
+                                   (if negative? unused-mask 0)))
+                           (values #f #f
+                                   (parser-failure-custom
+                                    inp "signed LEB128 has inconsistent unused bits"))]
+                          [continued? (loop (+ shift 7) n)]
+                          [else
+                           (values #t (if (logbit? 6 b) (- n (ash 1 (+ shift 7))) n) inp)]))
                       (values #f #f (parser-failure-eof inp '(sleb128) #f))))))
             sleb128-parser))
 

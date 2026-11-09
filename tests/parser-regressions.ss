@@ -423,3 +423,50 @@
        (= 2 (toml-table-ref b "d")))
 
      )
+
+(mat parser-signed-leb128-width
+
+     (for-all
+      (lambda (case)
+        (= (caddr case) (run-binary-parser (<sleb128> (car case)) (cadr case))))
+      '((1 #vu8(0) 0) (1 #vu8(127) -1)
+        (7 #vu8(63) 63) (7 #vu8(64) -64)
+        (8 #vu8(255 0) 127) (8 #vu8(128 127) -128)
+        (8 #vu8(255 127) -1) (8 #vu8(128 0) 0)))
+
+     ;; Error cases: padding cannot extend a signed LEB128 beyond its byte width.
+     (for-all
+      (lambda (bytes)
+        (parser-error?
+         (parser-error-from (lambda () (run-binary-parser (<sleb128> 8) bytes)))))
+      '(#vu8(255 255 127) #vu8(128 128 0) #vu8(128 128)))
+
+     ;; Error cases: unused terminal bits must all match the signed value's sign bit.
+     (for-all
+      (lambda (case)
+        (parser-error?
+         (parser-error-from
+          (lambda () (run-binary-parser (<sleb128> (car case)) (cadr case))))))
+      '((1 #vu8(1)) (1 #vu8(126)) (7 #vu8(128 0))
+        (8 #vu8(128 1)) (8 #vu8(255 126))))
+
+     ;; Error case: a continuation byte cannot end the input before a terminal byte.
+     (parser-error?
+      (parser-error-from (lambda () (run-binary-parser (<sleb128> 8) #vu8(128))))))
+
+(mat parser-failure-message-output
+
+     (string=? "review: message (0/0)\n"
+               (with-output-to-string
+                 (lambda ()
+                   (parser-error-from
+                    (lambda () (run-textual-parser (<msg-f> 'review "message") ""))))))
+
+     ;; Error case: printing a failure message must still fail the parse.
+     (let ([failure #f])
+       (with-output-to-string
+         (lambda ()
+           (set! failure
+                 (parser-error-from
+                  (lambda () (run-textual-parser (<msg-f> 'review "message") ""))))))
+       (parser-error? failure)))

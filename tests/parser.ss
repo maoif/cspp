@@ -651,12 +651,12 @@
                                   (apply append
                                          (map (lambda (n) (encode-uleb128 n)) n*)))])
                   (equal? n* (runB (<rep> <uleb128> 20) bv)))
-                (let* ([n* (random-list (lambda () (random (expt 2 bits))) 20 21)]
+                (let* ([n* (random-list (lambda () (random (expt 2 (fx1- bits)))) 20 21)]
                        [bv (apply bytevector
                                   (apply append
                                          (map (lambda (n) (encode-sleb128 bits n)) n*)))])
                   (equal? n* (runB (<rep> (<sleb128> bits) 20) bv)))
-                (let* ([n* (random-list (lambda () (- (random (expt 2 bits)))) 20 21)]
+                (let* ([n* (random-list (lambda () (- (random (expt 2 (fx1- bits))))) 20 21)]
                        [bv (apply bytevector
                                   (apply append
                                          (map (lambda (n) (encode-sleb128 bits n)) n*)))])
