@@ -589,3 +589,48 @@
      (wasm-review-error?
       (lambda () (parse-wasm-text-module
                   "(module (func) (@custom \"x\" (after function)))"))))
+
+(mat wasm-review-custom-default
+
+     (for-all
+      (lambda (source)
+        (eq? 'data (wasm-custom-section-after-section (wasm-review-custom source))))
+      '("(module (@custom \"x\" \"y\") (data \"z\"))"
+        "(module (func) (@custom \"x\" \"y\") (data \"z\"))"
+        "(module (@\"custom\" \"x\" \"y\"))"))
+
+     (not (wasm-custom-section-after-section
+           (wasm-review-custom "(module (@custom \"x\" (before first)))"))))
+
+(mat wasm-review-signed-decoder-reuse
+
+     (let* ([count 10000] [bytes (make-bytevector (* count 5) 255)]
+            [parser (<rep> <wasm-s32> count)])
+       (do ([i 4 (fx+ i 5)]) ((fx>= i (bytevector-length bytes)))
+         (bytevector-u8-set! bytes i 127))
+       (let* ([before (statistics)]
+              [values (run-binary-parser parser bytes)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and (= count (length values))
+              (for-all (lambda (value) (= value -1)) values)
+              (< allocated 2000000)))))
+
+(mat wasm-review-string-runs
+
+     (equal? (append-bytevectors
+              (string->utf8 "aλ😀") #vu8(255 0 34 92 10)
+              (string->utf8 "z\xfeff;"))
+             (parse-wat-lexeme <wat-string> "\"aλ😀\\ff\\00\\\"\\\\\\nz\\u{feff}\""))
+
+     ;; Error case: byte strings can contain invalid UTF-8, but names cannot.
+     (wasm-review-error? (lambda () (parse-wat-lexeme <wat-name> "\"abc\\ffdef\"")))
+
+     ;; Error case: batching must still reject literal control characters.
+     (wasm-review-error?
+      (lambda () (parse-wat-lexeme <wat-string> "\"abc\tdef\"")))
+
+     (let* ([count 16384] [source (string-append "\"" (make-string count #\a) "\"")]
+            [before (statistics)]
+            [bytes (parse-wat-lexeme <wat-string> source)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (bytevector=? bytes (make-bytevector count 97)) (< allocated 6000000))))

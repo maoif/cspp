@@ -30,38 +30,6 @@
                                 (<result> (+ value (ash payload shift)))])))))])
           (next 0 0 0)))))
 
-  (define wasm-signed-parser
-    (lambda (width)
-      (let ([maximum-bytes (quotient (+ width 6) 7)])
-        (letrec ([next
-                  (lambda (index shift value)
-                    (<bind>
-                     <u8>
-                     (lambda (byte)
-                       (let* ([payload (logand byte #x7f)]
-                              [remaining (- width shift)]
-                              [used-bits (min 7 remaining)]
-                              [value-mask (fx1- (expt 2 used-bits))]
-                              [unused-mask (logxor #x7f value-mask)]
-                              [negative?
-                               (not (zero? (logand payload
-                                                   (ash 1 (fx1- used-bits)))))]
-                              [unused (logand payload unused-mask)]
-                              [continued? (not (zero? (logand byte #x80)))]
-                              [next-value
-                               (+ value (ash (logand payload value-mask) shift))])
-                         (cond [(not (= unused (if negative? unused-mask 0)))
-                                (<fail-with> "integer has inconsistent unused bits")]
-                               [(and continued? (= index (fx1- maximum-bytes)))
-                                (<fail-with> "integer encoding is too long")]
-                               [continued?
-                                (next (fx1+ index) (+ shift 7) next-value)]
-                               [negative?
-                                (<result>
-                                 (- next-value (ash 1 (+ shift used-bits))))]
-                               [else (<result> next-value)])))))])
-          (next 0 0 0)))))
-
   ;; Direct slices avoid an intermediate list and still belong to each invocation.
   (define float-parser
     (lambda (width size ref)
@@ -85,17 +53,17 @@
   #|proc:<wasm-s32>
   The `<wasm-s32>` parser reads a bounded signed 32-bit LEB128 integer.
   |#
-  (define <wasm-s32> (wasm-signed-parser 32))
+  (define <wasm-s32> (<sleb128> 32))
 
   #|proc:<wasm-s33>
   The `<wasm-s33>` parser reads a bounded signed 33-bit LEB128 integer.
   |#
-  (define <wasm-s33> (wasm-signed-parser 33))
+  (define <wasm-s33> (<sleb128> 33))
 
   #|proc:<wasm-s64>
   The `<wasm-s64>` parser reads a bounded signed 64-bit LEB128 integer.
   |#
-  (define <wasm-s64> (wasm-signed-parser 64))
+  (define <wasm-s64> (<sleb128> 64))
 
   #|proc:<wasm-f32>
   The `<wasm-f32>` parser reads four little-endian bytes and preserves their exact bits.

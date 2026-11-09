@@ -133,7 +133,7 @@
 
   (define <name>
     (<map> (lambda (value)
-             (apply string (cons (car value) (cadr value))))
+             (list->string (cons (car value) (cadr value))))
            (<~> <name-start-character> (<many> <name-character>))))
 
   (define <whitespace-character>
@@ -149,7 +149,7 @@
   (define (<validated-character-reference> parser radix)
     (<bind> parser
             (lambda (digits)
-              (let ([value (string->number (apply string digits) radix)])
+              (let ([value (string->number (list->string digits) radix)])
                 (if (and value
                          (<= value #x10ffff)
                          (not (<= #xd800 value #xdfff))
@@ -180,7 +180,7 @@
          <predefined-reference>))
 
   (define (attribute-value-parser quote)
-    (<map> (lambda (characters) (apply string characters))
+    (<map> list->string
            (<~1> (<char> quote)
                  (<many>
                   (</> <reference>
@@ -216,7 +216,7 @@
 
   (define <comment>
     (<map> (lambda (pieces)
-             (make-xml-comment (apply string (apply append pieces))))
+             (make-xml-comment (list->string (apply append pieces))))
            (<~1> (<string> "<!--")
                  (<many> <comment-piece>)
                  (<string> "-->"))))
@@ -227,7 +227,7 @@
 
   (define <cdata>
     (<map> (lambda (characters)
-             (make-xml-cdata (apply string characters)))
+             (make-xml-cdata (list->string characters)))
            (<~1> (<string> "<![CDATA[")
                  (<many> <not-cdata-end>)
                  (<string> "]]>"))))
@@ -276,7 +276,7 @@
 
   (define <encoding-name>
     (<map> (lambda (value)
-             (apply string (cons (car value) (cadr value))))
+             (list->string (cons (car value) (cadr value))))
            (<~> (<satisfy-char> (lambda (character)
                                   (or (char<=? #\a character #\z)
                                       (char<=? #\A character #\Z))))
@@ -373,7 +373,7 @@
 
   (define <character-data>
     (<map> (lambda (characters)
-             (make-xml-text (apply string characters)))
+             (make-xml-text (list->string characters)))
            (<some> <character-data-character>)))
 
   (declare-lazy-parser <element>)

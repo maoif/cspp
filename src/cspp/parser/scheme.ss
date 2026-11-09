@@ -83,14 +83,14 @@
         (</> (<map> (lambda (val)
                       (string-append (car val)
                                      ;; list of chars
-                                     (apply string (cadr val))))
+                                     (list->string (cadr val))))
                     (<~> (<string> "->") (<many> <subsequent>)))
              ;; order matters: -> vs. -
              (<string> "+") (<string> "-") (<string> "...")))
       (define <identifier>
         (<map> string->symbol
                (</> (<map> (lambda (val)
-                             (apply string (cons (car val) (cadr val))))
+                             (list->string (cons (car val) (cadr val))))
                            (<~> <initial> (<many> <subsequent>)))
                     <peculiar-identifier>)))
       (define <s-symbol> (<scalar-token> <identifier>))

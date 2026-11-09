@@ -149,3 +149,14 @@ for elf64 in (False, True):
             payload = bytearray(compressed(b'\0'))
             struct.pack_into('<I', payload, 4, 1)
             variant_elf('compressed-bad-reserved', [dict(strings, data=payload)])
+
+# Symbol-free REL/RELA sections in executables/shared files need no symbol table.
+for elf64 in (False, True):
+    for endian in ('<', '>'):
+        tag = ('64' if elf64 else '32') + ('le' if endian == '<' else 'be')
+        for addends in (False, True):
+            entry_format = ('QQ' if elf64 else 'II') + ('q' if elf64 else 'i') * addends
+            payload = struct.pack(endian + entry_format, 0x1000, 8, *([-4] if addends else []))
+            variant_elf('symbolless-' + ('rela-' if addends else 'rel-') + tag,
+                        [dict(type=4 if addends else 9, align=8 if elf64 else 4,
+                              entsize=len(payload), data=payload)], elf64, endian, filetype=3)

@@ -390,7 +390,7 @@
              (not (char=? character #\return))))))
 
   (define <basic-string>
-    (<map> (lambda (characters) (apply string characters))
+    (<map> list->string
            (<~1> (<char> #\")
                  (<many>
                   (</> <basic-escape>
@@ -399,7 +399,7 @@
                  (<char> #\"))))
 
   (define <literal-string>
-    (<map> (lambda (characters) (apply string characters))
+    (<map> list->string
            (<~1> (<char> #\')
                  (<many> (<satisfy-char> literal-character?
                                           "invalid literal string character"))
@@ -436,8 +436,7 @@
 
   (define <multiline-basic-string>
     (<map> (lambda (value)
-             (apply string
-                    (append (filter char? (car value)) (cadr value))))
+             (list->string (append (filter char? (car value)) (cadr value))))
            (<~2> (<string> "\"\"\"")
                  (<optional> <newline>)
                  (<~> (<many> <multiline-basic-character>)
@@ -464,7 +463,7 @@
 
   (define <multiline-literal-string>
     (<map> (lambda (value)
-             (apply string (append (car value) (cadr value))))
+             (list->string (append (car value) (cadr value))))
            (<~2> (<string> "'''")
                  (<optional> <newline>)
                  (<~> (<many> <multiline-literal-character>)
@@ -500,7 +499,7 @@
 
   (define (<digit-sequence> digit-parser)
     (<map> (lambda (value)
-             (apply string (cons (car value) (cadr value))))
+             (list->string (cons (car value) (cadr value))))
            (<~> digit-parser
                 (<many> (~> (<optional> (<char> #\_)) digit-parser)))))
 
@@ -512,7 +511,7 @@
   (define <unsigned-decimal-integer-source>
     (</> (<as> "0" (<char> #\0))
          (<map> (lambda (value)
-                  (apply string (cons (car value) (cadr value))))
+                  (list->string (cons (car value) (cadr value))))
                 (<~> (<one-of> "123456789")
                      (<many> (~> (<optional> (<char> #\_)) <digit>))))))
 
@@ -571,7 +570,7 @@
 
   (define fixed-digits
     (lambda (count)
-      (<map> (lambda (digits) (string->number (apply string digits)))
+      (<map> (lambda (digits) (string->number (list->string digits)))
              (<rep> <digit> count))))
 
   (define leap-year?

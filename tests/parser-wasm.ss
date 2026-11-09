@@ -432,7 +432,7 @@
             (wat-module-field? first-field)
             (eq? 'custom (wat-module-field-kind first-field))
             (= 16 (wat-module-field-pos first-field))
-            (not
+            (eq? 'data
              (wat-custom-placement-after
               (vector-ref (wat-module-field-data first-field) 2)))
             (eq? 'recursive-type (wat-module-field-kind recursive-field))
@@ -560,7 +560,7 @@
                  (@custom \"after-import\" \"payload\"))")]
             [custom (vector-ref (wat-module-fields module) 1)]
             [placement (vector-ref (wat-module-field-data custom) 2)])
-       (eq? 'import (wat-custom-placement-after placement)))
+       (eq? 'data (wat-custom-placement-after placement)))
 
      (let* ([module
              (run-textual-parser

@@ -139,13 +139,25 @@ For simplicity, "PC" in the following documentation means "parser combinator".
     (lambda (x)
       (and (integer? x) (exact? x) (<= 0 x #xff))))
 
-  (define unique-cons
-    (lambda (x x*)
-      (if (exists (lambda (y) (equal? x y)) x*) x* (append x* (list x)))))
-
-  (define unique-append
-    (lambda (x* y*)
-      (fold-left (lambda (res x) (unique-cons x res)) x* y*)))
+  ;; Small failures avoid a hash table; wide choices switch to indexed deduplication.
+  (define make-unique-builder
+    (lambda ()
+      (let ([seen #f] [count 0] [builder (make-list-builder)])
+        (case-lambda
+          [() (builder)]
+          [(value)
+           (unless (if seen
+                       (hashtable-contains? seen value)
+                       (member value (builder)))
+             (builder value)
+             (if seen
+                 (hashtable-set! seen value #t)
+                 (begin
+                   (set! count (fx1+ count))
+                   (when (fx= count 16)
+                     (let ([table (make-hashtable equal-hash equal?)])
+                       (for-each (lambda (item) (hashtable-set! table item #t)) (builder))
+                       (set! seen table))))))]))))
 
   (define write-to-string
     (lambda (x)
@@ -179,12 +191,16 @@ For simplicity, "PC" in the following documentation means "parser combinator".
              (format "~a or ~a" (format-parser-item (car x*))
                      (format-parser-item (cadr x*)))]
             [else
-             (let loop ([x* x*] [res ""])
-               (cond [(null? (cdr x*))
-                      (format "~aor ~a" res (format-parser-item (car x*)))]
-                     [else
-                      (loop (cdr x*)
-                            (format "~a~a, " res (format-parser-item (car x*))))]))])))
+             (call-with-port (open-output-string)
+               (lambda (port)
+                 (let loop ([items x*])
+                   (if (null? (cdr items))
+                       (begin (display "or " port)
+                              (display (format-parser-item (car items)) port))
+                       (begin (display (format-parser-item (car items)) port)
+                              (display ", " port)
+                              (loop (cdr items)))))
+                 (get-output-string port)))])))
 
   (define parser-failure-message*
     (lambda (failure)
@@ -616,30 +632,28 @@ For simplicity, "PC" in the following documentation means "parser combinator".
             [(null? (cdr failure*))
              (parser-failure-add-context (car failure*) '</>)]
             [else
-             (let* ([first (car failure*)]
-                    [expected (fold-left
-                               (lambda (res failure)
-                                 (unique-append res (parser-failure-expected failure)))
-                               '()
-                               failure*)]
-                    [found (parser-failure-found first)]
-                    [messages (fold-left
-                               (lambda (messages failure)
-                                 (let ([message (parser-failure-message failure)])
-                                   (if message (unique-cons message messages) messages)))
-                               '() failure*)])
-               (make-parser-failure 'expected
-                                    (and (pair? messages)
-                                         (apply string-append
-                                                (cons (car messages)
-                                                      (map (lambda (message)
-                                                             (string-append "; " message))
-                                                           (cdr messages)))))
-                                    (parser-failure-position first)
-                                    expected
-                                    found
-                                    '(</>)
-                                    failure*))])))
+             (let ([first (car failure*)]
+                   [expected (make-unique-builder)]
+                   [messages (make-unique-builder)])
+               (for-each
+                (lambda (failure)
+                  (for-each expected (parser-failure-expected failure))
+                  (let ([message (parser-failure-message failure)])
+                    (when message (messages message))))
+                failure*)
+               (let ([messages (messages)])
+                 (make-parser-failure 'expected
+                                      (and (pair? messages)
+                                           (apply string-append
+                                                  (cons (car messages)
+                                                        (map (lambda (message)
+                                                               (string-append "; " message))
+                                                             (cdr messages)))))
+                                      (parser-failure-position first)
+                                      (expected)
+                                      (parser-failure-found first)
+                                      '(</>)
+                                      failure*)))])))
 
   (define ensure-parser-failure
     (case-lambda
@@ -2154,7 +2168,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   |#
   (define (<as-string> parser)
     (pcheck ([parser? parser])
-            (<map> (lambda (value) (apply string value)) parser)))
+            (<map> list->string parser)))
 
 
   #|proc:<as-symbol>
@@ -2163,28 +2177,32 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   |#
   (define (<as-symbol> parser)
     (pcheck ([parser? parser])
-            (<map> (lambda (value) (string->symbol (apply string value))) parser)))
+            (<map> (lambda (value) (string->symbol (list->string value))) parser)))
 
   #|proc:<as-integer>
   The `<as-integer>` procedure takes parser `parser` and returns a parser that converts
-  its parsed character list to an integer.
+  its parsed decimal character list to an integer, allowing an optional leading sign.
+  An empty list returns `#f`. A sign without digits fails with a parser error through a runner.
   |#
   (define (<as-integer> parser)
     (pcheck ([parser? parser])
-            (<map> (lambda (value)
-                     (if (null? value)
-                         #f
-                         (let-values ([(sign digit*)
-                                       (cond [(eq? #\+ (car value))
-                                              (values + (cdr value))]
-                                             [(eq? #\- (car value))
-                                              (values - (cdr value))]
-                                             [else (values + value)])])
-                           (sign (fold-left
-                                  (lambda (sum digit)
-                                    (+ (* sum 10) (char->num digit)))
-                                  0 digit*)))))
-                   parser)))
+            (<bind> parser
+                    (lambda (value)
+                      (if (null? value)
+                          (<result> #f)
+                          (let-values ([(sign digit*)
+                                        (cond [(eq? #\+ (car value))
+                                               (values + (cdr value))]
+                                              [(eq? #\- (car value))
+                                               (values - (cdr value))]
+                                              [else (values + value)])])
+                            (if (null? digit*)
+                                (<fail-with> "integer sign must be followed by digits")
+                                (<result>
+                                 (sign (fold-left
+                                        (lambda (sum digit)
+                                          (+ (* sum 10) (char->num digit)))
+                                        0 digit*))))))))))
 
   ;; TODO neg
   ;; TODO avoid building the list

@@ -470,3 +470,69 @@
                  (parser-error-from
                   (lambda () (run-textual-parser (<msg-f> 'review "message") ""))))))
        (parser-error? failure)))
+
+(mat parser-choice-diagnostic-cost
+
+     ;; Error case: preserve first occurrence order and punctuation while merging duplicates.
+     (let ([err (parser-error-from
+                 (lambda ()
+                   (run-textual-parser
+                    (</> (<string> "a") (<string> "b") (<string> "a") (<string> "c"))
+                    "x")))])
+       (and (equal? '("a" "b" "c") (parser-error-expected err))
+            (string=? "expected \"a\", \"b\", or \"c\", got #\\x"
+                      (parser-error-message err))
+            (= 4 (length (parser-error-causes err)))))
+
+     ;; Error case: useful custom messages remain ordered and distinct.
+     (let ([err (parser-error-from
+                 (lambda ()
+                   (run-textual-parser
+                    (</> (<fail-with> "first") (<fail-with> "second")
+                         (<fail-with> "first")) "")))])
+       (string=? "<fail-with>: first; <fail-with>: second" (parser-error-message err)))
+
+     ;; Error case: a wide choice should not copy every prior expectation/message prefix.
+     (let* ([count 1000]
+            [parser (apply </> (map (lambda (i) (<string> (format "keyword~a" i)))
+                                   (iota count)))]
+            [before (statistics)]
+            [err (parser-error-from (lambda () (run-textual-parser parser "x")))]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= count (length (parser-error-expected err))) (< allocated 10000000))))
+
+(mat parser-character-list-conversion
+
+     (let* ([characters (make-list 262144 #\a)]
+            [parser (<as-string> (<result> characters))]
+            [before (statistics)]
+            [text (run-textual-parser parser "")]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (string=? text (make-string 262144 #\a)) (< allocated 2000000)))
+
+     (eq? 'abc (run-textual-parser (<as-symbol> (<result> '(#\a #\b #\c))) ""))
+
+     (let* ([parser (<as-string> (<result> '(#\a #\b)))]
+            [first (run-textual-parser parser "")]
+            [second (run-textual-parser parser "")])
+       (string-set! first 0 #\x)
+       (string=? "ab" second)))
+
+(mat parser-integer-sign-only
+
+     ;; Error cases: a sign must be followed by at least one digit.
+     (for-all
+      (lambda (text)
+        (let ([err (parser-error-from
+                    (lambda ()
+                      (run-textual-parser (<as-integer> (<some> (<one-of> "+-0123456789")))
+                                          text)))])
+          (and (parser-error? err) (= 1 (parser-error-offset err)))))
+      '("+" "-"))
+
+     (equal? '(0 -1 12)
+             (map (lambda (text)
+                    (run-textual-parser (<as-integer> (<some> (<one-of> "+-0123456789"))) text))
+                  '("+0" "-1" "12")))
+
+     (not (run-textual-parser (<as-integer> (<result> '())) "")))

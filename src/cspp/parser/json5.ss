@@ -111,7 +111,7 @@
 
   (define <identifier-name-raw>
     (<map> (lambda (value)
-             (apply string (cons (car value) (cadr value))))
+             (list->string (cons (car value) (cadr value))))
            (<~> <identifier-start> (<many> <identifier-part>))))
 
 ;;;;===----------------------------------------------------------------------===
@@ -220,7 +220,7 @@
     (lambda (quote)
       (<json5-token>
        (<map> (lambda (characters)
-                (apply string (filter char? characters)))
+                (list->string (filter char? characters)))
               (<~1> (<char> quote)
                     (<many>
                      (</> <escaped-string-character>
@@ -250,7 +250,7 @@
 
   (define <decimal-integer>
     (</> (<string> "0")
-         (<map> (lambda (value) (apply string (cons (car value) (cadr value))))
+         (<map> (lambda (value) (list->string (cons (car value) (cadr value))))
                 (<~> (<one-of> "123456789") (<many> <digit>)))))
 
   (define <decimal-base>

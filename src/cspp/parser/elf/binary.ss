@@ -387,12 +387,13 @@
                                          endianness-name count)
                         (vector-length all-headers)))))]
           [(4 9)
-           (and (linked-section-type? all-headers link '(2 11))
+           (and (or (zero? link) (linked-section-type? all-headers link '(2 11)))
                 (< (elf-section-header-info header) (vector-length all-headers))
-                (let* ([symbol-header (vector-ref all-headers link)]
-                       [symbol-raw (vector-ref raw-sections link)]
-                       [symbol-count (symbol-table-entry-count
-                                      class symbol-header symbol-raw)]
+                (let* ([symbol-count
+                        ;; STN_UNDEF relocations need no symbol table when sh_link is zero.
+                        (if (zero? link) 1
+                            (symbol-table-entry-count
+                             class (vector-ref all-headers link) (vector-ref raw-sections link)))]
                        [relocations (and symbol-count
                                          (decode-relocations
                                           raw class endianness-name header (= type 4)))])
@@ -783,11 +784,17 @@
                                       programs headers raw-sections)])
                          (if finish-problem
                              (problem-parser finish-problem length)
-                             (<~ (<result> file)
-                                 (<skip> <u8>
-                                         (- length
-                                            (decoded-elf-header-header-size header))))))]
+                             (complete-file-parser file length)))]
                       ))))))))))
+
+  ;; All file ranges and typed contents have already been checked through random access.
+  (define complete-file-parser
+    (lambda (file length)
+      (define-parser complete-parser
+        (begin
+          (input-pos-set! inp length)
+          (values #t file inp)))
+      complete-parser))
 
   (define section-zero-problem
     (lambda (header zero)

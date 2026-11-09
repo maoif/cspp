@@ -501,7 +501,7 @@
      (lambda (value)
        (let* ([pos (car value)] [anchor (optional-value (caddr value))]
               [before (and anchor (eq? 'before (car anchor)) (cdr anchor))]
-              [after (and anchor (eq? 'after (car anchor)) (cdr anchor))])
+              [after (if anchor (and (eq? 'after (car anchor)) (cdr anchor)) 'data)])
          (field-result
           pos 'custom #f
           (make-immutable-vector
@@ -517,44 +517,6 @@
          table-field memory-field global-field tag-field export-field start-field
          element-field data-field))
 
-  (define module-field-section
-    (lambda (field)
-      (let ([kind (wat-module-field-kind field)])
-        (if (wat-module-field-import field)
-            'import
-            (case kind
-              [(recursive-type) 'type]
-              [(element) 'element]
-              [(function import table memory tag global export start data) kind]
-              [else #f])))))
-
-  (define anchor-custom-fields
-    (lambda (field*)
-      (let loop ([field* field*] [anchor #f] [result '()])
-        (if (null? field*)
-            (list->immutable-vector (reverse result))
-            (let* ([field (car field*)] [kind (wat-module-field-kind field)])
-              (if (eq? kind 'custom)
-                  (let* ([data (wat-module-field-data field)]
-                         [placement (vector-ref data 2)]
-                         [placement
-                          (if (or (wat-custom-placement-before placement)
-                                  (wat-custom-placement-after placement))
-                              placement
-                              (make-wat-custom-placement
-                               (wat-custom-placement-pos placement) #f anchor))])
-                    (loop
-                     (cdr field*) anchor
-                     (cons
-                      (make-wat-module-field
-                       (wat-module-field-pos field) kind #f
-                       (make-immutable-vector
-                        (vector-ref data 0) (vector-ref data 1) placement)
-                       #f '#() #f)
-                      result)))
-                  (loop (cdr field*) (or (module-field-section field) anchor)
-                        (cons field result))))))))
-
   #|proc:parser-wat-module-syntax
   The `parser-wat-module-syntax` parser reads exactly one Core 3.0 text module and returns an
   internal positioned module syntax record. Source files may omit the module wrapper.
@@ -564,7 +526,7 @@
     (<map>
      (lambda (value)
        (make-wat-module (car value) (optional-value (cadr value))
-                        (anchor-custom-fields (caddr value))))
+                        (list->immutable-vector (caddr value))))
      (<~1> <wat-trivia>
             (</> (<~0> (<~> (wat-field-head "module")
                              (<optional> <wat-identifier>)

@@ -2,6 +2,36 @@
 (define elf-review-file
   (lambda (name) (parse-elf-file (string-append "data/elf-review/" name ".elf"))))
 
+(mat parser-elf-symbolless-relocations
+
+     (for-all
+      (lambda (tag)
+        (for-all
+         (lambda (kind)
+           (let* ([table (elf-section-content
+                          (vector-ref (elf-file-sections
+                                       (elf-review-file (string-append "symbolless-" kind tag))) 1))]
+                  [entry (vector-ref (elf-relocation-table-relocations table) 0)])
+             (and (= 0 (elf-relocation-symbol-index entry))
+                  (= 8 (elf-relocation-type entry))
+                  (= #x1000 (elf-relocation-offset entry))
+                  (equal? (if (string=? kind "rela-") -4 #f)
+                          (elf-relocation-addend entry)))))
+         '("rel-" "rela-")))
+      '("32le" "32be" "64le" "64be"))
+
+     ;; Error case: a nonzero symbol index still requires a linked symbol table.
+     (error?
+      (let ([bytes (read-u8vec "data/elf-review/symbolless-rela-64le.elf")])
+        (bytevector-u64-set! bytes 200 #x100000008 (endianness little))
+        (parse-elf bytes)))
+
+     ;; Error case: a nonzero link cannot name a relocation section as a symbol table.
+     (error?
+      (let ([bytes (read-u8vec "data/elf-review/symbolless-rela-64le.elf")])
+        (bytevector-u32-set! bytes (+ 128 40) 1 (endianness little))
+        (parse-elf bytes))))
+
 (mat parser-elf-name-review
 
      (let ([sections (elf-file-sections (elf-review-file "nonutf8-section"))])

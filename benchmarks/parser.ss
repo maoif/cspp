@@ -55,6 +55,57 @@
            (list (cons "WASM bytes via list" byte-vector-via-list)
                  (cons "WASM bytes direct" <wasm-byte-vector>))))))
 
+(define measure-choice-failure
+  (lambda (count)
+    (let ([parser (apply </> (map (lambda (index) (<string> (format "keyword~a" index)))
+                                 (iota count)))])
+      (measure-parser
+       "Choice failure" count
+       (lambda ()
+         (guard (condition [(parser-error? condition) condition])
+           (run-textual-parser parser "x")))
+       (lambda (condition)
+         (and (parser-error? condition)
+              (= count (length (parser-error-expected condition)))))))))
+
+(define measure-signed-integers
+  (lambda (count)
+    (let ([bytes (make-bytevector (* count 5) 255)] [parser (<rep> <wasm-s32> count)])
+      (do ([index 4 (fx+ index 5)]) ((fx>= index (bytevector-length bytes)))
+        (bytevector-u8-set! bytes index 127))
+      (measure-parser
+       "WASM signed integers" count (lambda () (run-binary-parser parser bytes))
+       (lambda (values)
+         (and (= count (length values)) (for-all (lambda (value) (= value -1)) values)))))))
+
+(define measure-elf-completion
+  (lambda (size)
+    ;; A table-free ELF isolates cursor completion from section copying/interpretation.
+    (let ([bytes (make-bytevector size 0)])
+      (bytevector-copy! #vu8(127 69 76 70 2 1 1) 0 bytes 0 7)
+      (bytevector-u32-set! bytes 20 1 (endianness little))
+      (bytevector-u16-set! bytes 52 64 (endianness little))
+      (measure-parser
+       "ELF file bytes" size (lambda () (parse-elf bytes))
+       (lambda (file)
+         (and (elf-file? file) (= 0 (vector-length (elf-file-sections file)))))))))
+
+(define measure-wat-string
+  (lambda (count)
+    (let ([text (string-append "(module (data \"" (make-string count #\a) "\"))")])
+      (measure-parser
+       "WAT string characters" count (lambda () (parse-wasm-text-module text))
+       (lambda (module)
+         (bytevector=? (make-bytevector count 97)
+                       (wasm-data-bytes (vector-ref (wasm-module-data module) 0))))))))
+
+(define measure-character-conversion
+  (lambda (count)
+    (let ([parser (<as-string> (<result> (make-list count #\a)))])
+      (measure-parser
+       "Character list to string" count (lambda () (run-textual-parser parser ""))
+       (lambda (text) (string=? (make-string count #\a) text))))))
+
 (printf "~a ~a\n" (scheme-version) (machine-type))
 (benchmark-print-table!
  "Parser review workloads"
@@ -62,4 +113,9 @@
    ("allocated bytes" . right) ("elapsed ms" . right))
  (append (map measure-xml-attributes '(4000 8000 16000 32000))
          (map measure-zero-float '(10000 100000 1000000))
-         (measure-byte-vectors)))
+         (measure-byte-vectors)
+         (map measure-choice-failure '(1000 2000 4000 8000))
+         (list (measure-signed-integers 100000))
+         (map measure-elf-completion '(1048576 8388608 67108864))
+         (map measure-wat-string '(8192 32768 131072 262144))
+         (list (measure-character-conversion 262144))))

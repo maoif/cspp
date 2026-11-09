@@ -176,20 +176,24 @@
              <wat-hex-byte-escape>)))
 
   (define <wat-raw-string-character>
-    (<map> character->utf8
-           (<satisfy-char>
-            (lambda (character)
-              (let ([value (char->integer character)])
-                (and (>= value #x20)
-                     (not (= value #x7f))
-                     (not (char=? character wat-double-quote))
-                     (not (char=? character #\\))
-                     (unicode-scalar-value? value))))
-            "invalid unescaped string character")))
+    (<satisfy-char>
+     (lambda (character)
+       (let ([value (char->integer character)])
+         (and (>= value #x20)
+              (not (= value #x7f))
+              (not (char=? character wat-double-quote))
+              (not (char=? character #\\))
+              (unicode-scalar-value? value))))
+     "invalid unescaped string character"))
+
+  ;; Encode a whole ordinary run once; byte escapes remain separate raw fragments.
+  (define <wat-raw-string-run>
+    (<map> (lambda (characters) (string->utf8 (list->string characters)))
+           (<some> <wat-raw-string-character>)))
 
   (define <wat-annotation-string>
     (<~1> (<char> wat-double-quote)
-          (<many> (</> <wat-string-escape> <wat-raw-string-character>))
+          (<many> (</> <wat-string-escape> <wat-raw-string-run>))
           (<char> wat-double-quote)))
 
   (define <wat-annotation-character>
@@ -237,7 +241,7 @@
              (<many> <wat-annotation-content>)
              (<char> wat-close-parenthesis)))
       (<bind> (<~1> (<char> wat-double-quote)
-                    (<many> (</> <wat-string-escape> <wat-raw-string-character>))
+                    (<many> (</> <wat-string-escape> <wat-raw-string-run>))
                     (<char> wat-double-quote))
               (lambda (fragment*)
                 (if (< (byte-fragments-length fragment*) (ash 1 32))
