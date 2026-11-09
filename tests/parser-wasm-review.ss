@@ -672,3 +672,84 @@
             [functions (wasm-module-functions module)])
        (and (= 4 (vector-length (wasm-module-types module)))
             (equal? '(2 3 2) (map wasm-function-type-index (vector->list functions))))))
+
+(mat wasm-review-unsigned-decoder-cost
+
+     (let* ([count 10000] [bytes (make-bytevector (* count 5) #x80)]
+            [parser (<rep> <wasm-u32> count)])
+       (do ([i 4 (fx+ i 5)]) ((fx>= i (bytevector-length bytes)))
+         (bytevector-u8-set! bytes i 1))
+       (let* ([before (statistics)] [values (run-binary-parser parser bytes)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and (= count (length values))
+              (for-all (lambda (value) (= value #x10000000)) values)
+              (< allocated 2000000)))))
+
+(mat wasm-review-limit-widths
+
+     ;; Grammar controls: wide i32-address bounds are parsed without full size validation.
+     (for-all
+      (lambda (kind)
+        (for-all
+         (lambda (address)
+           (let* ([table? (string=? kind "table")]
+                  [module (parse-wasm-text-module
+                           (format "(module (~a ~a 0 18446744073709551615~a))"
+                                   kind address (if table? " funcref" "")))]
+                  [entity (vector-ref (if table? (wasm-module-tables module)
+                                          (wasm-module-memories module)) 0)]
+                  [limits (if table?
+                              (wasm-table-type-limits (wasm-table-type entity))
+                              (wasm-memory-type-limits (wasm-memory-type entity)))])
+             (and (= 0 (wasm-limits-minimum limits))
+                  (= #xffffffffffffffff (wasm-limits-maximum limits))
+                  (eq? (if (string=? address "i64") 'i64 'i32)
+                       (wasm-limits-address-type limits)))))
+         '("" "i32" "i64")))
+      '("table" "memory"))
+
+     (let* ([module (parse-wasm-text-module
+                     "(module (import \"m\" \"t\" (table i32 4294967296 funcref))
+                              (import \"m\" \"m\" (memory 0 4294967296)))")]
+            [imports (wasm-module-imports module)]
+            [table (wasm-import-external-type (vector-ref imports 0))]
+            [memory (wasm-import-external-type (vector-ref imports 1))])
+       (and (= 4294967296 (wasm-limits-minimum
+                          (wasm-table-type-limits (wasm-external-type-type table))))
+            (= 4294967296 (wasm-limits-maximum
+                          (wasm-memory-type-limits (wasm-external-type-type memory))))))
+
+     ;; Error case: both address types still reject values beyond u64.
+     (for-all
+      (lambda (address)
+        (wasm-review-error?
+         (lambda () (parse-wasm-text-module
+                     (format "(module (memory ~a 18446744073709551616))" address)))))
+      '("i32" "i64")))
+
+(mat wasm-review-bounded-payload-cost
+
+     ;; Error cases: Unicode scalars and NaN payloads stop growing after their fixed limits.
+     (for-all
+      (lambda (entry)
+        (let* ([source (cdr entry)] [before (statistics)]
+               [err (capture-parser-error
+                     (lambda () (run-textual-parser (car entry) source)))]
+               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (and (parser-error? err) (< allocated 12000000))))
+      (let ([digits (make-string 16000 #\f)])
+        (list (cons <wat-string> (string-append "\"\\u{" digits "}\""))
+              (cons <wat-f32> (string-append "nan:0x" digits))
+              (cons <wat-f64> (string-append "nan:0x" digits)))))
+
+     (let ([zeros (make-string 16000 #\0)])
+       (and (bytevector=? (string->utf8 (string #\x10ffff))
+                         (parse-wat-lexeme <wat-string>
+                                          (string-append "\"\\u{" zeros "_10ffff}\"")))
+            (= #x7fffffff (wasm-float-bits
+                           (parse-wat-lexeme <wat-f32>
+                                            (string-append "nan:0x" zeros "_7fffff"))))
+            (= #xffffffffffffffff
+               (wasm-float-bits (parse-wat-lexeme <wat-f64>
+                                                (string-append "-nan:0x" zeros
+                                                               "_fffffffffffff")))))))

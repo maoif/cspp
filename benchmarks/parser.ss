@@ -134,6 +134,51 @@
        "Character list to string" count (lambda () (run-textual-parser parser ""))
        (lambda (text) (string=? (make-string count #\a) text))))))
 
+(define measure-character-predicates
+  (lambda (count)
+    (let ([text (make-string count #\7)] [parser (~> (<skip> <digit> count) <pos>)])
+      (measure-parser
+       "Character predicates" count (lambda () (run-textual-parser parser text))
+       (lambda (position) (= count position))))))
+
+(define measure-unsigned-integers
+  (lambda (count)
+    (let ([bytes (make-bytevector (* count 5) #x80)]
+          [parser (~> (<skip> <wasm-u32> count) <pos>)])
+      (do ([index 4 (fx+ index 5)]) ((fx>= index (bytevector-length bytes)))
+        (bytevector-u8-set! bytes index 1))
+      (measure-parser
+       "WASM unsigned integers" count (lambda () (run-binary-parser parser bytes))
+       (lambda (position) (= (* count 5) position))))))
+
+(define measure-json5-whitespace
+  (lambda (count)
+    (let ([text (string-append (make-string count #\space) "42")])
+      (measure-parser
+       "JSON5 whitespace" count (lambda () (parse-json5 text))
+       (lambda (document) (= 42 (json5-document-value document)))))))
+
+(define measure-bounded-payloads
+  (lambda (count)
+    ;; Error cases: oversized Unicode scalars and NaN payloads must reject after lexical scanning.
+    (let ([digits (make-string count #\f)])
+      (map
+       (lambda (entry)
+         (let ([parser (cadr entry)] [source (caddr entry)])
+           (measure-parser
+            (car entry) count
+            (lambda ()
+              (guard (condition [(parser-error? condition) condition])
+                (run-textual-parser parser source)))
+            (lambda (condition)
+              (and (parser-error? condition)
+                   (= (if (eq? parser <wat-string>) 1 3)
+                      (parser-error-offset condition)))))))
+       (list (list "WAT oversized scalar" <wat-string>
+                   (string-append "\"\\u{" digits "}\""))
+             (list "WAT oversized NaN f32" <wat-f32> (string-append "nan:0x" digits))
+             (list "WAT oversized NaN f64" <wat-f64> (string-append "nan:0x" digits)))))))
+
 (printf "~a ~a\n" (scheme-version) (machine-type))
 (benchmark-print-table!
  "Parser review workloads"
@@ -148,4 +193,8 @@
          (list (measure-signed-integers 100000))
          (map measure-elf-completion '(1048576 8388608 67108864))
          (map measure-wat-string '(8192 32768 131072 262144))
-         (list (measure-character-conversion 262144))))
+         (list (measure-character-conversion 262144)
+               (measure-character-predicates 1000000)
+               (measure-unsigned-integers 100000)
+               (measure-json5-whitespace 1000000))
+         (measure-bounded-payloads 16000)))

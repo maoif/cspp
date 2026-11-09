@@ -140,6 +140,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
     (lambda (failure)
       (parser-position-offset (parser-failure-position failure))))
 
+  (define exact-natural?
+    (lambda (value) (and (natural? value) (exact? value))))
+
   (define byte?
     (lambda (x)
       (and (integer? x) (exact? x) (<= 0 x #xff))))
@@ -555,7 +558,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   (define-who set-input-position!
     (lambda (inp pos)
-      (pcheck ([natural? pos])
+      (pcheck ([exact-natural? pos])
               (when (> pos (input-len inp))
                 (errorf who "position ~a is past input length ~a" pos (input-len inp)))
               (cond
@@ -710,7 +713,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
     (case-lambda
       [(inp) (advance! inp 1)]
       [(inp n)
-       (pcheck ([natural? n])
+       (pcheck ([exact-natural? n])
                (let ([len (input-len inp)] [pos (input-pos inp)])
                  (cond [(zero? n) (void)]
                        [(= len pos) (errorf who "already at eof")]
@@ -1004,12 +1007,12 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:<pos-at>
-  The `<pos-at>` procedure takes natural `position` and `parser`. The returned parser
-  runs `parser` at `position` and restores the original input position on success.
+  The `<pos-at>` procedure takes exact nonnegative integer `position` and `parser`. The returned
+  parser runs `parser` at `position` and restores the original input position on success.
   It is an error when `position` is greater than the input length at parse time.
   |#
   (define-who (<pos-at> position parser)
-    (pcheck ([natural? position] [parser? parser])
+    (pcheck ([exact-natural? position] [parser? parser])
             (define-parser pos-at-parser
               ;; TODO error report
               (if (or (> position (input-len inp))
@@ -1031,13 +1034,14 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:<bounded>
-  The `<bounded>` procedure takes natural `count` and binary `parser`. It returns a parser that
-  runs `parser` over exactly the next `count` bytes. Random access must stay within that range.
+  The `<bounded>` procedure takes exact nonnegative integer `count` and binary `parser`. It returns
+  a parser that runs `parser` over exactly the next `count` bytes.
+  Random access must stay within that range.
   The returned parser fails if the range exceeds the input, if `parser` fails, or if `parser`
   does not consume the complete range.
   |#
   (define-who (<bounded> count parser)
-    (pcheck ([natural? count] [parser? parser])
+    (pcheck ([exact-natural? count] [parser? parser])
             (define-parser bounded-parser
               (if (not (binary-input? inp))
                   (values #f #f
@@ -1157,12 +1161,26 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   |#
   (define <satisfy-char>
     (case-lambda
-      [(predicate)
-       (pcheck ([procedure? predicate])
-               (<satisfy> <item> predicate "failed predicate"))]
+      [(predicate) (<satisfy-char> predicate "failed predicate")]
       [(predicate message)
        (pcheck ([procedure? predicate] [string? message])
-               (<satisfy> <item> predicate message))]))
+               (define-parser satisfy-character-parser
+                 (if (end-of-input? inp)
+                     (values #f #f (parser-failure-eof inp '(item) #f))
+                     ;; Keep the starting scalars; successful reads need no cursor snapshot.
+                     (let* ([start (input-pos inp)]
+                            [line (textual-input-line inp)]
+                            [column (textual-input-col inp)]
+                            [character (get-next! inp)])
+                       (if (predicate character)
+                           (values #t character inp)
+                           (values #f #f
+                                   (make-parser-failure
+                                    'predicate message
+                                    (make-parser-position
+                                     (or (input-source inp) "<string>") start line column 'text)
+                                    '() character '() '()))))))
+               satisfy-character-parser)]))
 
   #|proc:<char>
   The `<char>` procedure takes `character` and returns a textual parser. The parser
@@ -1672,11 +1690,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:<u8vec>
-  The `<u8vec>` procedure takes natural `count` and returns a binary parser. The parser
-  consumes the next `count` bytes and returns them in a fresh bytevector.
+  The `<u8vec>` procedure takes exact nonnegative integer `count` and returns a binary parser.
+  The parser consumes the next `count` bytes and returns them in a fresh bytevector.
   |#
   (define-who (<u8vec> count)
-    (pcheck ([natural? count])
+    (pcheck ([exact-natural? count])
             (define-parser u8vec-parser
               (let ([len (input-len inp)] [pos (input-pos inp)])
                 ;; TODO how to report error?
@@ -1859,42 +1877,42 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:<rep>
-  The `<rep>` procedure takes `parser` and natural `count`. The returned parser runs
-  `parser` exactly `count` times and returns the values, or fails when any run fails.
+  The `<rep>` procedure takes `parser` and exact nonnegative integer `count`. The returned parser
+  runs `parser` exactly `count` times and returns the values, or fails when any run fails.
   |#
   (define-who (<rep> parser count)
-    (pcheck ([parser? parser] [natural? count])
+    (pcheck ([parser? parser] [exact-natural? count])
             (let ([parser-body (parser-body parser)])
               (define-parser rep-parser
                 (let ([lb (make-list-builder)])
                   (let loop ([i 0] [inp1 inp])
-                    (if (fx= i count)
+                    (if (= i count)
                         (values #t (lb) inp1)
                         (let-values ([(stt val inp2)
                                       (parser-body inp1 state (fx1+ lvl))])
                           (if stt
                               (begin (lb val)
-                                     (loop (fx1+ i) inp2))
+                                     (loop (+ i 1) inp2))
                               (values #f #f (ensure-parser-failure inp2 inp1))))))))
               rep-parser)))
 
 
   #|proc:<skip>
-  The `<skip>` procedure takes `parser` and natural `count`. The returned parser runs
-  `parser` exactly `count` times, ignores the values, and returns `'()`.
+  The `<skip>` procedure takes `parser` and exact nonnegative integer `count`. The returned parser
+  runs `parser` exactly `count` times, ignores the values, and returns `'()`.
   It fails when any run of `parser` fails.
   |#
   (define-who (<skip> parser count)
-    (pcheck ([parser? parser] [natural? count])
+    (pcheck ([parser? parser] [exact-natural? count])
             (let ([parser-body (parser-body parser)])
               (define-parser skip-parser
                 (let loop ([i 0] [inp1 inp])
-                  (if (fx= i count)
+                  (if (= i count)
                       (values #t '() inp1)
                       (let-values ([(stt val inp2)
                                     (parser-body inp1 state (fx1+ lvl))])
                         (if stt
-                            (loop (fx1+ i) inp2)
+                            (loop (+ i 1) inp2)
                             (values #f #f (ensure-parser-failure inp2 inp1)))))))
               skip-parser)))
 
@@ -1959,12 +1977,12 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:<~n>
-  The `<~n>` procedure takes natural `index` and zero or more parsers `parser*`.
+  The `<~n>` procedure takes exact nonnegative integer `index` and zero or more parsers `parser*`.
   It returns a sequence parser like `<~>`, except success returns only the value from
   `index`. It is an error when `index` is outside the supplied parser range.
   |#
   (define-who (<~n> index . parser*)
-    (pcheck ([natural? index] [all-parsers? parser*])
+    (pcheck ([exact-natural? index] [all-parsers? parser*])
             (let ([body* (map parser-body parser*)])
               (define-parser indexed-sequence-parser
                 (let* ([body* body*] [len (length body*)] [v #f])

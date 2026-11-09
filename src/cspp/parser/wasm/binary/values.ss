@@ -9,26 +9,24 @@
 
   (define wasm-unsigned-parser
     (lambda (width)
-      (let ([maximum-bytes (quotient (+ width 6) 7)])
-        (letrec ([next
-                  (lambda (index shift value)
-                    (<bind>
-                     <u8>
-                     (lambda (byte)
-                       (let* ([payload (logand byte #x7f)]
-                              [remaining (- width shift)]
-                              [limit (expt 2 (min 7 remaining))]
-                              [continued? (not (zero? (logand byte #x80)))])
-                         (cond [(>= payload limit)
-                                (<fail-with> "integer has nonzero unused bits")]
-                               [(and continued? (= index (fx1- maximum-bytes)))
-                                (<fail-with> "integer encoding is too long")]
-                               [continued?
-                                (next (fx1+ index) (+ shift 7)
-                                      (+ value (ash payload shift)))]
-                               [else
-                                (<result> (+ value (ash payload shift)))])))))])
-          (next 0 0 0)))))
+      (define-parser unsigned-parser
+        (let loop ([shift 0] [number 0] [current inp])
+          (let-values ([(status byte next) (parser-call <u8> current state lvl)])
+            (if (not status)
+                (values #f #f next)
+                (let* ([payload (fxlogand byte #x7f)]
+                       [remaining (- width shift)]
+                       [continued? (fx>= byte #x80)])
+                  (cond
+                    [(>= payload (ash 1 (min 7 remaining)))
+                     (parser-call (<fail-with> "integer has nonzero unused bits")
+                                  next state lvl)]
+                    [(and continued? (<= remaining 7))
+                     (parser-call (<fail-with> "integer encoding is too long") next state lvl)]
+                    [continued?
+                     (loop (fx+ shift 7) (+ number (ash payload shift)) next)]
+                    [else (values #t (+ number (ash payload shift)) next)]))))))
+      unsigned-parser))
 
   ;; Direct slices avoid an intermediate list and still belong to each invocation.
   (define float-parser

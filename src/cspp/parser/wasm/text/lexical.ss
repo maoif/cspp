@@ -166,7 +166,7 @@
   (define <wat-unicode-escape>
     (<~2> (<char> #\u)
           (<char> #\{)
-          (<bind> <wat-hexadecimal-digits>
+          (<bind> (digit-sequence-parser <digit16> 16 #x10ffff)
                   (lambda (source)
                     (let ([value (car source)])
                       (if (unicode-scalar-value? value)
@@ -521,7 +521,8 @@
              [canonical-payload (ash 1 (fx1- fraction-width))]
              [nan-payload
               (~> (<string> "nan:0x")
-                  (<bind> <wat-hexadecimal-digits>
+                  (<bind> (digit-sequence-parser
+                           <digit16> 16 (- (ash 1 fraction-width) 1))
                           (lambda (source)
                             (let ([payload (car source)])
                               (if (and (positive? payload)

@@ -577,3 +577,63 @@
        (and (string=? "<fail-with>: first; <fail-with>: second; <fail-with>: third"
                       (parser-error-message err))
             (= 3 (length (parser-error-causes err))))))
+
+(mat parser-character-predicate-cost
+
+     (let* ([count 100000] [text (make-string count #\7)]
+            [parser (~> (<skip> <digit> count) <pos>)]
+            [before (statistics)] [position (run-textual-parser parser text)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= count position) (< allocated 2000000)))
+
+     ;; Error case: a predicate failure uses the position before the rejected line break.
+     (let ([err (parser-error-from
+                 (lambda () (run-textual-parser (~> (<string> "a\r") <digit>) "a\r\n")))])
+       (and (= 2 (parser-error-offset err)) (= 1 (parser-error-line err))
+            (= 0 (parser-error-column err)) (char=? #\newline (parser-error-found err)))))
+
+(mat parser-json5-whitespace-cost
+
+     (let* ([text (string-append (make-string 100000 #\space) "42")]
+            [before (statistics)] [document (parse-json5 text)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= 42 (json5-document-value document)) (< allocated 30000000))))
+
+(mat parser-exact-count-contracts
+
+     ;; Error cases: constructors reject inexact, fractional, and negative counts/indices.
+     (for-all
+      (lambda (number)
+        (for-all (lambda (construct)
+                   (guard (condition [(error? condition) #t])
+                     (construct number)
+                     #f))
+                 (list (lambda (n) (<rep> <item> n))
+                       (lambda (n) (<skip> <item> n))
+                       (lambda (n) (<~n> n <item>))
+                       (lambda (n) (<u8vec> n))
+                       (lambda (n) (<bounded> n <u8>))
+                       (lambda (n) (<pos-at> n <item>)))))
+      '(0.0 1.0 1/2 -1))
+
+     (and (equal? '() (run-textual-parser (<rep> <item> 0) "abc"))
+          (equal? '() (run-textual-parser (<skip> <item> 0) "abc"))
+          (equal? '(#\a) (run-textual-parser (<rep> <item> 1) "abc"))
+          (char=? #\b (run-textual-parser (<~n> 1 <item> <item>) "ab")))
+
+     ;; Error cases: large exact counts fail through the parser at EOF, not fixnum contracts.
+     (for-all
+      (lambda (construct)
+        (let ([err (parser-error-from
+                    (lambda ()
+                      (run-textual-parser (construct <item> (+ 1 (most-positive-fixnum)))
+                                          "abc")))])
+          (and (parser-error? err) (= 3 (parser-error-offset err)))))
+      (list <rep> <skip>))
+
+     ;; Error cases: large exact byte ranges fail before allocating or installing a cursor.
+     (for-all
+      (lambda (parser)
+        (parser-error? (parser-error-from (lambda () (run-binary-parser parser #vu8(1))))))
+      (let ([large (+ 1 (most-positive-fixnum))])
+        (list (<u8vec> large) (<bounded> large <u8>) (<pos-at> large <u8>)))))

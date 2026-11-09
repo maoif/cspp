@@ -55,9 +55,7 @@
   (define json5-whitespace?
     (lambda (character)
       (or (memv character
-                (list #\tab #\vtab #\page #\space
-                      (integer->char #xa0)
-                      (integer->char #xfeff)))
+                '(#\tab #\vtab #\page #\space #\xa0 #\xfeff))
           (json5-line-terminator? character)
           (eq? 'Zs (char-general-category character)))))
 

@@ -563,7 +563,8 @@
                           (make-wasm-limits address-type minimum maximum))]))))))
 
   #|proc:<wat-limits>
-  The `<wat-limits>` parser reads i32 or i64 minimum and optional maximum bounds.
+  The `<wat-limits>` parser reads an optional i32/i64 address type and u64 minimum and optional
+  maximum bounds. It returns limits syntax or a canonical limits record; the address defaults to i32.
   |#
   (define <wat-limits>
     (<bind> (<~> <pos>
@@ -572,10 +573,7 @@
                       (<result> 'i32)))
             (lambda (value)
               (let ([pos (car value)] [address-type (cadr value)])
-                (limits-parser pos address-type
-                               (if (eq? address-type 'i64)
-                                   <wat-u64>
-                                   <wat-u32>))))))
+                (limits-parser pos address-type <wat-u64>)))))
 
   #|proc:<wat-global-type>
   The `<wat-global-type>` parser reads a mutable or immutable global value type.
