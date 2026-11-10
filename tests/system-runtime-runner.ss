@@ -41,8 +41,12 @@
             (put-bytevector input (string->utf8 "inherited-input"))
             (close-output-port input)
             ;; The loader stress case can approach 15 seconds under user-mode emulation.
+            ;; Concurrent environment growth and 300 process launches can exceed that on CI.
             (let ([status (make-bytevector 4 0)]
-                  [deadline (+ (clock-ms) (if (string=? mode "loader-list-race") 30000 15000))])
+                  [deadline (+ (clock-ms)
+                               (cond [(string=? mode "environment-race") 60000]
+                                     [(string=? mode "loader-list-race") 30000]
+                                     [else 15000]))])
               (let loop ()
                 (let ([result (native-wait pid status 1)])
                   (cond
