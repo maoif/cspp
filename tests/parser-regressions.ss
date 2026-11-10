@@ -670,3 +670,23 @@
                (string=? "c\nd" (xml-cdata-value (vector-ref children 1)))
                (string=? "e\nf" (xml-text-value (vector-ref children 2))))))
       '("\n" "\r" "\r\n")))
+
+(mat parser-xml-bounded-references
+
+     ;; Error cases: rejecting oversized references must not construct oversized integers.
+     (for-all
+      (lambda (prefix digit)
+        (let* ([text (string-append "<r>" prefix (make-string 16000 digit) ";</r>")]
+               [before (statistics)]
+               [failure (parser-error-from (lambda () (parse-xml text)))]
+               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (and failure (< allocated 10000000))))
+      '("&#" "&#x") '(#\9 #\f))
+
+     (let* ([zeros (make-string 16000 #\0)]
+            [document (parse-xml (string-append "<r a='&#x" zeros "10ffff;'>&#"
+                                               zeros "65;</r>"))]
+            [root (xml-document-root document)])
+       (and (string=? (string #\x10ffff)
+                      (xml-attribute-value (vector-ref (xml-element-attributes root) 0)))
+            (string=? "A" (xml-text-value (vector-ref (xml-element-children root) 0))))))

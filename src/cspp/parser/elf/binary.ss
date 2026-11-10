@@ -267,7 +267,6 @@
       (let* ([standard (case class [(elf32) (if addends? 12 8)]
                                    [else (if addends? 24 16)])]
              [entry-size (elf-section-header-entry-size header)]
-             [entry-size (if (zero? entry-size) standard entry-size)]
              [size (bytevector-length bytes)])
         (and (= entry-size standard) (zero? (modulo size entry-size))
              (let ([result
@@ -408,14 +407,12 @@
                   (and relocations
                        (relocation-symbols-valid? relocations symbol-count)
                        relocations)))]
-          [(19) (and (or (zero? (elf-section-header-entry-size header))
-                         (= word (elf-section-header-entry-size header)))
+          [(19) (and (= word (elf-section-header-entry-size header))
                      (let ([entry* (parse-word-vector raw word endianness-name)])
                        (and entry* (make-elf-relr-table entry*))))]
           [(5)
            (and (linked-section-type? all-headers link '(2 11))
-                (or (zero? (elf-section-header-entry-size header))
-                    (= 4 (elf-section-header-entry-size header)))
+                (= 4 (elf-section-header-entry-size header))
                 (let* ([count (symbol-table-entry-count
                                class (vector-ref all-headers link) linked)]
                        [table (parse-bounded-content raw (hash-table-parser endianness-name))])
@@ -428,8 +425,7 @@
           [(17)
            (and (linked-section-type? all-headers link '(2 11))
                 (>= size 4) (zero? (modulo size 4))
-                (or (zero? (elf-section-header-entry-size header))
-                    (= 4 (elf-section-header-entry-size header)))
+                (= 4 (elf-section-header-entry-size header))
                 (let* ([count (symbol-table-entry-count
                                class (vector-ref all-headers link) linked)]
                        [table (parse-bounded-content
@@ -453,14 +449,12 @@
                        (and symbol-count (= size (* symbol-count 4))))
                      (let ([entry* (parse-word-vector raw 4 endianness-name)])
                        (and entry* (make-elf-word-table entry*))))]
-          [(14 15 16) (and (or (zero? (elf-section-header-entry-size header))
-                               (= word (elf-section-header-entry-size header)))
+          [(14 15 16) (and (= word (elf-section-header-entry-size header))
                            (let ([entry* (parse-word-vector raw word endianness-name)])
                              (and entry* (make-elf-word-table entry*))))]
           [(6) (and (linked-section-type? all-headers link '(3))
                     (zero? (modulo size (* 2 word)))
-                    (or (zero? (elf-section-header-entry-size header))
-                        (= (* 2 word) (elf-section-header-entry-size header)))
+                    (= (* 2 word) (elf-section-header-entry-size header))
                     (let ([entry*
                            (parse-bounded-content
                             raw
@@ -716,6 +710,12 @@
                    (loop (fx1+ index) seen-singletons)]
                   [(not (fxzero? (fxlogand singleton seen-singletons)))
                    (values #f (issue at "duplicate singleton section type"))]
+                  [(and (logbit? 6 (elf-section-header-flags section))
+                        (>= (elf-section-header-info section) count))
+                   (values #f (issue at "section info index is out of range"))]
+                  [(and (logbit? 7 (elf-section-header-flags section))
+                        (>= (elf-section-header-link section) count))
+                   (values #f (issue at "section link index is out of range"))]
                   [(not (elf-power-of-two? alignment))
                    (values #f (issue at "invalid section alignment"))]
                   [(and (> alignment 1)

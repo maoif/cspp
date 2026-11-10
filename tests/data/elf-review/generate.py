@@ -220,3 +220,30 @@ for elf64 in (False, True):
             struct.pack_into(endian + ('Q' if elf64 else 'I'), data,
                              hsize + ssize + (16 if elf64 else 12), address)
             path.write_bytes(data)
+
+# Fixed-size tables use explicit entry sizes; tests mutate only the relevant header fields.
+for elf64 in (False, True):
+    for endian in ('<', '>'):
+        word = 8 if elf64 else 4
+        tag = ('64' if elf64 else '32') + ('le' if endian == '<' else 'be')
+        symbol_size = 24 if elf64 else 16
+        signature = (struct.pack(endian + 'IBBHQQ', 1, 0x10, 0, 0, 0, 0) if elf64
+                     else struct.pack(endian + 'IIIBBH', 1, 0, 0, 0x10, 0, 0))
+        sections = [dict(type=3, data=b'\0signature\0'),
+                    dict(type=2, data=b'\0'*symbol_size + signature,
+                         link=1, info=1, align=word, entsize=symbol_size),
+                    dict(type=17, data=struct.pack(endian+'II', 1, 4),
+                         link=2, info=1, align=4, entsize=4),
+                    dict(type=1, flags=0x200, data=b'x'),
+                    dict(type=5, data=struct.pack(endian+'IIIII', 1, 2, 0, 0, 0),
+                         link=2, align=4, entsize=4),
+                    dict(type=6, data=b'\0'*(word*2), link=1, align=word, entsize=word*2)]
+        sections += [dict(type=kind, data=b'\0'*word, align=word, entsize=word)
+                     for kind in (14, 15, 16)]
+        sections += [dict(type=kind, data=b'\0'*(word*words),
+                          align=word, entsize=word*words)
+                     for kind, words in ((9, 2), (4, 3))]
+        variant_elf('fixed-tables-' + tag, sections, elf64, endian)
+        variant_elf('fixed-relr-' + tag,
+                    [dict(type=19, data=b'\0'*word, align=word, entsize=word)],
+                    elf64, endian, filetype=3)

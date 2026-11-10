@@ -150,7 +150,11 @@
   (define (<validated-character-reference> parser radix)
     (<bind> parser
             (lambda (digits)
-              (let ([value (string->number (list->string digits) radix)])
+              ;; Once the scalar bound is exceeded, more digits cannot restore validity.
+              (let ([value (fold-left
+                            (lambda (value digit)
+                              (if (> value #x10ffff) value (+ (* value radix) digit)))
+                            0 digits)])
                 (if (and value
                          (<= value #x10ffff)
                          (not (<= #xd800 value #xdfff))
@@ -160,12 +164,12 @@
 
   (define <decimal-character-reference>
     (<~1> (<string> "&#")
-          (<validated-character-reference> (<some> <digit>) 10)
+          (<validated-character-reference> (<some> <digit10>) 10)
           (<char> #\;)))
 
   (define <hexadecimal-character-reference>
     (<~1> (<string> "&#x")
-          (<validated-character-reference> (<some> <hexdigit>) 16)
+          (<validated-character-reference> (<some> <digit16>) 16)
           (<char> #\;)))
 
   (define <predefined-reference>

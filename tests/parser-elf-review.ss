@@ -301,3 +301,63 @@
                  '("single-tables" "multiple-strtab" "aligned-address"
                    "unconstrained-address" "unit-alignment-address")))
       '("32le" "32be" "64le" "64be")))
+
+(define elf-review-rejected?
+  (lambda (bytes)
+    (guard (condition [(parser-error? condition) #t] [else #f])
+      (parse-elf bytes)
+      #f)))
+
+(mat parser-elf-flag-indices
+
+     ;; Error cases: flag-declared section indices must name existing sections.
+     (for-all
+      (lambda (tag wide? endian)
+        (let* ([original (read-u8vec (string-append "data/elf-review/aligned-address-" tag ".elf"))]
+               [header (+ (if wide? 64 52) (if wide? 64 40))])
+          (for-all
+           (lambda (flag field)
+             (for-all
+              (lambda (index)
+                (let ([bytes (bytevector-copy original)])
+                  (if wide?
+                      (bytevector-u64-set! bytes (+ header 8) flag endian)
+                      (bytevector-u32-set! bytes (+ header 8) flag endian))
+                  (bytevector-u32-set! bytes (+ header field) index endian)
+                  (if (< index 2)
+                      (elf-file? (parse-elf bytes))
+                      (elf-review-rejected? bytes))))
+              '(0 1 2 4294967295)))
+           '(64 128) (if wide? '(44 40) '(28 24)))))
+      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
+      (list (endianness little) (endianness big) (endianness little) (endianness big))))
+
+(mat parser-elf-fixed-entry-sizes
+
+     ;; Error cases: zero and incorrect entry sizes cannot describe fixed-size typed tables.
+     (for-all
+      (lambda (tag wide? endian)
+        (for-all
+         (lambda (name)
+           (let* ([original (read-u8vec (string-append "data/elf-review/" name tag ".elf"))]
+                  [file (parse-elf original)] [headers (vector-map elf-section-header (elf-file-sections file))]
+                  [header-size (if wide? 64 52)] [section-size (if wide? 64 40)])
+             (let loop ([index 1])
+               (or (= index (vector-length headers))
+                   (and
+                    (let ([type (elf-section-header-type (vector-ref headers index))])
+                      (or (not (memv type '(4 5 6 9 14 15 16 17 19)))
+                          (for-all
+                           (lambda (size)
+                             (let ([bytes (bytevector-copy original)]
+                                   [at (+ header-size (* section-size index)
+                                          (if wide? 56 36))])
+                               (if wide?
+                                   (bytevector-u64-set! bytes at size endian)
+                                   (bytevector-u32-set! bytes at size endian))
+                               (elf-review-rejected? bytes)))
+                           '(0 1))))
+                    (loop (+ index 1)))))))
+         '("fixed-tables-" "fixed-relr-")))
+      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
+      (list (endianness little) (endianness big) (endianness little) (endianness big))))

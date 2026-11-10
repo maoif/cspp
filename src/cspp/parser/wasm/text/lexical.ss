@@ -428,42 +428,38 @@
                                   fractional-count)])
         (vector significand exponent-radix (- exponent fractional-bits)))))
 
+  (define float-body-parser
+    (lambda (digits digit-radix exponent-radix exponent-parser)
+      (let ([suffix-parser
+             (</> (<map> (lambda (value)
+                           (cons (if (pair? (car value)) (car value) '(0 . 0))
+                                 (if (integer? (cadr value)) (cadr value) 0)))
+                         (~> (<char> #\.)
+                             (<~> (<optional> digits) (<optional> exponent-parser))))
+                  (<map> (lambda (exponent) (cons '(0 . 0) exponent)) exponent-parser)
+                  (<result> '((0 . 0) . 0)))]
+            ;; Only used when the initial digits fail; retain all three original causes.
+            [missing-prefix-parser (</> digits digits digits)])
+        (define-parser body-parser
+          (let ([start (save-input inp)])
+            (let-values ([(status integral next) (parser-call digits inp state lvl)])
+              (if status
+                  (let-values ([(status suffix next)
+                                (parser-call suffix-parser next state lvl)])
+                    (if status
+                        (values #t (float-source (car integral) (car suffix)
+                                                digit-radix exponent-radix (cdr suffix)) next)
+                        (values #f #f next)))
+                  (parser-call missing-prefix-parser start state lvl)))))
+        body-parser)))
+
   (define decimal-float-body-parser
-    (lambda ()
-      (let ([with-point
-             (<map> (lambda (value)
-                      (float-source (car (car value))
-                                    (if (pair? (caddr value)) (caddr value) '(0 . 0))
-                                    10 10
-                                    (if (integer? (cadddr value)) (cadddr value) 0)))
-                    (<~> <wat-decimal-digits> (<char> #\.)
-                         (<optional> <wat-decimal-digits>)
-                         (<optional> <wat-decimal-exponent>)))]
-            [with-exponent
-             (<map> (lambda (value) (vector (car (car value)) 10 (cadr value)))
-                    (<~> <wat-decimal-digits> <wat-decimal-exponent>))]
-            [integer-value (<map> (lambda (source) (vector (car source) 10 0))
-                                  <wat-decimal-digits>)])
-        (</> with-point with-exponent integer-value))))
+    (lambda () (float-body-parser <wat-decimal-digits> 10 10 <wat-decimal-exponent>)))
 
   (define hexadecimal-float-body-parser
     (lambda ()
       (~> (<string> "0x")
-          (let ([with-point
-                 (<map> (lambda (value)
-                          (float-source (car (car value))
-                                        (if (pair? (caddr value)) (caddr value) '(0 . 0))
-                                        16 2
-                                        (if (integer? (cadddr value)) (cadddr value) 0)))
-                        (<~> <wat-hexadecimal-digits> (<char> #\.)
-                             (<optional> <wat-hexadecimal-digits>)
-                             (<optional> <wat-binary-exponent>)))]
-                [with-exponent
-                 (<map> (lambda (value) (vector (car (car value)) 2 (cadr value)))
-                        (<~> <wat-hexadecimal-digits> <wat-binary-exponent>))]
-                [integer-value (<map> (lambda (source) (vector (car source) 2 0))
-                                      <wat-hexadecimal-digits>)])
-            (</> with-point with-exponent integer-value)))))
+          (float-body-parser <wat-hexadecimal-digits> 16 2 <wat-binary-exponent>))))
 
   (define round-rational-to-even
     (lambda (value)

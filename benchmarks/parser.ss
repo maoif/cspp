@@ -1,5 +1,6 @@
 (import (cspp)
         (cspp parser combinator)
+        (cspp parser wasm binary instructions)
         (cspp parser wasm binary values)
         (cspp parser wasm text lexical))
 (load "benchmarks/common.ss")
@@ -213,6 +214,41 @@
        (lambda () (run-textual-parser (~> <wat-trivia> <pos>) text))
        (lambda (position) (= position (string-length text)))))))
 
+(define measure-finite-significand
+  (lambda (count)
+    (let ([text (string-append (make-string count #\1) "e-" (number->string count))])
+      (measure-parser
+       "WAT finite significand" count (lambda () (run-textual-parser <wat-f64> text))
+       (lambda (value) (= 4592670820000712476 (wasm-float-bits value)))))))
+
+(define measure-xml-reference
+  (lambda (count)
+    ;; Error case: scanning an oversized reference must not build an oversized integer.
+    (let ([text (string-append "<r>&#x" (make-string count #\f) ";</r>")])
+      (measure-parser
+       "XML oversized reference" count
+       (lambda () (guard (condition [(parser-error? condition) condition]) (parse-xml text)))
+       parser-error?))))
+
+(define measure-binary-instructions
+  (lambda (count)
+    (let ([bytes (make-bytevector (fx1+ count) 1)])
+      (bytevector-u8-set! bytes count 11)
+      (measure-parser
+       "WASM nop instructions" count (lambda () (run-binary-parser <wasm-expression> bytes))
+       (lambda (body)
+         (and (= count (vector-length body))
+              (eq? 'nop (wasm-instruction-mnemonic (vector-ref body (fx1- count))))))))))
+
+(define measure-binary-floats
+  (lambda (count)
+    (let ([bytes (make-bytevector (* count 8) 0)] [parser (<rep> <wasm-f64> count)])
+      (measure-parser
+       "WASM f64 values" count (lambda () (run-binary-parser parser bytes))
+       (lambda (values)
+         (and (= count (length values))
+              (for-all (lambda (value) (= 0 (wasm-float-bits value))) values)))))))
+
 (printf "~a ~a\n" (scheme-version) (machine-type))
 (benchmark-print-table!
  "Parser review workloads"
@@ -234,4 +270,8 @@
          (measure-bounded-payloads 16000)
          (map measure-long-exponent '(1000 4000 16000))
          (list (measure-xml-comment 250000) (measure-xml-no-cr 1000000)
-               (measure-wat-annotation 250000))))
+               (measure-wat-annotation 250000))
+         (map measure-finite-significand '(1000 4000 16000))
+         (map measure-xml-reference '(1000 4000 16000 32000))
+         (map measure-binary-instructions '(10000 100000 500000))
+         (list (measure-binary-floats 1000000))))

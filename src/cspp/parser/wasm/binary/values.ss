@@ -28,12 +28,15 @@
                     [else (values #t (+ number (ash payload shift)) next)]))))))
       unsigned-parser))
 
-  ;; Direct slices avoid an intermediate list and still belong to each invocation.
   (define float-parser
-    (lambda (width size ref)
-      (<map> (lambda (bytes)
-               (make-wasm-float width (ref bytes 0 (endianness little))))
-             (<u8vec> size))))
+    (lambda (width size integer-parser)
+      (let ([truncated-parser (<u8vec> size)])
+        (define-parser bits-parser
+          ;; Retain the byte-slice diagnostic on truncation without copying successful reads.
+          (if (> (+ (input-pos inp) size) (input-len inp))
+              (parser-call truncated-parser inp state lvl)
+              (parser-call integer-parser inp state lvl)))
+        (<map> (lambda (bits) (make-wasm-float width bits)) bits-parser))))
 
   (define strict-utf8->string
     (lambda (bytes) (parser-decode-bytes bytes 'utf-8)))
@@ -66,12 +69,12 @@
   #|proc:<wasm-f32>
   The `<wasm-f32>` parser reads four little-endian bytes and preserves their exact bits.
   |#
-  (define <wasm-f32> (float-parser 32 4 bytevector-u32-ref))
+  (define <wasm-f32> (float-parser 32 4 <u32le>))
 
   #|proc:<wasm-f64>
   The `<wasm-f64>` parser reads eight little-endian bytes and preserves their exact bits.
   |#
-  (define <wasm-f64> (float-parser 64 8 bytevector-u64-ref))
+  (define <wasm-f64> (float-parser 64 8 <u64le>))
 
   #|proc:<wasm-byte-vector>
   The `<wasm-byte-vector>` parser reads a u32 length and that many bytes.

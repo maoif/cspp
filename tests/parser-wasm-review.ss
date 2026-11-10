@@ -811,3 +811,45 @@
      (wasm-review-error?
       (lambda () (parse-wasm-text-module
                   "(module (func block $gone end) (func br $gone))"))))
+
+(mat wasm-review-shared-float-prefix
+
+     ;; The finite value uses exact cancellation; repeated significand conversion wastes memory.
+     (for-all
+      (lambda (text expected)
+        (let* ([before (statistics)] [bits (wasm-review-float-bits <wat-f64> text)]
+               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (and (= expected bits) (< allocated 160000000))))
+      (list (string-append (make-string 16000 #\1) "e-16000")
+            (string-append "0x" (make-string 16000 #\1) "p-64000"))
+      '(4592670820000712476 4589468260265693457)))
+
+(mat wasm-review-binary-float-allocation
+
+     (for-all
+      (lambda (parser width)
+        (let* ([count 100000] [bytes (make-bytevector (* count width) 0)]
+               [repeated (<rep> parser count)] [before (statistics)]
+               [result (run-binary-parser repeated bytes)]
+               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (and (= count (length result))
+               (for-all (lambda (value) (= 0 (wasm-float-bits value))) result)
+               (< allocated 9000000))))
+      (list <wasm-f32> <wasm-f64>) '(4 8)))
+
+(mat wasm-review-fixed-instruction-parsers
+
+     (let* ([count 100000] [bytes (make-bytevector (fx1+ count) 1)])
+       (bytevector-u8-set! bytes count 11)
+       (let* ([before (statistics)] [body (run-binary-parser <wasm-expression> bytes)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and (= count (vector-length body))
+              (eq? 'nop (wasm-instruction-mnemonic (vector-ref body (fx1- count))))
+              (not (eq? (vector-ref body 0) (vector-ref body 1)))
+              (< allocated 38000000))))
+
+     ;; Exact binary variants have different immediates despite sharing their WAT mnemonic.
+     (for-all
+      (lambda (bytes)
+        (vector? (run-binary-parser <wasm-expression> bytes)))
+      '(#vu8(27 11) #vu8(251 21 110 11) #vu8(251 23 110 11))))

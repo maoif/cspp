@@ -315,8 +315,25 @@
   |#
   (define <wasm-expression> sequence-ending-with-end)
 
+  ;; Prepare fixed compositions before sharing parsers. Each invocation still creates its
+  ;; own instruction records and nonempty immediate vectors, including in structured bodies.
+  (define instruction-parsers
+    (let ([table (make-eq-hashtable)])
+      (vector-for-each
+       (lambda (descriptor)
+         (hashtable-set! table descriptor (ordinary-instruction-parser descriptor)))
+       wasm-core-3-opcodes)
+      ;; Untyped select and nullable ref.test/ref.cast have encoding-specific shapes.
+      (for-each
+       (lambda (encoding)
+         (let ([descriptor (wasm-opcode-by-binary (car encoding) (cdr encoding))])
+           (hashtable-set! table descriptor (ordinary-instruction-parser descriptor))))
+       '((#f . #x1b) (#xfb . 21) (#xfb . 23)))
+      (hashtable-copy table #f)))
+
   (install-lazy-parser!
    <wasm-instruction>
-   (<bind> opcode-descriptor-parser ordinary-instruction-parser))
+   (<bind> opcode-descriptor-parser
+           (lambda (descriptor) (hashtable-ref instruction-parsers descriptor #f))))
 
   )
