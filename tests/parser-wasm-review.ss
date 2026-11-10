@@ -753,3 +753,61 @@
                (wasm-float-bits (parse-wat-lexeme <wat-f64>
                                                 (string-append "-nan:0x" zeros
                                                                "_fffffffffffff")))))))
+
+(mat wasm-review-long-exponent-digits
+
+     ;; The full exponent must be scanned, but a zero significand needs no giant bignum.
+     (let* ([text (string-append "-0e-" (make-string 16000 #\9))]
+            [before (statistics)]
+            [bits (wasm-review-float-bits <wat-f64> text)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= #x8000000000000000 bits) (< allocated 20000000)))
+
+     ;; Error case: a nonzero significand with a huge positive exponent still overflows.
+     (wasm-review-error?
+      (lambda () (wasm-review-float-bits
+                  <wat-f64> (string-append "1e" (make-string 1000 #\9)))))
+
+     ;; Exponent zero prefixes, separators and mantissa cancellation remain exact.
+     (for-all
+      (lambda (parser)
+        (let ([one (wasm-review-float-bits parser "1")])
+          (and (= one (wasm-review-float-bits
+                       parser (string-append "1e+" (make-string 1000 #\0))))
+               (= one (wasm-review-float-bits
+                       parser (string-append "0." (make-string 1000 #\0) "1e1_001")))
+               (= one (wasm-review-float-bits
+                       parser (string-append "0x1" (make-string 1000 #\0) "p-4_000"))))))
+      (list <wat-f32> <wat-f64>)))
+
+(mat wasm-review-label-scopes
+
+     ;; Named and numeric labels must produce identical canonical modules, including catches.
+     (for-all
+      (lambda (sources)
+        (string=? (format "~s" (parse-wasm-text-module (car sources)))
+                  (format "~s" (parse-wasm-text-module (cadr sources)))))
+      '(("(module (func block $x block $x br $x end br $x end))"
+         "(module (func block block br 0 end br 0 end))")
+        ("(module (func block $x block block br $x end end br $x end))"
+         "(module (func block block block br 2 end end br 0 end))")
+        ("(module (func block $x if $y block $x br $x end br $x
+                        else br $y br $x end br $x end))"
+         "(module (func block if block br 0 end br 1 else br 0 br 1 end br 0 end))")
+        ("(module (func block $x try_table $x (catch_all $x) br $x end br $x end))"
+         "(module (func block try_table (catch_all 0) br 0 end br 0 end))")
+        ("(module (func block $x block $y br_table $x $y $x end end))"
+         "(module (func block block br_table 1 0 1 end end))")
+        ("(module (func block $x block $y br_on_cast $x (ref null any) (ref any) end end))"
+         "(module (func block block br_on_cast 1 (ref null any) (ref any) end end))")
+        ("(module (func (block $x (br $x)) (block $x (br $x))))"
+         "(module (func (block (br 0)) (block (br 0))))")))
+
+     ;; Error case: a label must disappear after its block ends.
+     (wasm-review-error?
+      (lambda () (parse-wasm-text-module "(module (func block $gone end br $gone))")))
+
+     ;; Error case: a prior function's labels must not leak into another function.
+     (wasm-review-error?
+      (lambda () (parse-wasm-text-module
+                  "(module (func block $gone end) (func br $gone))"))))

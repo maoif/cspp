@@ -76,7 +76,7 @@ def variant_elf(name, sections, elf64=True, endian='<', filetype=1, names=0):
                      section_size, len(sections) + 1, names)
     for index, section in enumerate(sections, 1):
         alignment = section.get('align', 1)
-        data.extend(b'\0' * (-len(data) % alignment))
+        data.extend(b'\0' * (-len(data) % max(alignment, 1)))
         offset = len(data)
         payload = section.get('data', b'')
         data.extend(payload)
@@ -181,4 +181,42 @@ for endian in ('<', '>'):
             path = out / (name + '.elf')
             data = bytearray(path.read_bytes())
             struct.pack_into(endian + 'H', data, 18, 8)  # EM_MIPS
+            path.write_bytes(data)
+
+# Section cardinality and address alignment are independent of class and byte order.
+for elf64 in (False, True):
+    for endian in ('<', '>'):
+        word = 8 if elf64 else 4
+        tag = ('64' if elf64 else '32') + ('le' if endian == '<' else 'be')
+        symbol_size = 24 if elf64 else 16
+        strings = dict(type=3, data=b'\0')
+        symbol = dict(type=2, data=b'\0'*symbol_size, link=1, info=1,
+                      align=word, entsize=symbol_size)
+        dynsym = dict(symbol, type=11)
+        dynamic = dict(type=6, data=b'\0'*(word*2), link=1, align=word, entsize=word*2)
+        hash_table = dict(type=5, data=struct.pack(endian+'IIII', 1, 1, 0, 0),
+                          link=2, align=4, entsize=4)
+        # Error cases: gABI permits at most one of each of these section types.
+        for label, sections in (
+            ('symtab', [strings, symbol, symbol]),
+            ('dynsym', [strings, dynsym, dynsym]),
+            ('hash', [strings, symbol, hash_table, hash_table]),
+            ('dynamic', [strings, dynamic, dynamic]),
+        ):
+            variant_elf('duplicate-' + label + '-' + tag, sections, elf64, endian)
+        variant_elf('single-tables-' + tag,
+                    [strings, symbol, dynsym, hash_table, dynamic], elf64, endian)
+        variant_elf('multiple-strtab-' + tag, [strings, strings], elf64, endian)
+        for label, address, alignment in (('misaligned-address', 1, 8),
+                                           ('aligned-address', 8, 8),
+                                           ('unconstrained-address', 1, 0),
+                                           ('unit-alignment-address', 1, 1)):
+            variant_elf(label + '-' + tag,
+                        [dict(type=1, data=b'x', flags=2, align=alignment)], elf64, endian)
+            # Error case: only the first address violates its declared alignment.
+            path = out / (label + '-' + tag + '.elf')
+            data = bytearray(path.read_bytes())
+            hsize, ssize = (64, 64) if elf64 else (52, 40)
+            struct.pack_into(endian + ('Q' if elf64 else 'I'), data,
+                             hsize + ssize + (16 if elf64 else 12), address)
             path.write_bytes(data)

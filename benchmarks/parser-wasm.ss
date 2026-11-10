@@ -71,9 +71,47 @@
         (map (lambda (value) (format "~a" value))
              (list "Long signatures (normalize)" count allocated elapsed))))))
 
+(define measure-named-labels
+  (lambda (count)
+    (let* ([source
+            (call-with-port (open-output-string)
+              (lambda (port)
+                (display "(module (func block $outer " port)
+                (do ([index 0 (fx1+ index)]) ((fx= index count))
+                  (display "block br $outer " port))
+                (do ([index 0 (fx1+ index)]) ((fx> index count))
+                  (display "end " port))
+                (display "))" port)
+                (get-output-string port)))]
+           [syntax (run-textual-parser parser-wat-module-syntax source)])
+      ;; Isolate label resolution from text parsing and source construction.
+      (collect)
+      (let* ([before (statistics)] [started (real-time)]
+             [module (normalize-wat-module syntax)]
+             [elapsed (- (real-time) started)]
+             [allocated (sstats-bytes (sstats-difference (statistics) before))])
+        (let loop ([body (wasm-instruction-body
+                         (vector-ref (wasm-function-body
+                                      (vector-ref (wasm-module-functions module) 0)) 0))]
+                   [depth 1])
+          (let* ([block (vector-ref body (if (fx= depth 1) 0 1))]
+                 [nested (wasm-instruction-body block)])
+            (unless (and (eq? 'block (wasm-instruction-mnemonic block))
+                         (eq? 'br (wasm-instruction-mnemonic (vector-ref nested 0)))
+                         (fx= depth (vector-ref
+                                     (wasm-instruction-immediates (vector-ref nested 0)) 0)))
+              (error 'parser-wasm-benchmark "incorrect named branch" depth))
+            (if (fx= depth count)
+                (unless (fx= 1 (vector-length nested))
+                  (error 'parser-wasm-benchmark "incorrect nested leaf"))
+                (loop nested (fx1+ depth)))))
+        (map (lambda (value) (format "~a" value))
+             (list "Named labels (normalize)" count allocated elapsed))))))
+
 (benchmark-print-table!
  "WAT allocation scaling"
  '(("workload" . left) ("count" . right) ("allocated bytes" . right) ("elapsed ms" . right))
  (append (map measure-folded '(1000 2000 4000 8000))
          (map measure-implicit-types '(1000 2000 4000 8000))
-         (map measure-long-implicit-types '(250 500 1000 2000))))
+         (map measure-long-implicit-types '(250 500 1000 2000))
+         (map measure-named-labels '(1000 2000 4000 8000 16000))))

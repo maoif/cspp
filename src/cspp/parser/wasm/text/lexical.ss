@@ -206,7 +206,7 @@
      (lambda (character)
        (and (or (wat-whitespace-character? character)
                 (char<=? #\space character #\x7e))
-            (not (memv character (list #\( wat-close-parenthesis wat-double-quote)))))
+            (not (memv character '(#\( #\) #\")))))
      "invalid annotation character"))
 
   (define <wat-annotation-content>
@@ -400,12 +400,18 @@
           (/ value (expt base (- exponent)))
           (* value (expt base exponent)))))
 
+  ;; For source length N <= most-positive-fixnum, significand bits and fractional
+  ;; adjustment are each at most 4*N. Beyond this cap neither can cancel an exponent
+  ;; back into the f64 rounding range. Continue scanning after overflow as usual.
+  (define <wat-exponent-digits>
+    (digit-sequence-parser <digit10> 10 (+ (* 8 (most-positive-fixnum)) 2048)))
+
   (define exponent-parser
     (lambda (marker)
       (~> (<one-of> marker)
           (<map> (lambda (source)
                    (signed-value (car source) (car (cadr source))))
-                 (<~> <wat-sign> <wat-decimal-digits>)))))
+                 (<~> <wat-sign> <wat-exponent-digits>)))))
 
   (define <wat-decimal-exponent> (exponent-parser "eE"))
   (define <wat-binary-exponent> (exponent-parser "pP"))

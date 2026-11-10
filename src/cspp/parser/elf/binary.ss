@@ -700,20 +700,27 @@
              [raw-sections (make-vector count)]
              [table-offset (decoded-elf-header-shoff header)]
              [entry-size (decoded-elf-header-shentsize header)])
-        (let loop ([index 0])
+        (let loop ([index 0] [seen-singletons 0])
           (if (= index count)
               (values raw-sections (section-overlap-problem headers))
               (let* ([section (vector-ref headers index)]
                      [at (+ table-offset (* index entry-size))]
                      [file-offset (elf-section-header-offset section)]
-                     [size (elf-section-header-size section)])
+                     [size (elf-section-header-size section)]
+                     [alignment (elf-section-header-address-alignment section)]
+                     [singleton (case (elf-section-header-type section)
+                                  [(2) 1] [(11) 2] [(5) 4] [(6) 8] [else 0])])
                 (cond
                   [(zero? (elf-section-header-type section))
                    (vector-set! raw-sections index (make-bytevector 0))
-                   (loop (fx1+ index))]
-                  [(not (elf-power-of-two?
-                         (elf-section-header-address-alignment section)))
+                   (loop (fx1+ index) seen-singletons)]
+                  [(not (fxzero? (fxlogand singleton seen-singletons)))
+                   (values #f (issue at "duplicate singleton section type"))]
+                  [(not (elf-power-of-two? alignment))
                    (values #f (issue at "invalid section alignment"))]
+                  [(and (> alignment 1)
+                        (not (zero? (mod (elf-section-header-address section) alignment))))
+                   (values #f (issue at "section address violates alignment"))]
                   [(and (not (= 8 (elf-section-header-type section)))
                         (not (elf-range-valid? file-offset size length)))
                    (values #f (issue file-offset "section exceeds input"))]
@@ -731,7 +738,8 @@
                        (if problem (values #f problem)
                            (begin
                              (vector-set! raw-sections index content)
-                             (loop (fx1+ index))))))])))))))
+                             (loop (fx1+ index)
+                                   (fxlogor seen-singletons singleton))))))])))))))
 
   (define elf-layout-parser
     (lambda (bytes length header zero)

@@ -637,3 +637,36 @@
         (parser-error? (parser-error-from (lambda () (run-binary-parser parser #vu8(1))))))
       (let ([large (+ 1 (most-positive-fixnum))])
         (list (<u8vec> large) (<bounded> large <u8>) (<pos-at> large <u8>)))))
+
+(mat parser-xml-comment-copy
+
+     (let* ([body (string-append (make-string 250000 #\a) "-b")]
+            [text (string-append "<r><!--" body "--></r>")]
+            [before (statistics)] [document (parse-xml text)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (string=? body (xml-comment-value
+                           (vector-ref (xml-element-children
+                                        (xml-document-root document)) 0)))
+            (< allocated 68000000)))
+
+     ;; Error case: a double hyphen inside comment text is still forbidden.
+     (and (parser-error-from (lambda () (parse-xml "<r><!--a--b--></r>"))) #t)
+
+     ;; Error case: a trailing hyphen is not part of a valid comment terminator.
+     (and (parser-error-from (lambda () (parse-xml "<r><!--a---></r>"))) #t))
+
+(mat parser-xml-newline-copy
+
+     ;; Newline normalization must keep literal and referenced whitespace distinct.
+     (for-all
+      (lambda (newline)
+        (let* ([document (parse-xml
+                          (string-append "<r a='x" newline "y&#13;'><!--a" newline
+                                         "b--><![CDATA[c" newline "d]]>e" newline "f</r>"))]
+               [root (xml-document-root document)] [children (xml-element-children root)])
+          (and (string=? "x y\r" (xml-attribute-value
+                                  (vector-ref (xml-element-attributes root) 0)))
+               (string=? "a\nb" (xml-comment-value (vector-ref children 0)))
+               (string=? "c\nd" (xml-cdata-value (vector-ref children 1)))
+               (string=? "e\nf" (xml-text-value (vector-ref children 2))))))
+      '("\n" "\r" "\r\n")))

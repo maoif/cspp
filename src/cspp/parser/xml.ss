@@ -16,6 +16,7 @@
           (cspp parser combinator)
           (cspp file)
           (cspp list)
+          (only (cspp string) string-contains?)
           (cspp utils))
 
   (define-record-type xml-document
@@ -216,7 +217,18 @@
 
   (define <comment>
     (<map> (lambda (pieces)
-             (make-xml-comment (list->string (apply append pieces))))
+             (make-xml-comment
+              (let* ([length (fold-left (lambda (sum piece) (fx+ sum (length piece))) 0 pieces)]
+                     [text (make-string length)])
+                (let loop ([pieces pieces] [index 0])
+                  (if (null? pieces)
+                      text
+                      (let copy ([piece (car pieces)] [index index])
+                        (if (null? piece)
+                            (loop (cdr pieces) index)
+                            (begin
+                              (string-set! text index (car piece))
+                              (copy (cdr piece) (fx1+ index))))))))))
            (<~1> (<string> "<!--")
                  (<many> <comment-piece>)
                  (<string> "-->"))))
@@ -449,24 +461,26 @@
 
   (define normalize-xml-newlines
     (lambda (text)
-      (let* ([length (string-length text)]
-             [normalized (make-string length)])
-        (let loop ([source-index 0] [target-index 0])
-          (if (= source-index length)
-              (substring normalized 0 target-index)
-              (let ([character (string-ref text source-index)])
-                (if (char=? character #\return)
-                    (begin
-                      (string-set! normalized target-index #\newline)
-                      (loop (if (and (< (fx1+ source-index) length)
-                                     (char=? (string-ref text (fx1+ source-index))
-                                             #\newline))
-                                (fx+ source-index 2)
-                                (fx1+ source-index))
-                            (fx1+ target-index)))
-                    (begin
-                      (string-set! normalized target-index character)
-                      (loop (fx1+ source-index) (fx1+ target-index))))))))))
+      (if (not (string-contains? text #\return))
+          text
+          (let* ([length (string-length text)]
+                 [normalized (make-string length)])
+            (let loop ([source-index 0] [target-index 0])
+              (if (= source-index length)
+                  (substring normalized 0 target-index)
+                  (let ([character (string-ref text source-index)])
+                    (if (char=? character #\return)
+                        (begin
+                          (string-set! normalized target-index #\newline)
+                          (loop (if (and (< (fx1+ source-index) length)
+                                         (char=? (string-ref text (fx1+ source-index))
+                                                 #\newline))
+                                    (fx+ source-index 2)
+                                    (fx1+ source-index))
+                                (fx1+ target-index)))
+                        (begin
+                          (string-set! normalized target-index character)
+                          (loop (fx1+ source-index) (fx1+ target-index)))))))))))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; File decoding

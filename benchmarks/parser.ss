@@ -179,6 +179,40 @@
              (list "WAT oversized NaN f32" <wat-f32> (string-append "nan:0x" digits))
              (list "WAT oversized NaN f64" <wat-f64> (string-append "nan:0x" digits)))))))
 
+(define measure-long-exponent
+  (lambda (count)
+    (let ([text (string-append "-0e-" (make-string count #\9))])
+      (measure-parser
+       "WAT exponent digits" count (lambda () (run-textual-parser <wat-f64> text))
+       (lambda (value) (= #x8000000000000000 (wasm-float-bits value)))))))
+
+(define measure-xml-comment
+  (lambda (count)
+    (let* ([body (make-string count #\a)]
+           [text (string-append "<r><!--" body "--></r>")])
+      (measure-parser
+       "XML comment characters" count (lambda () (parse-xml text))
+       (lambda (document)
+         (string=? body (xml-comment-value
+                        (vector-ref (xml-element-children (xml-document-root document)) 0))))))))
+
+(define measure-xml-no-cr
+  (lambda (count)
+    (let* ([body (make-string count #\a)] [text (string-append "<r>" body "</r>")])
+      (measure-parser
+       "XML text without CR" count (lambda () (parse-xml text))
+       (lambda (document)
+         (string=? body (xml-text-value
+                        (vector-ref (xml-element-children (xml-document-root document)) 0))))))))
+
+(define measure-wat-annotation
+  (lambda (count)
+    (let ([text (string-append "(@ignored " (make-string count #\a) ")")])
+      (measure-parser
+       "WAT annotation characters" count
+       (lambda () (run-textual-parser (~> <wat-trivia> <pos>) text))
+       (lambda (position) (= position (string-length text)))))))
+
 (printf "~a ~a\n" (scheme-version) (machine-type))
 (benchmark-print-table!
  "Parser review workloads"
@@ -197,4 +231,7 @@
                (measure-character-predicates 1000000)
                (measure-unsigned-integers 100000)
                (measure-json5-whitespace 1000000))
-         (measure-bounded-payloads 16000)))
+         (measure-bounded-payloads 16000)
+         (map measure-long-exponent '(1000 4000 16000))
+         (list (measure-xml-comment 250000) (measure-xml-no-cr 1000000)
+               (measure-wat-annotation 250000))))

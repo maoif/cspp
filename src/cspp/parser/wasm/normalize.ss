@@ -489,18 +489,16 @@
 ;;;;===----------------------------------------------------------------------===
 
   (define resolve-label
-    (lambda (reference label*)
+    (lambda (reference labels depth)
       (let ([value (wat-index-reference-value reference)])
         (if (natural? value)
             value
-            (let ([key (identifier-key value)])
-              (let loop ([label* label*] [depth 0])
-                (cond [(null? label*)
-                       (normalization-error
-                        (wat-index-reference-pos reference)
-                        (format "unknown WebAssembly label identifier: ~a" value))]
-                      [(eq? key (car label*)) depth]
-                      [else (loop (cdr label*) (fx1+ depth))])))))))
+            (let ([binding-depth (hashtable-ref labels (identifier-key value) #f)])
+              (if binding-depth
+                  (fx- depth binding-depth)
+                  (normalization-error
+                   (wat-index-reference-pos reference)
+                   (format "unknown WebAssembly label identifier: ~a" value))))))))
 
   (define resolve-local
     (lambda (reference locals)
@@ -542,7 +540,7 @@
               (resolve-reference state second-kind (vector-ref immediate* 1)))))
 
   (define normalize-immediates
-    (lambda (state instruction locals label*)
+    (lambda (state instruction locals labels depth)
       (let* ([mnemonic (wat-instruction-syntax-mnemonic instruction)]
              [descriptor (wasm-opcode-by-mnemonic mnemonic)]
              [shape (wasm-opcode-immediate-shape descriptor)]
@@ -559,7 +557,7 @@
           [(block-type try-table)
            (vector (normalize-block-type state (vector-ref immediate* 0)))]
           [(label-index)
-           (vector (resolve-label (vector-ref immediate* 0) label*))]
+           (vector (resolve-label (vector-ref immediate* 0) labels depth))]
           [(function-index)
            (vector (resolve-reference state 'function (vector-ref immediate* 0)))]
           [(type-index)
@@ -601,8 +599,8 @@
                    (vector-ref immediate* 1))]
           [(label-vector)
            (let ([target* (vector-ref immediate* 0)])
-             (vector (vector-map* (lambda (target) (resolve-label target label*)) target*)
-                     (resolve-label (vector-ref immediate* 1) label*)))]
+             (vector (vector-map* (lambda (target) (resolve-label target labels depth)) target*)
+                     (resolve-label (vector-ref immediate* 1) labels depth)))]
           [(table-pair)
            (normalize-index-pair state 'table 'table immediate*)]
           [(memory-pair)
@@ -626,7 +624,7 @@
            (vector (resolve-reference state 'type (vector-ref immediate* 0))
                    (vector-ref immediate* 1))]
           [(br-on-cast)
-           (vector (resolve-label (vector-ref immediate* 0) label*)
+           (vector (resolve-label (vector-ref immediate* 0) labels depth)
                    (normalize-reference-type state (vector-ref immediate* 1))
                    (normalize-reference-type state (vector-ref immediate* 2)))]
           [else
@@ -635,38 +633,47 @@
             (format "unsupported WebAssembly normalization shape: ~a" shape))]))))
 
   (define normalize-expression
-    (lambda (state instruction* locals label*)
-      (vector-map*
-       (lambda (instruction)
-         (let* ([label (wat-instruction-syntax-label instruction)]
-                [nested-label* (cons (identifier-key label) label*)]
-                [body (normalize-expression
-                       state (wat-instruction-syntax-body instruction)
-                       locals nested-label*)]
-                [alternate-syntax (wat-instruction-syntax-alternate instruction)]
-                [alternate
-                 (cond [(not alternate-syntax) '#()]
-                       [(or (zero? (vector-length alternate-syntax))
-                            (wat-instruction-syntax?
-                             (vector-ref alternate-syntax 0)))
-                        (normalize-expression state alternate-syntax
-                                              locals nested-label*)]
-                       [else
-                        (vector-map*
-                         (lambda (catch)
-                           (make-wasm-catch
-                            (wat-catch-syntax-kind catch)
-                            (and (wat-catch-syntax-tag catch)
-                                 (resolve-reference
-                                  state 'tag (wat-catch-syntax-tag catch)))
-                            (resolve-label (wat-catch-syntax-label catch)
-                                           label*)))
-                         alternate-syntax)])])
-           (make-wasm-instruction
-            (wat-instruction-syntax-mnemonic instruction)
-            (normalize-immediates state instruction locals label*)
-            body alternate)))
-       instruction*)))
+    (lambda (state instruction* locals)
+      ;; Each expression owns its table. Bind absolute depths while traversing a body,
+      ;; then restore the shadowed binding before processing siblings or catch targets.
+      (let ([labels (make-eq-hashtable)])
+        (let normalize ([instruction* instruction*] [depth 0])
+          (vector-map*
+           (lambda (instruction)
+             (let* ([label (identifier-key (wat-instruction-syntax-label instruction))]
+                    [previous (and label (hashtable-ref labels label #f))]
+                    [body
+                     (begin
+                       (when label (hashtable-set! labels label (fx1+ depth)))
+                       (normalize (wat-instruction-syntax-body instruction) (fx1+ depth)))]
+                    [alternate-syntax (wat-instruction-syntax-alternate instruction)]
+                    [catches? (and alternate-syntax
+                                   (positive? (vector-length alternate-syntax))
+                                   (wat-catch-syntax? (vector-ref alternate-syntax 0)))]
+                    [alternate
+                     (if (or (not alternate-syntax) catches?)
+                         '#()
+                         (normalize alternate-syntax (fx1+ depth)))])
+               (when label
+                 (if previous
+                     (hashtable-set! labels label previous)
+                     (hashtable-delete! labels label)))
+               (make-wasm-instruction
+                (wat-instruction-syntax-mnemonic instruction)
+                (normalize-immediates state instruction locals labels depth)
+                body
+                (if catches?
+                    ;; try_table catches target the enclosing scope, not its body label.
+                    (vector-map*
+                     (lambda (catch)
+                       (make-wasm-catch
+                        (wat-catch-syntax-kind catch)
+                        (and (wat-catch-syntax-tag catch)
+                             (resolve-reference state 'tag (wat-catch-syntax-tag catch)))
+                        (resolve-label (wat-catch-syntax-label catch) labels depth)))
+                     alternate-syntax)
+                    alternate))))
+           instruction*)))))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Entity and abbreviation normalization
@@ -704,7 +711,7 @@
         (add-binding-ids! locals local* parameter-count 'local)
         (make-wasm-function
          type-index (function-locals state type-use local*)
-         (normalize-expression state (vector-ref data 2) locals '())))))
+         (normalize-expression state (vector-ref data 2) locals)))))
 
   (define normalize-table-type
     (lambda (state type)
@@ -778,7 +785,7 @@
                    (if (wat-element-segment-syntax-offset syntax)
                        (normalize-expression
                         state (wat-element-segment-syntax-offset syntax)
-                        (make-eq-hashtable) '())
+                        (make-eq-hashtable))
                        (zero-expression
                         (or (wat-element-segment-syntax-address-type syntax) 'i32))))]
              [items (wat-element-segment-syntax-items syntax)]
@@ -791,7 +798,7 @@
                   items)
                   (vector-map*
                    (lambda (expression)
-                     (normalize-expression state expression (make-eq-hashtable) '()))
+                     (normalize-expression state expression (make-eq-hashtable)))
                    items))])
         (make-wasm-element mode reference-type table offset initializers))))
 
@@ -810,7 +817,7 @@
                    (if (wat-data-segment-syntax-offset syntax)
                        (normalize-expression
                         state (wat-data-segment-syntax-offset syntax)
-                        (make-eq-hashtable) '())
+                        (make-eq-hashtable))
                        (zero-expression
                         (or (wat-data-segment-syntax-address-type syntax) 'i32))))])
         (make-wasm-data
@@ -946,7 +953,7 @@
                           (normalize-table-type state (if initialized? (vector-ref data 0) data))
                           (and initialized?
                                (normalize-expression state (vector-ref data 1)
-                                                     (make-eq-hashtable) '()))))))]
+                                                     (make-eq-hashtable)))))))]
                  [(memory)
                   (if (wat-module-field-abbreviation field)
                       (let-values ([(memory data)
@@ -962,7 +969,7 @@
                      (make-wasm-global
                       (normalize-global-type state (vector-ref data 0))
                       (normalize-expression state (vector-ref data 1)
-                                            (make-eq-hashtable) '()))))]
+                                            (make-eq-hashtable)))))]
                  [(tag)
                   (tag-builder
                    (make-wasm-tag

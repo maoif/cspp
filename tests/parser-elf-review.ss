@@ -278,3 +278,26 @@
                      #f))
                  '("rel-" "rela-")))
       '("-64le" "-64be")))
+
+(mat parser-elf-section-structure
+
+     ;; Error cases: duplicate singleton tables and misaligned section addresses are rejected.
+     (for-all
+      (lambda (tag)
+        (for-all
+         (lambda (name)
+           (guard (condition [(parser-error? condition) #t] [else #f])
+             (elf-review-file (string-append name "-" tag))
+             #f))
+         '("duplicate-symtab" "duplicate-dynsym" "duplicate-hash" "duplicate-dynamic"
+           "misaligned-address")))
+      '("32le" "32be" "64le" "64be"))
+
+     ;; One table of each kind, multiple string tables, and unconstrained addresses are valid.
+     (for-all
+      (lambda (tag)
+        (for-all (lambda (name)
+                   (elf-file? (elf-review-file (string-append name "-" tag))))
+                 '("single-tables" "multiple-strtab" "aligned-address"
+                   "unconstrained-address" "unit-alignment-address")))
+      '("32le" "32be" "64le" "64be")))
