@@ -2,7 +2,11 @@
         (cspp parser combinator)
         (cspp parser wasm binary instructions)
         (cspp parser wasm binary values)
-        (cspp parser wasm text lexical))
+        (cspp parser wasm text lexical)
+        (cspp parser wasm text instructions)
+        (only (cspp parser wasm text types)
+              wat-index-reference-value wat-instruction-syntax-mnemonic
+              wat-instruction-syntax-immediates))
 (load "benchmarks/common.ss")
 
 ;; Run from the repository root: ./cspp --script=benchmarks/parser.ss
@@ -249,6 +253,81 @@
          (and (= count (length values))
               (for-all (lambda (value) (= 0 (wasm-float-bits value))) values)))))))
 
+(define measure-counted-vector
+  (lambda (count)
+    (let* ([prefix (u8-list->bytevector
+                    (let loop ([value count])
+                      (if (< value 128) (list value)
+                          (cons (logor 128 (logand value 127))
+                                (loop (ash value -7))))))]
+           [bytes (make-bytevector (+ (bytevector-length prefix) count) 0)]
+           [parser (<wasm-vector> <wasm-u32>)])
+      (bytevector-copy! prefix 0 bytes 0 (bytevector-length prefix))
+      (measure-parser
+       "WASM counted u32 vector" count (lambda () (run-binary-parser parser bytes))
+       (lambda (result) (and (= count (vector-length result)) (vfor-all zero? result)))))))
+
+(define measure-text-memory-instructions
+  (lambda (count)
+    (let ([source (apply string-append
+                        (make-list count "i32.load offset=8 align=4 "))]
+          [parser (<~ <wat-expression> <eof>)])
+      (measure-parser
+       "WAT memory instructions" count (lambda () (run-textual-parser parser source))
+       (lambda (body)
+         (and (= count (vector-length body))
+              (eq? 'i32.load (wat-instruction-syntax-mnemonic (vector-ref body 0)))))))))
+
+(define measure-text-branch-table
+  (lambda (count)
+    (let ([source (string-append "br_table "
+                                (apply string-append (make-list count "0 ")) "0")]
+          [parser (<~ <wat-instruction> <eof>)])
+      (measure-parser
+       "WAT br_table targets" count (lambda () (run-textual-parser parser source))
+       (lambda (instruction)
+         (let ([immediates (wat-instruction-syntax-immediates instruction)])
+           (and (= count (vector-length (vector-ref immediates 0)))
+                (= 0 (wat-index-reference-value (vector-ref immediates 1))))))))))
+
+(define measure-elf-hash-validation
+  (lambda (count)
+    ;; One SysV hash linked to a valid symbol table: null symbol, then unnamed globals.
+    (let* ([symbols-offset 328] [hash-offset (+ symbols-offset (* count 24))]
+           [hash-size (+ 12 (* count 4))]
+           [bytes (make-bytevector (+ hash-offset hash-size) 0)]
+           [endian (endianness little)])
+      (bytevector-copy! #vu8(127 69 76 70 2 1 1) 0 bytes 0 7)
+      (bytevector-u16-set! bytes 16 1 endian)
+      (bytevector-u16-set! bytes 18 62 endian)
+      (bytevector-u32-set! bytes 20 1 endian)
+      (bytevector-u64-set! bytes 40 64 endian)
+      (bytevector-u16-set! bytes 52 64 endian)
+      (bytevector-u16-set! bytes 58 64 endian)
+      (bytevector-u16-set! bytes 60 4 endian)
+      (for-each
+       (lambda (index type offset size link info alignment entry-size)
+         (let ([at (+ 64 (* 64 index))])
+           (bytevector-u32-set! bytes (+ at 4) type endian)
+           (bytevector-u64-set! bytes (+ at 24) offset endian)
+           (bytevector-u64-set! bytes (+ at 32) size endian)
+           (bytevector-u32-set! bytes (+ at 40) link endian)
+           (bytevector-u32-set! bytes (+ at 44) info endian)
+           (bytevector-u64-set! bytes (+ at 48) alignment endian)
+           (bytevector-u64-set! bytes (+ at 56) entry-size endian)))
+       '(1 2 3) '(3 2 5) (list 320 symbols-offset hash-offset)
+       (list 1 (* count 24) hash-size) '(0 1 2) '(0 1 0) '(1 8 4) '(0 24 4))
+      (do ([index 1 (fx1+ index)]) ((fx= index count))
+        (bytevector-u8-set! bytes (+ symbols-offset (* index 24) 4) 16))
+      (bytevector-u32-set! bytes hash-offset 1 endian)
+      (bytevector-u32-set! bytes (+ hash-offset 4) count endian)
+      (measure-parser
+       "ELF hash entries" count (lambda () (parse-elf bytes))
+       (lambda (file)
+         (let ([hash (elf-section-content (vector-ref (elf-file-sections file) 3))])
+           (and (= count (vector-length (elf-hash-table-chains hash)))
+                (vfor-all zero? (elf-hash-table-chains hash)))))))))
+
 (printf "~a ~a\n" (scheme-version) (machine-type))
 (benchmark-print-table!
  "Parser review workloads"
@@ -274,4 +353,8 @@
          (map measure-finite-significand '(1000 4000 16000))
          (map measure-xml-reference '(1000 4000 16000 32000))
          (map measure-binary-instructions '(10000 100000 500000))
-         (list (measure-binary-floats 1000000))))
+         (list (measure-binary-floats 1000000))
+         (map measure-counted-vector '(1000 100000 1000000))
+         (map measure-text-memory-instructions '(1000 10000 50000))
+         (map measure-text-branch-table '(1000 10000 50000))
+         (map measure-elf-hash-validation '(1000 10000 100000))))

@@ -361,3 +361,43 @@
          '("fixed-tables-" "fixed-relr-")))
       '("32le" "32be" "64le" "64be") '(#f #f #t #t)
       (list (endianness little) (endianness big) (endianness little) (endianness big))))
+
+(mat parser-elf-relr-file-types
+
+     ;; Error cases: gABI permits RELR only in executable and shared-object files.
+     (for-all
+      (lambda (tag endian)
+        (let ([original (read-u8vec (string-append "data/elf-review/fixed-relr-" tag ".elf"))])
+          (for-all
+           (lambda (type)
+             (let ([bytes (bytevector-copy original)])
+               (bytevector-u16-set! bytes 16 type endian)
+               (if (memv type '(2 3))
+                   (equal? '#(0)
+                           (elf-relr-table-entries
+                            (elf-section-content (vector-ref (elf-file-sections
+                                                             (parse-elf bytes)) 1))))
+                   (elf-review-rejected? bytes))))
+           '(0 1 2 3 4))))
+      '("32le" "32be" "64le" "64be")
+      (list (endianness little) (endianness big) (endianness little) (endianness big)))
+
+     ;; Multi-entry RELR content is decoded in the containing file's class and byte order.
+     (for-all
+      (lambda (tag wide? endian)
+        (let* ([original (read-u8vec (string-append "data/elf-review/fixed-relr-" tag ".elf"))]
+               [header (elf-section-header (vector-ref (elf-file-sections
+                                                        (parse-elf original)) 1))]
+               [offset (elf-section-header-offset header)] [word (if wide? 8 4)]
+               [bytes (make-bytevector (+ (bytevector-length original) word) 0)]
+               [set-word! (if wide? bytevector-u64-set! bytevector-u32-set!)])
+          (bytevector-copy! original 0 bytes 0 (bytevector-length original))
+          (set-word! bytes (+ (if wide? 64 52) (if wide? 64 40) (if wide? 32 20))
+                     (* word 2) endian)
+          (set-word! bytes offset #x1000 endian)
+          (set-word! bytes (+ offset word) 3 endian)
+          (equal? '#(#x1000 3)
+                  (elf-relr-table-entries
+                   (elf-section-content (vector-ref (elf-file-sections (parse-elf bytes)) 1))))))
+      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
+      (list (endianness little) (endianness big) (endianness little) (endianness big))))

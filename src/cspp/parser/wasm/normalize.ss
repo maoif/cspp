@@ -827,13 +827,13 @@
 
   (define normalize-inline-table
     (lambda (state field abbreviation)
-      (let* ([syntax (wat-inline-abbreviation-data abbreviation)]
+      (let* ([data (wat-inline-abbreviation-data abbreviation)]
+             [syntax (vector-ref data 1)]
              [count (vector-length (wat-element-segment-syntax-items syntax))]
              [address-type
               (or (wat-element-segment-syntax-address-type syntax) 'i32)]
              [type (make-wasm-table-type
-                    (normalize-reference-type
-                     state (wat-element-segment-syntax-reference-type syntax))
+                    (normalize-reference-type state (vector-ref data 0))
                     (make-wasm-limits address-type count count))]
              [index (hashtable-ref
                      (normalization-state-field-indices state) field #f)])

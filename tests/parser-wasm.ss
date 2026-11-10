@@ -448,8 +448,8 @@
                  (wat-inline-abbreviation-kind
                   (wat-module-field-abbreviation (vector-ref field* 6))))
             (wat-element-segment-syntax?
-             (wat-inline-abbreviation-data
-              (wat-module-field-abbreviation (vector-ref field* 6))))
+             (vector-ref (wat-inline-abbreviation-data
+                          (wat-module-field-abbreviation (vector-ref field* 6))) 1))
             (eq? 'memory-data
                  (wat-inline-abbreviation-kind
                   (wat-module-field-abbreviation (vector-ref field* 8))))
@@ -635,12 +635,12 @@
        (and (= 4 (vector-length field*))
             (eq? 'i64
                  (wat-element-segment-syntax-address-type
-                  (wat-inline-abbreviation-data
-                   (wat-module-field-abbreviation (vector-ref field* 0)))))
+                  (vector-ref (wat-inline-abbreviation-data
+                               (wat-module-field-abbreviation (vector-ref field* 0))) 1)))
             (eq? 'i32
                  (wat-element-segment-syntax-address-type
-                  (wat-inline-abbreviation-data
-                   (wat-module-field-abbreviation (vector-ref field* 1)))))
+                  (vector-ref (wat-inline-abbreviation-data
+                               (wat-module-field-abbreviation (vector-ref field* 1))) 1)))
             (eq? 'i64
                  (wat-data-segment-syntax-address-type
                   (wat-inline-abbreviation-data
@@ -659,11 +659,11 @@
                "  (table funcref (elem (ref.func 0) (ref.func 1))))"))]
             [field* (wat-module-fields module)]
             [index-items
-             (wat-inline-abbreviation-data
-              (wat-module-field-abbreviation (vector-ref field* 0)))]
+             (vector-ref (wat-inline-abbreviation-data
+                          (wat-module-field-abbreviation (vector-ref field* 0))) 1)]
             [expression-items
-             (wat-inline-abbreviation-data
-              (wat-module-field-abbreviation (vector-ref field* 1)))])
+             (vector-ref (wat-inline-abbreviation-data
+                          (wat-module-field-abbreviation (vector-ref field* 1))) 1)])
        (and (eq? 'indexes (wat-element-segment-syntax-item-kind index-items))
             (= 2 (vector-length (wat-element-segment-syntax-items index-items)))
             (= 0 (wat-index-reference-value

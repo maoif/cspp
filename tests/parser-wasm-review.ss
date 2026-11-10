@@ -853,3 +853,103 @@
       (lambda (bytes)
         (vector? (run-binary-parser <wasm-expression> bytes)))
       '(#vu8(27 11) #vu8(251 21 110 11) #vu8(251 23 110 11))))
+
+(mat wasm-review-inline-element-lists
+
+     ;; Normative element lists have a type distinct from the enclosing table's type.
+     (for-all
+      (lambda (sources)
+        (string=? (format "~s" (parse-wasm-text-module (car sources)))
+                  (format "~s" (parse-wasm-text-module (cadr sources)))))
+      '(("(module (func $f) (table funcref (elem func $f)))"
+         "(module (func $f) (table 1 1 funcref)
+                  (elem (table 0) (i32.const 0) func $f))")
+        ("(module (table externref (elem externref (ref.null extern))))"
+         "(module (table 1 1 externref)
+                  (elem (table 0) (i32.const 0) externref (ref.null extern)))")
+        ("(module (table i64 funcref (elem func)))"
+         "(module (table i64 0 0 funcref) (elem (table 0) (i64.const 0) func))")
+        ("(module (table externref (elem externref)))"
+         "(module (table 0 0 externref) (elem (table 0) (i32.const 0) externref))")
+        ("(module (import \"m\" \"t\" (table 0 funcref)) (func $f)
+                  (table $t (export \"t\") funcref (elem (ref func) (item ref.func $f))))"
+         "(module (import \"m\" \"t\" (table 0 funcref)) (func $f)
+                  (table $t (export \"t\") 1 1 funcref)
+                  (elem (table $t) (i32.const 0) (ref func) (item ref.func $f)))")))
+
+     ;; Preserve the existing bare-index, bare-expression and empty abbreviations.
+     (for-all
+      (lambda (text)
+        (wasm-module? (parse-wasm-text-module text)))
+      '("(module (func $f) (table funcref (elem $f)))"
+        "(module (table externref (elem (ref.null extern))))"
+        "(module (table funcref (elem)))")))
+
+(mat wasm-review-counted-vector-allocation
+
+     ;; Known counts can fill the vector without retaining one temporary pair per element.
+     (let* ([count 100000] [bytes (make-bytevector (+ count 3) 0)]
+            [parser (<wasm-vector> <wasm-u32>)])
+       (bytevector-u8-set! bytes 0 #xa0)
+       (bytevector-u8-set! bytes 1 #x8d)
+       (bytevector-u8-set! bytes 2 #x06)
+       (let* ([before (statistics)] [result (run-binary-parser parser bytes)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and (= count (vector-length result)) (vfor-all zero? result)
+              (< allocated 1800000))))
+
+     ;; Public element parsers may consume zero bytes, even when count exceeds remaining input.
+     (equal? '#(7 7 7) (run-binary-parser (<wasm-vector> (<result> 7)) #vu8(3)))
+
+     (equal? '(#(7 7 7) 1)
+             (run-binary-parser (<~> (<wasm-vector> (<result> 7)) <pos>) #vu8(3 0 0 0)))
+
+     ;; Error case: a huge count on truncated input must fail before preallocating its result.
+     (wasm-review-error?
+      (lambda () (run-binary-parser (<wasm-vector> <u8>) #vu8(255 255 255 255 15))))
+
+     ;; Error case: a truncated multibyte element keeps the actual failure offset.
+     (let ([failure (capture-parser-error
+                     (lambda () (run-binary-parser (<wasm-vector> <wasm-u32>)
+                                                  #vu8(2 1 128))))])
+       (and failure (= 3 (parser-error-offset failure))))
+
+     (equal? '(9 #(0 1 2) 8)
+             (run-binary-parser (<~> <u8> (<bounded> 4 (<wasm-vector> <wasm-u32>)) <u8>)
+                                #vu8(9 3 0 1 2 8)))
+
+     ;; Vectors and mutable element values belong to the invocation.
+     (let* ([parser (<wasm-vector> (<u8vec> 1))]
+            [first (run-binary-parser parser #vu8(2 8 9))]
+            [second (run-binary-parser parser #vu8(2 8 9))])
+       (bytevector-u8-set! (vector-ref first 0) 0 42)
+       (vector-set! first 1 #vu8(0))
+       (and (= 8 (bytevector-u8-ref (vector-ref second 0) 0))
+            (= 9 (bytevector-u8-ref (vector-ref second 1) 0)))))
+
+(mat wasm-review-text-immediate-results
+
+     ;; br_table preserves target order, final default, source positions and immutable vectors.
+     (for-all
+      (lambda (source targets default)
+        (let* ([instruction (parse-wat-lexeme <wat-instruction> source)]
+               [immediates (wat-instruction-syntax-immediates instruction)]
+               [actual (vector-ref immediates 0)])
+          (and (equal? targets
+                       (map wat-index-reference-value (vector->list actual)))
+               (equal? default (wat-index-reference-value (vector-ref immediates 1)))
+               (= 9 (wat-index-reference-pos
+                     (if (zero? (vector-length actual)) (vector-ref immediates 1)
+                         (vector-ref actual 0))))
+               (or (zero? (vector-length actual)) (immutable-vector? actual)))))
+      '("br_table 2" "br_table 2 0 1" "br_table $a $b $a")
+      '(() (2 0) ("$a" "$b")) '(2 1 "$a"))
+
+     ;; Cached parser compositions must not share mutable v128 results.
+     (let* ([source "v128.const i32x4 1 2 3 4"]
+            [first (parse-wat-lexeme <wat-instruction> source)]
+            [second (parse-wat-lexeme <wat-instruction> source)]
+            [bytes (vector-ref (wat-instruction-syntax-immediates first) 0)])
+       (bytevector-u8-set! bytes 0 42)
+       (= 1 (bytevector-u8-ref
+             (vector-ref (wat-instruction-syntax-immediates second) 0) 0))))

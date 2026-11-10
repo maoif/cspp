@@ -317,3 +317,21 @@
             (toml-value "t=2016-12-31T23:59:60" "t")))
 
      (= 60 (toml-local-time-second (toml-value "t=23:59:60" "t"))))
+
+(mat parse-toml-inline-error-positions
+
+     ;; Error cases: duplicate and conflicting inline keys point to the offending key,
+     ;; including nested tables/arrays and multiline TOML 1.1 inline tables.
+     (for-all
+      (lambda (source offset line column)
+        (guard (condition
+                [(parser-error? condition)
+                 (and (= offset (parser-error-offset condition))
+                      (= line (parser-error-line condition))
+                      (= column (parser-error-column condition)))])
+          (parse-toml source)
+          #f))
+      '("a={x=1,x=2}" "a={x=1,x.y=2}" "a={x.y=1,x=2}"
+        "a={\n x=1,\n x=2\n}" "a=[{x=1,x=2}]" "a={outer={x=1,x=2}}"
+        "x=1\nx=2")
+      '(7 7 9 11 8 14 4) '(0 0 0 2 0 0 1) '(7 7 9 1 8 14 0)))

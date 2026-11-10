@@ -279,14 +279,22 @@
 
   (define table-abbreviation
     (<map> (lambda (value)
-             (make-wat-inline-abbreviation
-              (car value) 'table-element
-              (make-wat-element-segment-syntax
-               (car value) 'abbreviation #f #f (optional-value (cadr value))
-               (caddr value) (vector-ref (cadddr value) 0)
-               (vector-ref (cadddr value) 1))))
+             (let* ([table-type (caddr value)] [items (cadddr value)]
+                    ;; The normative list declares its own type; legacy bare lists
+                    ;; inherit the table type, as they did before.
+                    [typed? (= 3 (vector-length items))]
+                    [element-type (if typed? (vector-ref items 0) table-type)]
+                    [kind (vector-ref items (if typed? 1 0))]
+                    [initializers (vector-ref items (if typed? 2 1))])
+               (make-wat-inline-abbreviation
+                (car value) 'table-element
+                (make-immutable-vector
+                 table-type
+                 (make-wat-element-segment-syntax
+                  (car value) 'abbreviation #f #f (optional-value (cadr value))
+                  element-type kind initializers)))))
            (<~> <pos> optional-address-type <wat-reference-type>
-                (wat-parenthesized "elem" table-element-items))))
+                (wat-parenthesized "elem" (</> element-items table-element-items)))))
 
   (define table-field
     (<bind>

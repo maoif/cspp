@@ -5,7 +5,8 @@
           (cspp parser private)
           (cspp optional-library-check)
           (cspp parser elf types)
-          (cspp parser elf validate))
+          (cspp parser elf validate)
+          (only (cspp vector) vfor-all))
 
   (define issue (lambda (offset message) (make-elf-issue offset message)))
 
@@ -417,10 +418,10 @@
                                class (vector-ref all-headers link) linked)]
                        [table (parse-bounded-content raw (hash-table-parser endianness-name))])
                   (and count table (= count (vector-length (elf-hash-table-chains table)))
-                       (for-all (lambda (index) (< index count))
-                                (vector->list (elf-hash-table-buckets table)))
-                       (for-all (lambda (index) (< index count))
-                                (vector->list (elf-hash-table-chains table)))
+                       (vfor-all (lambda (index) (< index count))
+                                 (elf-hash-table-buckets table))
+                       (vfor-all (lambda (index) (< index count))
+                                 (elf-hash-table-chains table))
                        table)))]
           [(17)
            (and (linked-section-type? all-headers link '(2 11))
@@ -437,8 +438,8 @@
                                            (<rep> (unsigned-parser 4 endianness-name)
                                                   (fx1- (/ size 4))))))])
                   (and count (< (elf-section-header-info header) count) table
-                       (for-all (lambda (index) (< 0 index (vector-length all-headers)))
-                                (vector->list (elf-group-section-members table)))
+                       (vfor-all (lambda (index) (< 0 index (vector-length all-headers)))
+                                 (elf-group-section-members table))
                        table)))]
           [(18) (and (linked-section-type? all-headers link '(2 11))
                      (= 4 (elf-section-header-entry-size header))
@@ -710,6 +711,9 @@
                    (loop (fx1+ index) seen-singletons)]
                   [(not (fxzero? (fxlogand singleton seen-singletons)))
                    (values #f (issue at "duplicate singleton section type"))]
+                  [(and (= 19 (elf-section-header-type section))
+                        (not (memv (decoded-elf-header-type header) '(2 3))))
+                   (values #f (issue at "RELR sections require an executable or shared file"))]
                   [(and (logbit? 6 (elf-section-header-flags section))
                         (>= (elf-section-header-info section) count))
                    (values #f (issue at "section info index is out of range"))]

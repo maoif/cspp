@@ -727,7 +727,8 @@
                          (let-values ([(table problem)
                                        (build-inline-table (car value))])
                            (if problem
-                               (<fail-with> (validation-issue-message problem))
+                               (<pos-at> (validation-issue-offset problem)
+                                         (<fail-with> (validation-issue-message problem)))
                                (<result> table))))))))
 
   (define <toml-value-parser>

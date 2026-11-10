@@ -243,7 +243,9 @@
       (bytevector-u32-set! bytes
                            (+ table-offset (* 2 (if elf64? 64 40)) (if elf64? 44 28))
                            1 endianness)
-      (set-elf-section! bytes class endianness table-offset 3 19 208 (* 2 word) 0 word)
+      ;; RELR cannot coexist with GROUP: the former requires ET_EXEC/ET_DYN,
+      ;; while this fixture exercises GROUP in ET_REL. Keep these bytes untyped.
+      (set-elf-section! bytes class endianness table-offset 3 1 208 (* 2 word) 0 0)
       (set-elf-section! bytes class endianness table-offset 4 5 240 20 2 4)
       (set-elf-section! bytes class endianness table-offset 5 17 272 8 2 4)
       (set-elf-section! bytes class endianness table-offset 6 14 288 (* 2 word) 0 word)
@@ -511,7 +513,6 @@
                [endianness-name (cadr configuration)]
                [file (parse-elf (typed-elf class endianness-name))]
                [sections (elf-file-sections file)]
-               [relr (elf-section-content (vector-ref sections 3))]
                [hash (elf-section-content (vector-ref sections 4))]
                [group (elf-section-content (vector-ref sections 5))]
                [init (elf-section-content (vector-ref sections 6))]
@@ -520,8 +521,7 @@
                [dynamic (elf-section-content (vector-ref sections 9))]
                [dynamic* (elf-dynamic-table-entries dynamic)]
                [xindex (elf-section-content (vector-ref sections 10))])
-          (and (equal? '#(#x1000 3) (elf-relr-table-entries relr))
-               (equal? '#(1) (elf-hash-table-buckets hash))
+          (and (equal? '#(1) (elf-hash-table-buckets hash))
                (equal? '#(0 1) (elf-hash-table-chains hash))
                (= 1 (elf-group-section-flags group))
                (equal? '#(6) (elf-group-section-members group))
@@ -535,7 +535,10 @@
       '((elf32 little) (elf32 big) (elf64 little) (elf64 big)))
 
      ;; error: an SHT_RELR payload must contain complete class-sized words.
-     (error? (parse-elf (typed-elf-with-section-size 'elf32 'little 3 5)))
+     (error?
+      (let ([bytes (read-u8vec "data/elf-review/fixed-relr-32le.elf")])
+        (bytevector-u32-set! bytes (+ 52 40 20) 3 (endianness little))
+        (parse-elf bytes)))
 
      ;; error: an SHT_HASH payload must match its declared bucket and chain counts.
      (error?

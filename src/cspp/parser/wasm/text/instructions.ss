@@ -339,7 +339,7 @@
     (<map> list->immutable-vector
            (<~> <wat-index-reference> <wat-reference-type> <wat-reference-type>)))
 
-  (define immediate-parser
+  (define make-immediate-parser
     (lambda (descriptor)
       (case (wasm-opcode-immediate-shape descriptor)
         [(none) (<result> empty-vector)]
@@ -350,9 +350,15 @@
         [(table-index memory-index) optional-index-immediate]
         [(label-vector)
          (<map> (lambda (index*)
-                  (make-immutable-vector
-                   (list->immutable-vector (reverse (cdr (reverse index*))))
-                   (car (reverse index*))))
+                  (let* ([count (fx1- (length index*))]
+                         [labels (make-vector count)])
+                    (let loop ([index 0] [rest index*])
+                      (if (fx= index count)
+                          (make-immutable-vector
+                           (vector->immutable-vector labels) (car rest))
+                          (begin
+                            (vector-set! labels index (car rest))
+                            (loop (fx1+ index) (cdr rest)))))))
                 (<some> <wat-index-reference>))]
         [(heap-type) (one-immediate <wat-heap-type>)]
         [(heap-type-non-null heap-type-nullable)
@@ -381,6 +387,18 @@
          (<fail-with>
           (format "unsupported WebAssembly text immediate shape: ~a"
                   (wasm-opcode-immediate-shape descriptor)))])))
+
+  ;; Cache fixed compositions only; their callbacks still create invocation-local results.
+  (define immediate-parsers
+    (let ([table (make-eq-hashtable)])
+      (vector-for-each
+       (lambda (descriptor)
+         (hashtable-set! table descriptor (make-immediate-parser descriptor)))
+       wasm-core-3-opcodes)
+      (hashtable-copy table #f)))
+
+  (define immediate-parser
+    (lambda (descriptor) (hashtable-ref immediate-parsers descriptor #f)))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Flat and folded instruction grammar
