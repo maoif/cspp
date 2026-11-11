@@ -205,6 +205,14 @@
              (make-wasm-global-type (car field*) (cadr field*)))
            (<~> <wasm-value-type> mutability-parser)))
 
+  ;; These six compositions are independent of the declaration being parsed.
+  (define i32-minimum-limits (limits-without-maximum 'i32))
+  (define i32-bounded-limits (limits-with-maximum 'i32 #f))
+  (define i32-shared-limits (limits-with-maximum 'i32 #t))
+  (define i64-minimum-limits (limits-without-maximum 'i64))
+  (define i64-bounded-limits (limits-with-maximum 'i64 #f))
+  (define i64-shared-limits (limits-with-maximum 'i64 #t))
+
   #|proc:<wasm-limits>
   The `<wasm-limits>` parser reads i32 or i64 minimum and optional maximum bounds. Shared-memory
   extension flags are supported and require a maximum.
@@ -213,12 +221,12 @@
     (<bind> <u8>
             (lambda (flags)
               (case flags
-                [(#x00) (limits-without-maximum 'i32)]
-                [(#x01) (limits-with-maximum 'i32 #f)]
-                [(#x03) (limits-with-maximum 'i32 #t)]
-                [(#x04) (limits-without-maximum 'i64)]
-                [(#x05) (limits-with-maximum 'i64 #f)]
-                [(#x07) (limits-with-maximum 'i64 #t)]
+                [(#x00) i32-minimum-limits]
+                [(#x01) i32-bounded-limits]
+                [(#x03) i32-shared-limits]
+                [(#x04) i64-minimum-limits]
+                [(#x05) i64-bounded-limits]
+                [(#x07) i64-shared-limits]
                 [else (<fail-with> "invalid WebAssembly limits flags")]))))
 
   #|proc:<wasm-table-type>

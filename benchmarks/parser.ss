@@ -501,11 +501,38 @@
          (if wat? (= 0 (vector-length (wasm-module-functions value)))
              (= 0 (json5-document-value value))))))))
 
+(define measure-wasm-declarations
+  (lambda (count tables?)
+    (define encode-count
+      (lambda (value)
+        (if (< value 128) (list value)
+            (cons (+ 128 (bitwise-and value 127)) (encode-count (ash value -7))))))
+    (let* ([entry-size (if tables? 4 2)]
+           [count-bytes (encode-count count)]
+           [payload-size (+ (length count-bytes) (* count entry-size))]
+           [header (u8-list->bytevector
+                    (append '(0 97 115 109 1 0 0 0) (list (if tables? 4 5))
+                            (encode-count payload-size) count-bytes))]
+           [start (bytevector-length header)]
+           [bytes (make-bytevector (+ start (* count entry-size)) 0)])
+      (bytevector-copy! header 0 bytes 0 start)
+      (when tables?
+        (do ([index start (+ index 4)]) ((= index (bytevector-length bytes)))
+          (bytevector-u8-set! bytes index 112)
+          (bytevector-u8-set! bytes (+ index 1) 1)))
+      (measure-parser
+       (if tables? "WASM table declarations" "WASM memory declarations") count
+       (lambda () (parse-wasm-binary-module bytes))
+       (lambda (module)
+         (= count (vector-length ((if tables? wasm-module-tables wasm-module-memories)
+                                  module))))))))
+
 (benchmark-print-table!
  "Parser review workloads"
  '(("workload" . left) ("count/exponent" . right)
    ("allocated bytes" . right) ("elapsed ms" . right))
- (append (map measure-xml-attributes '(4000 8000 16000 32000))
+ (append (map (lambda (count) (measure-wasm-declarations count #f)) '(10000 100000))
+         (map measure-xml-attributes '(4000 8000 16000 32000))
          (map measure-zero-float '(10000 100000 1000000))
          (measure-byte-vectors)
          (map measure-choice-failure '(1000 2000 4000 8000))

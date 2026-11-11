@@ -1153,3 +1153,28 @@
      (for-all (lambda (source)
                 (and (parser-error-from (lambda () (parse-json5 source))) #t))
               '("/*abc" "/*abc*" "/*abc/0")))
+
+(mat parser-wasm-reused-limits
+
+     ;; Repeated declarations must reuse parser compositions while keeping each value fresh.
+     (let* ([count 10000] [bytes (make-bytevector (+ 14 (* count 2)) 0)])
+       (bytevector-copy! #vu8(0 97 115 109 1 0 0 0 5 162 156 1 144 78) 0 bytes 0 14)
+       (let* ([before (statistics)] [module (parse-wasm-binary-module bytes)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))]
+              [memories (wasm-module-memories module)])
+         (and (= count (vector-length memories))
+              (not (eq? (vector-ref memories 0) (vector-ref memories 1)))
+              (< allocated 1700000))))
+
+     ;; Error case: a cached parser must still reject a maximum smaller than its minimum.
+     (parser-error? (parser-error-from
+                    (lambda () (parse-wasm-binary-module
+                                #vu8(0 97 115 109 1 0 0 0 5 4 1 1 2 1)))))
+
+     (let* ([module (parse-wasm-binary-module
+                     #vu8(0 97 115 109 1 0 0 0 5 7 2 3 1 2 7 3 4))]
+            [memories (wasm-module-memories module)])
+       (and (= 2 (vector-length memories))
+            (wasm-limits-shared? (wasm-memory-type-limits (wasm-memory-type (vector-ref memories 0))))
+            (eq? 'i64 (wasm-limits-address-type
+                       (wasm-memory-type-limits (wasm-memory-type (vector-ref memories 1))))))))
