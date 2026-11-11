@@ -95,9 +95,22 @@
                             (<fail-with> "invalid escaped identifier character")))
                       (<fail-with> "invalid escaped identifier character"))))))
 
+  ;; Only known successful ordinary characters bypass the original grammar. Prefixes,
+  ;; invalid characters and EOF keep its complete failure positions and causes.
+  (define (ordinary-character-parser predicate original)
+    (define-parser ordinary-parser
+      (let-values ([(status character next-input)
+                    (parser-call <item> (save-input inp) state lvl)])
+        (if (and status (predicate character))
+            (values #t character next-input)
+            (parser-call original inp state lvl))))
+    ordinary-parser)
+
   (define (<identifier-character> predicate message)
-    (</> (<escaped-identifier-character> predicate)
-         (<satisfy-char> predicate message)))
+    (ordinary-character-parser
+     predicate
+     (</> (<escaped-identifier-character> predicate)
+          (<satisfy-char> predicate message))))
 
   (define <identifier-start>
     (<identifier-character> identifier-start-character?
@@ -216,20 +229,23 @@
 
   (define json5-string-parser
     (lambda (quote)
-      (<json5-token>
-       (<map> (lambda (characters)
-                (list->string (filter char? characters)))
-              (<~1> (<char> quote)
-                    (<many>
-                     (</> <escaped-string-character>
-                          (<satisfy-char>
-                           (lambda (character)
-                             (and (not (char=? character quote))
-                                  (not (char=? character #\\))
-                                  (not (char=? character #\newline))
-                                  (not (char=? character #\return))))
-                           "invalid unescaped string character")))
-                    (<char> quote))))))
+      (let ([ordinary-character?
+             (lambda (character)
+               (and (not (char=? character quote))
+                    (not (char=? character #\\))
+                    (not (char=? character #\newline))
+                    (not (char=? character #\return))))])
+        (<json5-token>
+         (<map> (lambda (characters)
+                  (list->string (filter char? characters)))
+                (<~1> (<char> quote)
+                      (<many>
+                       (ordinary-character-parser
+                        ordinary-character?
+                        (</> <escaped-string-character>
+                             (<satisfy-char> ordinary-character?
+                                            "invalid unescaped string character"))))
+                      (<char> quote)))))))
 
   (define <json5-string>
     (</> (json5-string-parser #\")

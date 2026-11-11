@@ -458,6 +458,21 @@
          (string=? body (vector-ref
                         (csv-record-fields (vector-ref (csv-document-records document) 0)) 0)))))))
 
+(define measure-json5-characters
+  (lambda (count identifier?)
+    (let* ([body (make-string count #\a)]
+           [text (if identifier? (string-append "{" body ":0}")
+                     (string-append "\"" body "\""))])
+      (measure-parser
+       (if identifier? "JSON5 identifier characters" "JSON5 string characters") count
+       (lambda () (parse-json5 text))
+       (lambda (document)
+         (string=? body
+                   (if identifier?
+                       (json5-member-name
+                        (vector-ref (json5-object-members (json5-document-value document)) 0))
+                       (json5-document-value document))))))))
+
 (benchmark-print-table!
  "Parser review workloads"
  '(("workload" . left) ("count/exponent" . right)
@@ -466,6 +481,8 @@
          (map measure-zero-float '(10000 100000 1000000))
          (measure-byte-vectors)
          (map measure-choice-failure '(1000 2000 4000 8000))
+         (map (lambda (count) (measure-json5-characters count #f)) '(100000 1000000))
+         (map (lambda (count) (measure-json5-characters count #t)) '(100000 1000000))
          (map measure-csv-quoted-field '(100000 1000000))
          (map measure-ignored-whitespace '(100000 1000000))
          (map (lambda (count) (measure-generic-leb128 count #f)) '(1000 4000 16000 32000))
