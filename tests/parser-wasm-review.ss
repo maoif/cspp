@@ -953,3 +953,46 @@
        (bytevector-u8-set! bytes 0 42)
        (= 1 (bytevector-u8-ref
              (vector-ref (wat-instruction-syntax-immediates second) 0) 0))))
+
+(mat wasm-review-short-value-type-cost
+
+     (for-all
+      (lambda (byte)
+        (let* ([bytes (make-bytevector 100000 byte)]
+               [parser (<rep> <wasm-value-type> 100000)]
+               [before (statistics)] [types (run-binary-parser parser bytes)]
+               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (and (= 100000 (length types)) (< allocated 6000000))))
+      '(#x7f #x7c #x7b #x70))
+
+     (let ([first (run-binary-parser <wasm-value-type> #vu8(#x70))]
+           [second (run-binary-parser <wasm-value-type> #vu8(#x70))])
+       (and (not (eq? first second))
+            (wasm-reference-type-nullable? first)
+            (eq? 'func (wasm-reference-type-heap-type first))))
+
+     ;; Error case: unknown value-type tags retain structured diagnostics.
+     (parser-rejects? <wasm-value-type> #vu8(#x65))
+
+     ;; Error case: an empty bounded range cannot read the surrounding known type byte.
+     (parser-rejects? (<bounded> 0 <wasm-value-type>) #vu8(#x7f)))
+
+(mat wasm-review-balanced-significands
+
+     (for-all
+      (lambda (prefix radix)
+        (let* ([source (string-append prefix (make-string 16000 #\1)
+                                     (if (= radix 10) "e-16000" "p-64000"))]
+               [before (statistics)] [number (parse-wat-lexeme <wat-f64> source)]
+               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (and (= (if (= radix 10) 4592670820000712476 4589468260265693457)
+                  (wasm-float-bits number))
+               (< allocated 14000000))))
+      '("" "0x") '(10 16)))
+
+(mat wasm-review-identifier-punctuation-cost
+
+     (let* ([source (string-append "$" (make-string 100000 #\!))]
+            [before (statistics)] [identifier (parse-wat-lexeme <wat-identifier> source)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (string=? source identifier) (< allocated 11000000))))

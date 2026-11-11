@@ -2,6 +2,7 @@
         (cspp parser combinator)
         (cspp parser wasm binary instructions)
         (cspp parser wasm binary values)
+        (cspp parser wasm binary types)
         (cspp parser wasm text lexical)
         (cspp parser wasm text instructions)
         (only (cspp parser wasm text types)
@@ -328,6 +329,45 @@
            (and (= count (vector-length (elf-hash-table-chains hash)))
                 (vfor-all zero? (elf-hash-table-chains hash)))))))))
 
+(define measure-json5-exact-hex
+  (lambda (count)
+    (let ([source (string-append "0x" (make-string count #\f))])
+      (measure-parser
+       "JSON5 exact hex digits" count (lambda () (parse-json5 source))
+       (lambda (document) (= (- (expt 16 count) 1) (json5-document-value document)))))))
+
+(define measure-short-value-types
+  (lambda (byte name)
+    (let ([bytes (make-bytevector 100000 byte)]
+          [parser (<rep> <wasm-value-type> 100000)])
+      (measure-parser
+       (format "WASM ~a value types" name) 100000
+       (lambda () (run-binary-parser parser bytes))
+       (lambda (types)
+         (and (= 100000 (length types))
+              (for-all (lambda (type)
+                         (if (eq? name 'funcref)
+                             (and (wasm-reference-type? type)
+                                  (wasm-reference-type-nullable? type)
+                                  (eq? 'func (wasm-reference-type-heap-type type)))
+                             (eq? name type)))
+                       types)))))))
+
+(define measure-wat-punctuation
+  (lambda (count)
+    (let ([source (string-append "$" (make-string count #\!))])
+      (measure-parser
+       "WAT identifier punctuation" count
+       (lambda () (run-textual-parser <wat-identifier> source))
+       (lambda (identifier) (string=? source identifier))))))
+
+(define measure-xml-delimited-content
+  (lambda (count prefix suffix name extract)
+    (let* ([body (make-string count #\a)] [source (string-append prefix body suffix)])
+      (measure-parser
+       (format "XML ~a characters" name) count (lambda () (parse-xml source))
+       (lambda (document) (string=? body (extract document)))))))
+
 (printf "~a ~a\n" (scheme-version) (machine-type))
 (benchmark-print-table!
  "Parser review workloads"
@@ -357,4 +397,18 @@
          (map measure-counted-vector '(1000 100000 1000000))
          (map measure-text-memory-instructions '(1000 10000 50000))
          (map measure-text-branch-table '(1000 10000 50000))
-         (map measure-elf-hash-validation '(1000 10000 100000))))
+         (map measure-elf-hash-validation '(1000 10000 100000))
+         (map measure-json5-exact-hex '(1000 4000 16000 32000))
+         (map measure-short-value-types '(127 124 123 112) '(i32 f64 v128 funcref))
+         (list
+          (measure-wat-punctuation 100000)
+          (measure-xml-delimited-content
+           1000000 "<r><![CDATA[" "]]></r>" 'cdata
+           (lambda (document)
+             (xml-cdata-value
+              (vector-ref (xml-element-children (xml-document-root document)) 0))))
+          (measure-xml-delimited-content
+           1000000 "<?p " "?><r/>" 'processing-instruction
+           (lambda (document)
+             (xml-processing-instruction-data
+              (vector-ref (xml-document-before-root document) 0)))))))

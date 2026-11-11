@@ -12,15 +12,19 @@
           (cspp parser wasm types))
 
   ;; Abstract heap types are single-byte terminals in the final Core 3.0 grammar.
+  (define abstract-heap-type-from-byte
+    (lambda (byte)
+      (case byte
+        [(#x69) 'exn] [(#x6a) 'array] [(#x6b) 'struct]
+        [(#x6c) 'i31] [(#x6d) 'eq] [(#x6e) 'any]
+        [(#x6f) 'extern] [(#x70) 'func] [(#x71) 'none]
+        [(#x72) 'noextern] [(#x73) 'nofunc] [(#x74) 'noexn]
+        [else #f])))
+
   (define abstract-heap-type-parser
     (<bind> <u8>
             (lambda (byte)
-              (let ([type (case byte
-                            [(#x69) 'exn] [(#x6a) 'array] [(#x6b) 'struct]
-                            [(#x6c) 'i31] [(#x6d) 'eq] [(#x6e) 'any]
-                            [(#x6f) 'extern] [(#x70) 'func] [(#x71) 'none]
-                            [(#x72) 'noextern] [(#x73) 'nofunc] [(#x74) 'noexn]
-                            [else #f])])
+              (let ([type (abstract-heap-type-from-byte byte)])
                 (if type (<result> type)
                     (<fail-with> "undefined WebAssembly abstract heap type"))))))
 
@@ -92,7 +96,21 @@
   The `<wasm-value-type>` parser reads a numeric, vector, or reference value type.
   |#
   (define <wasm-value-type>
-    (</> <wasm-number-type> <wasm-vector-type> <wasm-reference-type>))
+    (let ([fallback (</> <wasm-number-type> <wasm-vector-type> <wasm-reference-type>)])
+      (define-parser value-type-parser
+        (let* ([position (input-pos inp)]
+               [byte (and (fx< position (input-len inp))
+                          (bytevector-u8-ref (binary-input-data inp) position))]
+               [number-type (case byte
+                              [(#x7f) 'i32] [(#x7e) 'i64] [(#x7d) 'f32]
+                              [(#x7c) 'f64] [(#x7b) 'v128] [else #f])]
+               [heap-type (and byte (not number-type) (abstract-heap-type-from-byte byte))])
+          ;; Only known successful short forms bypass choice. Other forms keep full causes.
+          (if (or number-type heap-type)
+              (begin (input-pos-set! inp (fx1+ position))
+                     (values #t (or number-type (nullable-reference heap-type)) inp))
+              (parser-call fallback inp state lvl))))
+      value-type-parser))
 
   #|proc:<wasm-storage-type>
   The `<wasm-storage-type>` parser reads i8, i16, or a value type.

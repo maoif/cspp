@@ -690,3 +690,109 @@
        (and (string=? (string #\x10ffff)
                       (xml-attribute-value (vector-ref (xml-element-attributes root) 0)))
             (string=? "A" (xml-text-value (vector-ref (xml-element-children root) 0))))))
+
+(mat parser-balanced-exact-digits
+
+     (for-all
+      (lambda (radix convert)
+        (for-all (lambda (count) (= (- (expt radix count) 1)
+                                    (convert (make-list count (- radix 1)))))
+                 '(0 1 14 15 29 1000)))
+      '(2 8 10 16) (list bindigits->num octdigits->num digits->num hexdigits->num))
+
+     ;; Long significant integers must not allocate a growing bignum for every digit.
+     (let* ([source (string-append "0x" (make-string 16000 #\f))]
+            [before (statistics)] [document (parse-json5 source)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= (- (expt 16 16000) 1) (json5-document-value document))
+            (< allocated 10000000)))
+
+     ;; Error case: validation reports the first invalid digit across a split boundary.
+     (let ([digits (make-list 100 1)])
+       (set-car! (list-tail digits 15) 'first-invalid)
+       (set-car! (list-tail digits 80) 'second-invalid)
+       (guard (err [(message-condition? err)
+                    (string=? "bad digit first-invalid for base 16"
+                              (apply format (condition-message err) (condition-irritants err)))])
+         (hexdigits->num digits) #f))
+
+     ;; Error case: a zero leading half must not hide an invalid digit in the right half.
+     (let ([digits (make-list 100 0)])
+       (set-car! (list-tail digits 80) 16)
+       (guard (err [(message-condition? err)
+                    (string=? "bad digit 16 for base 16"
+                              (apply format (condition-message err) (condition-irritants err)))])
+         (hexdigits->num digits) #f))
+
+     (= 0 (hexdigits->num (make-list 32000 0))))
+
+(define parser-raw-failure-wrappers
+  (list values
+        (lambda (parser) (<satisfy> parser (lambda (value) #t)))
+        (lambda (parser) (<followed-by> parser (<result> #t)))
+        (lambda (parser) (<not-followed-by> parser (<result> #t)))
+        (lambda (parser) (<bind> (<result> #t) (lambda (value) parser)))
+        (lambda (parser) (<bind-st> (<result> #t) (lambda (value state) parser)))))
+
+(mat parser-raw-failure-source
+
+     ;; Error cases: legacy string/#f/cursor failures retain the available source and cursor.
+     (for-all
+      (lambda (prefix runner input line column)
+        (for-all
+         (lambda (kind)
+           (let ()
+             (define-parser raw-failure
+               (let-values ([(status value next) (parser-call prefix inp state lvl)])
+                 (if status
+                     (values #f #f (case kind [(string) "domain failure"]
+                                               [(false) #f] [else next]))
+                     (values #f #f next))))
+             (for-all
+              (lambda (wrap)
+                (let ([err (parser-error-from
+                            (lambda () (runner (wrap raw-failure) input "custom.input")))])
+                  (and err (string=? "custom.input" (parser-error-source err))
+                       (= 3 (parser-error-offset err))
+                       (eqv? line (parser-error-line err))
+                       (eqv? column (parser-error-column err)))))
+              parser-raw-failure-wrappers)))
+         '(string false cursor)))
+      (list (<string> "\r\nx") (<u8vec> 3))
+      (list run-textual-parser/source run-binary-parser/source)
+      (list "\r\nx" #vu8(1 2 3)) '(1 #f) '(1 #f))
+
+     ;; Error case: normalize a bounded raw failure before discarding its private cursor.
+     (let ()
+       (define-parser raw-failure
+         (let-values ([(status value next) (parser-call (<u8vec> 3) inp state lvl)])
+           (if status (values #f #f "domain failure") (values #f #f next))))
+       (let ([err (parser-error-from
+                   (lambda () (run-binary-parser/source
+                               (~> <u8> (<bounded> 3 raw-failure))
+                               #vu8(0 1 2 3) "bounded.input")))])
+         (and err (= 4 (parser-error-offset err))
+              (string=? "bounded.input" (parser-error-source err))
+              (string=? "domain failure" (parser-error-message err))))))
+
+(mat parser-xml-ordinary-characters
+
+     (for-all
+      (lambda (prefix suffix)
+        (let* ([text (string-append prefix (make-string 100000 #\a) suffix)]
+               [before (statistics)] [document (parse-xml text)]
+               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (and (xml-document? document) (< allocated 22000000))))
+      '("<r>" "<r><![CDATA[" "<?p ") '("</r>" "]]></r>" "?><r/>"))
+
+     ;; Error case: ]]> remains forbidden in ordinary character data.
+     (and (parser-error-from (lambda () (parse-xml "<r>a]]>b</r>"))) #t)
+
+     ;; Error case: forbidden XML scalars cannot pass the ordinary-character shortcut.
+     (and (parser-error-from (lambda () (parse-xml "<r><![CDATA[a\x0;b]]></r>"))) #t)
+
+     (let* ([root (xml-document-root (parse-xml "<r>a]b<![CDATA[c]d]]><?p e?f?></r>"))]
+            [children (xml-element-children root)])
+       (and (string=? "a]b" (xml-text-value (vector-ref children 0)))
+            (string=? "c]d" (xml-cdata-value (vector-ref children 1)))
+            (string=? "e?f" (xml-processing-instruction-data (vector-ref children 2))))))

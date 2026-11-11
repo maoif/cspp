@@ -22,7 +22,10 @@
       (or (char<=? #\0 character #\9)
           (char<=? #\a character #\z)
           (char<=? #\A character #\Z)
-          (string-contains? "!#$%&'*+-./:<=>?@\\^_`|~" character))))
+          (and (memv character
+                     '(#\! #\# #\$ #\% #\& #\' #\* #\+ #\- #\. #\/ #\: #\< #\=
+                       #\> #\? #\@ #\\ #\^ #\_ #\` #\| #\~))
+               #t))))
 
   (define <wat-whitespace>
     (<satisfy-char> wat-whitespace-character? "not WebAssembly text whitespace"))
@@ -37,15 +40,17 @@
     (case-lambda
       [(digit-parser radix) (digit-sequence-parser digit-parser radix #f)]
       [(digit-parser radix limit)
-       (let ([accumulate
+       (let ([convert
               (if limit
                   ;; Keep scanning after overflow without allocating larger exact integers.
-                  (lambda (number digit)
-                    (if (> number limit) number (+ (* number radix) digit)))
-                  (lambda (number digit) (+ (* number radix) digit)))])
+                  (lambda (digits)
+                    (fold-left (lambda (number digit)
+                                 (if (> number limit) number (+ (* number radix) digit)))
+                               0 digits))
+                  (if (fx= radix 10) digits->num hexdigits->num))])
          (<map> (lambda (value)
                   (let ([digits (cons (car value) (cadr value))])
-                    (cons (fold-left accumulate 0 digits) (length digits))))
+                    (cons (convert digits) (length digits))))
                 (<~> digit-parser
                      (<many> (</> digit-parser
                                   (~> (<char> #\_) digit-parser))))))]))

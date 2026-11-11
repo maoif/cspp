@@ -648,10 +648,15 @@
                        [header (elf-section-header section)]
                        [content (elf-section-content section)])
                   (if (elf-group-section? content)
-                      (if (not (= type 1))
-                          (issue (elf-section-header-offset header)
-                                 "section groups require a relocatable object")
-                          (let ([members (elf-group-section-members content)])
+                      (cond
+                        [(not (= type 1))
+                         (issue (elf-section-header-offset header)
+                                "section groups require a relocatable object")]
+                        [(not (zero? (elf-section-header-flags header)))
+                         (issue (elf-section-header-offset header)
+                                "section-group header flags must be zero")]
+                        [else
+                         (let ([members (elf-group-section-members content)])
                             (or
                              (let member-loop ([member-index 0])
                                (and (fx< member-index (vector-length members))
@@ -672,7 +677,7 @@
                                         [else
                                          (vector-set! owners member index)
                                          (member-loop (fx1+ member-index))]))))
-                             (loop (fx1+ index)))))
+                             (loop (fx1+ index))))])
                       (loop (fx1+ index))))))
          (let loop ([index 0])
            (and (fx< index (vector-length sections))

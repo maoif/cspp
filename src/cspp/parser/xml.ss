@@ -237,9 +237,24 @@
                  (<many> <comment-piece>)
                  (<string> "-->"))))
 
-  (define <not-cdata-end>
+  ;; Ordinary accepted characters cannot start a delimiter. Keep the original parser for
+  ;; prefixes, invalid characters and EOF so its complete diagnostic causes stay unchanged.
+  (define (ordinary-before-end prefix predicate original)
+    (define-parser ordinary-before-end-parser
+      (let-values ([(status character next-input)
+                    (parser-call <item> (save-input inp) state lvl)])
+        (if (and status (not (char=? character prefix)) (predicate character))
+            (values #t character next-input)
+            (parser-call original inp state lvl))))
+    ordinary-before-end-parser)
+
+  (define <not-cdata-end-fallback>
     (<~1> (<not-followed-by> (<result> #t) (<string> "]]>") )
           <xml-character>))
+
+  (define <not-cdata-end>
+    (ordinary-before-end
+     #\] xml-character? <not-cdata-end-fallback>))
 
   (define <cdata>
     (<map> (lambda (characters)
@@ -248,9 +263,13 @@
                  (<many> <not-cdata-end>)
                  (<string> "]]>"))))
 
-  (define <not-processing-instruction-end>
+  (define <not-processing-instruction-end-fallback>
     (<~1> (<not-followed-by> (<result> #t) (<string> "?>"))
           <xml-character>))
+
+  (define <not-processing-instruction-end>
+    (ordinary-before-end
+     #\? xml-character? <not-processing-instruction-end-fallback>))
 
   (define <processing-instruction>
     (<~1> (<string> "<?")
@@ -378,14 +397,19 @@
              (make-xml-text (string character)))
            <reference>))
 
-  (define <character-data-character>
+  (define character-data-character?
+    (lambda (character)
+      (and (xml-character? character)
+           (not (char=? character #\<))
+           (not (char=? character #\&)))))
+
+  (define <character-data-character-fallback>
     (<~1> (<not-followed-by> (<result> #t) (<string> "]]>") )
-          (<satisfy-char>
-           (lambda (character)
-             (and (xml-character? character)
-                  (not (char=? character #\<))
-                  (not (char=? character #\&))))
-           "invalid XML character data")))
+          (<satisfy-char> character-data-character? "invalid XML character data")))
+
+  (define <character-data-character>
+    (ordinary-before-end
+     #\] character-data-character? <character-data-character-fallback>))
 
   (define <character-data>
     (<map> (lambda (characters)
@@ -492,10 +516,12 @@
 
   (define bytevector-slice
     (lambda (bytevector start)
-      (let* ([length (- (bytevector-length bytevector) start)]
-             [result (make-bytevector length 0)])
-        (bytevector-copy! bytevector start result 0 length)
-        result)))
+      (if (fxzero? start)
+          bytevector
+          (let* ([length (fx- (bytevector-length bytevector) start)]
+                 [result (make-bytevector length 0)])
+            (bytevector-copy! bytevector start result 0 length)
+            result))))
 
   (define detect-xml-encoding
     (lambda (bytevector)

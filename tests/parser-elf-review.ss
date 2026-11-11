@@ -401,3 +401,26 @@
                    (elf-section-content (vector-ref (elf-file-sections (parse-elf bytes)) 1))))))
       '("32le" "32be" "64le" "64be") '(#f #f #t #t)
       (list (endianness little) (endianness big) (endianness little) (endianness big))))
+
+(mat parser-elf-group-header-flags
+
+     ;; Error cases: group headers require zero sh_flags; GRP_COMDAT is payload data.
+     (for-all
+      (lambda (tag wide? endian)
+        (let* ([original (read-u8vec (string-append "data/elf-review/fixed-tables-" tag ".elf"))]
+               [sections (elf-file-sections (parse-elf original))])
+          (let find ([index 0])
+            (and (< index (vector-length sections))
+                 (if (= 17 (elf-section-header-type
+                            (elf-section-header (vector-ref sections index))))
+                     (for-all
+                      (lambda (flags)
+                        (let ([bytes (bytevector-copy original)])
+                          ((if wide? bytevector-u64-set! bytevector-u32-set!)
+                           bytes (+ (if wide? 64 52) (* index (if wide? 64 40)) 8)
+                           flags endian)
+                          (elf-review-rejected? bytes)))
+                      '(1 2 4 64 128))
+                     (find (+ index 1)))))))
+      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
+      (list (endianness little) (endianness big) (endianness little) (endianness big))))

@@ -279,23 +279,19 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   (define $run-textual-parser
     (lambda (who p in source state)
       (pcheck ([parser? p] [string? in])
-              (let-values ([(stt val inp/err)
-                            (parser-call p
-                                         (make-textual-input
-                                          (string-length in) source 0 in 0 0)
-                                         state 0)])
-                (if stt val (raise-parser-error who inp/err))))))
+              (let ([inp (make-textual-input (string-length in) source 0 in 0 0)])
+                (let-values ([(stt val inp/err) (parser-call p inp state 0)])
+                  (if stt val
+                      (raise-parser-error who (ensure-parser-failure inp/err inp))))))))
 
 
   (define $run-binary-parser
     (lambda (who p in source state)
       (pcheck ([parser? p] [bytevector? in])
-              (let-values ([(stt val inp/err)
-                            (parser-call p
-                                         (make-binary-input
-                                          (bytevector-length in) source 0 in 0)
-                                         state 0)])
-                (if stt val (raise-parser-error who inp/err))))))
+              (let ([inp (make-binary-input (bytevector-length in) source 0 in 0)])
+                (let-values ([(stt val inp/err) (parser-call p inp state 0)])
+                  (if stt val
+                      (raise-parser-error who (ensure-parser-failure inp/err inp))))))))
 
   #|proc:run-textual-parser/source
   The `run-textual-parser/source` procedure runs textual `parser` over string `input`.
@@ -398,10 +394,27 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   (define (mk-digits->num who r)
     (lambda (d*)
       (pcheck ([list? d*])
-              (fold-left (lambda (n d)
-                           (unless (and (integer? d) (exact? d) (<= 0 d) (< d r))
-                             (errorf who "bad digit ~a for base ~a" d r))
-                           (+ d (* n r))) 0 d*))))
+              ;; Combine balanced halves instead of copying a growing bignum per digit.
+              ;; Returning the unused tail avoids copying or repeatedly splitting lists.
+              (define convert
+                (lambda (digits count)
+                  (if (fx<= count 14)
+                      (let loop ([digits digits] [count count] [number 0])
+                        (if (fxzero? count)
+                            (values number digits)
+                            (let ([digit (car digits)])
+                              (unless (and (integer? digit) (exact? digit) (<= 0 digit) (< digit r))
+                                (errorf who "bad digit ~a for base ~a" digit r))
+                              (loop (cdr digits) (fx1- count) (+ digit (* number r))))))
+                      (let* ([left-count (fxdiv count 2)]
+                             [right-count (fx- count left-count)])
+                        (let-values ([(left remaining) (convert digits left-count)])
+                          (let-values ([(right tail) (convert remaining right-count)])
+                            ;; Validate both halves before skipping a zero leading half.
+                            (values (if (zero? left) right
+                                        (+ (* left (expt r right-count)) right))
+                                    tail)))))))
+              (let-values ([(number tail) (convert d* (length d*))]) number))))
   #|proc:bindigits->num
   The `bindigits->num` procedure converts list `digits` of binary integers to a number.
   |#
@@ -468,7 +481,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   `body`, `inp`, `state`, and `lvl` are the current input, caller-supplied state, and nesting level.
   The body must return three values: `#t`, the parse value, and the resulting input on success;
   or `#f`, `#f`, and a failure on failure. Delegate to `parser-call` and existing combinators to
-  preserve this protocol. Input cursors and intermediate mutable values must belong to the
+  preserve this protocol. Legacy string or `#f` failures use the available caller cursor;
+  a private cursor discarded by the body cannot be recovered. Input cursors must belong to the
   invocation. Fiber safety is not guaranteed; callback continuation resumption is undefined.
   |#
   (define-syntax define-parser
@@ -995,7 +1009,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                              (values #f #f
                                      (parser-failure-at start-input 'predicate message
                                                         '() value)))
-                         (values #f #f next-input)))))
+                         (values #f #f (ensure-parser-failure next-input inp))))))
                satisfy-parser)]))
 
 
@@ -1060,7 +1074,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                           (let-values ([(status value next-input)
                                         (parser-call parser limited state (fx1+ lvl))])
                             (cond
-                             [(not status) (values #f #f next-input)]
+                             [(not status)
+                              (values #f #f (ensure-parser-failure next-input limited))]
                              [(not (= end (input-pos next-input)))
                               (values #f #f
                                       (parser-failure-custom
@@ -2047,8 +2062,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                   (if stt
                       (let ([next-parser (binder val)])
                         (pcheck ([parser? next-parser])
-                                ((parser-body next-parser)
-                                 inp1 state (fx1+ lvl))))
+                                (let-values ([(status value next-input)
+                                              ((parser-body next-parser) inp1 state (fx1+ lvl))])
+                                  (if status (values #t value next-input)
+                                      (values #f #f
+                                              (ensure-parser-failure next-input inp1))))))
                       (values #f #f (ensure-parser-failure inp1 inp)))))
               bind-parser)))
 
@@ -2067,8 +2085,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                   (if stt
                       (let ([next-parser (binder val state)])
                         (pcheck ([parser? next-parser])
-                                ((parser-body next-parser)
-                                 inp1 state (fx1+ lvl))))
+                                (let-values ([(status value next-input)
+                                              ((parser-body next-parser) inp1 state (fx1+ lvl))])
+                                  (if status (values #t value next-input)
+                                      (values #f #f
+                                              (ensure-parser-failure next-input inp1))))))
                       (values #f #f (ensure-parser-failure inp1 inp)))))
               bind-state-parser)))
 
@@ -2092,7 +2113,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                           (if stt2
                               (values #t val1 old-input)
                               (values #f #f (ensure-parser-failure inp2 inp1)))))
-                      (values #f #f inp1))))
+                      (values #f #f (ensure-parser-failure inp1 inp)))))
               followed-by-parser)))
 
 
@@ -2117,7 +2138,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                                       (parser-failure-custom old-input
                                                              "input was not expected"))
                               (values #t val1 old-input))))
-                      (values #f #f inp1))))
+                      (values #f #f (ensure-parser-failure inp1 inp)))))
               not-followed-by-parser)))
 
 
