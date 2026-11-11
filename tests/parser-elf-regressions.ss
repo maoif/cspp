@@ -21,16 +21,20 @@
       '("32le" "32be" "64le" "64be"))
 
      ;; Error case: a nonzero symbol index still requires a linked symbol table.
-     (error?
-      (let ([bytes (read-u8vec "data/elf-review/symbolless-rela-64le.elf")])
-        (bytevector-u64-set! bytes 200 #x100000008 (endianness little))
-        (parse-elf bytes)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (let ([bytes (read-u8vec "data/elf-review/symbolless-rela-64le.elf")])
+           (bytevector-u64-set! bytes 200 #x100000008 (endianness little))
+           (parse-elf bytes)))))
 
      ;; Error case: a nonzero link cannot name a relocation section as a symbol table.
-     (error?
-      (let ([bytes (read-u8vec "data/elf-review/symbolless-rela-64le.elf")])
-        (bytevector-u32-set! bytes (+ 128 40) 1 (endianness little))
-        (parse-elf bytes))))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (let ([bytes (read-u8vec "data/elf-review/symbolless-rela-64le.elf")])
+           (bytevector-u32-set! bytes (+ 128 40) 1 (endianness little))
+           (parse-elf bytes))))))
 
 (mat parser-elf-name-review
 
@@ -82,37 +86,41 @@
 (mat parser-elf-validation-review
 
      ;; Error case: SHN_XINDEX must resolve to an actual section, not a reserved 16-bit code.
-     (error? (elf-review-file "reserved-xindex"))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "reserved-xindex"))))
 
      ;; Error case: duplicate companion sections cannot disable unused-index validation.
-     (error? (elf-review-file "duplicate-shndx"))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "duplicate-shndx"))))
 
      ;; Error case: group members must reference existing sections.
-     (error? (elf-review-file "bad-group-index"))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "bad-group-index"))))
 
      ;; Error case: hash buckets and chains must reference the linked symbol table.
-     (error? (elf-review-file "bad-hash-index"))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "bad-hash-index"))))
 
      ;; Error case: the first-nonlocal symbol index cannot exceed the symbol count.
-     (error? (elf-review-file "bad-symbol-info"))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "bad-symbol-info"))))
 
      ;; Error case: no section-name table can be selected without a section table.
-     (error? (elf-review-file "shstr-no-sections"))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "shstr-no-sections"))))
 
      ;; Error case: every field of the undefined symbol zero must be zero.
-     (error? (parse-elf (rich-elf-with-u32 208 1)))
+     (parser-error? (parser-error-from (lambda () (parse-elf (rich-elf-with-u32 208 1)))))
 
      ;; Error case: a local symbol cannot appear after the first nonlocal symbol boundary.
-     (error?
-      (let ([bytes (rich-elf64le)])
-        (bytevector-u8-set! bytes 236 2)
-        (parse-elf bytes)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (let ([bytes (rich-elf64le)])
+           (bytevector-u8-set! bytes 236 2)
+           (parse-elf bytes)))))
 
      ;; Error case: group signatures must reference an existing linked symbol.
-     (error?
-      (let ([bytes (read-u8vec "data/elf-review/bad-group-index.elf")])
-        (bytevector-u32-set! bytes (+ 64 (* 3 64) 44) 999 (endianness little))
-        (parse-elf bytes)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (let ([bytes (read-u8vec "data/elf-review/bad-group-index.elf")])
+           (bytevector-u32-set! bytes (+ 64 (* 3 64) 44) 999 (endianness little))
+           (parse-elf bytes)))))
 
      )
 
@@ -137,39 +145,45 @@
      (elf-file? (elf-review-file "nobits-overlap"))
 
      ;; Error case: ordinary string tables must start with NUL.
-     (error? (elf-review-file "string-table-missing-first-nul"))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (elf-review-file "string-table-missing-first-nul"))))
 
      ;; Error case: ordinary string tables must end with NUL.
-     (error? (elf-review-file "string-table-missing-last-nul"))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (elf-review-file "string-table-missing-last-nul"))))
 
      ;; Error case: every section-group member must carry SHF_GROUP.
-     (error? (elf-review-file "group-missing-member-flag"))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "group-missing-member-flag"))))
 
      ;; Error case: the same section cannot belong to two distinct groups.
-     (error? (elf-review-file "group-multiple-membership"))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "group-multiple-membership"))))
 
      ;; Error case: section groups occur only in relocatable objects.
-     (error? (elf-review-file "group-in-executable"))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "group-in-executable"))))
 
      ;; Error case: nonempty file-backed section ranges cannot overlap.
-     (error? (elf-review-file "overlapping-sections"))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "overlapping-sections"))))
 
      ;; Error case: reserved section counts require extended encoding.
-     (error? (parse-elf (elf-reserved-header #f)))
+     (parser-error? (parser-error-from (lambda () (parse-elf (elf-reserved-header #f)))))
 
      ;; Error case: reserved section-name indices require SHN_XINDEX.
-     (error? (parse-elf (elf-reserved-header #t))))
+     (parser-error? (parser-error-from (lambda () (parse-elf (elf-reserved-header #t))))))
 
 (mat parser-elf-group-order
 
      ;; Error case: a group section header must precede every member header.
-     (error? (elf-review-file "group-after-member"))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "group-after-member"))))
 
      ;; Error case: a section marked SHF_GROUP must have a referring group.
-     (error? (elf-review-file "group-orphan"))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "group-orphan"))))
 
      ;; Error case: SHF_GROUP is restricted to relocatable objects, even without a group table.
-     (error? (elf-review-file "group-orphan-executable")))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "group-orphan-executable")))))
 
 (mat parser-elf-note-alignment
 
@@ -184,10 +198,10 @@
         "note-align8-64le" "note-align8-64be"))
 
      ;; Error case: an eight-aligned note must include all of its final padding.
-     (error? (elf-review-file "note-short8-64le"))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "note-short8-64le"))))
 
      ;; Error case: big-endian notes obey the same eight-byte padding rule.
-     (error? (elf-review-file "note-short8-64be")))
+     (parser-error? (parser-error-from (lambda () (elf-review-file "note-short8-64be")))))
 
 (mat parser-elf-compressed-sections
 

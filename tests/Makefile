@@ -118,7 +118,7 @@ parser.so parser-csv.so parser-json5.so parser-xml.so parser-toml.so parser-elf.
 parser-wasm.so: parser-external-tools.ss
 
 parser.so parser-csv.so parser-json5.so parser-xml.so parser-toml.so parser-wasm.so \
-parser-regressions.so: parser-test-support.ss
+parser-regressions.so parser-elf.so: parser-test-support.ss
 
 parser.so: parser-scheme-regressions.ss
 parser-csv.so: parser-csv-regressions.ss

@@ -3,6 +3,7 @@
         (cspp parser elf types))
 
 (include "parser-external-tools.ss")
+(include "parser-test-support.ss")
 
 (mat parser-elf-record-writers
 
@@ -349,19 +350,19 @@
       '((elf32 little) (elf32 big) (elf64 little) (elf64 big)))
 
      ;; error: the four-byte ELF magic must match exactly.
-     (error? (parse-elf (elf-with-u8 'elf64 'little 0 0)))
+     (parser-error? (parser-error-from (lambda () (parse-elf (elf-with-u8 'elf64 'little 0 0)))))
 
      ;; error: the ELF class byte must identify ELF32 or ELF64.
-     (error? (parse-elf (elf-with-u8 'elf64 'little 4 3)))
+     (parser-error? (parser-error-from (lambda () (parse-elf (elf-with-u8 'elf64 'little 4 3)))))
 
      ;; error: the ELF data byte must identify little- or big-endian encoding.
-     (error? (parse-elf (elf-with-u8 'elf64 'little 5 0)))
+     (parser-error? (parser-error-from (lambda () (parse-elf (elf-with-u8 'elf64 'little 5 0)))))
 
      ;; error: the declared ELF header size must match the selected class.
-     (error? (parse-elf (elf-with-u16 'elf32 'big 40 51)))
+     (parser-error? (parser-error-from (lambda () (parse-elf (elf-with-u16 'elf32 'big 40 51)))))
 
      ;; error: a complete class-specific ELF header is required.
-     (error? (parse-elf (truncated-elf-header)))
+     (parser-error? (parser-error-from (lambda () (parse-elf (truncated-elf-header)))))
 
      )
 
@@ -512,13 +513,19 @@
             (= -4 (elf-relocation-addend (vector-ref relocations 0)))))
 
      ;; error: a symbol table must link to a string table.
-     (error? (parse-elf (rich-elf-with-u32 (+ 512 (* 3 64) 40) 4)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (parse-elf (rich-elf-with-u32 (+ 512 (* 3 64) 40) 4)))))
 
      ;; error: a symbol name index must identify a terminated linked-table string.
-     (error? (parse-elf (rich-elf-with-u32 232 99)))
+     (parser-error? (parser-error-from (lambda () (parse-elf (rich-elf-with-u32 232 99)))))
 
      ;; error: a relocation table must link to a symbol table.
-     (error? (parse-elf (rich-elf-with-u32 (+ 512 (* 5 64) 40) 2)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (parse-elf (rich-elf-with-u32 (+ 512 (* 5 64) 40) 2)))))
 
      ;; Note padding aligns fields but has no required byte value.
      (elf-file?
@@ -536,7 +543,7 @@
        (string=? "\xff;NU" (elf-note-name (vector-ref notes 0))))
 
      ;; error: the section-header table must fit in the input.
-     (error? (parse-elf (rich-elf-with-u64 40 800)))
+     (parser-error? (parser-error-from (lambda () (parse-elf (rich-elf-with-u64 40 800)))))
 
      )
 
@@ -583,31 +590,46 @@
       '((elf32 little) (elf32 big) (elf64 little) (elf64 big)))
 
      ;; error: an SHT_RELR payload must contain complete class-sized words.
-     (error?
-      (let ([bytes (read-u8vec "data/elf-review/fixed-relr-32le.elf")])
-        (bytevector-u32-set! bytes (+ 52 40 20) 3 (endianness little))
-        (parse-elf bytes)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (let ([bytes (read-u8vec "data/elf-review/fixed-relr-32le.elf")])
+           (bytevector-u32-set! bytes (+ 52 40 20) 3 (endianness little))
+           (parse-elf bytes)))))
 
      ;; error: an SHT_HASH payload must match its declared bucket and chain counts.
-     (error?
-      (let ([bytes (typed-elf 'elf64 'big)])
-        (bytevector-u32-set! bytes 240 2 (endianness big))
-        (parse-elf bytes)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (let ([bytes (typed-elf 'elf64 'big)])
+           (bytevector-u32-set! bytes 240 2 (endianness big))
+           (parse-elf bytes)))))
 
      ;; error: an SHT_GROUP payload must contain a flags word and complete members.
-     (error? (parse-elf (typed-elf-with-section-size 'elf64 'little 5 6)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (parse-elf (typed-elf-with-section-size 'elf64 'little 5 6)))))
 
      ;; error: an address-array payload must contain complete class-sized words.
-     (error? (parse-elf (typed-elf-with-section-size 'elf32 'big 6 5)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (parse-elf (typed-elf-with-section-size 'elf32 'big 6 5)))))
 
      ;; error: an SHT_DYNAMIC payload must contain complete tag/value pairs.
-     (error? (parse-elf (typed-elf-with-section-size 'elf64 'big 9 17)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (parse-elf (typed-elf-with-section-size 'elf64 'big 9 17)))))
 
      ;; error: unused SHT_SYMTAB_SHNDX entries must be zero.
-     (error?
-      (let ([bytes (typed-elf 'elf32 'little)])
-        (bytevector-u32-set! bytes 480 1 (endianness little))
-        (parse-elf bytes)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (let ([bytes (typed-elf 'elf32 'little)])
+           (bytevector-u32-set! bytes 480 1 (endianness little))
+           (parse-elf bytes)))))
 
      )
 
@@ -627,22 +649,40 @@
             (= 0 (bytevector-length (elf-raw-section-bytes zero)))))
 
      ;; error: an extended section count must be in the reserved-index range.
-     (error? (parse-elf (elf32be-with-section-zero 0 0 0 2 0 0)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (parse-elf (elf32be-with-section-zero 0 0 0 2 0 0)))))
 
      ;; error: an extended program-header count must be at least PN_XNUM.
-     (error? (parse-elf (elf32be-with-section-zero #xffff 1 0 0 0 2)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (parse-elf (elf32be-with-section-zero #xffff 1 0 0 0 2)))))
 
      ;; error: an extended section-name index must be in the reserved-index range.
-     (error? (parse-elf (elf32be-with-section-zero 0 1 #xffff 0 2 0)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (parse-elf (elf32be-with-section-zero 0 1 #xffff 0 2 0)))))
 
      ;; error: section zero must not carry an extended count when e_shnum is ordinary.
-     (error? (parse-elf (elf32be-with-section-zero 0 1 0 2 0 0)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (parse-elf (elf32be-with-section-zero 0 1 0 2 0 0)))))
 
      ;; error: section zero must not carry PN_XNUM data when e_phnum is ordinary.
-     (error? (parse-elf (elf32be-with-section-zero 0 1 0 0 0 2)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (parse-elf (elf32be-with-section-zero 0 1 0 0 0 2)))))
 
      ;; error: section zero must not carry SHN_XINDEX data when e_shstrndx is ordinary.
-     (error? (parse-elf (elf32be-with-section-zero 0 1 0 0 2 0)))
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (parse-elf (elf32be-with-section-zero 0 1 0 0 2 0)))))
 
      )
 
