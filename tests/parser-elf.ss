@@ -386,17 +386,22 @@
             (and (= 1 (length matches))
                  (= 2 (length (car matches)))
                  (string=? expected (cadar matches))))))
+      (define count=?
+        (lambda (label count sentinel threshold)
+          (or (field=? label (number->string count))
+              (and (>= count threshold)
+                   (field=? label (format "~a (~a)" sentinel count))))))
       (and (field=? "Class" (if (eq? (elf-identification-class identification) 'elf64)
                                 "ELF64" "ELF32"))
            (field=? "Data" (format "2's complement, ~a endian"
                                     (if (eq? (elf-identification-endianness identification)
                                              'little) "little" "big")))
-           (field=? "Number of program headers"
-                    (number->string (elf-header-program-header-count header)))
-           (field=? "Number of section headers"
-                    (number->string (elf-header-section-header-count header)))
-           (field=? "Section header string table index"
-                    (number->string (elf-header-section-name-index header)))))))
+           (count=? "Number of program headers"
+                    (elf-header-program-header-count header) 65535 65535)
+           (count=? "Number of section headers"
+                    (elf-header-section-header-count header) 0 65280)
+           (count=? "Section header string table index"
+                    (elf-header-section-name-index header) 65535 65280)))))
 
 (mat elf-readelf-comparison-controls
 
@@ -422,6 +427,27 @@
                (car counts) (cadr counts) (caddr counts)))))
       '(("01" "0" "0") ("0" "01" "0") ("0" "0" "01")
         ("0x" "0" "0") ("0 1" "0" "0"))))
+
+(mat elf-readelf-extended-comparison
+
+     (readelf-header-matches?
+      (parse-elf (extended-count-elf32be))
+      (string-append "Class: ELF32\nData: 2's complement, big endian\n"
+                     "Number of program headers: 65535 (65535)\n"
+                     "Number of section headers: 0 (65281)\n"
+                     "Section header string table index: 65535 (65280)\n"))
+
+     ;; Error controls: only the proper sentinel and one complete decimal count are allowed.
+     (for-all
+      (lambda (count)
+        (not (readelf-header-matches?
+              (parse-elf (extended-count-elf32be))
+              (string-append "Class: ELF32\nData: 2's complement, big endian\n"
+                             "Number of program headers: 65535 (65535)\n"
+                             "Number of section headers: " count "\n"
+                             "Section header string table index: 65535 (65280)\n"))))
+      '("1 (65281)" "0 (652810)" "0 (065281)" "0 (65281)x" "0 (65281) (65281)"
+        "0(65281)" "0 (65281" "0 (65281.0)" "0 (65281)\nNumber of section headers: 0 (65281)")))
 
 (mat parse-elf-file
 
