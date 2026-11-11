@@ -598,7 +598,7 @@
                  [normalized (make-string length)])
             (let loop ([source-index 0] [target-index 0])
               (if (= source-index length)
-                  (substring normalized 0 target-index)
+                  (string-truncate! normalized target-index)
                   (let ([character (string-ref text source-index)])
                     (if (char=? character #\return)
                         (begin

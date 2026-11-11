@@ -120,3 +120,14 @@
      (for-all (lambda (source)
                 (and (parser-error-from (lambda () (parse-xml source))) #t))
               '("<r a='a<b'/>" "<r a='a&no;'/>" "<r a='x&#0;'/>" "<r a='x\x0;'/>")))
+
+(mat parser-xml-cr-normalization-cost
+
+     (let* ([count 1000000] [source (string-append "<r>" (make-string count #\return) "</r>")]
+            [before (statistics)] [document (parse-xml source)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))]
+            [text (xml-text-value (vector-ref
+                                   (xml-element-children (xml-document-root document)) 0))])
+       (and (string=? text (make-string count #\newline))
+            (char=? #\return (string-ref source 3))
+            (< allocated 154000000))))
