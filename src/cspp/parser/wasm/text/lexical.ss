@@ -98,9 +98,8 @@
        (<~1> (<string> "(;")
              (parser-discard-many <wat-block-comment-element>)
              (<string> ";)")))
-      (<as> '()
-            (parser-discard-many (</> <wat-whitespace> <wat-line-comment> <wat-block-comment>
-                         <wat-ignored-annotation>)))))
+      (parser-discard-many
+       (</> <wat-whitespace> <wat-line-comment> <wat-block-comment> <wat-ignored-annotation>))))
 
   (define <wat-token-boundary>
     (</> <eof>

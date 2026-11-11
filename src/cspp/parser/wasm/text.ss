@@ -11,7 +11,7 @@
           (cspp parser wasm validate))
 
 ;;;;===----------------------------------------------------------------------===
-;;;; Module grammar helpers and instruction placeholders
+;;;; Module grammar helpers
 ;;;;===----------------------------------------------------------------------===
 
   (define make-immutable-vector
@@ -28,9 +28,6 @@
   (define wat-close
     (<~0> (<char> #\)) <wat-trivia>))
 
-  (define wat-double-quote (integer->char #x22))
-  (define wat-semicolon (integer->char #x3b))
-
   (define wat-field-head
     (lambda (keyword)
       (<~0> <pos> wat-open (<wat-keyword> keyword))))
@@ -39,47 +36,15 @@
     (lambda (keyword parser)
       (<~1> (<~0> wat-open (<wat-keyword> keyword)) parser wat-close)))
 
-  (define reserved-character?
-    (lambda (character)
-      (and (not (memv character
-                      (list #\space #\tab #\newline #\return #\( #\)
-                            wat-double-quote)))
-           (not (char=? character wat-semicolon)))))
-
-  (define <wat-reserved>
-    (<wat-token>
-     (<as-string>
-      (<some> (<satisfy-char> reserved-character? "not a WebAssembly reserved character")))))
-
-  (define forbidden-placeholder-head?
-    (lambda (head)
-      (member head '("import" "export" "param" "result" "local" "type"))))
-
-  (declare-lazy-parser <wat-generic-item>)
-
   (define <wat-generic-parenthesized>
     (<map> list->immutable-vector <wat-folded-instruction>))
 
-  (define <wat-positioned-identifier>
-    (<map> (lambda (value) (make-wat-index-reference (car value) (cadr value)))
-           (<~> <pos> <wat-identifier>)))
-
-  (define <wat-generic-atom>
-    <wat-instruction>)
-
   (define generic-body
-    (begin
-      (install-lazy-parser!
-       <wat-generic-item>
-       (</> <wat-generic-parenthesized> <wat-generic-atom>))
-      (<map>
-       (lambda (instruction**)
-         (apply append instruction**))
-       (<~0>
-        (<many-until>
-         (</> (<map> list <wat-instruction>) <wat-folded-instruction>)
-         wat-close)
-        wat-close))))
+    (<map> (lambda (instruction**) (apply append instruction**))
+           (<~0> (<many-until>
+                  (</> (<map> list <wat-instruction>) <wat-folded-instruction>)
+                  wat-close)
+                 wat-close)))
 
   (define inline-import
     (<map> list->immutable-vector

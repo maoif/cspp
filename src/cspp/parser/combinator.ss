@@ -133,10 +133,6 @@ For simplicity, "PC" in the following documentation means "parser combinator".
     (parent parser-failure)
     (fields))
 
-  (define parser-position-offset<?
-    (lambda (a b)
-      (< (parser-position-offset a) (parser-position-offset b))))
-
   (define parser-failure-offset
     (lambda (failure)
       (parser-position-offset (parser-failure-position failure))))
@@ -1662,33 +1658,6 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   (define-who <bytes> ($<u8*> who))
 
 
-  #|proc:<ascii>
-  The `<ascii>` procedure takes ASCII string `text`. It returns a binary parser that
-  matches the character byte values and returns a fresh copy of `text`.
-  |#
-  (define-who (<ascii> text)
-    (pcheck ([string? text])
-            (string-for-each (lambda (character)
-                               (unless (char<=? #\nul character #\delete)
-                                 (errorf who
-                                         "not a valid ascii character: ~a" character)))
-                             text)
-            (let ()
-              (define-parser ascii-parser
-                (let loop ([i 0])
-                  (if (fx= i (string-length text))
-                      (values #t (string-copy text) inp)
-		                      (let ([b (char->integer (string-ref text i))])
-		                        (if (peek-u8! inp b)
-		                            (loop (fx1+ i))
-                            (let ([failure (parser-failure-expected-at
-                                            inp
-                                            (list b)
-                                            (current-found inp))])
-                              (values #f #f failure)))))))
-              ascii-parser)))
-
-
   #|proc:<u8vec>
   The `<u8vec>` procedure takes exact nonnegative integer `count` and returns a binary parser.
   The parser consumes the next `count` bytes and returns them in a fresh bytevector.
@@ -2271,13 +2240,6 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                                   ;; Validate left to right; map callback order is unspecified.
                                   (for-each (lambda (character) (digits (char->num character))) digit*)
                                   (<result> (sign (digits->num (digits))))))))))))
-
-  ;; TODO neg
-  ;; TODO avoid building the list
-  (define <nat>
-    (<map> (lambda (val)
-             (fold-left (lambda (s n) (+ (* 10 s) (char->num n))) 0 val))
-           (<some> <digit>)))
 
   #|proc:<sep-by>
   The `<sep-by>` procedure takes `parser` and `separator`. It returns a parser for zero

@@ -8,17 +8,6 @@
           (cspp parser wasm binary types)
           (cspp parser wasm binary instructions))
 
-  (define list->vector*
-    (lambda (value*)
-      (let* ([length (length value*)]
-             [result (make-vector length)])
-        (let loop ([index 0] [value* value*])
-          (if (null? value*)
-              result
-              (begin
-                (vector-set! result index (car value*))
-                (loop (fx1+ index) (cdr value*))))))))
-
   (define-record-type parsed-section
     (fields offset id value))
 
@@ -326,7 +315,7 @@
                (make-wasm-module
                 types imports (make-functions type-indices code)
                 tables memories globals tags exports start elements data
-                (list->vector* (reverse custom*))))])
+                (list->vector (reverse custom*))))])
             (let* ([parsed (car section*)]
                    [offset (parsed-section-offset parsed)]
                    [id (parsed-section-id parsed)]

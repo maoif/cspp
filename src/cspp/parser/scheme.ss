@@ -8,8 +8,7 @@
           (cspp vector)
           (cspp utils))
 
-  ;; TODO how to handle cycles?
-  ;; no comments
+  ;; This deliberately supports a Scheme datum subset; see the public entry-point docs.
   (define-values (parser-scheme-datum parser-scheme)
     (let ()
       (define cons-back!
@@ -20,12 +19,6 @@
                 (begin (set-cdr! ls1 v)
                        ls)
                 (loop (cdr ls1))))))
-      (define-who char->num
-        (lambda (c)
-          (if (char<=? #\0 c #\9)
-              (fx- (char->integer c) 48)
-              (errorf who "not a digit: ~a" c))))
-
       (declare-lazy-parser <s-datum>)
 
       (define <delimiter>
@@ -37,17 +30,10 @@
           [(parser) (<scalar-token> parser <delimiter>)]
           [(parser delimiter-parser)
            (<token> (<followed-by> parser delimiter-parser))]))
-      (define <nat>
-        (<map> (lambda (val)
-                 (fold-left (lambda (s n) (+ (* 10 s) (char->num n))) 0 val))
-               (<some> <digit>)))
-
       (define <left-paren>    (<token> (<char> #\()))
       (define <right-paren>   (<token> (<char> #\))))
       (define <left-bracket>  (<token> (<char> #\[)))
       (define <right-bracket> (<token> (<char> #\])))
-      (define <left-brace>    (<token> (<char> #\{)))
-      (define <right-brace>   (<token> (<char> #\})))
       ;; TODO chez allows dot to precede none-digit
       (define <dot>           (<token> (<followed-by> (<char> #\.) <boolean/character-delimiter>)))
       (define <left-vector-delim> (<token> (<string> "#(")))

@@ -30,13 +30,6 @@
                 (vector-set! result index (procedure (vector-ref vector index)))
                 (loop (fx1+ index))))))))
 
-  (define vector->list*
-    (lambda (vector)
-      (let loop ([index (fx1- (vector-length vector))] [result '()])
-        (if (fx< index 0)
-            result
-            (loop (fx1- index) (cons (vector-ref vector index) result))))))
-
   (define identifier-key
     (lambda (identifier)
       (and identifier (string->symbol identifier))))
@@ -823,7 +816,7 @@
         (make-wasm-data
          mode memory offset
          (concatenate-bytevectors
-          (vector->list* (wat-data-segment-syntax-strings syntax)))))))
+          (vector->list (wat-data-segment-syntax-strings syntax)))))))
 
   (define normalize-inline-table
     (lambda (state field abbreviation)
@@ -844,7 +837,7 @@
     (lambda (state field abbreviation)
       (let* ([syntax (wat-inline-abbreviation-data abbreviation)]
              [bytes (concatenate-bytevectors
-                     (vector->list* (wat-data-segment-syntax-strings syntax)))]
+                     (vector->list (wat-data-segment-syntax-strings syntax)))]
              [pages (quotient (+ (bytevector-length bytes) 65535) 65536)]
              [address-type (or (wat-data-segment-syntax-address-type syntax) 'i32)]
              [index (hashtable-ref
@@ -914,7 +907,7 @@
                               (wat-custom-placement-before placement))))])
         (make-wasm-custom-section
          (vector-ref data 0)
-         (concatenate-bytevectors (vector->list* (vector-ref data 1)))
+         (concatenate-bytevectors (vector->list (vector-ref data 1)))
          after))))
 
 ;;;;===----------------------------------------------------------------------===

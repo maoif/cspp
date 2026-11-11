@@ -441,34 +441,25 @@
   (define <element-parser>
     (<bind> (<~1> (<char> #\<) <name>)
             (lambda (name)
-              (<bind> (<~> (<many> (~> <S> <attribute>)) <S?>)
-                      (lambda (value)
-                        (let ([attributes (car value)])
-                          (if (duplicate-attribute? attributes)
-                              (<fail-with> "duplicate XML attribute")
-                              (</> (<as> (make-xml-element
-                                          name
-                                          (list->vector attributes)
-                                          '#())
-                                        (<string> "/>"))
-                                   (~> (<char> #\>)
-                                       (<bind> (<many> <content-node>)
-                                               (lambda (children)
-                                                 (<bind> <end-tag>
-                                                         (lambda (end-name)
-                                                           (if (string=? name end-name)
-                                                               (<result>
-                                                                (make-xml-element
-                                                                 name
-                                                                 (list->vector attributes)
-                                                                 (list->vector
-                                                                  (merge-adjacent-text
-                                                                   children))))
-                                                               (<fail-with>
-                                                                (string-append
-                                                                 "end tag does not match "
-                                                                 "open tag"))))))
-                                                         ))))))))))
+              (<bind> (<~ (<many> (~> <S> <attribute>)) <S?>)
+                      (lambda (attributes)
+                        (if (duplicate-attribute? attributes)
+                            (<fail-with> "duplicate XML attribute")
+                            (</> (<as> (make-xml-element name (list->vector attributes) '#())
+                                       (<string> "/>"))
+                                 (~> (<char> #\>)
+                                     (<bind> (<many> <content-node>)
+                                             (lambda (children)
+                                               (<bind> <end-tag>
+                                                       (lambda (end-name)
+                                                         (if (string=? name end-name)
+                                                             (<result>
+                                                              (make-xml-element
+                                                               name (list->vector attributes)
+                                                               (list->vector
+                                                                (merge-adjacent-text children))))
+                                                             (<fail-with>
+                                                              "end tag does not match open tag"))))))))))))))
 
   (define <misc-node>
     (</> <comment>

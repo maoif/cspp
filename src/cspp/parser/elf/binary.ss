@@ -806,19 +806,8 @@
                       [section-problem (problem-parser section-problem length)]
                       [else
                        (let-values ([(file finish-problem)
-                                     (finish-elf
-                                      bytes class endianness-name
-                                      (decoded-elf-header-type header)
-                                      (decoded-elf-header-machine header)
-                                      (decoded-elf-header-version header)
-                                      (decoded-elf-header-entry header)
-                                      (decoded-elf-header-phoff header)
-                                      (decoded-elf-header-shoff header)
-                                      (decoded-elf-header-flags header)
-                                      (decoded-elf-header-header-size header)
-                                      (decoded-elf-header-phentsize header) phnum
-                                      (decoded-elf-header-shentsize header) shnum shstrndx
-                                      programs headers raw-sections)])
+                                     (finish-elf bytes header phnum shnum shstrndx
+                                                 programs headers raw-sections)])
                          (if finish-problem
                              (problem-parser finish-problem length)
                              (complete-file-parser file length)))]
@@ -902,11 +891,14 @@
                     (elf-layout-parser bytes length header zero)))))]))))
 
   (define finish-elf
-    (lambda (bytes class endianness-name type machine version entry phoff shoff flags
-                   header-size phentsize phnum shentsize shnum shstrndx programs headers
-                   raw-sections)
-      (let ([name-bytes (and (> shnum 0) (not (zero? shstrndx))
-                             (vector-ref raw-sections shstrndx))])
+    (lambda (bytes decoded-header phnum shnum shstrndx programs headers raw-sections)
+      (let* ([class (decoded-elf-header-class decoded-header)]
+             [endianness-name (decoded-elf-header-endianness-name decoded-header)]
+             [type (decoded-elf-header-type decoded-header)]
+             [machine (decoded-elf-header-machine decoded-header)]
+             [shoff (decoded-elf-header-shoff decoded-header)]
+             [name-bytes (and (> shnum 0) (not (zero? shstrndx))
+                              (vector-ref raw-sections shstrndx))])
         (cond
           [(and name-bytes
                 (not (= 3 (elf-section-header-type (vector-ref headers shstrndx)))))
@@ -926,8 +918,13 @@
                              class endianness-name 1 (bytevector-u8-ref bytes 7)
                              (bytevector-u8-ref bytes 8))
                             (make-elf-header
-                             type machine version entry phoff shoff flags header-size
-                             phentsize phnum shentsize shnum shstrndx)
+                             type machine (decoded-elf-header-version decoded-header)
+                             (decoded-elf-header-entry decoded-header)
+                             (decoded-elf-header-phoff decoded-header) shoff
+                             (decoded-elf-header-flags decoded-header)
+                             (decoded-elf-header-header-size decoded-header)
+                             (decoded-elf-header-phentsize decoded-header) phnum
+                             (decoded-elf-header-shentsize decoded-header) shnum shstrndx)
                             programs sections))
                       problem))
                    (let* ([old-header (vector-ref headers i)]
