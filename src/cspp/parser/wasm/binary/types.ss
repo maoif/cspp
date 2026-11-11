@@ -86,11 +86,22 @@
   The `<wasm-reference-type>` parser reads an explicit or shorthand reference type.
   |#
   (define <wasm-reference-type>
-    (</> (<map> nullable-reference
-                (<~1> (<uimm8> #x63) <wasm-heap-type>))
-         (<map> non-null-reference
-                (<~1> (<uimm8> #x64) <wasm-heap-type>))
-         (<map> nullable-reference shorthand-heap-type-parser)))
+    (let ([fallback
+           (</> (<map> nullable-reference
+                       (<~1> (<uimm8> #x63) <wasm-heap-type>))
+                (<map> non-null-reference
+                       (<~1> (<uimm8> #x64) <wasm-heap-type>))
+                (<map> nullable-reference shorthand-heap-type-parser))])
+      (define-parser reference-type-parser
+        (let* ([position (input-pos inp)]
+               [type (and (fx< position (input-len inp))
+                          (abstract-heap-type-from-byte
+                           (bytevector-u8-ref (binary-input-data inp) position)))])
+          (if type
+              (begin (input-pos-set! inp (fx1+ position))
+                     (values #t (nullable-reference type) inp))
+              (parser-call fallback inp state lvl))))
+      reference-type-parser))
 
   #|proc:<wasm-value-type>
   The `<wasm-value-type>` parser reads a numeric, vector, or reference value type.

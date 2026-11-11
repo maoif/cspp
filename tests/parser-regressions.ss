@@ -2,7 +2,8 @@
         (prefix (cspp parser elf validate) elf:)
         (prefix (cspp parser wasm validate) wasm:)
         (only (cspp parser wasm opcodes) wasm-opcode-by-binary wasm-opcode-mnemonic)
-        (only (cspp parser wasm binary instructions) <wasm-expression>))
+        (only (cspp parser wasm binary instructions) <wasm-expression>)
+        (only (cspp parser wasm binary types) <wasm-reference-type>))
 
 (define parser-error-from
   (lambda (thunk)
@@ -1178,3 +1179,38 @@
             (wasm-limits-shared? (wasm-memory-type-limits (wasm-memory-type (vector-ref memories 0))))
             (eq? 'i64 (wasm-limits-address-type
                        (wasm-memory-type-limits (wasm-memory-type (vector-ref memories 1))))))))
+
+(mat parser-wasm-standalone-reference-dispatch
+
+     (let* ([count 10000] [bytes (make-bytevector (+ 14 (* count 4)) 0)])
+       (bytevector-copy! #vu8(0 97 115 109 1 0 0 0 4 194 184 2 144 78) 0 bytes 0 14)
+       (do ([index 14 (+ index 4)]) ((= index (bytevector-length bytes)))
+         (bytevector-u8-set! bytes index 112)
+         (bytevector-u8-set! bytes (+ index 1) 1))
+       (let* ([before (statistics)] [module (parse-wasm-binary-module bytes)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and (= count (vector-length (wasm-module-tables module)))
+              (< allocated 11000000))))
+
+     (for-all
+      (lambda (byte name)
+        (let* ([input (bytevector byte)]
+               [first (run-binary-parser <wasm-reference-type> input)]
+               [second (run-binary-parser <wasm-reference-type> input)])
+          (and (wasm-reference-type-nullable? first)
+               (eq? name (wasm-reference-type-heap-type first))
+               (not (eq? first second)))))
+      '(105 106 107 108 109 110 111 112 113 114 115 116)
+      '(exn array struct i31 eq any extern func none noextern nofunc noexn))
+
+     (let ([type (run-binary-parser <wasm-reference-type> #vu8(100 0))])
+       (and (not (wasm-reference-type-nullable? type))
+            (= 0 (wasm-reference-type-heap-type type))))
+
+     ;; Error case: an out-of-range shorthand byte must not be read through a bounded cursor.
+     (let ([err (parser-error-from
+                 (lambda ()
+                   (run-binary-parser/source (<bounded> 0 <wasm-reference-type>)
+                                             #vu8(112) "reference-range")))])
+       (and err (= 0 (parser-error-offset err))
+            (string=? "reference-range" (parser-error-source err)))))

@@ -532,6 +532,7 @@
  '(("workload" . left) ("count/exponent" . right)
    ("allocated bytes" . right) ("elapsed ms" . right))
  (append (map (lambda (count) (measure-wasm-declarations count #f)) '(10000 100000))
+         (map (lambda (count) (measure-wasm-declarations count #t)) '(10000 100000))
          (map measure-xml-attributes '(4000 8000 16000 32000))
          (map measure-zero-float '(10000 100000 1000000))
          (measure-byte-vectors)
