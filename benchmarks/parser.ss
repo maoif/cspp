@@ -480,6 +480,15 @@
        label count (lambda () (parse-toml text))
        (lambda (document) (string=? body (toml-table-ref (toml-document-root document) "v")))))))
 
+(define measure-xml-attribute-characters
+  (lambda (count)
+    (let* ([body (make-string count #\a)] [text (string-append "<r a='" body "'/>")])
+      (measure-parser
+       "XML attribute characters" count (lambda () (parse-xml text))
+       (lambda (document)
+         (string=? body (xml-attribute-value
+                         (vector-ref (xml-element-attributes (xml-document-root document)) 0))))))))
+
 (benchmark-print-table!
  "Parser review workloads"
  '(("workload" . left) ("count/exponent" . right)
@@ -488,6 +497,7 @@
          (map measure-zero-float '(10000 100000 1000000))
          (measure-byte-vectors)
          (map measure-choice-failure '(1000 2000 4000 8000))
+         (map measure-xml-attribute-characters '(100000 1000000))
          (map (lambda (count) (measure-toml-string-characters count "\"" "TOML basic characters"))
               '(100000 1000000))
          (map (lambda (count)

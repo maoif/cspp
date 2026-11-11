@@ -184,20 +184,40 @@
          <decimal-character-reference>
          <predefined-reference>))
 
+  ;; Ordinary accepted characters cannot start a delimiter. Keep the original parser for
+  ;; prefixes, invalid characters and EOF so its complete diagnostic causes stay unchanged.
+  (define (ordinary-before-end prefix predicate original)
+    (define-parser ordinary-before-end-parser
+      (let-values ([(status character next-input)
+                    (parser-call <item> (save-input inp) state lvl)])
+        (if (and status (not (char=? character prefix)) (predicate character))
+            (values #t character next-input)
+            (parser-call original inp state lvl))))
+    ordinary-before-end-parser)
+
   (define (attribute-value-parser quote)
-    (<map> list->string
-           (<~1> (<char> quote)
-                 (<many>
-                  (</> <reference>
-                       (<as> #\space (<one-of> "\t\n\r"))
-                       (<satisfy-char>
-                        (lambda (character)
-                          (and (xml-character? character)
-                               (not (char=? character #\<))
-                               (not (char=? character #\&))
-                               (not (char=? character quote))))
-                        "invalid XML attribute character")))
-                 (<char> quote))))
+    (let* ([ordinary-character?
+            (lambda (character)
+              (and (xml-character? character)
+                   (not (char=? character #\<))
+                   (not (char=? character #\&))
+                   (not (char=? character quote))))]
+           [original (</> <reference>
+                          (<as> #\space (<one-of> "\t\n\r"))
+                          (<satisfy-char> ordinary-character?
+                                           "invalid XML attribute character"))])
+      (<map> list->string
+             (<~1> (<char> quote)
+                   (<many>
+                    (ordinary-before-end
+                     #\&
+                     (lambda (character)
+                       (and (ordinary-character? character)
+                            (not (char=? character #\tab))
+                            (not (char=? character #\newline))
+                            (not (char=? character #\return))))
+                     original))
+                   (<char> quote)))))
 
   (define <attribute-value>
     (</> (attribute-value-parser #\")
@@ -236,17 +256,6 @@
            (<~1> (<string> "<!--")
                  (<many> <comment-piece>)
                  (<string> "-->"))))
-
-  ;; Ordinary accepted characters cannot start a delimiter. Keep the original parser for
-  ;; prefixes, invalid characters and EOF so its complete diagnostic causes stay unchanged.
-  (define (ordinary-before-end prefix predicate original)
-    (define-parser ordinary-before-end-parser
-      (let-values ([(status character next-input)
-                    (parser-call <item> (save-input inp) state lvl)])
-        (if (and status (not (char=? character prefix)) (predicate character))
-            (values #t character next-input)
-            (parser-call original inp state lvl))))
-    ordinary-before-end-parser)
 
   (define <not-cdata-end-fallback>
     (<~1> (<not-followed-by> (<result> #t) (<string> "]]>") )

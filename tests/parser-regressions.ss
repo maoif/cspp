@@ -1104,3 +1104,22 @@
      (for-all (lambda (source)
                 (and (parser-error-from (lambda () (parse-toml source))) #t))
               '("v=\"abc\\q\"" "v=\"\"\"abc\\q\"\"\"" "v='''abc\x7f;'''" "v=\"\"\"abc")))
+
+(mat parser-xml-ordinary-attribute-characters
+
+     (let* ([body (make-string 100000 #\a)] [source (string-append "<r a='" body "'/>")]
+            [before (statistics)] [document (parse-xml source)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (string=? body (xml-attribute-value
+                           (vector-ref (xml-element-attributes (xml-document-root document)) 0)))
+            (< allocated 25000000)))
+
+     ;; Literal whitespace normalizes to spaces; a referenced carriage return stays content.
+     (let* ([document (parse-xml "<r a='x\t\r\ny&#xD;&amp;&quot;'/>")]
+            [attribute (vector-ref (xml-element-attributes (xml-document-root document)) 0)])
+       (string=? "x  y\r&\"" (xml-attribute-value attribute)))
+
+     ;; Error cases: direct success cannot bypass forbidden characters or reference checking.
+     (for-all (lambda (source)
+                (and (parser-error-from (lambda () (parse-xml source))) #t))
+              '("<r a='a<b'/>" "<r a='a&no;'/>" "<r a='x&#0;'/>" "<r a='x\x0;'/>")))
