@@ -75,6 +75,18 @@
                              (</> (<string> "(;") (<string> ";)")))
           <item>))
 
+  (define <wat-block-comment-element>
+    (let ([original (</> <wat-block-comment> <wat-block-comment-character>)])
+      ;; Only '(' and ';' can begin a nested opener or closer. Keep both alternatives
+      ;; for these prefixes and EOF, including their complete failure causes.
+      (define-parser block-comment-element-parser
+        (let-values ([(status character next-input)
+                      (parser-call <item> (save-input inp) state lvl)])
+          (if (and status (not (memv character '(#\( #\;))))
+              (values #t character next-input)
+              (parser-call original inp state lvl))))
+      block-comment-element-parser))
+
   #|proc:<wat-trivia>
   The `<wat-trivia>` parser consumes WebAssembly whitespace, comments, and generic annotations.
   It leaves `@custom` annotations for the module grammar and returns the empty list.
@@ -84,7 +96,7 @@
       (install-lazy-parser!
        <wat-block-comment>
        (<~1> (<string> "(;")
-             (<many> (</> <wat-block-comment> <wat-block-comment-character>))
+             (<many> <wat-block-comment-element>)
              (<string> ";)")))
       (<as> '()
             (<many> (</> <wat-whitespace> <wat-line-comment> <wat-block-comment>

@@ -489,6 +489,18 @@
          (string=? body (xml-attribute-value
                          (vector-ref (xml-element-attributes (xml-document-root document)) 0))))))))
 
+(define measure-block-comment-characters
+  (lambda (count wat?)
+    (let* ([body (make-string count #\a)]
+           [text (if wat? (string-append "(;" body ";)(module)")
+                     (string-append "/*" body "*/0"))])
+      (measure-parser
+       (if wat? "WAT block comment characters" "JSON5 block comment characters") count
+       (lambda () (if wat? (parse-wasm-text-module text) (parse-json5 text)))
+       (lambda (value)
+         (if wat? (= 0 (vector-length (wasm-module-functions value)))
+             (= 0 (json5-document-value value))))))))
+
 (benchmark-print-table!
  "Parser review workloads"
  '(("workload" . left) ("count/exponent" . right)
@@ -497,6 +509,8 @@
          (map measure-zero-float '(10000 100000 1000000))
          (measure-byte-vectors)
          (map measure-choice-failure '(1000 2000 4000 8000))
+         (map (lambda (count) (measure-block-comment-characters count #t)) '(100000 1000000))
+         (map (lambda (count) (measure-block-comment-characters count #f)) '(100000 1000000))
          (map measure-xml-attribute-characters '(100000 1000000))
          (map (lambda (count) (measure-toml-string-characters count "\"" "TOML basic characters"))
               '(100000 1000000))

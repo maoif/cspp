@@ -140,8 +140,10 @@
 
   (define <block-comment>
     (<~1> (<string> "/*")
-          (<many> (<~1> (<not-followed-by> (<result> #t) (<string> "*/"))
-                        <item>))
+          (<many>
+           (ordinary-character-parser
+            (lambda (character) (not (char=? character #\*)))
+            (<~1> (<not-followed-by> (<result> #t) (<string> "*/")) <item>)))
           (<string> "*/")))
 
   (define <junk>

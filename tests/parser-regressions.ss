@@ -1123,3 +1123,33 @@
      (for-all (lambda (source)
                 (and (parser-error-from (lambda () (parse-xml source))) #t))
               '("<r a='a<b'/>" "<r a='a&no;'/>" "<r a='x&#0;'/>" "<r a='x\x0;'/>")))
+
+(mat parser-ordinary-block-comment-characters
+
+     (let ([body (make-string 100000 #\a)])
+       (for-all
+        (lambda (parse prefix suffix)
+          (let* ([source (string-append prefix body suffix)]
+                 [before (statistics)] [value (parse source)]
+                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+            (and (if (wasm-module? value)
+                     (= 0 (vector-length (wasm-module-functions value)))
+                     (= 0 (json5-document-value value)))
+                 (< allocated 25000000))))
+        (list parse-wasm-text-module parse-json5) '("(;" "/*") '(";)(module)" "*/0")))
+
+     (= 1 (vector-length
+           (wasm-module-functions
+            (parse-wasm-text-module "(;a(;b;)c;)(module (func nop))"))))
+
+     (= 0 (json5-document-value (parse-json5 "/***/0")))
+
+     ;; Error cases: nested or partial WAT comment delimiters must retain the original grammar.
+     (for-all (lambda (source)
+                (and (parser-error-from (lambda () (parse-wasm-text-module source))) #t))
+              '("(;a(;b;)" "(;abc;" "(;abc("))
+
+     ;; Error cases: JSON5 comments cannot end at an isolated '*' or missing terminator.
+     (for-all (lambda (source)
+                (and (parser-error-from (lambda () (parse-json5 source))) #t))
+              '("/*abc" "/*abc*" "/*abc/0")))
