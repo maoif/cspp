@@ -134,20 +134,20 @@
 
   (define <line-comment>
     (<~1> (<string> "//")
-          (<many> (<satisfy-char>
+          (parser-discard-many (<satisfy-char>
                    (lambda (character)
                      (not (json5-line-terminator? character)))))))
 
   (define <block-comment>
     (<~1> (<string> "/*")
-          (<many>
+          (parser-discard-many
            (ordinary-character-parser
             (lambda (character) (not (char=? character #\*)))
             (<~1> (<not-followed-by> (<result> #t) (<string> "*/")) <item>)))
           (<string> "*/")))
 
   (define <junk>
-    (<many> (</> <json5-whitespace> <line-comment> <block-comment>)))
+    (parser-discard-many (</> <json5-whitespace> <line-comment> <block-comment>)))
 
   (define (<json5-token> parser)
     (<~ parser <junk>))

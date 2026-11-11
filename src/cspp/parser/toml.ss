@@ -318,7 +318,7 @@
   ;; https://toml.io/en/v1.1.0
 
   (define <ws-character> (<one-of> " \t"))
-  (define <ws> (<many> <ws-character>))
+  (define <ws> (parser-discard-many <ws-character>))
   (define <newline>
     (</> (<as> #\newline (<string> "\r\n"))
          (<char> #\newline)))
@@ -331,7 +331,7 @@
 
   (define <comment>
     (<~1> (<char> #\#)
-          (<many> (<satisfy-char> valid-comment-character?
+          (parser-discard-many (<satisfy-char> valid-comment-character?
                                    "invalid TOML comment character"))))
 
   (define <blank-line>
@@ -423,7 +423,7 @@
           (<~> (<char> #\\)
                <ws>
                <newline>
-               (<many> (</> <ws-character> <newline>)))))
+               (parser-discard-many (</> <ws-character> <newline>)))))
 
   (define multiline-basic-unescaped-character?
     (lambda (character)
@@ -731,7 +731,7 @@
   (declare-lazy-parser <toml-value>)
 
   (define <collection-junk>
-    (<many> (</> <ws-character> <newline> <comment>)))
+    (parser-discard-many (</> <ws-character> <newline> <comment>)))
 
   (define <collection-separator>
     (<~1> <collection-junk> (<char> #\,) <collection-junk>))

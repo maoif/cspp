@@ -59,7 +59,7 @@
 
   (define <wat-line-comment>
     (<~1> (<string> ";;")
-          (<many> (<satisfy-char>
+          (parser-discard-many (<satisfy-char>
                    (lambda (character)
                      (and (not (char=? character #\newline))
                           (not (char=? character #\return))))
@@ -96,10 +96,10 @@
       (install-lazy-parser!
        <wat-block-comment>
        (<~1> (<string> "(;")
-             (<many> <wat-block-comment-element>)
+             (parser-discard-many <wat-block-comment-element>)
              (<string> ";)")))
       (<as> '()
-            (<many> (</> <wat-whitespace> <wat-line-comment> <wat-block-comment>
+            (parser-discard-many (</> <wat-whitespace> <wat-line-comment> <wat-block-comment>
                          <wat-ignored-annotation>)))))
 
   (define <wat-token-boundary>
@@ -227,9 +227,10 @@
      "invalid annotation character"))
 
   (define <wat-annotation-content>
-    (let ([original (</> <wat-any-annotation> <wat-annotation-group>
-         <wat-annotation-string> <wat-block-comment> <wat-line-comment>
-         <wat-annotation-character>)])
+    (let ([original
+           (</> <wat-any-annotation> <wat-annotation-group>
+                <wat-annotation-string> <wat-block-comment> <wat-line-comment>
+                <wat-annotation-character>)])
       (define-parser annotation-content-parser
         (let-values ([(status character next-input)
                       (parser-call <item> (save-input inp) state lvl)])
@@ -254,12 +255,12 @@
        <wat-any-annotation>
        (<~1> (<string> "(@")
              <wat-annotation-id>
-             (<many> <wat-annotation-content>)
+             (parser-discard-many <wat-annotation-content>)
              (<char> wat-close-parenthesis)))
       (install-lazy-parser!
        <wat-annotation-group>
        (<~1> (<not-followed-by> (<char> #\() (<one-of> ";@"))
-             (<many> <wat-annotation-content>) (<char> wat-close-parenthesis)))
+             (parser-discard-many <wat-annotation-content>) (<char> wat-close-parenthesis)))
       (install-lazy-parser!
        <wat-ignored-annotation>
        (<~1> (<string> "(@")
@@ -270,7 +271,7 @@
                              [(string=? identifier "custom")
                               (<fail-with> "custom annotation is not trivia")]
                              [else (<result> identifier)])))
-             (<many> <wat-annotation-content>)
+             (parser-discard-many <wat-annotation-content>)
              (<char> wat-close-parenthesis)))
       (<bind> (<~1> (<char> wat-double-quote)
                     (<many> (</> <wat-string-escape> <wat-raw-string-run>))

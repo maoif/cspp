@@ -9,6 +9,7 @@
           parse-textual-file parse-binary-file
           ;; TODO remove these
           parser-call input-pos input-pos-set! input-len save-input binary-input-data
+          parser-discard-many
           bindigits->num octdigits->num digits->num hexdigits->num
 
           <fail> <fail-with> <eof> <result> <satisfy>
@@ -2321,19 +2322,24 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                    (<~> parser (<many> (~> separator parser))))))
 
 
-  ;; Match repetition's progress checks and rollback without retaining ignored values.
-  (define discard-many
-    (lambda (parser)
-      (define-parser discard-parser
-        (let loop ([current inp])
-          (let ([snapshot (save-input current)])
-            (let-values ([(status value next-input)
-                          (parser-call parser current state (fx1+ lvl))])
-              (if status
-                  (begin (ensure-progress '<many> snapshot next-input)
-                         (loop next-input))
-                  (values #t '() snapshot))))))
-      discard-parser))
+  #|proc:parser-discard-many
+  The `parser-discard-many` procedure takes `parser` and returns a parser that repeats it,
+  ignores its values, and returns the empty list. The final failed attempt restores its starting
+  cursor. A success without input progress raises an error. Callback state is not rolled back.
+  This helper is shared internally by format grammars and is excluded from the parser umbrella.
+  |#
+  (define (parser-discard-many parser)
+    (pcheck ([parser? parser])
+            (define-parser discard-parser
+              (let loop ([current inp])
+                (let ([snapshot (save-input current)])
+                  (let-values ([(status value next-input)
+                                (parser-call parser current state (fx1+ lvl))])
+                    (if status
+                        (begin (ensure-progress '<many> snapshot next-input)
+                               (loop next-input))
+                        (values #t '() snapshot))))))
+            discard-parser))
 
   #|proc:<token>
   The `<token>` procedure takes `parser` and returns a parser that runs it, consumes any
@@ -2341,7 +2347,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   |#
   (define (<token> parser)
     (pcheck ([parser? parser])
-            (<~ parser (discard-many <whitespace>))))
+            (<~ parser (parser-discard-many <whitespace>))))
 
 
   #|proc:<fully>
@@ -2350,7 +2356,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   |#
   (define (<fully> parser)
     (pcheck ([parser? parser])
-            (<~n> 1 (discard-many <whitespace>) parser (discard-many <whitespace>) <eof>)))
+            (<~n> 1 (parser-discard-many <whitespace>) parser (parser-discard-many <whitespace>) <eof>)))
 
 
   ;; TODO These can be placed in the front at o=3, but not at o=2.

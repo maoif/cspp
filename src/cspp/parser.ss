@@ -4,7 +4,7 @@
 
   (export (import (except (cspp parser combinator)
                           parser-call input-pos input-pos-set! input-len
-                          save-input binary-input-data
+                          save-input binary-input-data parser-discard-many
                           bindigits->num octdigits->num digits->num hexdigits->num)
 
                   (cspp parser csv)

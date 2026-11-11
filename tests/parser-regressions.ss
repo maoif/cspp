@@ -1291,3 +1291,38 @@
      ;; Error cases: TOML requires fractional digits and complete decimal exponents.
      (for-all (lambda (text) (and (parser-error-from (lambda () (parse-toml text))) #t))
               '("v=1." "v=1.e2" "v=1e+" "v=01")))
+
+(mat parser-format-discarded-trivia
+
+     (let ([spaces (make-string 100000 #\space)])
+       (for-all
+        (lambda (parse text)
+          (let* ([before (statistics)] [value (parse text)]
+                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+            (and (= 0 value) (< allocated 14500000))))
+        (list (lambda (text) (vector-length
+                             (toml-table-entries (toml-document-root (parse-toml text)))))
+              (lambda (text) (vector-length
+                             (xml-element-attributes (xml-document-root (parse-xml text))))))
+        (list spaces (string-append "<r" spaces "/>"))))
+
+     (let ([body (make-string 100000 #\a)])
+       (for-all
+        (lambda (parse prefix suffix)
+          (let* ([text (string-append prefix body suffix)]
+                 [before (statistics)] [value (parse text)]
+                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+            (and (= 0 value) (< allocated 7500000))))
+        (list (lambda (text) (json5-document-value (parse-json5 text)))
+              (lambda (text) (toml-table-ref (toml-document-root (parse-toml text)) "v"))
+              (lambda (text) (vector-length
+                             (wasm-module-functions (parse-wasm-text-module text)))))
+        '("//" "#" ";;") '("\n0" "\nv=0" "\n(module)")))
+
+     ;; Error cases: discard repetition must leave the first invalid/control character unread.
+     (for-all
+      (lambda (parse text)
+        (let ([err (parser-error-from (lambda () (parse text)))])
+          (and err (string=? "<string>" (parser-error-source err)))))
+      (list parse-json5 parse-toml parse-xml parse-wasm-text-module)
+      '("/*abc" "#abc\x0;" "<r \x0;/>" "(@foo abc")))

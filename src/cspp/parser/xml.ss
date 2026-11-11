@@ -140,8 +140,8 @@
   (define <whitespace-character>
     (<one-of> "\x20;\x9;\xA;"))
 
-  (define <S> (<some> <whitespace-character>))
-  (define <S?> (<many> <whitespace-character>))
+  (define <S> (~> <whitespace-character> (parser-discard-many <whitespace-character>)))
+  (define <S?> (parser-discard-many <whitespace-character>))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; References and quoted values

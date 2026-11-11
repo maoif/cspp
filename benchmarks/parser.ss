@@ -544,11 +544,28 @@
                       (json5-document-value (parse-json5 text))))
        (lambda (value) (eqv? 0.1111111111111111 value))))))
 
+(define measure-format-trivia
+  (lambda (count)
+    (let ([spaces (make-string count #\space)] [plain (make-string count #\a)])
+      (map
+       (lambda (name parse source)
+         (measure-parser name count (lambda () (parse source)) zero?))
+       '("TOML blank whitespace" "XML tag whitespace" "JSON5 line comment" "WAT line comment")
+       (list (lambda (text) (vector-length
+                            (toml-table-entries (toml-document-root (parse-toml text)))))
+             (lambda (text) (vector-length
+                            (xml-element-attributes (xml-document-root (parse-xml text)))))
+             (lambda (text) (json5-document-value (parse-json5 text)))
+             (lambda (text) (vector-length (wasm-module-functions (parse-wasm-text-module text)))))
+       (list spaces (string-append "<r" spaces "/>")
+             (string-append "//" plain "\n0") (string-append ";;" plain "\n(module)"))))))
+
 (benchmark-print-table!
  "Parser review workloads"
  '(("workload" . left) ("count/exponent" . right)
    ("allocated bytes" . right) ("elapsed ms" . right))
- (append (map (lambda (count) (measure-decimal-floats count #f)) '(1000 4000 16000 32000))
+ (append (apply append (map measure-format-trivia '(100000 1000000)))
+         (map (lambda (count) (measure-decimal-floats count #f)) '(1000 4000 16000 32000))
          (map (lambda (count) (measure-decimal-floats count #t)) '(1000 4000 16000 32000))
          (map (lambda (count) (measure-wasm-declarations count #f)) '(10000 100000))
          (map (lambda (count) (measure-wasm-declarations count #t)) '(10000 100000))
