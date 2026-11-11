@@ -527,6 +527,13 @@
          (= count (vector-length ((if tables? wasm-module-tables wasm-module-memories)
                                   module))))))))
 
+(define measure-csv-unquoted-records
+  (lambda (count)
+    (let ([text (apply string-append (make-list count "a,b,c\n"))])
+      (measure-parser
+       "CSV unquoted records" count (lambda () (parse-csv text))
+       (lambda (document) (= count (vector-length (csv-document-records document))))))))
+
 (benchmark-print-table!
  "Parser review workloads"
  '(("workload" . left) ("count/exponent" . right)
@@ -551,6 +558,7 @@
          (map (lambda (count) (measure-json5-characters count #f)) '(100000 1000000))
          (map (lambda (count) (measure-json5-characters count #t)) '(100000 1000000))
          (map measure-csv-quoted-field '(100000 1000000))
+         (map measure-csv-unquoted-records '(10000 100000))
          (map measure-ignored-whitespace '(100000 1000000))
          (map (lambda (count) (measure-generic-leb128 count #f)) '(1000 4000 16000 32000))
          (map (lambda (count) (measure-generic-leb128 count #t)) '(1000 4000 16000 32000))

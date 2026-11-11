@@ -1214,3 +1214,33 @@
                                              #vu8(112) "reference-range")))])
        (and err (= 0 (parser-error-offset err))
             (string=? "reference-range" (parser-error-source err)))))
+
+(mat parser-csv-unquoted-field-dispatch
+
+     (let* ([count 10000] [text (apply string-append (make-list count "a,b,c\n"))]
+            [before (statistics)] [document (parse-csv text)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= count (vector-length (csv-document-records document)))
+            (equal? '#("a" "b" "c")
+                    (csv-record-fields (vector-ref (csv-document-records document) 0)))
+            (< allocated 40000000)))
+
+     (for-all
+      (lambda (delimiter)
+        (let* ([text (string-append "a" (string delimiter) "" (string delimiter) "c")]
+               [first (parse-csv text delimiter)] [second (parse-csv text delimiter)]
+               [field (vector-ref
+                       (csv-record-fields (vector-ref (csv-document-records first) 0)) 0)])
+          (string-set! field 0 #\z)
+          (equal? '#("a" "" "c")
+                  (csv-record-fields (vector-ref (csv-document-records second) 0)))))
+      '(#\, #\; #\space #\tab #\|))
+
+     (let* ([document (parse-csv "a, \"b\" ,c")]
+            [warning (vector-ref (csv-document-warnings document) 0)])
+       (and (= 0 (csv-warning-record-index warning))
+            (= 1 (csv-warning-field-index warning))))
+
+     ;; Error cases: dispatch must retain illegal quotes and inconsistent record widths.
+     (for-all (lambda (text) (and (parser-error-from (lambda () (parse-csv text))) #t))
+              '("a\"b,c" "a,\"b\"x" "a,b\nc")))

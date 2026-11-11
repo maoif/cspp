@@ -96,8 +96,15 @@
              (<~> padding (<escaped-field> delimiter) padding))))
 
   (define (<field> delimiter)
-    (</> (<quoted-field> delimiter)
-         (<unescaped-field> delimiter)))
+    (let* ([unescaped (<unescaped-field> delimiter)]
+           [original (</> (<quoted-field> delimiter) unescaped)])
+      (define-parser field-parser
+        (let-values ([(status character next-input)
+                      (parser-call <item> (save-input inp) state lvl)])
+          (parser-call
+           (if (and status (not (memv character '(#\space #\")))) unescaped original)
+           inp state lvl)))
+      field-parser))
 
   (define (<record> delimiter)
     (<map> (lambda (value)
