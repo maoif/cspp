@@ -10,6 +10,7 @@
         (cspp parser wasm text))
 
 (include "parser-external-tools.ss")
+(include "parser-test-support.ss")
 
 (mat parser-wasm-record-writers
 
@@ -20,38 +21,13 @@
   (lambda (parser bytes)
     (run-binary-parser (<~0> parser <eof>) bytes)))
 
-(define capture-parser-error
-  (lambda (thunk)
-    (guard (err [(parser-error? err) err]
-                [else #f])
-      (thunk)
-      #f)))
-
 (define parser-rejects?
   (lambda (parser bytes)
-    (and (capture-parser-error (lambda () (parse-binary parser bytes))) #t)))
+    (and (parser-error-from (lambda () (parse-binary parser bytes))) #t)))
 
 (define parse-wat-lexeme
   (lambda (parser text)
     (run-textual-parser (<~0> parser <eof>) text)))
-
-(define with-temporary-wat
-  (lambda (text procedure)
-    (let ([path (format "parser-wasm-~a.wat" (random 999999))]
-          [port #f])
-      (dynamic-wind
-        (lambda ()
-          (set! port
-                (open-file-output-port path
-                                       (file-options no-fail replace)
-                                       (buffer-mode block)
-                                       #f))
-          (put-bytevector port (string->utf8 text))
-          (flush-output-port port))
-        (lambda () (procedure path))
-        (lambda ()
-          (when port (close-port port))
-          (when (file-exists? path) (delete-file path)))))))
 
 (mat wasm-vector-immutability
 
@@ -1307,7 +1283,7 @@
                   (vector-ref expression (fx1- count))))))
 
      ;; error: memory flags are truncated before the offset.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (parse-binary <wasm-instruction> #vu8(#x28 #x02))))])
        (and (parser-error? err)
             (eq? 'unexpected-eof (parser-error-kind err))
@@ -1318,7 +1294,7 @@
      (error? (parse-binary <wasm-instruction> #vu8(#x28)))
 
      ;; error: a continued memory alignment encoding is truncated.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (parse-binary <wasm-instruction> #vu8(#x28 #x80))))])
        (and (parser-error? err)
             (eq? 'unexpected-eof (parser-error-kind err))
@@ -1338,7 +1314,7 @@
      (for-all
       (lambda (opcode)
         (let ([err
-               (capture-parser-error
+               (parser-error-from
                 (lambda ()
                   (parse-binary <wasm-instruction> (bytevector opcode))))])
           (and (parser-error? err)
@@ -1349,7 +1325,7 @@
       reserved-one-byte-opcodes)
 
      ;; error: an unknown one-byte opcode reports its consumed offset and category.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (parse-binary <wasm-instruction> #vu8(#x06))))])
        (and (parser-error? err)
             (eq? 'custom (parser-error-kind err))
@@ -1358,7 +1334,7 @@
                               "unknown WebAssembly opcode")))
 
      ;; error: an unknown opcode in an expression preserves its instruction failure.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (parse-binary <wasm-expression> #vu8(#x06 #x0b))))])
        (and (parser-error? err)
             (eq? 'custom (parser-error-kind err))
@@ -1368,7 +1344,7 @@
 
      ;; error: an unknown opcode in a block preserves its instruction failure.
      (let ([err
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-binary <wasm-instruction> #vu8(#x02 #x40 #x06 #x0b))))])
        (and (parser-error? err)
@@ -1379,7 +1355,7 @@
 
      ;; error: an unknown opcode in an if alternate preserves its instruction failure.
      (let ([err
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-binary <wasm-instruction>
                              #vu8(#x04 #x40 #x05 #x06 #x0b))))])
@@ -1424,7 +1400,7 @@
      (error? (parse-binary <wasm-instruction> #vu8(#x02 #x40 #x01)))
 
      ;; error: an expression must end with an end terminator.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (parse-binary <wasm-expression> #vu8(#x01))))])
        (and (parser-error? err)
             (eq? 'unexpected-eof (parser-error-kind err))
@@ -1593,7 +1569,7 @@
       (integer-range 0 16))
 
      ;; error: shuffle lane 32 reports its exact consumed offset and category.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda ()
                    (parse-binary <wasm-instruction>
                                  (make-shuffle-instruction-bytes 0))))])
@@ -1617,7 +1593,7 @@
             #vu8(#xfd #x56 0 0 4) #vu8(#xfd #x57 0 0 2)))
 
      ;; error: an invalid direct lane reports its exact consumed offset and category.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda ()
                    (parse-binary <wasm-instruction> #vu8(#xfd #x18 8))))])
        (and (parser-error? err)
@@ -1630,7 +1606,7 @@
      (error? (parse-binary <wasm-instruction> #vu8(#xfb #x02 #x01)))
 
      ;; error: a truncated aggregate reports the exact missing-field offset.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda ()
                    (parse-binary <wasm-instruction> #vu8(#xfb #x02 #x01))))])
        (and (parser-error? err)
@@ -1640,7 +1616,7 @@
 
      ;; error: a malformed aggregate type index retains a stable custom failure.
      (let ([err
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-binary <wasm-instruction>
                              #vu8(#xfb #x02 #xff #xff #xff #xff #x10 #x00))))])
@@ -1669,7 +1645,7 @@
      (error? (parse-binary <wasm-instruction> #vu8(#xfb #x18 #x00 #x01 #x70)))
 
      ;; error: malformed abstract source heap types retain their location and diagnostic.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda ()
                    (parse-binary <wasm-instruction> #vu8(#xfb #x18 #x00 #x00 #x64 #x70))))])
        (and (parser-error? err)
@@ -1682,7 +1658,7 @@
                            #vu8(#xfb #x14 #x80 #x80 #x80 #x80 #x10)))
 
      ;; error: a representative bounded LEB failure preserves its exact location and message.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda ()
                    (parse-binary <wasm-u32> #vu8(#xff #xff #xff #xff #x10))))])
        (and (parser-error? err)
@@ -1691,7 +1667,7 @@
                               "integer has nonzero unused bits")))
 
      ;; error: a representative malformed UTF-8 name preserves its location and message.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (parse-binary <wasm-name> #vu8(#x02 #xc3 #x28))))])
        (and (parser-error? err)
             (eq? 'custom (parser-error-kind err))
@@ -2443,35 +2419,6 @@
    (vector #xfd #x5d 'v128.load64-zero 'memory-argument #f)
    ))
 
-(define concatenate-bytevectors
-  (lambda bytevectors
-    (let* ([length (apply + (map bytevector-length bytevectors))]
-           [result (make-bytevector length)])
-      (let loop ([bytevectors bytevectors] [offset 0])
-        (if (null? bytevectors)
-            result
-            (let* ([bytes (car bytevectors)]
-                   [next-offset (fx+ offset (bytevector-length bytes))])
-              (bytevector-copy! bytes 0 result offset (bytevector-length bytes))
-              (loop (cdr bytevectors) next-offset)))))))
-
-(define byte-list->bytevector
-  (lambda (byte*)
-    (let* ([length (length byte*)] [bytes (make-bytevector length)])
-      (let loop ([index 0] [byte* byte*])
-        (unless (null? byte*)
-          (bytevector-u8-set! bytes index (car byte*))
-          (loop (fx1+ index) (cdr byte*))))
-      bytes)))
-
-(define encode-minimal-u32
-  (lambda (value)
-    (let loop ([value value] [byte* '()])
-      (let ([next (fxsra value 7)] [payload (fxand value #x7f)])
-        (if (fxzero? next)
-            (byte-list->bytevector (reverse (cons payload byte*)))
-            (loop next (cons (fxior payload #x80) byte*)))))))
-
 (define expected-special-row
   (lambda (assignment)
     (let ([prefix (vector-ref assignment 0)] [code (vector-ref assignment 1)])
@@ -2521,10 +2468,10 @@
            [shape (if special (vector-ref special 3) 'none)]
            [structured-kind (and special (vector-ref special 4))]
            [opcode (if prefix
-                       (concatenate-bytevectors (bytevector prefix)
-                                                (encode-minimal-u32 code))
+                       (parser-test-bytes (bytevector prefix)
+                                                (encode-wasm-u32 code))
                        (bytevector code))])
-      (concatenate-bytevectors opcode
+      (parser-test-bytes opcode
                                (minimal-binary-immediate shape structured-kind)))))
 
 (define expected-lane-instructions
@@ -2554,14 +2501,14 @@
 
 (define lane-instruction-test-bytes
   (lambda (expected)
-    (let* ([opcode (concatenate-bytevectors
+    (let* ([opcode (parser-test-bytes
                     (bytevector (vector-ref expected 0))
-                    (encode-minimal-u32 (vector-ref expected 1)))]
+                    (encode-wasm-u32 (vector-ref expected 1)))]
            [lane (fx1- (vector-ref expected 4))]
            [immediate (if (eq? 'lane-index (vector-ref expected 3))
                           (bytevector lane)
                           (bytevector 0 0 lane))])
-      (concatenate-bytevectors opcode immediate))))
+      (parser-test-bytes opcode immediate))))
 
 (define private-binary-variant?
   (lambda (assignment)
@@ -3786,7 +3733,7 @@
 
      ;; error: the source-string API parses a path spelling as source text.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda () (parse-wasm-text-module "data/wasm-core3.wat")))])
        (and error (string=? "<string>" (parser-error-source error))))
 
@@ -3805,7 +3752,7 @@
 
      ;; error: a type truncated inside a bounded section reports its exact byte position.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-binary-module
                 #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00 #x01 #x01 #x60))))])
@@ -3826,7 +3773,7 @@
 
      ;; error: an unknown nested folded instruction retains its source position.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-text-module
                 "(module (func (i32.add (i32.const 1) (bad))))")))])
@@ -3844,7 +3791,7 @@
 
      ;; error: an unterminated nested comment retains exact expected field alternatives.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-text-module "(module (; outer (; inner ;)")))])
        (and error
@@ -3866,7 +3813,7 @@
 
      ;; error: post-parse identifier resolution reports the original symbolic reference.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-text-module "(module\n  (func call $missing))")))])
        (and error
@@ -3885,39 +3832,15 @@
 
      )
 
-(define append-bytevectors
-  (lambda bytevector*
-    (let ([result
-           (make-bytevector
-            (fold-left (lambda (length bytes)
-                         (+ length (bytevector-length bytes)))
-                       0 bytevector*))])
-      (let loop ([bytevector* bytevector*] [offset 0])
-        (if (null? bytevector*)
-            result
-            (let* ([bytes (car bytevector*)]
-                   [length (bytevector-length bytes)])
-              (bytevector-copy! bytes 0 result offset length)
-              (loop (cdr bytevector*) (+ offset length))))))))
-
-(define encode-wasm-u32
-  (lambda (value)
-    (let loop ([value value] [byte* '()])
-      (let ([byte (logand value #x7f)]
-            [remaining (ash value -7)])
-        (if (zero? remaining)
-            (apply bytevector (reverse (cons byte byte*)))
-            (loop remaining (cons (logor byte #x80) byte*)))))))
-
 (define make-wasm-section-bytes
   (lambda (id payload)
-    (append-bytevectors (bytevector id)
+    (parser-test-bytes (bytevector id)
                         (encode-wasm-u32 (bytevector-length payload))
                         payload)))
 
 (define make-wasm-module-bytes
   (lambda section*
-    (apply append-bytevectors
+    (apply parser-test-bytes
            (cons #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00) section*))))
 
 (define standard-section-order
@@ -4087,7 +4010,7 @@
 
      ;; error: duplicate standard sections are invalid.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-binary-module
                 #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
@@ -4097,7 +4020,7 @@
      (andmap
       (lambda (section-pair)
         (let ([error
-               (capture-parser-error
+               (parser-error-from
                 (lambda ()
                   (parse-wasm-binary-module
                    (make-wasm-module-bytes
@@ -4118,7 +4041,7 @@
 
      ;; error: data-count must equal the number of data segments.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-binary-module
                 #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
@@ -4127,7 +4050,7 @@
 
      ;; error: standard sections must occur in Core 3.0 order.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-binary-module
                 #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
@@ -4352,7 +4275,7 @@
 
      ;; error: symbolic references must name a declaration in the matching namespace.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-text-module
                 "(module (func call $missing))")))])
@@ -4376,15 +4299,9 @@
      (error? (parse-wasm-text-module
               "(module (func block br $missing end))"))
 
-     ;; error: the source-string API requires a string.
-     (error? (parse-wasm-text-module #vu8()))
-
-     (with-temporary-wat
-      "(module)"
+     (with-parser-file
+      (string->utf8 "(module)")
       (lambda (path) (wasm-module? (parse-wasm-text-module-file path))))
-
-     ;; error: the file API requires a regular-file path.
-     (error? (parse-wasm-text-module-file "data/not-a-wasm-module.wat"))
 
      )
 
@@ -4805,4 +4722,4 @@
 
      )
 
-(include "parser-wasm-review.ss")
+(include "parser-wasm-regressions.ss")

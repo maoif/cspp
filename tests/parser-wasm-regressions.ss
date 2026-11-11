@@ -1,11 +1,11 @@
-;; Included by parser-wasm.ss; these tests cover the second parser review.
+;; WebAssembly format and normalization regressions; included by parser-wasm.ss.
 (define wasm-review-binary
   (lambda (parser bytes)
     (run-binary-parser (<~ parser <eof>) bytes)))
 
 (define wasm-review-error?
   (lambda (thunk)
-    (and (capture-parser-error thunk) #t)))
+    (and (parser-error-from thunk) #t)))
 
 (mat wasm-review-binary-types
 
@@ -311,8 +311,8 @@
 
 (mat wasm-review-bare-module-file
 
-     (with-temporary-wat
-      "(func) (func)"
+     (with-parser-file
+      (string->utf8 "(func) (func)")
       (lambda (path)
         (= 2 (vector-length (wasm-module-functions (parse-wasm-text-module-file path)))))))
 
@@ -379,7 +379,7 @@
 
 (define wasm-review-data-module
   (lambda (instructions count?)
-    (let ([body (append-bytevectors #vu8(0) instructions #vu8(#x0b))])
+    (let ([body (parser-test-bytes #vu8(0) instructions #vu8(#x0b))])
       (make-wasm-module-bytes
        ;; One function type and one mutable i32 array type.
        (make-wasm-section-bytes 1 #vu8(2 #x60 0 0 #x5e #x7f 1))
@@ -387,7 +387,7 @@
        (make-wasm-section-bytes 5 #vu8(1 0 0))
        (if count? (make-wasm-section-bytes 12 #vu8(1)) #vu8())
        (make-wasm-section-bytes
-        10 (append-bytevectors #vu8(1) (encode-wasm-u32 (bytevector-length body)) body))
+        10 (parser-test-bytes #vu8(1) (encode-wasm-u32 (bytevector-length body)) body))
        (make-wasm-section-bytes 11 #vu8(1 1 0))))))
 
 (define wasm-review-data-instructions
@@ -617,7 +617,7 @@
 
 (mat wasm-review-string-runs
 
-     (equal? (append-bytevectors
+     (equal? (parser-test-bytes
               (string->utf8 "aλ😀") #vu8(255 0 34 92 10)
               (string->utf8 "z\xfeff;"))
              (parse-wat-lexeme <wat-string> "\"aλ😀\\ff\\00\\\"\\\\\\nz\\u{feff}\""))
@@ -640,7 +640,7 @@
      ;; Error case: an overflowing decimal token is scanned without growing an unbounded bignum.
      (let* ([source (make-string 16000 #\9)]
             [before (statistics)]
-            [err (capture-parser-error (lambda () (run-textual-parser <wat-u32> source)))]
+            [err (parser-error-from (lambda () (run-textual-parser <wat-u32> source)))]
             [allocated (sstats-bytes (sstats-difference (statistics) before))])
        (and (parser-error? err) (= 16000 (parser-error-offset err)) (< allocated 12000000)))
 
@@ -656,7 +656,7 @@
      (for-all
       (lambda (case)
         (parser-error?
-         (capture-parser-error (lambda () (run-textual-parser (car case) (cdr case))))))
+         (parser-error-from (lambda () (run-textual-parser (car case) (cdr case))))))
       (list (cons <wat-u32> "4294967296") (cons <wat-u64> "0x10000000000000000")
             (cons <wat-i32> "-2147483649") (cons <wat-i64> "-9223372036854775809"))))
 
@@ -733,7 +733,7 @@
      (for-all
       (lambda (entry)
         (let* ([source (cdr entry)] [before (statistics)]
-               [err (capture-parser-error
+               [err (parser-error-from
                      (lambda () (run-textual-parser (car entry) source)))]
                [allocated (sstats-bytes (sstats-difference (statistics) before))])
           (and (parser-error? err) (< allocated 12000000))))
@@ -909,7 +909,7 @@
       (lambda () (run-binary-parser (<wasm-vector> <u8>) #vu8(255 255 255 255 15))))
 
      ;; Error case: a truncated multibyte element keeps the actual failure offset.
-     (let ([failure (capture-parser-error
+     (let ([failure (parser-error-from
                      (lambda () (run-binary-parser (<wasm-vector> <wasm-u32>)
                                                   #vu8(2 1 128))))])
        (and failure (= 3 (parser-error-offset failure))))
@@ -996,3 +996,94 @@
             [before (statistics)] [identifier (parse-wat-lexeme <wat-identifier> source)]
             [allocated (sstats-bytes (sstats-difference (statistics) before))])
        (and (string=? source identifier) (< allocated 11000000))))
+
+;;;; Allocation and value ownership regressions
+
+(mat parser-wasm-sequence-lookahead-cost
+
+     (let ([bytes (make-bytevector 100001 1)])
+       (bytevector-u8-set! bytes 100000 11)
+       (let* ([before (statistics)] [body (run-binary-parser <wasm-expression> bytes)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and (= 100000 (vector-length body))
+              (eq? 'nop (wasm-instruction-mnemonic (vector-ref body 99999)))
+              (< allocated 28000000)))))
+
+(mat parser-wasm-reused-limits
+
+     ;; Repeated declarations must reuse parser compositions while keeping each value fresh.
+     (let* ([count 10000] [bytes (make-bytevector (+ 14 (* count 2)) 0)])
+       (bytevector-copy! #vu8(0 97 115 109 1 0 0 0 5 162 156 1 144 78) 0 bytes 0 14)
+       (let* ([before (statistics)] [module (parse-wasm-binary-module bytes)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))]
+              [memories (wasm-module-memories module)])
+         (and (= count (vector-length memories))
+              (not (eq? (vector-ref memories 0) (vector-ref memories 1)))
+              (< allocated 1700000))))
+
+     ;; Error case: a cached parser must still reject a maximum smaller than its minimum.
+     (parser-error? (parser-error-from
+                    (lambda () (parse-wasm-binary-module
+                                #vu8(0 97 115 109 1 0 0 0 5 4 1 1 2 1)))))
+
+     (let* ([module (parse-wasm-binary-module
+                     #vu8(0 97 115 109 1 0 0 0 5 7 2 3 1 2 7 3 4))]
+            [memories (wasm-module-memories module)])
+       (and (= 2 (vector-length memories))
+            (wasm-limits-shared? (wasm-memory-type-limits (wasm-memory-type (vector-ref memories 0))))
+            (eq? 'i64 (wasm-limits-address-type
+                       (wasm-memory-type-limits (wasm-memory-type (vector-ref memories 1))))))))
+
+(mat parser-wasm-standalone-reference-dispatch
+
+     (let* ([count 10000] [bytes (make-bytevector (+ 14 (* count 4)) 0)])
+       (bytevector-copy! #vu8(0 97 115 109 1 0 0 0 4 194 184 2 144 78) 0 bytes 0 14)
+       (do ([index 14 (+ index 4)]) ((= index (bytevector-length bytes)))
+         (bytevector-u8-set! bytes index 112)
+         (bytevector-u8-set! bytes (+ index 1) 1))
+       (let* ([before (statistics)] [module (parse-wasm-binary-module bytes)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and (= count (vector-length (wasm-module-tables module)))
+              (< allocated 11000000))))
+
+     (for-all
+      (lambda (byte name)
+        (let* ([input (bytevector byte)]
+               [first (run-binary-parser <wasm-reference-type> input)]
+               [second (run-binary-parser <wasm-reference-type> input)])
+          (and (wasm-reference-type-nullable? first)
+               (eq? name (wasm-reference-type-heap-type first))
+               (not (eq? first second)))))
+      '(105 106 107 108 109 110 111 112 113 114 115 116)
+      '(exn array struct i31 eq any extern func none noextern nofunc noexn))
+
+     (let ([type (run-binary-parser <wasm-reference-type> #vu8(100 0))])
+       (and (not (wasm-reference-type-nullable? type))
+            (= 0 (wasm-reference-type-heap-type type))))
+
+     ;; Error case: an out-of-range shorthand byte must not be read through a bounded cursor.
+     (let ([err (parser-error-from
+                 (lambda ()
+                   (run-binary-parser/source (<bounded> 0 <wasm-reference-type>)
+                                             #vu8(112) "reference-range")))])
+       (and err (= 0 (parser-error-offset err))
+            (string=? "reference-range" (parser-error-source err)))))
+
+(mat parser-wat-ordinary-annotation-content
+
+     (let* ([body (make-string 100000 #\a)]
+            [source (string-append "(@foo " body ")(module)")]
+            [before (statistics)] [module (parse-wasm-text-module source)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= 0 (vector-length (wasm-module-functions module)))
+            (< allocated 25000000)))
+
+     (= 1 (vector-length
+           (wasm-module-functions
+            (parse-wasm-text-module
+             "(@\"foo\" a (b \"c\") (;d(;e;)f;))(module (func nop))"))))
+
+     ;; Error cases: ordinary content cannot hide missing parentheses, strings or comments.
+     (for-all
+      (lambda (text) (and (parser-error-from (lambda () (parse-wasm-text-module text))) #t))
+      '("(@foo abc" "(@foo abc (def)" "(@foo abc \"def)" "(@foo abc (;def)")))

@@ -2,6 +2,7 @@
         (cspp parser json5))
 
 (include "parser-external-tools.ss")
+(include "parser-test-support.ss")
 
 (define json5-value
   (lambda (text)
@@ -205,3 +206,5 @@
            (equal? summary (successful-process-output result))))
 
      )
+
+(include "parser-json5-regressions.ss")

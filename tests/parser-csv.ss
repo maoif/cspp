@@ -2,6 +2,7 @@
         (cspp parser csv))
 
 (include "parser-external-tools.ss")
+(include "parser-test-support.ss")
 
 (define csv-fields
   (lambda (document)
@@ -107,3 +108,5 @@
            (equal? (csv-summary records) (successful-process-output result))))
 
      )
+
+(include "parser-csv-regressions.ss")

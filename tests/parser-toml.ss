@@ -2,6 +2,7 @@
         (cspp parser toml))
 
 (include "parser-external-tools.ss")
+(include "parser-test-support.ss")
 
 (define toml-root
   (lambda (text)
@@ -10,24 +11,6 @@
 (define toml-value
   (lambda (text key)
     (toml-table-ref (toml-root text) key)))
-
-(define with-temporary-toml-bytes
-  (lambda (bytes procedure)
-    (let ([path (format "parser-toml-~a.toml" (random 999999))]
-          [port #f])
-      (dynamic-wind
-        (lambda ()
-          (set! port
-                (open-file-output-port path
-                                       (file-options no-fail replace)
-                                       (buffer-mode block)
-                                       #f))
-          (put-bytevector port bytes)
-          (flush-output-port port))
-        (lambda () (procedure path))
-        (lambda ()
-          (when port (close-port port))
-          (when (file-exists? path) (delete-file path)))))))
 
 (mat parse-toml-records
 
@@ -298,7 +281,7 @@
 
      ;; error: malformed UTF-8 must not be replaced while reading TOML files.
      (error?
-      (with-temporary-toml-bytes (bytevector #xc3 #x28) parse-toml-file))
+      (with-parser-file (bytevector #xc3 #x28) parse-toml-file))
 
      )
 
@@ -335,3 +318,5 @@
         "a={\n x=1,\n x=2\n}" "a=[{x=1,x=2}]" "a={outer={x=1,x=2}}"
         "x=1\nx=2")
       '(7 7 9 11 8 14 4) '(0 0 0 2 0 0 1) '(7 7 9 1 8 14 0)))
+
+(include "parser-toml-regressions.ss")

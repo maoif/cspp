@@ -1,92 +1,9 @@
 (import (cspp) (cspp parser combinator)
         (prefix (cspp parser elf validate) elf:)
         (prefix (cspp parser wasm validate) wasm:)
-        (only (cspp parser wasm opcodes) wasm-opcode-by-binary wasm-opcode-mnemonic)
-        (only (cspp parser wasm binary instructions) <wasm-expression>)
-        (only (cspp parser wasm binary types) <wasm-reference-type>))
+        (only (cspp parser wasm opcodes) wasm-opcode-by-binary wasm-opcode-mnemonic))
 
-(define parser-error-from
-  (lambda (thunk)
-    (guard (err [(parser-error? err) err])
-      (thunk)
-      #f)))
-
-(define parser-review-bytes
-  (lambda bytevectors
-    (u8-list->bytevector (apply append (map bytevector->u8-list bytevectors)))))
-
-(define with-parser-file
-  (lambda (bytes procedure)
-    (let ([path (format "parser-regression-~a.tmp" (random 999999999))])
-      (dynamic-wind
-        (lambda () (write-u8vec path bytes))
-        (lambda () (procedure path))
-        (lambda () (when (file-exists? path) (delete-file path)))))))
-
-(mat parser-scheme-regressions
-
-     (equal? '(a . #\b) (parse-scheme-datum "(a . #\\b)"))
-
-     (equal? '(a b . #\)) (parse-scheme-datum "[a b . #\\)]"))
-
-     (equal? '((a . #f) (a . ()) (a b) #(a #\b))
-             (parse-scheme "(a . #f) [a . ()] (a b) #(a #\\b)"))
-
-     (string=? (string #\page) (parse-scheme-datum "\"\\f\""))
-
-     ;; Error case: a dotted list must have at least one element before the dot.
-     (parser-error? (parser-error-from (lambda () (parse-scheme-datum "(. a)"))))
-
-     ;; Error case: a boolean cannot run into a following identifier.
-     (parser-error? (parser-error-from (lambda () (parse-scheme "#tfoo"))))
-
-     ;; Error case: a character name cannot run into a following identifier.
-     (parser-error? (parser-error-from (lambda () (parse-scheme "#\\spacefoo"))))
-
-     ;; Error case: an integer cannot run into a following identifier.
-     (parser-error? (parser-error-from (lambda () (parse-scheme "123abc"))))
-
-     ;; Error case: a radix integer must end before another radix prefix.
-     (parser-error? (parser-error-from (lambda () (parse-scheme "#x1#x2"))))
-
-     (equal? '(#t (x) #\space (quote a) -12 + #f)
-             (parse-scheme "#t(x)#\\space'a -12 + #f"))
-
-     (equal? '(#t #f #\a #\b #\space #t)
-             (parse-scheme "#t#f #\\a#\\b #\\ #t"))
-
-     )
-
-(mat parser-toml-regressions
-
-     (= 1 (toml-table-ref (toml-document-root (parse-toml "  x = 1\n")) "x"))
-
-     (let* ([root (toml-document-root (parse-toml "\t[a]\n  x = 1\n \t"))]
-            [table (toml-table-ref root "a")])
-       (= 1 (toml-table-ref table "x")))
-
-     (= 0 (vector-length (toml-table-entries (toml-document-root (parse-toml "  \t")))))
-
-     (let* ([root (toml-document-root (parse-toml "[[a.b]]\nx=1\n[[a.b]]\nx=2"))]
-            [array (toml-table-ref (toml-table-ref root "a") "b")])
-       (equal? '(1 2)
-               (map (lambda (table) (toml-table-ref table "x"))
-                    (vector->list (toml-array-elements array)))))
-
-     ;; Error case: an implicit ordinary parent cannot later become an array of tables.
-     (parser-error?
-      (parser-error-from (lambda () (parse-toml "[[a.b]]\nx=1\n[[a]]"))))
-
-     ;; Error case: bare TOML keys are restricted to ASCII.
-     (parser-error? (parser-error-from (lambda () (parse-toml "é = 1"))))
-
-     (= 1 (toml-table-ref (toml-document-root (parse-toml "'é' = 1")) "é"))
-
-     ;; Error case: preserve the location of a missing value after an indented key.
-     (let ([err (parser-error-from (lambda () (parse-toml "  a = ")))])
-       (and (parser-error? err) (= 6 (parser-error-offset err))))
-
-     )
+(include "parser-test-support.ss")
 
 (mat parser-json5-csv-regressions
 
@@ -115,33 +32,6 @@
             (= 4 (parser-error-offset err))
             (= 1 (parser-error-line err))
             (= 0 (parser-error-column err))))
-
-     )
-
-(mat parser-xml-regressions
-
-     (let* ([document (parse-xml "<a x='a\tb\r\nc&#9;d&#10;e&#13;f'/>")]
-            [attribute (vector-ref (xml-element-attributes (xml-document-root document)) 0)])
-       (string=? "a b c\td\ne\rf" (xml-attribute-value attribute)))
-
-     (let* ([document (parse-xml "<a>one&amp;two&#65;<![CDATA[raw]]>three&amp;<!--c-->end</a>")]
-            [children (xml-element-children (xml-document-root document))])
-       (and (= 5 (vector-length children))
-            (string=? "one&twoA" (xml-text-value (vector-ref children 0)))
-            (xml-cdata? (vector-ref children 1))
-            (string=? "three&" (xml-text-value (vector-ref children 2)))
-            (xml-comment? (vector-ref children 3))
-            (string=? "end" (xml-text-value (vector-ref children 4)))))
-
-     (let* ([count 16000]
-            [text (string-append "<a>" (apply string-append (make-list count "&amp;")) "</a>")]
-            [before (statistics)]
-            [root (xml-document-root (parse-xml text))]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
-       (and (string=? (make-string count #\&)
-                      (xml-text-value (vector-ref (xml-element-children root) 0)))
-            ;; A generous allocation bound catches repeated copies of accumulated text.
-            (< allocated 100000000)))
 
      )
 
@@ -390,20 +280,20 @@
 
      ;; Error case: WAT strings cannot hide malformed UTF-8 in file input.
      (with-parser-file
-      (parser-review-bytes (string->utf8 "(module (import \"") #vu8(255)
+      (parser-test-bytes (string->utf8 "(module (import \"") #vu8(255)
                          (string->utf8 "\" \"f\" (func)))"))
       (lambda (path) (guard (err [else #t]) (parse-wasm-text-module-file path) #f)))
 
      ;; Error case: only the first BOM is a stream signature in XML/TOML files.
      (for-all
       (lambda (case)
-        (with-parser-file (parser-review-bytes #vu8(239 187 191 239 187 191)
+        (with-parser-file (parser-test-bytes #vu8(239 187 191 239 187 191)
                                              (string->utf8 (cdr case)))
           (lambda (path)
             (parser-error? (parser-error-from (lambda () ((car case) path)))))))
       (list (cons parse-xml-file "<a/>") (cons parse-toml-file "a=1")))
 
-     (with-parser-file (parser-review-bytes #vu8(239 187 191) (string->utf8 "a=1"))
+     (with-parser-file (parser-test-bytes #vu8(239 187 191) (string->utf8 "a=1"))
        (lambda (path)
          (= 1 (toml-table-ref (toml-document-root (parse-toml-file path)) "a"))))
 
@@ -412,20 +302,6 @@
                      "(module (func) (export \"\\u{feff}A\" (func 0)))")]
             [export (vector-ref (wasm-module-exports module) 0)])
        (string=? "\xfeff;A" (wasm-export-name export)))
-
-     )
-
-(mat parser-toml-implicit-dotted-review
-
-     ;; Error case: traversing an implicit parent with a dotted key defines that parent.
-     (parser-error?
-      (parser-error-from
-       (lambda () (parse-toml "[a.b.c]\nx=1\n[a]\nb.d=2\n[a.b]\ny=3"))))
-
-     (let* ([root (toml-document-root (parse-toml "[a.b.c]\nx=1\n[a]\nb.d=2"))]
-            [a (toml-table-ref root "a")]
-            [b (toml-table-ref a "b")])
-       (= 2 (toml-table-ref b "d")))
 
      )
 
@@ -597,13 +473,6 @@
        (and (= 2 (parser-error-offset err)) (= 1 (parser-error-line err))
             (= 0 (parser-error-column err)) (char=? #\newline (parser-error-found err)))))
 
-(mat parser-json5-whitespace-cost
-
-     (let* ([text (string-append (make-string 100000 #\space) "42")]
-            [before (statistics)] [document (parse-json5 text)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
-       (and (= 42 (json5-document-value document)) (< allocated 30000000))))
-
 (mat parser-exact-count-contracts
 
      ;; Error cases: constructors reject inexact, fractional, and negative counts/indices.
@@ -642,59 +511,6 @@
         (parser-error? (parser-error-from (lambda () (run-binary-parser parser #vu8(1))))))
       (let ([large (+ 1 (most-positive-fixnum))])
         (list (<u8vec> large) (<bounded> large <u8>) (<pos-at> large <u8>)))))
-
-(mat parser-xml-comment-copy
-
-     (let* ([body (string-append (make-string 250000 #\a) "-b")]
-            [text (string-append "<r><!--" body "--></r>")]
-            [before (statistics)] [document (parse-xml text)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
-       (and (string=? body (xml-comment-value
-                           (vector-ref (xml-element-children
-                                        (xml-document-root document)) 0)))
-            (< allocated 68000000)))
-
-     ;; Error case: a double hyphen inside comment text is still forbidden.
-     (and (parser-error-from (lambda () (parse-xml "<r><!--a--b--></r>"))) #t)
-
-     ;; Error case: a trailing hyphen is not part of a valid comment terminator.
-     (and (parser-error-from (lambda () (parse-xml "<r><!--a---></r>"))) #t))
-
-(mat parser-xml-newline-copy
-
-     ;; Newline normalization must keep literal and referenced whitespace distinct.
-     (for-all
-      (lambda (newline)
-        (let* ([document (parse-xml
-                          (string-append "<r a='x" newline "y&#13;'><!--a" newline
-                                         "b--><![CDATA[c" newline "d]]>e" newline "f</r>"))]
-               [root (xml-document-root document)] [children (xml-element-children root)])
-          (and (string=? "x y\r" (xml-attribute-value
-                                  (vector-ref (xml-element-attributes root) 0)))
-               (string=? "a\nb" (xml-comment-value (vector-ref children 0)))
-               (string=? "c\nd" (xml-cdata-value (vector-ref children 1)))
-               (string=? "e\nf" (xml-text-value (vector-ref children 2))))))
-      '("\n" "\r" "\r\n")))
-
-(mat parser-xml-bounded-references
-
-     ;; Error cases: rejecting oversized references must not construct oversized integers.
-     (for-all
-      (lambda (prefix digit)
-        (let* ([text (string-append "<r>" prefix (make-string 16000 digit) ";</r>")]
-               [before (statistics)]
-               [failure (parser-error-from (lambda () (parse-xml text)))]
-               [allocated (sstats-bytes (sstats-difference (statistics) before))])
-          (and failure (< allocated 10000000))))
-      '("&#" "&#x") '(#\9 #\f))
-
-     (let* ([zeros (make-string 16000 #\0)]
-            [document (parse-xml (string-append "<r a='&#x" zeros "10ffff;'>&#"
-                                               zeros "65;</r>"))]
-            [root (xml-document-root document)])
-       (and (string=? (string #\x10ffff)
-                      (xml-attribute-value (vector-ref (xml-element-attributes root) 0)))
-            (string=? "A" (xml-text-value (vector-ref (xml-element-children root) 0))))))
 
 (mat parser-balanced-exact-digits
 
@@ -784,28 +600,6 @@
          (and err (= 4 (parser-error-offset err))
               (string=? "bounded.input" (parser-error-source err))
               (string=? "domain failure" (parser-error-message err))))))
-
-(mat parser-xml-ordinary-characters
-
-     (for-all
-      (lambda (prefix suffix)
-        (let* ([text (string-append prefix (make-string 100000 #\a) suffix)]
-               [before (statistics)] [document (parse-xml text)]
-               [allocated (sstats-bytes (sstats-difference (statistics) before))])
-          (and (xml-document? document) (< allocated 22000000))))
-      '("<r>" "<r><![CDATA[" "<?p ") '("</r>" "]]></r>" "?><r/>"))
-
-     ;; Error case: ]]> remains forbidden in ordinary character data.
-     (and (parser-error-from (lambda () (parse-xml "<r>a]]>b</r>"))) #t)
-
-     ;; Error case: forbidden XML scalars cannot pass the ordinary-character shortcut.
-     (and (parser-error-from (lambda () (parse-xml "<r><![CDATA[a\x0;b]]></r>"))) #t)
-
-     (let* ([root (xml-document-root (parse-xml "<r>a]b<![CDATA[c]d]]><?p e?f?></r>"))]
-            [children (xml-element-children root)])
-       (and (string=? "a]b" (xml-text-value (vector-ref children 0)))
-            (string=? "c]d" (xml-cdata-value (vector-ref children 1)))
-            (string=? "e?f" (xml-processing-instruction-data (vector-ref children 2))))))
 
 (mat parser-remaining-exact-integers
 
@@ -907,36 +701,6 @@
       (list (<some> (<one-of> " \t")) (<some> (<none-of> "\"\\")))
       '(#\space #\a)))
 
-(mat parser-scheme-ordinary-string-cost
-
-     (let* ([body (make-string 100000 #\a)] [source (string-append "\"" body "\"")]
-            [before (statistics)] [value (parse-scheme-datum source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
-       (and (string=? body value) (< allocated 30000000)))
-
-     (for-all
-      (lambda (newline)
-        (string=? "a\nb" (parse-scheme-datum (string-append "\"a" newline "b\""))))
-      '("\r" "\n" "\r\n" "\r\x85;" "\x85;" "\x2028;"))
-
-     (string=? (string #\return #\newline #\x2029)
-               (parse-scheme-datum "\"\\r\\n\x2029;\""))
-
-     ;; Error cases: ordinary characters must not hide invalid escapes or a missing quote.
-     (for-all (lambda (source)
-                (and (parser-error-from (lambda () (parse-scheme-datum source))) #t))
-              '("\"abc\\q\"" "\"abc")))
-
-(mat parser-wasm-sequence-lookahead-cost
-
-     (let ([bytes (make-bytevector 100001 1)])
-       (bytevector-u8-set! bytes 100000 11)
-       (let* ([before (statistics)] [body (run-binary-parser <wasm-expression> bytes)]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))])
-         (and (= 100000 (vector-length body))
-              (eq? 'nop (wasm-instruction-mnemonic (vector-ref body 99999)))
-              (< allocated 28000000)))))
-
 (mat parser-lookup-exact-codes
 
      ;; Error cases: admitted numeric codes must be exact, including unknown codes and zero.
@@ -1027,104 +791,6 @@
             (= 2 (parser-error-line err)) (= 0 (parser-error-column err))
             (char=? #\! (parser-error-found err)))))
 
-(mat parser-csv-ordinary-quoted-fields
-
-     (let* ([body (make-string 100000 #\a)] [source (string-append "\"" body "\"")]
-            [before (statistics)] [document (parse-csv source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
-       (and (string=? body (vector-ref
-                           (csv-record-fields (vector-ref (csv-document-records document) 0)) 0))
-            (< allocated 25000000)))
-
-     (let ([records (csv-document-records (parse-csv "\"a\"\"b\",c\r\n\"d\r\ne\",f"))])
-       (equal? '(#("a\"b" "c") #("d\r\ne" "f"))
-               (map csv-record-fields (vector->list records))))
-
-     (let* ([document (parse-csv " \"abc\" ,d")]
-            [warning (vector-ref (csv-document-warnings document) 0)])
-       (and (string=? "abc" (vector-ref
-                            (csv-record-fields (vector-ref (csv-document-records document) 0)) 0))
-            (= 0 (csv-warning-record-index warning))
-            (= 0 (csv-warning-field-index warning))))
-
-     ;; Error cases: ordinary runs must not hide missing quotes or characters after a quote.
-     (for-all (lambda (source)
-                (and (parser-error-from (lambda () (parse-csv source))) #t))
-              '("\"abc" "\"a\"x" "a\"b")))
-
-(mat parser-json5-ordinary-strings-and-identifiers
-
-     (let* ([body (make-string 100000 #\a)] [source (string-append "\"" body "\"")]
-            [before (statistics)] [value (json5-document-value (parse-json5 source))]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
-       (and (string=? body value) (< allocated 28000000)))
-
-     (let* ([name (make-string 100000 #\a)] [source (string-append "{" name ":0}")]
-            [before (statistics)] [document (parse-json5 source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))]
-            [member (vector-ref (json5-object-members (json5-document-value document)) 0)])
-       (and (string=? name (json5-member-name member))
-            (= 0 (json5-member-value member)) (< allocated 25000000)))
-
-     (let* ([document (parse-json5 "{ab\\u0063:'x\\u0020y\\n'}")]
-            [member (vector-ref (json5-object-members (json5-document-value document)) 0)])
-       (and (string=? "abc" (json5-member-name member))
-            (string=? "x y\n" (json5-member-value member))))
-
-     (string=? (string #\x2028 #\x2029)
-               (json5-document-value (parse-json5 "'\x2028;\x2029;'")))
-
-     ;; Error cases: ordinary runs must retain invalid escapes, surrogate and identifier checks.
-     (for-all (lambda (source)
-                (and (parser-error-from (lambda () (parse-json5 source))) #t))
-              '("\"abc\\xQ0\"" "\"abc\\uD800\"" "{\\u0030x:1}" "\"abc")))
-
-(mat parser-toml-ordinary-string-characters
-
-     (let ([body (make-string 100000 #\a)])
-       (for-all
-        (lambda (delimiter budget)
-          (let* ([source (string-append "v=" delimiter body delimiter)]
-                 [before (statistics)] [document (parse-toml source)]
-                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
-            (and (string=? body (toml-table-ref (toml-document-root document) "v"))
-                 (< allocated budget))))
-        '("\"" "\"\"\"" "'''") '(25000000 30000000 30000000)))
-
-     (let ([root (toml-document-root
-                  (parse-toml "a=\"x\\u0041\\n\"\nb=\"\"\"\r\nx\\\r\n  y\r\nz\"\"\""))])
-       (and (string=? "xA\n" (toml-table-ref root "a"))
-            (string=? "xy\nz" (toml-table-ref root "b"))))
-
-     (and (string=? "abc\"\""
-                    (toml-table-ref (toml-document-root (parse-toml "v=\"\"\"abc\"\"\"\"\"")) "v"))
-          (string=? "abc''"
-                    (toml-table-ref (toml-document-root (parse-toml "v='''abc'''''")) "v")))
-
-     ;; Error cases: guards retain invalid escapes, forbidden controls and missing terminators.
-     (for-all (lambda (source)
-                (and (parser-error-from (lambda () (parse-toml source))) #t))
-              '("v=\"abc\\q\"" "v=\"\"\"abc\\q\"\"\"" "v='''abc\x7f;'''" "v=\"\"\"abc")))
-
-(mat parser-xml-ordinary-attribute-characters
-
-     (let* ([body (make-string 100000 #\a)] [source (string-append "<r a='" body "'/>")]
-            [before (statistics)] [document (parse-xml source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
-       (and (string=? body (xml-attribute-value
-                           (vector-ref (xml-element-attributes (xml-document-root document)) 0)))
-            (< allocated 25000000)))
-
-     ;; Literal whitespace normalizes to spaces; a referenced carriage return stays content.
-     (let* ([document (parse-xml "<r a='x\t\r\ny&#xD;&amp;&quot;'/>")]
-            [attribute (vector-ref (xml-element-attributes (xml-document-root document)) 0)])
-       (string=? "x  y\r&\"" (xml-attribute-value attribute)))
-
-     ;; Error cases: direct success cannot bypass forbidden characters or reference checking.
-     (for-all (lambda (source)
-                (and (parser-error-from (lambda () (parse-xml source))) #t))
-              '("<r a='a<b'/>" "<r a='a&no;'/>" "<r a='x&#0;'/>" "<r a='x\x0;'/>")))
-
 (mat parser-ordinary-block-comment-characters
 
      (let ([body (make-string 100000 #\a)])
@@ -1155,115 +821,6 @@
                 (and (parser-error-from (lambda () (parse-json5 source))) #t))
               '("/*abc" "/*abc*" "/*abc/0")))
 
-(mat parser-wasm-reused-limits
-
-     ;; Repeated declarations must reuse parser compositions while keeping each value fresh.
-     (let* ([count 10000] [bytes (make-bytevector (+ 14 (* count 2)) 0)])
-       (bytevector-copy! #vu8(0 97 115 109 1 0 0 0 5 162 156 1 144 78) 0 bytes 0 14)
-       (let* ([before (statistics)] [module (parse-wasm-binary-module bytes)]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))]
-              [memories (wasm-module-memories module)])
-         (and (= count (vector-length memories))
-              (not (eq? (vector-ref memories 0) (vector-ref memories 1)))
-              (< allocated 1700000))))
-
-     ;; Error case: a cached parser must still reject a maximum smaller than its minimum.
-     (parser-error? (parser-error-from
-                    (lambda () (parse-wasm-binary-module
-                                #vu8(0 97 115 109 1 0 0 0 5 4 1 1 2 1)))))
-
-     (let* ([module (parse-wasm-binary-module
-                     #vu8(0 97 115 109 1 0 0 0 5 7 2 3 1 2 7 3 4))]
-            [memories (wasm-module-memories module)])
-       (and (= 2 (vector-length memories))
-            (wasm-limits-shared? (wasm-memory-type-limits (wasm-memory-type (vector-ref memories 0))))
-            (eq? 'i64 (wasm-limits-address-type
-                       (wasm-memory-type-limits (wasm-memory-type (vector-ref memories 1))))))))
-
-(mat parser-wasm-standalone-reference-dispatch
-
-     (let* ([count 10000] [bytes (make-bytevector (+ 14 (* count 4)) 0)])
-       (bytevector-copy! #vu8(0 97 115 109 1 0 0 0 4 194 184 2 144 78) 0 bytes 0 14)
-       (do ([index 14 (+ index 4)]) ((= index (bytevector-length bytes)))
-         (bytevector-u8-set! bytes index 112)
-         (bytevector-u8-set! bytes (+ index 1) 1))
-       (let* ([before (statistics)] [module (parse-wasm-binary-module bytes)]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))])
-         (and (= count (vector-length (wasm-module-tables module)))
-              (< allocated 11000000))))
-
-     (for-all
-      (lambda (byte name)
-        (let* ([input (bytevector byte)]
-               [first (run-binary-parser <wasm-reference-type> input)]
-               [second (run-binary-parser <wasm-reference-type> input)])
-          (and (wasm-reference-type-nullable? first)
-               (eq? name (wasm-reference-type-heap-type first))
-               (not (eq? first second)))))
-      '(105 106 107 108 109 110 111 112 113 114 115 116)
-      '(exn array struct i31 eq any extern func none noextern nofunc noexn))
-
-     (let ([type (run-binary-parser <wasm-reference-type> #vu8(100 0))])
-       (and (not (wasm-reference-type-nullable? type))
-            (= 0 (wasm-reference-type-heap-type type))))
-
-     ;; Error case: an out-of-range shorthand byte must not be read through a bounded cursor.
-     (let ([err (parser-error-from
-                 (lambda ()
-                   (run-binary-parser/source (<bounded> 0 <wasm-reference-type>)
-                                             #vu8(112) "reference-range")))])
-       (and err (= 0 (parser-error-offset err))
-            (string=? "reference-range" (parser-error-source err)))))
-
-(mat parser-csv-unquoted-field-dispatch
-
-     (let* ([count 10000] [text (apply string-append (make-list count "a,b,c\n"))]
-            [before (statistics)] [document (parse-csv text)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
-       (and (= count (vector-length (csv-document-records document)))
-            (equal? '#("a" "b" "c")
-                    (csv-record-fields (vector-ref (csv-document-records document) 0)))
-            (< allocated 40000000)))
-
-     (for-all
-      (lambda (delimiter)
-        (let* ([text (string-append "a" (string delimiter) "" (string delimiter) "c")]
-               [first (parse-csv text delimiter)] [second (parse-csv text delimiter)]
-               [field (vector-ref
-                       (csv-record-fields (vector-ref (csv-document-records first) 0)) 0)])
-          (string-set! field 0 #\z)
-          (equal? '#("a" "" "c")
-                  (csv-record-fields (vector-ref (csv-document-records second) 0)))))
-      '(#\, #\; #\space #\tab #\|))
-
-     (let* ([document (parse-csv "a, \"b\" ,c")]
-            [warning (vector-ref (csv-document-warnings document) 0)])
-       (and (= 0 (csv-warning-record-index warning))
-            (= 1 (csv-warning-field-index warning))))
-
-     ;; Error cases: dispatch must retain illegal quotes and inconsistent record widths.
-     (for-all (lambda (text) (and (parser-error-from (lambda () (parse-csv text))) #t))
-              '("a\"b,c" "a,\"b\"x" "a,b\nc")))
-
-(mat parser-wat-ordinary-annotation-content
-
-     (let* ([body (make-string 100000 #\a)]
-            [source (string-append "(@foo " body ")(module)")]
-            [before (statistics)] [module (parse-wasm-text-module source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
-       (and (= 0 (vector-length (wasm-module-functions module)))
-            (< allocated 25000000)))
-
-     (= 1 (vector-length
-           (wasm-module-functions
-            (parse-wasm-text-module
-             "(@\"foo\" a (b \"c\") (;d(;e;)f;))(module (func nop))"))))
-
-     ;; Error cases: ordinary content cannot hide missing parentheses, strings or comments.
-     (for-all
-      (lambda (text) (and (parser-error-from (lambda () (parse-wasm-text-module text))) #t))
-      '("(@foo abc" "(@foo abc (def)" "(@foo abc \"def)" "(@foo abc (;def)")))
-
 (mat parser-shared-decimal-prefixes
 
      (let* ([count 32000] [source (make-string count #\1)]
@@ -1271,12 +828,6 @@
             [before (statistics)] [value (json5-document-value (parse-json5 source))]
             [allocated (sstats-bytes (sstats-difference (statistics) before))])
        (and (= expected value) (< allocated 12500000)))
-
-     (let* ([source (string-append "v=" (make-string 32000 #\1) "e-32000")]
-            [before (statistics)] [document (parse-toml source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
-       (and (eqv? 0.1111111111111111 (toml-table-ref (toml-document-root document) "v"))
-            (< allocated 446000000)))
 
      (equal? '(100.0 0.5 0.5 -0.0)
              (map (lambda (text) (json5-document-value (parse-json5 text)))

@@ -5,9 +5,11 @@
         (cspp system process)
         (cspp utils)
         (cspp parser combinator)
-        (cspp parser wasm))
+        (cspp parser wasm)
+        (cspp parser scheme))
 
 (include "parser-external-tools.ss")
+(include "parser-test-support.ss")
 
 (mat parser-external-tools
 
@@ -28,13 +30,6 @@
     [(p in st) (run-binary-parser p in st)]))
 
 (define u8vec bytevector)
-
-(define capture-parser-error
-  (lambda (thunk)
-    (guard (err [(parser-error? err) err]
-                [else #f])
-      (thunk)
-      #f)))
 
 (define-parser <defined-item>
   (parser-call <item> inp state lvl))
@@ -118,15 +113,8 @@
 
 (mat parser-consumers
 
-     (let ([path (format "parser-wasm-minimal-~a.wasm" (random 9999))])
-       (dynamic-wind
-         (lambda ()
-           (write-u8vec path (u8vec #x00 #x61 #x73 #x6d 1 0 0 0)))
-         (lambda ()
-           (wasm-module? (parse-wasm-binary-module path)))
-         (lambda ()
-           (when (file-exists? path)
-             (delete-file path)))))
+     (with-parser-file #vu8(0 97 115 109 1 0 0 0)
+       (lambda (path) (wasm-module? (parse-wasm-binary-module path))))
 
      )
 
@@ -169,7 +157,7 @@
 (mat parser-errors
 
      ;; error: textual parser failure exposes string source and zero-based position fields.
-     (let ([err (capture-parser-error (lambda () (runT (<char> #\a) "xb")))])
+     (let ([err (parser-error-from (lambda () (runT (<char> #\a) "xb")))])
        (and (parser-error? err)
             (eq? 'run-textual-parser (parser-error-who err))
             (eq? 'expected (parser-error-kind err))
@@ -183,7 +171,7 @@
                     (parser-error->string err))))
 
      ;; error: newline tracking reports the failure line and column.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (runT (<~> (<string> "aa\nbb\n") (<char> #\c))
                                   "aa\nbb\nx")))])
        (and (parser-error? err)
@@ -194,7 +182,7 @@
                     (parser-error->string err))))
 
      ;; error: source-aware textual runner uses the supplied source.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (run-textual-parser/source (<char> #\a) "z" "input.ss")))])
        (and (parser-error? err)
             (equal? "input.ss" (parser-error-source err))
@@ -204,7 +192,7 @@
      ;; error: textual file parser reports the source path.
      (let ([path (format "parser-error-text-~a" (random 9999))])
        (call-with-output-file path (lambda (p) (put-string p "z")))
-       (let ([err (capture-parser-error
+       (let ([err (parser-error-from
                    (lambda () (parse-textual-file (<char> #\a) path)))])
          (delete-file path)
          (and (parser-error? err)
@@ -213,7 +201,7 @@
                       (parser-error->string err)))))
 
      ;; error: binary parser failure reports byte offset and found byte.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (runB (<uimm8> #x0b) (u8vec #x20))))])
        (and (parser-error? err)
             (equal? "<bytevector>" (parser-error-source err))
@@ -228,7 +216,7 @@
      ;; error: binary file parser reports the source path and byte offset.
      (let ([path (format "parser-error-bin-~a" (random 9999))])
        (write-u8vec! path (u8vec #x20))
-       (let ([err (capture-parser-error
+       (let ([err (parser-error-from
                    (lambda () (parse-binary-file (<uimm8> #x0b) path)))])
          (delete-file path)
          (and (parser-error? err)
@@ -237,7 +225,7 @@
                       (parser-error->string err)))))
 
      ;; error: choice merges expected alternatives at the farthest offset.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (runT (</> (<string> "abx") (<string> "aby")) "abz")))])
        (and (parser-error? err)
             (= 2 (parser-error-offset err))
@@ -247,7 +235,7 @@
                     (parser-error->string err))))
 
      ;; error: sequence propagates the child failure without nested failed prefixes.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (runT (<~> (<char> #\a) (<char> #\b)) "ac")))])
        (and (parser-error? err)
             (not (string-contains? (parser-error->string err) "failed <~>"))
@@ -255,7 +243,7 @@
                     (parser-error->string err))))
 
      ;; error: <pos-at> recomputes text line and column for random access.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (runT (<pos-at> 3 (<char> #\z)) "a\nbx")))])
        (and (parser-error? err)
             (= 3 (parser-error-offset err))
@@ -265,7 +253,7 @@
                     (parser-error->string err))))
 
      ;; error: <u8vec> short input is a parser error, not a generic API error.
-     (let ([err (capture-parser-error (lambda () (runB (<u8vec> 3) (u8vec 1 2))))])
+     (let ([err (parser-error-from (lambda () (runB (<u8vec> 3) (u8vec 1 2))))])
        (and (parser-error? err)
             (eq? 'unexpected-eof (parser-error-kind err))
             (equal? "<bytevector>:byte 0: unexpected EOF while reading u8vec"
@@ -713,7 +701,7 @@
      (error? (runB (<bounded> 3 (<rep> <u8> 3)) (u8vec 1 2)))
 
      ;; error: failures inside a bounded parser retain the absolute byte offset.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda ()
                    (runB (<~> (<uimm8> 9)
                               (<bounded> 2 (<~> (<uimm8> 1) (<uimm8> 2))))
@@ -772,7 +760,7 @@
 
      ;; error: a partially consumed item reports its own exact failure.
      (let ([err
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (runT (<many-until> (<~> (<char> #\a) (<char> #\b))
                                    (<char> #\x3b))
@@ -786,7 +774,7 @@
 
      ;; error: EOF without a terminator propagates the item parser's EOF failure.
      (let ([err
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (runT (<many-until> (<char> #\a) (<char> #\x3b)) "aa")))])
        (and (parser-error? err)
@@ -985,3 +973,5 @@
      (error? (runT (<some> (<result> 1)) ""))
 
      )
+
+(include "parser-scheme-regressions.ss")
