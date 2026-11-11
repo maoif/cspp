@@ -18,10 +18,6 @@
 
   (define empty-vector '#())
 
-  (define make-immutable-vector
-    (lambda value*
-      (list->immutable-vector value*)))
-
   (define flatten-lists
     (lambda (value**)
       (let ([builder (make-list-builder)])
@@ -122,7 +118,7 @@
 
   (define one-immediate
     (lambda (parser)
-      (<map> (lambda (value) (make-immutable-vector value)) parser)))
+      (<map> (lambda (value) (immutable-vector value)) parser)))
 
   (define two-immediates
     (lambda (first second)
@@ -139,19 +135,19 @@
 
   (define optional-index-immediate
     (<map> (lambda (index*)
-             (make-immutable-vector
+             (immutable-vector
               (optional-value index* (default-index-reference))))
            (<optional> <wat-index-reference>)))
 
   (define optional-pair-immediate
     (</> indexed-pair-immediate
-         (<result> (make-immutable-vector
+         (<result> (immutable-vector
                     (default-index-reference) (default-index-reference)))))
 
   (define optional-leading-index-pair-immediate
     (</> indexed-pair-immediate
          (<map> (lambda (second)
-                  (make-immutable-vector (default-index-reference) second))
+                  (immutable-vector (default-index-reference) second))
                 <wat-index-reference>)))
 
   (define wat-open (<~0> (<char> #\() <wat-trivia>))
@@ -166,14 +162,14 @@
      (lambda (type**)
        (if (null? type**)
            empty-vector
-           (make-immutable-vector
+           (immutable-vector
             (list->immutable-vector (flatten-lists type**)))))
      (<many> (parenthesized "result" (<many> <wat-value-type>)))))
 
   (define call-indirect-immediate
     (<map>
      (lambda (value)
-       (make-immutable-vector (cadr value)
+       (immutable-vector (cadr value)
                               (optional-value (car value)
                                               (make-wat-index-reference 0 0))))
      (<~> (<optional> <wat-index-reference>) <wat-anonymous-type-use>)))
@@ -227,8 +223,8 @@
     (lambda (descriptor index-parser)
       (<map>
        (lambda (value)
-         (make-immutable-vector
-          (make-immutable-vector
+         (immutable-vector
+          (immutable-vector
            (optional-value (caddr value)
                            (memory-natural-alignment
                             (wasm-opcode-mnemonic descriptor)))
@@ -251,7 +247,7 @@
       (let ([combine
              (lambda (memory-argument-parser)
                (<map> (lambda (value)
-                        (make-immutable-vector
+                        (immutable-vector
                          (vector-ref (car value) 0) (cadr value)))
                       (<~> memory-argument-parser (lane-parser descriptor))))])
         (</> (combine (memory-argument-with-index descriptor <wat-index-reference>))
@@ -295,7 +291,7 @@
      (<rep> <wat-u32> 16)
      (lambda (lane*)
        (if (andmap (lambda (lane) (< lane 32)) lane*)
-           (<result> (make-immutable-vector (apply bytevector lane*)))
+           (<result> (immutable-vector (apply bytevector lane*)))
            (<fail-with> "invalid WebAssembly shuffle lane")))))
 
   (define vector-lanes-immediate
@@ -314,7 +310,7 @@
                    [(8) (bytevector-u64-set! bytes offset (lane-bits lane)
                                             (endianness little))])
                  (loop (fx1+ index) (cdr lane*)))))
-           (make-immutable-vector bytes)))
+           (immutable-vector bytes)))
        (<rep> lane-parser lane-count))))
 
   (define vector-immediate
@@ -354,7 +350,7 @@
                          [labels (make-vector count)])
                     (let loop ([index 0] [rest index*])
                       (if (fx= index count)
-                          (make-immutable-vector
+                          (immutable-vector
                            (vector->immutable-vector labels) (car rest))
                           (begin
                             (vector-set! labels index (car rest))
@@ -463,7 +459,7 @@
               (<map>
                (lambda (unused)
                  (make-instruction
-                  pos descriptor (make-immutable-vector type)
+                  pos descriptor (immutable-vector type)
                   (list->immutable-vector body) #f empty-vector label))
                (<~0> (<wat-keyword> "end") (closing-label label))))))))))
 
@@ -487,14 +483,14 @@
                      (<map>
                       (lambda (unused)
                         (make-instruction
-                         pos descriptor (make-immutable-vector type)
+                         pos descriptor (immutable-vector type)
                          (list->immutable-vector body)
                          (list->immutable-vector alternate) empty-vector label))
                       (<~0> (<wat-keyword> "end") (closing-label label)))))))
                (<map>
                 (lambda (unused)
                   (make-instruction
-                   pos descriptor (make-immutable-vector type)
+                   pos descriptor (immutable-vector type)
                    (list->immutable-vector body) empty-vector empty-vector label))
                 (<~0> (<wat-keyword> "end") (closing-label label)))))))))))
 
@@ -537,7 +533,7 @@
                (lambda (unused)
                  (make-instruction
                   pos descriptor
-                  (make-immutable-vector (cadr header))
+                  (immutable-vector (cadr header))
                   (list->immutable-vector body)
                   (list->immutable-vector (caddr header)) empty-vector label))
                (<~0> (<wat-keyword> "end") (closing-label label))))))))))
@@ -572,7 +568,7 @@
          (<map>
           (lambda (body)
             (make-instruction
-             pos descriptor (make-immutable-vector (cadr header))
+             pos descriptor (immutable-vector (cadr header))
              (instruction-vector body) #f empty-vector
              (optional-value (car header) #f)))
           (<many-until> <wat-sequence-node> wat-close))))))
@@ -586,7 +582,7 @@
          (<map>
           (lambda (body)
             (make-instruction
-             pos descriptor (make-immutable-vector (cadr header))
+             pos descriptor (immutable-vector (cadr header))
              (instruction-vector body)
              (list->immutable-vector (caddr header)) empty-vector
              (optional-value (car header) #f)))
@@ -601,7 +597,7 @@
       (<map>
        (lambda (value)
          (make-instruction
-          pos descriptor (make-immutable-vector (cadr value))
+          pos descriptor (immutable-vector (cadr value))
           (cadddr value) (optional-value (car (cddddr value)) empty-vector)
           (list->immutable-vector (caddr value))
           (optional-value (car value) #f)))

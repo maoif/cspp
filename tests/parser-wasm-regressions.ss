@@ -1087,3 +1087,20 @@
      (for-all
       (lambda (text) (and (parser-error-from (lambda () (parse-wasm-text-module text))) #t))
       '("(@foo abc" "(@foo abc (def)" "(@foo abc \"def)" "(@foo abc (;def)")))
+
+(mat parser-wasm-immediate-vector-cost
+
+     (let* ([count 100000] [bytes (make-bytevector (* 2 count) 0)]
+            [parser (<rep> <wasm-instruction> count)])
+       (do ([index 0 (+ index 2)]) ((= index (bytevector-length bytes)))
+         (bytevector-u8-set! bytes index #x41))
+       (let* ([before (statistics)] [instructions (run-binary-parser parser bytes)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))]
+              [first (car instructions)] [last (list-ref instructions (- count 1))])
+         (and (= count (length instructions))
+              (eq? 'i32.const (wasm-instruction-mnemonic first))
+              (equal? '#(0) (wasm-instruction-immediates first))
+              (immutable-vector? (wasm-instruction-immediates first))
+              (not (eq? (wasm-instruction-immediates first)
+                        (wasm-instruction-immediates last)))
+              (< allocated 12500000)))))

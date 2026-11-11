@@ -10,13 +10,9 @@
 
   (define empty-vector '#())
 
-  (define make-immutable-vector
-    (lambda value*
-      (list->immutable-vector value*)))
-
   (define one-immediate
     (lambda (parser)
-      (<map> make-immutable-vector parser)))
+      (<map> immutable-vector parser)))
 
   (define pair-immediates
     (lambda (first-parser second-parser)
@@ -25,7 +21,7 @@
   (define reversed-pair-immediates
     (lambda (first-parser second-parser)
       (<map> (lambda (values)
-               (make-immutable-vector (cadr values) (car values)))
+               (immutable-vector (cadr values) (car values)))
              (<~> first-parser second-parser))))
 
   (define instruction-record
@@ -99,17 +95,17 @@
 
   (define value-type-vector-immediates
     (<map> (lambda (types)
-             (make-immutable-vector (vector->immutable-vector types)))
+             (immutable-vector (vector->immutable-vector types)))
            (<wasm-vector> <wasm-value-type>)))
 
   (define non-null-heap-type-immediates
     (<map> (lambda (heap-type)
-             (make-immutable-vector (make-wasm-reference-type #f heap-type)))
+             (immutable-vector (make-wasm-reference-type #f heap-type)))
            <wasm-heap-type>))
 
   (define nullable-heap-type-immediates
     (<map> (lambda (heap-type)
-             (make-immutable-vector (make-wasm-reference-type #t heap-type)))
+             (immutable-vector (make-wasm-reference-type #t heap-type)))
            <wasm-heap-type>))
 
   (define vector-bytes-immediates
@@ -125,7 +121,7 @@
 
   (define shuffle-bytes-immediates
     (<map> (lambda (lane*)
-             (make-immutable-vector (u8-list->bytevector lane*)))
+             (immutable-vector (u8-list->bytevector lane*)))
            (<rep> shuffle-lane-parser 16)))
 
   ;; Core 3.0 binary grammar, `Bcastop` and `Binstr/cast`, uses flags before all fields.
@@ -143,7 +139,7 @@
      (lambda (flags)
        (<map>
         (lambda (values)
-          (make-immutable-vector
+          (immutable-vector
            (car values)
            (make-wasm-reference-type (not (fxzero? (fxand flags 1)))
                                      (cadr values))
@@ -195,7 +191,7 @@
          (one-immediate <wasm-u32>)]
         [(label-vector)
          (<map> (lambda (values)
-                  (make-immutable-vector
+                  (immutable-vector
                    (vector->immutable-vector (car values)) (cadr values)))
                 (<~> (<wasm-vector> <wasm-u32>) <wasm-u32>))]
         [(heap-type) (one-immediate <wasm-heap-type>)]
@@ -255,7 +251,7 @@
        (lambda (values)
          (make-wasm-instruction
           (wasm-opcode-mnemonic descriptor)
-          (make-immutable-vector (car values))
+          (immutable-vector (car values))
           (cadr values)
           empty-vector))
        (<~> <wasm-block-type> sequence-ending-with-end))))
@@ -272,13 +268,13 @@
              (<map> (lambda (alternate)
                       (make-wasm-instruction
                        (wasm-opcode-mnemonic descriptor)
-                       (make-immutable-vector block-type)
+                       (immutable-vector block-type)
                        body
                        alternate))
                     (<~1> (<uimm8> #x05) sequence-ending-with-end))
              (<as> (make-wasm-instruction
                     (wasm-opcode-mnemonic descriptor)
-                    (make-immutable-vector block-type)
+                    (immutable-vector block-type)
                     body
                     empty-vector)
                    (<uimm8> #x0b)))))))))
@@ -294,7 +290,7 @@
             (<map> (lambda (body)
                      (make-wasm-instruction
                       (wasm-opcode-mnemonic descriptor)
-                      (make-immutable-vector block-type)
+                      (immutable-vector block-type)
                       body
                       (vector->immutable-vector catches)))
                    sequence-ending-with-end)))))))
