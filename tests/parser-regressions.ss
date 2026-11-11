@@ -1077,3 +1077,30 @@
      (for-all (lambda (source)
                 (and (parser-error-from (lambda () (parse-json5 source))) #t))
               '("\"abc\\xQ0\"" "\"abc\\uD800\"" "{\\u0030x:1}" "\"abc")))
+
+(mat parser-toml-ordinary-string-characters
+
+     (let ([body (make-string 100000 #\a)])
+       (for-all
+        (lambda (delimiter budget)
+          (let* ([source (string-append "v=" delimiter body delimiter)]
+                 [before (statistics)] [document (parse-toml source)]
+                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+            (and (string=? body (toml-table-ref (toml-document-root document) "v"))
+                 (< allocated budget))))
+        '("\"" "\"\"\"" "'''") '(25000000 30000000 30000000)))
+
+     (let ([root (toml-document-root
+                  (parse-toml "a=\"x\\u0041\\n\"\nb=\"\"\"\r\nx\\\r\n  y\r\nz\"\"\""))])
+       (and (string=? "xA\n" (toml-table-ref root "a"))
+            (string=? "xy\nz" (toml-table-ref root "b"))))
+
+     (and (string=? "abc\"\""
+                    (toml-table-ref (toml-document-root (parse-toml "v=\"\"\"abc\"\"\"\"\"")) "v"))
+          (string=? "abc''"
+                    (toml-table-ref (toml-document-root (parse-toml "v='''abc'''''")) "v")))
+
+     ;; Error cases: guards retain invalid escapes, forbidden controls and missing terminators.
+     (for-all (lambda (source)
+                (and (parser-error-from (lambda () (parse-toml source))) #t))
+              '("v=\"abc\\q\"" "v=\"\"\"abc\\q\"\"\"" "v='''abc\x7f;'''" "v=\"\"\"abc")))

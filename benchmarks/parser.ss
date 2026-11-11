@@ -473,6 +473,13 @@
                         (vector-ref (json5-object-members (json5-document-value document)) 0))
                        (json5-document-value document))))))))
 
+(define measure-toml-string-characters
+  (lambda (count delimiter label)
+    (let* ([body (make-string count #\a)] [text (string-append "v=" delimiter body delimiter)])
+      (measure-parser
+       label count (lambda () (parse-toml text))
+       (lambda (document) (string=? body (toml-table-ref (toml-document-root document) "v")))))))
+
 (benchmark-print-table!
  "Parser review workloads"
  '(("workload" . left) ("count/exponent" . right)
@@ -481,6 +488,14 @@
          (map measure-zero-float '(10000 100000 1000000))
          (measure-byte-vectors)
          (map measure-choice-failure '(1000 2000 4000 8000))
+         (map (lambda (count) (measure-toml-string-characters count "\"" "TOML basic characters"))
+              '(100000 1000000))
+         (map (lambda (count)
+                (measure-toml-string-characters count "\"\"\"" "TOML multiline basic characters"))
+              '(100000 1000000))
+         (map (lambda (count)
+                (measure-toml-string-characters count "'''" "TOML multiline literal characters"))
+              '(100000 1000000))
          (map (lambda (count) (measure-json5-characters count #f)) '(100000 1000000))
          (map (lambda (count) (measure-json5-characters count #t)) '(100000 1000000))
          (map measure-csv-quoted-field '(100000 1000000))

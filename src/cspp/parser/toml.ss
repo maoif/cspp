@@ -389,13 +389,26 @@
              (not (char=? character #\newline))
              (not (char=? character #\return))))))
 
+  ;; Preserve the grammar's newline, escape, delimiter and failure behavior outside
+  ;; known successful ordinary characters.
+  (define (ordinary-character-parser predicate original)
+    (define-parser ordinary-parser
+      (let-values ([(status character next-input)
+                    (parser-call <item> (save-input inp) state lvl)])
+        (if (and status (predicate character))
+            (values #t character next-input)
+            (parser-call original inp state lvl))))
+    ordinary-parser)
+
   (define <basic-string>
     (<map> list->string
            (<~1> (<char> #\")
                  (<many>
-                  (</> <basic-escape>
-                       (<satisfy-char> basic-unescaped-character?
-                                        "invalid basic string character")))
+                  (ordinary-character-parser
+                   basic-unescaped-character?
+                   (</> <basic-escape>
+                        (<satisfy-char> basic-unescaped-character?
+                                         "invalid basic string character"))))
                  (<char> #\"))))
 
   (define <literal-string>
@@ -422,12 +435,16 @@
              (not (char=? character #\return))))))
 
   (define <multiline-basic-character>
-    (<~1> (<not-followed-by> (<result> #t) (<string> "\"\"\""))
-          (</> <multiline-continuation>
-               <basic-escape>
-               (<as> #\newline <newline>)
-               (<satisfy-char> multiline-basic-unescaped-character?
-                                "invalid multiline basic string character"))))
+    (ordinary-character-parser
+     (lambda (character)
+       (and (not (char=? character #\"))
+            (multiline-basic-unescaped-character? character)))
+     (<~1> (<not-followed-by> (<result> #t) (<string> "\"\"\""))
+           (</> <multiline-continuation>
+                <basic-escape>
+                (<as> #\newline <newline>)
+                (<satisfy-char> multiline-basic-unescaped-character?
+                                 "invalid multiline basic string character")))))
 
   (define <multiline-basic-close>
     (</> (<as> '(#\" #\") (<string> "\"\"\"\"\""))
@@ -451,10 +468,13 @@
              (not (char=? character #\return))))))
 
   (define <multiline-literal-character>
-    (<~1> (<not-followed-by> (<result> #t) (<string> "'''"))
-          (</> (<as> #\newline <newline>)
-               (<satisfy-char> multiline-literal-character?
-                                "invalid multiline literal string character"))))
+    (ordinary-character-parser
+     (lambda (character)
+       (and (not (char=? character #\')) (multiline-literal-character? character)))
+     (<~1> (<not-followed-by> (<result> #t) (<string> "'''"))
+           (</> (<as> #\newline <newline>)
+                (<satisfy-char> multiline-literal-character?
+                                 "invalid multiline literal string character")))))
 
   (define <multiline-literal-close>
     (</> (<as> '(#\' #\') (<string> "'''''"))
