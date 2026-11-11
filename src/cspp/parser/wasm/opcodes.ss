@@ -20,7 +20,7 @@
 
   (define wasm-opcode-code?
     (lambda (value)
-      (and (natural? value) (<= value #xffffffff))))
+      (and (natural? value) (exact? value) (<= value #xffffffff))))
 
   #|proc:wasm-opcode-descriptor?
   Returns whether `object` is a WebAssembly opcode descriptor. `object` is tested.
@@ -653,7 +653,7 @@
 
   #|proc:wasm-opcode-by-binary
   Returns the exact binary descriptor for `prefix` and `code`, or `#f`. `prefix` is `#f` or a
-  prefix byte, and `code` is a u32 one-byte opcode or prefixed subopcode. A binary variant result
+  prefix byte, and `code` is an exact u32 one-byte opcode or prefixed subopcode. A variant result
   may not be a member of `wasm-core-3-opcodes`; mnemonic lookup always returns its canonical row.
   |#
   (define wasm-opcode-by-binary

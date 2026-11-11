@@ -1,6 +1,7 @@
 (import (cspp) (cspp parser combinator)
         (prefix (cspp parser elf validate) elf:)
         (prefix (cspp parser wasm validate) wasm:)
+        (only (cspp parser wasm opcodes) wasm-opcode-by-binary wasm-opcode-mnemonic)
         (only (cspp parser wasm binary instructions) <wasm-expression>))
 
 (define parser-error-from
@@ -934,3 +935,28 @@
          (and (= 100000 (vector-length body))
               (eq? 'nop (wasm-instruction-mnemonic (vector-ref body 99999)))
               (< allocated 28000000)))))
+
+(mat parser-lookup-exact-codes
+
+     ;; Error cases: admitted numeric codes must be exact, including unknown codes and zero.
+     (for-all
+      (lambda (lookup)
+        (for-all
+         (lambda (value)
+           (guard (condition
+                   [(and (who-condition? condition) (eq? 'pcheck (condition-who condition))) #t])
+             (lookup value) #f))
+         '(0.0 1.0 62.0 999.0 1/2)))
+      (list elf-section-type-name elf-program-type-name elf-machine-name elf-dynamic-tag-name
+            (lambda (value) (wasm-opcode-by-binary #f value))
+            (lambda (value) (wasm-opcode-by-binary 253 value))))
+
+     (and (eq? 'progbits (elf-section-type-name 1))
+          (eq? 'load (elf-program-type-name 1))
+          (eq? 'x86-64 (elf-machine-name 62))
+          (eq? 'needed (elf-dynamic-tag-name 1))
+          (eq? 'unknown (elf-dynamic-tag-name -1))
+          (eq? 'unknown (elf-section-type-name (expt 2 100)))
+          (not (wasm-opcode-by-binary #f 255))
+          (eq? 'nop (wasm-opcode-mnemonic (wasm-opcode-by-binary #f 1)))
+          (eq? 'v128.load (wasm-opcode-mnemonic (wasm-opcode-by-binary 253 0)))))

@@ -43,13 +43,19 @@
           (cspp parser elf validate)
           (cspp utils))
 
+  (define exact-integer?
+    (lambda (value) (and (integer? value) (exact? value))))
+
+  (define exact-natural?
+    (lambda (value) (and (natural? value) (exact? value))))
+
   #|proc:elf-section-type-name
-  The `elf-section-type-name` procedure returns the symbolic name of numeric section `type`, or
-  `unknown` when the code is not a standard ELF section type.
+  The `elf-section-type-name` procedure returns the symbolic name of exact nonnegative section
+  code `type`, or `unknown` when the code is not a standard ELF section type.
   |#
   (define elf-section-type-name
     (lambda (type)
-      (pcheck ([natural? type])
+      (pcheck ([exact-natural? type])
               (case type
                 [(0) 'null] [(1) 'progbits] [(2) 'symbol-table] [(3) 'string-table]
                 [(4) 'relocation-with-addends] [(5) 'hash] [(6) 'dynamic] [(7) 'note]
@@ -59,24 +65,24 @@
                 [else 'unknown]))))
 
   #|proc:elf-program-type-name
-  The `elf-program-type-name` procedure returns the symbolic name of numeric segment `type`, or
-  `unknown` when the code is not a standard ELF program-header type.
+  The `elf-program-type-name` procedure returns the symbolic name of exact nonnegative segment
+  code `type`, or `unknown` when the code is not a standard ELF program-header type.
   |#
   (define elf-program-type-name
     (lambda (type)
-      (pcheck ([natural? type])
+      (pcheck ([exact-natural? type])
               (case type
                 [(0) 'null] [(1) 'load] [(2) 'dynamic] [(3) 'interpreter] [(4) 'note]
                 [(5) 'shared-library] [(6) 'program-header] [(7) 'tls]
                 [else 'unknown]))))
 
   #|proc:elf-machine-name
-  The `elf-machine-name` procedure returns the symbolic name of numeric machine code `machine`,
-  or `unknown` when the machine is not known.
+  The `elf-machine-name` procedure returns the symbolic name of exact nonnegative machine
+  code `machine`, or `unknown` when the machine is not known.
   |#
   (define elf-machine-name
     (lambda (machine)
-      (pcheck ([natural? machine])
+      (pcheck ([exact-natural? machine])
               (case machine
                 [(0) 'none] [(2) 'sparc] [(3) 'i386] [(8) 'mips] [(20) 'powerpc]
                 [(21) 'powerpc64] [(22) 's390] [(40) 'arm] [(50) 'ia64] [(62) 'x86-64]
@@ -84,12 +90,12 @@
                 [else 'unknown]))))
 
   #|proc:elf-dynamic-tag-name
-  The `elf-dynamic-tag-name` procedure returns the symbolic name of integer dynamic `tag`, or
+  The `elf-dynamic-tag-name` procedure returns the symbolic name of exact integer dynamic `tag`, or
   `unknown` when the tag is not a standard ELF dynamic tag.
   |#
   (define elf-dynamic-tag-name
     (lambda (tag)
-      (pcheck ([integer? tag])
+      (pcheck ([exact-integer? tag])
               (case tag
                 [(0) 'null] [(1) 'needed] [(2) 'pltrelsz] [(3) 'pltgot] [(4) 'hash]
                 [(5) 'strtab] [(6) 'symtab] [(7) 'rela] [(8) 'relasz] [(9) 'relaent]
