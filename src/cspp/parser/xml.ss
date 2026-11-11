@@ -19,35 +19,138 @@
           (only (cspp string) string-contains?)
           (cspp utils))
 
+  ;; Record fields are immutable. Accessors return stored strings/vectors without copying;
+  ;; these objects may be mutable, so a record wrapper does not imply deep immutability.
+
+  #|proc:xml-document?
+  Returns #t when object is a parsed XML document, and #f otherwise. The object parameter may be
+  any Scheme value.
+  |#
+  #|proc:xml-document-declaration
+  Returns an xml-declaration record or #f when no declaration was supplied from record, a
+  xml-document record. The stored value is returned without copying.
+  |#
+  #|proc:xml-document-before-root
+  Returns a vector of comments and processing instructions before the root, in order from
+  record, a xml-document record. The stored value is returned without copying.
+  |#
+  #|proc:xml-document-root
+  Returns the root xml-element record from record, a xml-document record. The stored value is
+  returned without copying.
+  |#
+  #|proc:xml-document-after-root
+  Returns a vector of comments and processing instructions after the root, in order from record,
+  a xml-document record. The stored value is returned without copying.
+  |#
   (define-record-type xml-document
     (fields (immutable declaration)
             (immutable before-root)
             (immutable root)
             (immutable after-root)))
 
+  #|proc:xml-declaration?
+  Returns #t when object is a XML declaration, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:xml-declaration-version
+  Returns the XML version string, currently "1.0" from record, a xml-declaration record. The
+  stored value is returned without copying.
+  |#
+  #|proc:xml-declaration-encoding
+  Returns the declared encoding-name string or #f when omitted from record, a xml-declaration
+  record. The stored value is returned without copying.
+  |#
+  #|proc:xml-declaration-standalone
+  Returns the symbol yes or no, or #f when the standalone declaration was omitted from record, a
+  xml-declaration record. The stored value is returned without copying.
+  |#
   (define-record-type xml-declaration
     (fields (immutable version)
             (immutable encoding)
             (immutable standalone)))
 
+  #|proc:xml-element?
+  Returns #t when object is a XML element, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:xml-element-name
+  Returns the decoded element-name string, retaining any namespace prefix from record, a
+  xml-element record. The stored value is returned without copying.
+  |#
+  #|proc:xml-element-attributes
+  Returns a vector of xml-attribute records in source order from record, a xml-element record.
+  The stored value is returned without copying.
+  |#
+  #|proc:xml-element-children
+  Returns a vector of element, text, CDATA, comment, or processing-instruction records from
+  record, a xml-element record. The stored value is returned without copying.
+  |#
   (define-record-type xml-element
     (fields (immutable name)
             (immutable attributes)
             (immutable children)))
 
+  #|proc:xml-attribute?
+  Returns #t when object is a XML attribute, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:xml-attribute-name
+  Returns the decoded attribute-name string, retaining any namespace prefix from record, a
+  xml-attribute record. The stored value is returned without copying.
+  |#
+  #|proc:xml-attribute-value
+  Returns the string after XML attribute whitespace normalization and reference expansion from
+  record, a xml-attribute record. The stored value is returned without copying.
+  |#
   (define-record-type xml-attribute
     (fields (immutable name)
             (immutable value)))
 
+  #|proc:xml-text?
+  Returns #t when object is a XML text node, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:xml-text-value
+  Returns the decoded character-data string; adjacent ordinary text is merged from record, a
+  xml-text record. The stored value is returned without copying.
+  |#
   (define-record-type xml-text
     (fields (immutable value)))
 
+  #|proc:xml-cdata?
+  Returns #t when object is a XML CDATA node, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:xml-cdata-value
+  Returns the literal CDATA string after XML newline normalization from record, a xml-cdata
+  record. The stored value is returned without copying.
+  |#
   (define-record-type xml-cdata
     (fields (immutable value)))
 
+  #|proc:xml-comment?
+  Returns #t when object is a XML comment, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:xml-comment-value
+  Returns the comment-content string without its opening and closing delimiters from record, a
+  xml-comment record. The stored value is returned without copying.
+  |#
   (define-record-type xml-comment
     (fields (immutable value)))
 
+  #|proc:xml-processing-instruction?
+  Returns #t when object is a XML processing instruction, and #f otherwise. The object parameter
+  may be any Scheme value.
+  |#
+  #|proc:xml-processing-instruction-target
+  Returns the processing-instruction target string from record, a xml-processing-instruction
+  record. The stored value is returned without copying.
+  |#
+  #|proc:xml-processing-instruction-data
+  Returns the instruction-data string without its separator whitespace or closing delimiter from
+  record, a xml-processing-instruction record. The stored value is returned without copying.
+  |#
   (define-record-type xml-processing-instruction
     (fields (immutable target)
             (immutable data)))
@@ -580,6 +683,9 @@
   The `parse-xml` procedure parses XML 1.0 string `text` and returns an `xml-document`.
   Document type declarations and declared general entities are not supported. Error offsets
   refer to text after CR and CRLF are normalized to LF; lines and columns are zero-based.
+  The complete document must have one root; syntax failures raise `&parser-error`.
+  Names retain prefixes without namespace resolution. Children preserve element, text, CDATA,
+  comment, and processing-instruction nodes; adjacent ordinary text nodes are merged.
   |#
   (define parse-xml
     (lambda (text)
@@ -590,7 +696,10 @@
   The `parse-xml-file` procedure parses the regular XML file at string `path` and returns an
   `xml-document`. Document type declarations and declared general entities are not supported.
   Syntax failures raise `&parser-error` with `path` as the source and offsets in newline-normalized
-  text. File, decoding, and encoding-declaration conflicts propagate as non-parser exceptions.
+  text. Input supports strict UTF-8 and UTF-16LE/BE, detected from a stream signature or leading
+  UTF-16 markup bytes; otherwise UTF-8 is used. One detected signature is removed. An encoding
+  declaration must agree with detected encoding; UTF-16 also accepts its matching explicit endian
+  name. File, decoding, and encoding-declaration conflicts propagate as non-parser exceptions.
   |#
   (define parse-xml-file
     (lambda (path)

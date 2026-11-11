@@ -12,19 +12,62 @@
           (cspp list)
           (cspp utils))
 
+  ;; Record fields are immutable. Accessors return stored strings/vectors without copying;
+  ;; these objects may be mutable, so a record wrapper does not imply deep immutability.
+
+  #|proc:json5-document?
+  Returns #t when object is a parsed JSON5 document, and #f otherwise. The object parameter may
+  be any Scheme value.
+  |#
+  #|proc:json5-document-value
+  Returns the root JSON5 value: an object, array, null record, boolean, string, or number from
+  record, a json5-document record. The stored value is returned without copying.
+  |#
   (define-record-type json5-document
     (fields (immutable value)))
 
+  #|proc:json5-object?
+  Returns #t when object is a JSON5 object, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:json5-object-members
+  Returns a vector of json5-member records in source order; duplicate names are retained from
+  record, a json5-object record. The stored value is returned without copying.
+  |#
   (define-record-type json5-object
     (fields (immutable members)))
 
+  #|proc:json5-member?
+  Returns #t when object is a JSON5 object member, and #f otherwise. The object parameter may be
+  any Scheme value.
+  |#
+  #|proc:json5-member-name
+  Returns the decoded member-name string from record, a json5-member record. The stored value is
+  returned without copying.
+  |#
+  #|proc:json5-member-value
+  Returns the member value: an object, array, null record, boolean, string, or number from
+  record, a json5-member record. The stored value is returned without copying.
+  |#
   (define-record-type json5-member
     (fields (immutable name)
             (immutable value)))
 
+  #|proc:json5-array?
+  Returns #t when object is a JSON5 array, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:json5-array-elements
+  Returns a vector of JSON5 values in source order from record, a json5-array record. The stored
+  value is returned without copying.
+  |#
   (define-record-type json5-array
     (fields (immutable elements)))
 
+  #|proc:json5-null?
+  Returns #t when object is a JSON5 null value, and #f otherwise. The object parameter may be
+  any Scheme value.
+  |#
   (define-record-type json5-null
     (fields))
 
@@ -429,6 +472,10 @@
 
   #|proc:parse-json5
   The `parse-json5` procedure parses JSON5 string `text` and returns a `json5-document`.
+  Objects preserve member order and duplicate names; arrays contain ordered value vectors.
+  Null is a `json5-null` record, distinct from boolean `#f`. Integers are exact Scheme integers;
+  decimal floats, negative zero, Infinity, and NaN are binary64 flonums.
+  Syntax failures raise `&parser-error`; the complete input must be a single JSON5 value.
   |#
   (define parse-json5
     (lambda (text)
@@ -437,7 +484,10 @@
 
   #|proc:parse-json5-file
   The `parse-json5-file` procedure parses the regular file at string `path` as JSON5 and returns
-  a `json5-document`.
+  a `json5-document`, with the value representations described by `parse-json5`.
+  Input is strict UTF-8, ignoring one initial UTF-8 signature and preserving newline characters.
+  Syntax failures raise `&parser-error` with `path` as the source. File and decoding conditions
+  propagate without being converted to parser errors.
   |#
   (define parse-json5-file
     (lambda (path)

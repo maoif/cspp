@@ -21,33 +21,182 @@
           (cspp list)
           (cspp utils))
 
+  ;; Record fields are immutable. Accessors return stored strings/vectors without copying;
+  ;; these objects may be mutable, so a record wrapper does not imply deep immutability.
+
+  #|proc:toml-document?
+  Returns #t when object is a parsed TOML document, and #f otherwise. The object parameter may
+  be any Scheme value.
+  |#
+  #|proc:toml-document-root
+  Returns the root toml-table record from record, a toml-document record. The stored value is
+  returned without copying.
+  |#
   (define-record-type toml-document
     (fields (immutable root)))
 
+  #|proc:toml-table?
+  Returns #t when object is a TOML table, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:toml-table-entries
+  Returns a vector of toml-entry records in first-definition order from record, a toml-table
+  record. The stored value is returned without copying.
+  |#
+  #|proc:toml-table-inline?
+  Returns whether this table belongs to an inline-table context, as a boolean from record, a
+  toml-table record. The stored value is returned without copying.
+  |#
   (define-record-type toml-table
     (fields (immutable entries)
             (immutable inline?)))
 
+  #|proc:toml-entry?
+  Returns #t when object is a TOML table entry, and #f otherwise. The object parameter may be
+  any Scheme value.
+  |#
+  #|proc:toml-entry-key
+  Returns the decoded local key string, without any parent path from record, a toml-entry
+  record. The stored value is returned without copying.
+  |#
+  #|proc:toml-entry-value
+  Returns the stored scalar, temporal record, toml-array, or toml-table from record, a
+  toml-entry record. The stored value is returned without copying.
+  |#
   (define-record-type toml-entry
     (fields (immutable key)
             (immutable value)))
 
+  #|proc:toml-array?
+  Returns #t when object is a TOML array, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:toml-array-elements
+  Returns a vector of values or array-of-tables entries in source order from record, a
+  toml-array record. The stored value is returned without copying.
+  |#
   (define-record-type toml-array
     (fields (immutable elements)))
 
+  #|proc:toml-offset-date-time?
+  Returns #t when object is a TOML offset date-time, and #f otherwise. The object parameter may
+  be any Scheme value.
+  |#
+  #|proc:toml-offset-date-time-year
+  Returns the four-digit year as an exact integer from 0 through 9999 from record, a
+  toml-offset-date-time record. The stored value is returned without copying.
+  |#
+  #|proc:toml-offset-date-time-month
+  Returns the month as an exact integer from 1 through 12 from record, a toml-offset-date-time
+  record. The stored value is returned without copying.
+  |#
+  #|proc:toml-offset-date-time-day
+  Returns the day of the month as an exact integer, validated against the year and month from
+  record, a toml-offset-date-time record. The stored value is returned without copying.
+  |#
+  #|proc:toml-offset-date-time-hour
+  Returns the hour as an exact integer from 0 through 23 from record, a toml-offset-date-time
+  record. The stored value is returned without copying.
+  |#
+  #|proc:toml-offset-date-time-minute
+  Returns the minute as an exact integer from 0 through 59 from record, a toml-offset-date-time
+  record. The stored value is returned without copying.
+  |#
+  #|proc:toml-offset-date-time-second
+  Returns the second as an exact integer from 0 through 60, including leap-second spelling from
+  record, a toml-offset-date-time record. The stored value is returned without copying.
+  |#
+  #|proc:toml-offset-date-time-nanosecond
+  Returns the fractional second as an exact integer from 0 through 999999999; extra digits are
+  truncated from record, a toml-offset-date-time record. The stored value is returned without
+  copying.
+  |#
+  #|proc:toml-offset-date-time-offset-seconds
+  Returns the signed UTC offset in seconds as an exact integer; Z is zero from record, a
+  toml-offset-date-time record. The stored value is returned without copying.
+  |#
   (define-record-type toml-offset-date-time
     (fields (immutable year) (immutable month) (immutable day)
             (immutable hour) (immutable minute) (immutable second)
             (immutable nanosecond) (immutable offset-seconds)))
 
+  #|proc:toml-local-date-time?
+  Returns #t when object is a TOML local date-time without a UTC offset, and #f otherwise. The
+  object parameter may be any Scheme value.
+  |#
+  #|proc:toml-local-date-time-year
+  Returns the four-digit year as an exact integer from 0 through 9999 from record, a
+  toml-local-date-time record. The stored value is returned without copying.
+  |#
+  #|proc:toml-local-date-time-month
+  Returns the month as an exact integer from 1 through 12 from record, a toml-local-date-time
+  record. The stored value is returned without copying.
+  |#
+  #|proc:toml-local-date-time-day
+  Returns the day of the month as an exact integer, validated against the year and month from
+  record, a toml-local-date-time record. The stored value is returned without copying.
+  |#
+  #|proc:toml-local-date-time-hour
+  Returns the hour as an exact integer from 0 through 23 from record, a toml-local-date-time
+  record. The stored value is returned without copying.
+  |#
+  #|proc:toml-local-date-time-minute
+  Returns the minute as an exact integer from 0 through 59 from record, a toml-local-date-time
+  record. The stored value is returned without copying.
+  |#
+  #|proc:toml-local-date-time-second
+  Returns the second as an exact integer from 0 through 60, including leap-second spelling from
+  record, a toml-local-date-time record. The stored value is returned without copying.
+  |#
+  #|proc:toml-local-date-time-nanosecond
+  Returns the fractional second as an exact integer from 0 through 999999999; extra digits are
+  truncated from record, a toml-local-date-time record. The stored value is returned without
+  copying.
+  |#
   (define-record-type toml-local-date-time
     (fields (immutable year) (immutable month) (immutable day)
             (immutable hour) (immutable minute) (immutable second)
             (immutable nanosecond)))
 
+  #|proc:toml-local-date?
+  Returns #t when object is a TOML local date without a time or UTC offset, and #f otherwise.
+  The object parameter may be any Scheme value.
+  |#
+  #|proc:toml-local-date-year
+  Returns the four-digit year as an exact integer from 0 through 9999 from record, a
+  toml-local-date record. The stored value is returned without copying.
+  |#
+  #|proc:toml-local-date-month
+  Returns the month as an exact integer from 1 through 12 from record, a toml-local-date record.
+  The stored value is returned without copying.
+  |#
+  #|proc:toml-local-date-day
+  Returns the day of the month as an exact integer, validated against the year and month from
+  record, a toml-local-date record. The stored value is returned without copying.
+  |#
   (define-record-type toml-local-date
     (fields (immutable year) (immutable month) (immutable day)))
 
+  #|proc:toml-local-time?
+  Returns #t when object is a TOML local time without a date or UTC offset, and #f otherwise.
+  The object parameter may be any Scheme value.
+  |#
+  #|proc:toml-local-time-hour
+  Returns the hour as an exact integer from 0 through 23 from record, a toml-local-time record.
+  The stored value is returned without copying.
+  |#
+  #|proc:toml-local-time-minute
+  Returns the minute as an exact integer from 0 through 59 from record, a toml-local-time
+  record. The stored value is returned without copying.
+  |#
+  #|proc:toml-local-time-second
+  Returns the second as an exact integer from 0 through 60, including leap-second spelling from
+  record, a toml-local-time record. The stored value is returned without copying.
+  |#
+  #|proc:toml-local-time-nanosecond
+  Returns the fractional second as an exact integer from 0 through 999999999; extra digits are
+  truncated from record, a toml-local-time record. The stored value is returned without copying.
+  |#
   (define-record-type toml-local-time
     (fields (immutable hour) (immutable minute) (immutable second)
             (immutable nanosecond)))
@@ -827,6 +976,9 @@
 
   #|proc:parse-toml
   The `parse-toml` procedure parses TOML 1.1 string `text` and returns a `toml-document`.
+  Its root is an ordered `toml-table`; values include exact integers, binary64 floats, strings,
+  booleans, temporal records, tables, and arrays. Temporal fractional seconds are truncated to
+  nanoseconds after nine digits. Syntax and table-definition failures raise `&parser-error`.
   |#
   (define parse-toml
     (lambda (text)
@@ -836,7 +988,8 @@
   #|proc:parse-toml-file
   The `parse-toml-file` procedure parses the regular UTF-8 TOML file at string `path` and returns
   a `toml-document`. Syntax failures raise `&parser-error` with `path` as the source. File and
-  UTF-8 decoding exceptions propagate as non-parser exceptions.
+  UTF-8 decoding exceptions propagate as non-parser exceptions. One initial UTF-8 signature
+  is ignored; source newline characters are retained. Value representations follow `parse-toml`.
   |#
   (define parse-toml-file
     (lambda (path)
