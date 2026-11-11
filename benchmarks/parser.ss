@@ -574,7 +574,7 @@
          (measure-bounded-payloads 16000)
          (map measure-long-exponent '(1000 4000 16000))
          (list (measure-xml-comment 250000) (measure-xml-no-cr 1000000)
-               (measure-wat-annotation 250000))
+               (measure-wat-annotation 250000) (measure-wat-annotation 1000000))
          (map measure-finite-significand '(1000 4000 16000))
          (map measure-xml-reference '(1000 4000 16000 32000))
          (map measure-binary-instructions '(10000 100000 500000))

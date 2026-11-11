@@ -227,9 +227,19 @@
      "invalid annotation character"))
 
   (define <wat-annotation-content>
-    (</> <wat-any-annotation> <wat-annotation-group>
+    (let ([original (</> <wat-any-annotation> <wat-annotation-group>
          <wat-annotation-string> <wat-block-comment> <wat-line-comment>
-         <wat-annotation-character>))
+         <wat-annotation-character>)])
+      (define-parser annotation-content-parser
+        (let-values ([(status character next-input)
+                      (parser-call <item> (save-input inp) state lvl)])
+          (if (and status
+                   (not (memv character '(#\( #\) #\" #\;)))
+                   (or (wat-whitespace-character? character)
+                       (char<=? #\space character #\x7e)))
+              (values #t character next-input)
+              (parser-call original inp state lvl))))
+      annotation-content-parser))
 
   (define <wat-annotation-id>
     (</> (<bind> <wat-annotation-string>

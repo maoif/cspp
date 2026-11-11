@@ -1244,3 +1244,22 @@
      ;; Error cases: dispatch must retain illegal quotes and inconsistent record widths.
      (for-all (lambda (text) (and (parser-error-from (lambda () (parse-csv text))) #t))
               '("a\"b,c" "a,\"b\"x" "a,b\nc")))
+
+(mat parser-wat-ordinary-annotation-content
+
+     (let* ([body (make-string 100000 #\a)]
+            [source (string-append "(@foo " body ")(module)")]
+            [before (statistics)] [module (parse-wasm-text-module source)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= 0 (vector-length (wasm-module-functions module)))
+            (< allocated 25000000)))
+
+     (= 1 (vector-length
+           (wasm-module-functions
+            (parse-wasm-text-module
+             "(@\"foo\" a (b \"c\") (;d(;e;)f;))(module (func nop))"))))
+
+     ;; Error cases: ordinary content cannot hide missing parentheses, strings or comments.
+     (for-all
+      (lambda (text) (and (parser-error-from (lambda () (parse-wasm-text-module text))) #t))
+      '("(@foo abc" "(@foo abc (def)" "(@foo abc \"def)" "(@foo abc (;def)")))
