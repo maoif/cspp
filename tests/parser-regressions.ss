@@ -1263,3 +1263,31 @@
      (for-all
       (lambda (text) (and (parser-error-from (lambda () (parse-wasm-text-module text))) #t))
       '("(@foo abc" "(@foo abc (def)" "(@foo abc \"def)" "(@foo abc (;def)")))
+
+(mat parser-shared-decimal-prefixes
+
+     (let* ([count 32000] [source (make-string count #\1)]
+            [expected (div (- (expt 10 count) 1) 9)]
+            [before (statistics)] [value (json5-document-value (parse-json5 source))]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= expected value) (< allocated 12500000)))
+
+     (let* ([source (string-append "v=" (make-string 32000 #\1) "e-32000")]
+            [before (statistics)] [document (parse-toml source)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (eqv? 0.1111111111111111 (toml-table-ref (toml-document-root document) "v"))
+            (< allocated 446000000)))
+
+     (equal? '(100.0 0.5 0.5 -0.0)
+             (map (lambda (text) (json5-document-value (parse-json5 text)))
+                  '("1.e2" ".5" "0.5" "-0")))
+
+     (eqv? 1.25e-20 (toml-table-ref (toml-document-root (parse-toml "v=1.25e-20")) "v"))
+
+     ;; Error cases: sharing must not accept incomplete suffixes or leading-zero integers.
+     (for-all (lambda (text) (and (parser-error-from (lambda () (parse-json5 text))) #t))
+              '("00" "1e+" "1..0" "-."))
+
+     ;; Error cases: TOML requires fractional digits and complete decimal exponents.
+     (for-all (lambda (text) (and (parser-error-from (lambda () (parse-toml text))) #t))
+              '("v=1." "v=1.e2" "v=1e+" "v=01")))

@@ -534,11 +534,23 @@
        "CSV unquoted records" count (lambda () (parse-csv text))
        (lambda (document) (= count (vector-length (csv-document-records document))))))))
 
+(define measure-decimal-floats
+  (lambda (count toml?)
+    (let ([text (string-append (if toml? "v=" "") (make-string count #\1)
+                               "e-" (number->string count))])
+      (measure-parser
+       (if toml? "TOML compensated decimal float" "JSON5 compensated decimal float") count
+       (lambda () (if toml? (toml-table-ref (toml-document-root (parse-toml text)) "v")
+                      (json5-document-value (parse-json5 text))))
+       (lambda (value) (eqv? 0.1111111111111111 value))))))
+
 (benchmark-print-table!
  "Parser review workloads"
  '(("workload" . left) ("count/exponent" . right)
    ("allocated bytes" . right) ("elapsed ms" . right))
- (append (map (lambda (count) (measure-wasm-declarations count #f)) '(10000 100000))
+ (append (map (lambda (count) (measure-decimal-floats count #f)) '(1000 4000 16000 32000))
+         (map (lambda (count) (measure-decimal-floats count #t)) '(1000 4000 16000 32000))
+         (map (lambda (count) (measure-wasm-declarations count #f)) '(10000 100000))
          (map (lambda (count) (measure-wasm-declarations count #t)) '(10000 100000))
          (map measure-xml-attributes '(4000 8000 16000 32000))
          (map measure-zero-float '(10000 100000 1000000))

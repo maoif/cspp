@@ -270,14 +270,27 @@
                 (<~> (<one-of> "123456789") (<many> <digit>)))))
 
   (define <decimal-base>
-    (</> (<map> (lambda (value)
-                  (string-append (car value) "." (caddr value)))
-                (<~> <decimal-integer> (<char> #\.)
-                     (<as-string> (<many> <digit>))))
-         (<map> (lambda (value)
-                  (string-append "." (cadr value)))
-                (<~> (<char> #\.) <decimal-digits>))
-         <decimal-integer>))
+    (let ([original
+           (</> (<map> (lambda (value)
+                         (string-append (car value) "." (caddr value)))
+                       (<~> <decimal-integer> (<char> #\.)
+                            (<as-string> (<many> <digit>))))
+                (<map> (lambda (value)
+                         (string-append "." (cadr value)))
+                       (<~> (<char> #\.) <decimal-digits>))
+                <decimal-integer>)]
+          [fraction (~> (<char> #\.) (<as-string> (<many> <digit>)))])
+      (define-parser shared-prefix-parser
+        (let-values ([(status integral next-input)
+                      (parser-call <decimal-integer> (save-input inp) state lvl)])
+          (if status
+              (let-values ([(point? fractional end-input)
+                            (parser-call fraction (save-input next-input) state lvl)])
+                (if point?
+                    (values #t (string-append integral "." fractional) end-input)
+                    (values #t integral next-input)))
+              (parser-call original inp state lvl))))
+      shared-prefix-parser))
 
   (define <decimal-exponent>
     (<map> (lambda (value)

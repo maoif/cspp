@@ -562,18 +562,37 @@
                 <decimal-sequence>)))
 
   (define <regular-float-source>
-    (</> (<map> (lambda (value)
-                  (string-append (car value) "." (caddr value)
-                                 (if (string? (list-ref value 3))
-                                     (list-ref value 3)
-                                     "")))
-                (<~> <signed-decimal-integer-source>
-                     (<char> #\.)
-                     <decimal-sequence>
-                     (<optional> <exponent-source>)))
-         (<map> (lambda (value)
-                  (string-append (car value) (cadr value)))
-                (<~> <signed-decimal-integer-source> <exponent-source>))))
+    (let ([original
+           (</> (<map> (lambda (value)
+                         (string-append (car value) "." (caddr value)
+                                        (if (string? (list-ref value 3))
+                                            (list-ref value 3)
+                                            "")))
+                       (<~> <signed-decimal-integer-source>
+                            (<char> #\.)
+                            <decimal-sequence>
+                            (<optional> <exponent-source>)))
+                (<map> (lambda (value)
+                         (string-append (car value) (cadr value)))
+                       (<~> <signed-decimal-integer-source> <exponent-source>)))]
+          [suffix
+           (</> (<map> (lambda (value)
+                         (string-append "." (car value)
+                                        (if (string? (cadr value)) (cadr value) "")))
+                       (~> (<char> #\.)
+                           (<~> <decimal-sequence> (<optional> <exponent-source>))))
+                <exponent-source>)])
+      (define-parser shared-prefix-parser
+        (let-values ([(status integral next-input)
+                      (parser-call <signed-decimal-integer-source> (save-input inp) state lvl)])
+          (if status
+              (let-values ([(suffix? fractional end-input)
+                            (parser-call suffix next-input state lvl)])
+                (if suffix?
+                    (values #t (string-append integral fractional) end-input)
+                    (parser-call original inp state lvl)))
+              (parser-call original inp state lvl))))
+      shared-prefix-parser))
 
   (define <float-value>
     (</> (<map> string->number <regular-float-source>)
