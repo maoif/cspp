@@ -424,3 +424,22 @@
                      (find (+ index 1)))))))
       '("32le" "32be" "64le" "64be") '(#f #f #t #t)
       (list (endianness little) (endianness big) (endianness little) (endianness big))))
+
+(mat parser-elf-direct-word-vector
+
+     ;; A known-count word table must not allocate a temporary list of all its entries.
+     (let* ([original (read-u8vec "data/elf-review/fixed-relr-64le.elf")]
+            [header (elf-section-header (vector-ref (elf-file-sections (parse-elf original)) 1))]
+            [offset (elf-section-header-offset header)] [count 100000]
+            [bytes (make-bytevector (+ offset (* count 8)) 0)])
+       (bytevector-copy! original 0 bytes 0 (bytevector-length original))
+       (bytevector-u64-set! bytes (+ 64 64 32) (* count 8) (endianness little))
+       (bytevector-u64-set! bytes offset #x1000 (endianness little))
+       (bytevector-u64-set! bytes (+ offset (* 99999 8)) 3 (endianness little))
+       (let* ([before (statistics)] [file (parse-elf bytes)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))]
+              [entries (elf-relr-table-entries
+                        (elf-section-content (vector-ref (elf-file-sections file) 1)))])
+         (and (= count (vector-length entries))
+              (= #x1000 (vector-ref entries 0)) (= 3 (vector-ref entries 99999))
+              (< allocated 3000000)))))

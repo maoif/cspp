@@ -234,8 +234,17 @@
 
   (define sequence-before
     (lambda (terminator-parser)
+      ;; Non-terminator bytes need no mismatch diagnostic: many-until discards it.
+      ;; Leave terminator candidates and EOF on the original diagnostic path.
+      (define-parser guarded-terminator
+        (let ([position (input-pos inp)])
+          (if (and (fx< position (input-len inp))
+                   (not (memv (bytevector-u8-ref (binary-input-data inp) position)
+                              '(#x05 #x0b))))
+              (values #f #f inp)
+              (parser-call terminator-parser inp state lvl))))
       (<map> list->immutable-vector
-             (<many-until> <wasm-instruction> terminator-parser))))
+             (<many-until> <wasm-instruction> guarded-terminator))))
 
   (define sequence-ending-with-end
     (<~ (sequence-before (<uimm8> #x0b)) (<uimm8> #x0b)))

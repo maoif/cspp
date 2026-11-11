@@ -279,10 +279,27 @@
                 <decimal-base>
                 (<optional> <decimal-exponent>))))
 
+  ;; The grammar has already validated source. Preserve Chez's float conversion, and
+  ;; reuse balanced digit conversion only for exact decimal integers.
+  (define decimal-source->number
+    (lambda (source)
+      (let loop ([index 0])
+        (cond [(fx= index (string-length source))
+               (let* ([characters (string->list source)]
+                      [negative? (char=? (car characters) #\-)]
+                      [digits (if (memv (car characters) '(#\+ #\-))
+                                  (cdr characters) characters)]
+                      [number (digits->num
+                               (map (lambda (character) (fx- (char->integer character) 48))
+                                    digits))])
+                 (if negative? (- number) number))]
+              [(memv (string-ref source index) '(#\. #\e #\E)) (string->number source)]
+              [else (loop (fx1+ index))]))))
+
   (define <json5-decimal>
     (<json5-token>
      (<map> (lambda (source)
-              (let ([value (string->number source)])
+              (let ([value (decimal-source->number source)])
                 (if (and (zero? value) (char=? (string-ref source 0) #\-))
                     -0.0 value)))
             (<not-followed-by> <decimal-source> <identifier-part>))))

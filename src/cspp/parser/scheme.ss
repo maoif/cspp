@@ -106,26 +106,26 @@
       ;; TODO deforest
       (define <sign> (</> (<as> 1 (<char> #\+)) (<as> -1 (<char> #\-)) (<result> 1)))
       (define <s-decimal>
-        (<map> (lambda (val) (* (car val) (string->number (cadr val) 10)))
-               (</> (<~> <sign> (<as-string> (<some> <digit>)))
+        (<map> (lambda (val) (* (car val) (digits->num (cadr val))))
+               (</> (<~> <sign> (<some> <digit10>))
                     (<~n> 1
                           (</> (<string> "#d") (<string> "#D"))
-                          (<~> <sign> (<as-string> (<some> <digit>)))))))
+                          (<~> <sign> (<some> <digit10>))))))
       (define <s-octal>
-        (<map> (lambda (val) (* (car val) (string->number (cadr val) 8)))
+        (<map> (lambda (val) (* (car val) (octdigits->num (cadr val))))
                (<~n> 1
                      (</> (<string> "#o") (<string> "#O"))
-                     (<~> <sign> (<as-string> (<some> <octdigit>))))))
+                     (<~> <sign> (<some> <digit8>)))))
       (define <s-hex>
-        (<map> (lambda (val) (* (car val) (string->number (cadr val) 16)))
+        (<map> (lambda (val) (* (car val) (hexdigits->num (cadr val))))
                (<~n> 1
                      (</> (<string> "#x") (<string> "#X"))
-                     (<~> <sign> (<as-string> (<some> <hexdigit>))))))
+                     (<~> <sign> (<some> <digit16>)))))
       (define <s-bin>
-        (<map> (lambda (val) (* (car val) (string->number (cadr val) 2)))
+        (<map> (lambda (val) (* (car val) (bindigits->num (cadr val))))
                (<~n> 1
                      (</> (<string> "#b") (<string> "#B"))
-                     (<~> <sign> (<as-string> (<some> <bindigit>))))))
+                     (<~> <sign> (<some> <digit2>)))))
       (define <s-num> (<scalar-token> (</> <s-decimal> <s-octal> <s-hex> <s-bin>)))
 
       (define <s-special-char> (</> (<as> #\nul       (<string> "nul"))
@@ -163,7 +163,17 @@
               (</> (<string> "\r\n") (<string> "\r\x85;")
                    (<one-of> "\r\n\x85;\x2028;"))))
       (define <s-str-elements>
-        (</> <s-literal-newline> (<none-of> "\"\\") <escape-seq>))
+        (let ([original (</> <s-literal-newline> (<none-of> "\"\\") <escape-seq>)])
+          ;; Ordinary characters need no failed newline alternatives. Keep the original
+          ;; grammar for prefixes and EOF to preserve normalization and diagnostics.
+          (define-parser ordinary-string-parser
+            (let-values ([(status character next-input)
+                          (parser-call <item> (save-input inp) state lvl)])
+              (if (and status
+                       (not (memv character '(#\\ #\" #\return #\newline #\x85 #\x2028))))
+                  (values #t character next-input)
+                  (parser-call original inp state lvl))))
+          ordinary-string-parser))
       (define <s-string> (<token>
                           (</> (<as> "" (<string> "\"\""))
                                (<as-string>

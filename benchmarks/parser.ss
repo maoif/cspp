@@ -368,6 +368,68 @@
        (format "XML ~a characters" name) count (lambda () (parse-xml source))
        (lambda (document) (string=? body (extract document)))))))
 
+(define measure-decimal-integers
+  (lambda (count)
+    (let ([source (make-string count #\9)] [parser (<as-integer> (<some> <digit>))])
+      (map
+       (lambda (name parse input)
+         (measure-parser
+          name count (lambda () (parse input))
+          (lambda (value) (= (- (expt 10 count) 1) value))))
+       '("Combinator exact decimal" "Scheme exact decimal"
+         "JSON5 exact decimal" "TOML exact decimal")
+       (list (lambda (text) (run-textual-parser parser text)) parse-scheme-datum
+             (lambda (text) (json5-document-value (parse-json5 text)))
+             (lambda (text) (toml-table-ref (toml-document-root (parse-toml text)) "n")))
+       (list source source source (string-append "n=" source))))))
+
+(define measure-character-membership
+  (lambda (count)
+    (map
+     (lambda (name character parser)
+       (let ([source (make-string count character)])
+         (measure-parser name count (lambda () (run-textual-parser parser source))
+                         (lambda (characters) (= count (length characters))))))
+     '("Character one-of" "Character none-of") '(#\space #\a)
+     (list (<some> (<one-of> " \t")) (<some> (<none-of> "\"\\"))))))
+
+(define measure-scheme-string
+  (lambda (count)
+    (let* ([body (make-string count #\a)] [source (string-append "\"" body "\"")])
+      (measure-parser "Scheme ordinary string" count (lambda () (parse-scheme-datum source))
+                      (lambda (value) (string=? body value))))))
+
+(define measure-toml-whitespace
+  (lambda (count)
+    (let ([source (string-append (make-string count #\space) "n=1")])
+      (measure-parser "TOML leading spaces" count (lambda () (parse-toml source))
+                      (lambda (document) (= 1 (toml-table-ref (toml-document-root document) "n")))))))
+
+(define measure-elf-word-table
+  (lambda (count)
+    ;; A two-section executable with one fixed-width RELR table, without symbol-name costs.
+    (let ([bytes (make-bytevector (+ 192 (* count 8)) 0)] [endian (endianness little)])
+      (bytevector-copy! #vu8(127 69 76 70 2 1 1) 0 bytes 0 7)
+      (bytevector-u16-set! bytes 16 3 endian)
+      (bytevector-u16-set! bytes 18 62 endian)
+      (bytevector-u32-set! bytes 20 1 endian)
+      (bytevector-u64-set! bytes 40 64 endian)
+      (bytevector-u16-set! bytes 52 64 endian)
+      (bytevector-u16-set! bytes 58 64 endian)
+      (bytevector-u16-set! bytes 60 2 endian)
+      (bytevector-u32-set! bytes (+ 128 4) 19 endian)
+      (bytevector-u64-set! bytes (+ 128 24) 192 endian)
+      (bytevector-u64-set! bytes (+ 128 32) (* count 8) endian)
+      (bytevector-u64-set! bytes (+ 128 48) 8 endian)
+      (bytevector-u64-set! bytes (+ 128 56) 8 endian)
+      (bytevector-u64-set! bytes 192 #x1000 endian)
+      (measure-parser
+       "ELF RELR words" count (lambda () (parse-elf bytes))
+       (lambda (file)
+         (let ([entries (elf-relr-table-entries
+                         (elf-section-content (vector-ref (elf-file-sections file) 1)))])
+           (and (= count (vector-length entries)) (= #x1000 (vector-ref entries 0)))))))))
+
 (printf "~a ~a\n" (scheme-version) (machine-type))
 (benchmark-print-table!
  "Parser review workloads"
@@ -400,6 +462,10 @@
          (map measure-elf-hash-validation '(1000 10000 100000))
          (map measure-json5-exact-hex '(1000 4000 16000 32000))
          (map measure-short-value-types '(127 124 123 112) '(i32 f64 v128 funcref))
+         (apply append (map measure-decimal-integers '(1000 4000 16000 32000)))
+         (measure-character-membership 1000000)
+         (list (measure-scheme-string 1000000) (measure-toml-whitespace 1000000))
+         (map measure-elf-word-table '(1000 10000 100000))
          (list
           (measure-wat-punctuation 100000)
           (measure-xml-delimited-content

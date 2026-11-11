@@ -151,7 +151,24 @@
 
   (define vector-parser
     (lambda (parser count)
-      (<map> list->vector (<rep> parser count))))
+      (let ([checked-parser (<map> values parser)]
+            [fallback (<map> list->vector (<rep> parser count))])
+        (define-parser counted-parser
+          ;; Each private entry parser consumes bytes. Let impossible declared counts
+          ;; fail through the original parser before allocating their result vector.
+          (if (> count (- (input-len inp) (input-pos inp)))
+              (parser-call fallback inp state lvl)
+              (let ([result (make-vector count)])
+                (let loop ([index 0] [current inp])
+                  (if (fx= index count)
+                      (values #t result current)
+                      (let-values ([(status value next)
+                                    (parser-call checked-parser current state lvl)])
+                        (if status
+                            (begin (vector-set! result index value)
+                                   (loop (fx1+ index) next))
+                            (values #f #f next))))))))
+        counted-parser)))
 
   (define parse-word-vector
     (lambda (bytes size endianness-name)
@@ -193,10 +210,8 @@
              (let* ([count (/ size entry-size)]
                     [parsed (parse-bounded-content
                              bytes
-                             (vector-parser
-                              (<bounded> entry-size
-                                         (symbol-entry-parser class endianness-name))
-                              count))]
+                             (vector-parser (symbol-entry-parser class endianness-name)
+                                            count))]
                     [result (make-vector count)])
                (and parsed (> count 0)
                     (<= 1 (elf-section-header-info header) count)
@@ -274,8 +289,7 @@
                     (parse-bounded-content
                      bytes
                      (vector-parser
-                      (<bounded> entry-size
-                                 (relocation-entry-parser bytes class endianness-name machine addends?))
+                      (relocation-entry-parser bytes class endianness-name machine addends?)
                       (/ size entry-size)))])
                (and result (make-elf-relocation-table result addends?)))))))
 
@@ -353,10 +367,9 @@
          (lambda (count*)
            (<map>
             (lambda (table*)
-              (make-elf-hash-table (list->vector (list-ref table* 0))
-                                   (list->vector (list-ref table* 1))))
-            (<~> (<rep> <word> (list-ref count* 0))
-                 (<rep> <word> (list-ref count* 1)))))))))
+              (make-elf-hash-table (car table*) (cadr table*)))
+            (<~> (vector-parser <word> (car count*))
+                 (vector-parser <word> (cadr count*)))))))))
 
   (define dynamic-entry-parser
     (lambda (word endianness-name)
@@ -460,8 +473,7 @@
                            (parse-bounded-content
                             raw
                             (vector-parser
-                             (<bounded> (* 2 word)
-                                        (dynamic-entry-parser word endianness-name))
+                             (dynamic-entry-parser word endianness-name)
                              (/ size (* 2 word))))])
                       (and entry* (make-elf-dynamic-table entry*))))]
           [(7) (decode-notes raw endianness-name alignment)]
@@ -575,10 +587,10 @@
 
   (define table-parser
     (lambda (offset entry-size count entry-parser)
+      ;; Callers validate the fixed entry width. One exact bound encloses the whole table.
       (<pos-at> offset
                 (<bounded> (* entry-size count)
-                           (<map> list->vector
-                                  (<rep> (<bounded> entry-size entry-parser) count))))))
+                           (vector-parser entry-parser count)))))
 
   (define build-programs
     (lambda (bytes header raw-programs)

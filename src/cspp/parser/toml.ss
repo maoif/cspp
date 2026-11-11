@@ -497,16 +497,16 @@
 ;;;; Numbers and temporal values
 ;;;;===----------------------------------------------------------------------===
 
-  (define (<digit-sequence> digit-parser)
+  (define (<digit-list> digit-parser)
     (<map> (lambda (value)
-             (list->string (cons (car value) (cadr value))))
+             (cons (car value) (cadr value)))
            (<~> digit-parser
                 (<many> (~> (<optional> (<char> #\_)) digit-parser)))))
 
+  (define (<digit-sequence> digit-parser)
+    (<as-string> (<digit-list> digit-parser)))
+
   (define <decimal-sequence> (<digit-sequence> <digit>))
-  (define <hex-sequence> (<digit-sequence> <hexdigit>))
-  (define <octal-sequence> (<digit-sequence> <octdigit>))
-  (define <binary-sequence> (<digit-sequence> <bindigit>))
 
   (define <unsigned-decimal-integer-source>
     (</> (<as> "0" (<char> #\0))
@@ -525,13 +525,10 @@
                 <unsigned-decimal-integer-source>)))
 
   (define <integer-value>
-    (</> (<map> (lambda (digits) (string->number digits 16))
-                (~> (<string> "0x") <hex-sequence>))
-         (<map> (lambda (digits) (string->number digits 8))
-                (~> (<string> "0o") <octal-sequence>))
-         (<map> (lambda (digits) (string->number digits 2))
-                (~> (<string> "0b") <binary-sequence>))
-         (<map> string->number <signed-decimal-integer-source>)))
+    (</> (<map> hexdigits->num (~> (<string> "0x") (<digit-list> <digit16>)))
+         (<map> octdigits->num (~> (<string> "0o") (<digit-list> <digit8>)))
+         (<map> bindigits->num (~> (<string> "0b") (<digit-list> <digit2>)))
+         (<as-integer> (<map> string->list <signed-decimal-integer-source>))))
 
   (define <exponent-source>
     (<map> (lambda (value)

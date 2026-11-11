@@ -1288,6 +1288,14 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   (define <octdigit>
     (<satisfy-char> ascii-octdigit? "not an octal digit"))
 
+  ;; Compare directly against the live set string without allocating a search pattern.
+  (define character-in-string?
+    (lambda (character characters)
+      (let loop ([index 0])
+        (and (fx< index (string-length characters))
+             (or (char=? character (string-ref characters index))
+                 (loop (fx1+ index)))))))
+
   #|proc:<one-of>
   The `<one-of>` procedure takes string `characters` and returns a parser. The parser
   succeeds with the current character when it occurs in `characters` and fails otherwise.
@@ -1295,7 +1303,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   (define (<one-of> characters)
     (pcheck ([string? characters])
             (<satisfy-char> (lambda (character)
-                              (string-contains? characters character))
+                              (character-in-string? character characters))
                             (format "not one of \"~a\"" characters))))
 
   #|proc:<none-of>
@@ -1305,7 +1313,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   (define (<none-of> characters)
     (pcheck ([string? characters])
             (<satisfy-char> (lambda (character)
-                              (not (string-contains? characters character)))
+                              (not (character-in-string? character characters)))
                             (format "should not be one of \"~a\"" characters))))
 
 
@@ -1841,7 +1849,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                                     (loop item-input))
                                   (values #f #f
                                           (ensure-parser-failure
-                                           item-input current-input))))))))))
+                                           item-input inp1))))))))))
               many-until-parser)))
 
 
@@ -1957,14 +1965,14 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                                               (= max-offset (parser-failure-offset failure)))
                                             failure*)])
                             (values #f #f (parser-failure-merge-choice (reverse farthest))))
-                          (let-values ([(stt val inp1)
-                                        ((car body*) (save-input old-inp)
-                                                     state (fx1+ lvl))])
-                            (if stt
-                                (values #t val inp1)
-                                (loop (cdr body*)
-                                      (cons (ensure-parser-failure inp1 old-inp)
-                                            failure*)))))))))
+                          (let ([branch-input (save-input old-inp)])
+                            (let-values ([(stt val inp1)
+                                          ((car body*) branch-input state (fx1+ lvl))])
+                              (if stt
+                                  (values #t val inp1)
+                                  (loop (cdr body*)
+                                        (cons (ensure-parser-failure inp1 branch-input)
+                                              failure*))))))))))
               choice-parser)))
 
 
@@ -2254,11 +2262,10 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                                               [else (values + value)])])
                             (if (null? digit*)
                                 (<fail-with> "integer sign must be followed by digits")
-                                (<result>
-                                 (sign (fold-left
-                                        (lambda (sum digit)
-                                          (+ (* sum 10) (char->num digit)))
-                                        0 digit*))))))))))
+                                (let ([digits (make-list-builder)])
+                                  ;; Validate left to right; map callback order is unspecified.
+                                  (for-each (lambda (character) (digits (char->num character))) digit*)
+                                  (<result> (sign (digits->num (digits))))))))))))
 
   ;; TODO neg
   ;; TODO avoid building the list

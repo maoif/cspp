@@ -1,4 +1,7 @@
-(import (cspp) (cspp parser combinator))
+(import (cspp) (cspp parser combinator)
+        (prefix (cspp parser elf validate) elf:)
+        (prefix (cspp parser wasm validate) wasm:)
+        (only (cspp parser wasm binary instructions) <wasm-expression>))
 
 (define parser-error-from
   (lambda (thunk)
@@ -728,6 +731,9 @@
 
 (define parser-raw-failure-wrappers
   (list values
+        (lambda (parser) (</> parser))
+        (lambda (parser) (</> parser <fail>))
+        (lambda (parser) (<many-until> parser <eof>))
         (lambda (parser) (<satisfy> parser (lambda (value) #t)))
         (lambda (parser) (<followed-by> parser (<result> #t)))
         (lambda (parser) (<not-followed-by> parser (<result> #t)))
@@ -755,7 +761,9 @@
                   (and err (string=? "custom.input" (parser-error-source err))
                        (= 3 (parser-error-offset err))
                        (eqv? line (parser-error-line err))
-                       (eqv? column (parser-error-column err)))))
+                       (eqv? column (parser-error-column err))
+                       (or (not (eq? kind 'string))
+                           (string=? "domain failure" (parser-error-message err))))))
               parser-raw-failure-wrappers)))
          '(string false cursor)))
       (list (<string> "\r\nx") (<u8vec> 3))
@@ -796,3 +804,133 @@
        (and (string=? "a]b" (xml-text-value (vector-ref children 0)))
             (string=? "c]d" (xml-cdata-value (vector-ref children 1)))
             (string=? "e?f" (xml-processing-instruction-data (vector-ref children 2))))))
+
+(mat parser-remaining-exact-integers
+
+     ;; Exact conversion must avoid repeatedly copying a growing integer in every format.
+     (let* ([count 16000] [digits (make-string count #\9)]
+            [expected (- (expt 10 count) 1)]
+            [parser (<as-integer> (<some> <digit>))])
+       (for-all
+        (lambda (parse budget)
+          (let* ([before (statistics)] [actual (parse digits)]
+                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+            (and (= expected actual) (< allocated budget))))
+        (list (lambda (text) (run-textual-parser parser text))
+              parse-scheme-datum
+              (lambda (text) (json5-document-value (parse-json5 text)))
+              (lambda (text)
+                (toml-table-ref (toml-document-root (parse-toml (string-append "n=" text)))
+                                "n")))
+        '(16000000 20000000 20000000 40000000)))
+
+     (equal? '(-255 63 5 0)
+             (map parse-scheme-datum '("#x-ff" "#o+77" "#b101" "#D-0")))
+
+     (let ([root (toml-document-root (parse-toml "a=-1_234\nb=0xff\nc=0o77\nd=0b101"))])
+       (equal? '(-1234 255 63 5)
+               (map (lambda (key) (toml-table-ref root key)) '("a" "b" "c" "d"))))
+
+     (and (eqv? -0.0 (json5-document-value (parse-json5 "-0")))
+          (eqv? -0.0 (json5-document-value (parse-json5 "-0.0")))
+          (eqv? -0.0 (json5-document-value (parse-json5 "-0e0")))
+          (eqv? 0.1 (json5-document-value (parse-json5 "1e-1"))))
+
+     ;; Error cases: sign-only and malformed numeric suffixes remain parser failures.
+     (for-all (lambda (source) (and (parser-error-from (lambda () (parse-json5 source))) #t))
+              '("+" "-" "12x" "1e+"))
+
+     ;; Error cases: multiple invalid characters must report the first in source order.
+     (for-all
+      (lambda (characters)
+        (guard (condition
+                [(message-condition? condition)
+                 (string=? "not a digit: a"
+                           (apply format (condition-message condition)
+                                  (condition-irritants condition)))])
+          (run-textual-parser (<as-integer> (<result> characters)) "") #f))
+      (list (string->list "1a2b")
+            (let ([characters (make-list 100 #\1)])
+              (set-car! (list-tail characters 15) #\a)
+              (set-car! (list-tail characters 80) #\b)
+              characters))))
+
+(mat parser-validation-exact-arguments
+
+     ;; Error cases: validation helpers reject inexact IDs, alignments, counts and positions.
+     (for-all
+      (lambda (value)
+        (for-all
+         (lambda (call)
+           (guard (condition
+                   [(and (who-condition? condition) (eq? 'pcheck (condition-who condition))) #t])
+             (call value) #f))
+         (list wasm:wasm-standard-section? wasm:wasm-section-rank
+               (lambda (value) (wasm:wasm-section-order-valid? 0 value))
+               (lambda (value) (wasm:wasm-section-order-valid? value 1))
+               (lambda (value) (wasm:wasm-data-count-valid? value '#()))
+               (lambda (value) (wasm:make-wasm-issue value "position"))
+               elf:elf-power-of-two?
+               (lambda (value) (elf:elf-range-valid? value 0 1))
+               (lambda (value) (elf:elf-range-valid? 0 value 1))
+               (lambda (value) (elf:elf-range-valid? 0 0 value))
+               (lambda (value) (elf:make-elf-issue value "position")))))
+      '(0.0 1.0 1/2 -1))
+
+     (and (wasm:wasm-standard-section? 13) (= 6 (wasm:wasm-section-rank 13))
+          (wasm:wasm-section-order-valid? 5 13)
+          (not (wasm:wasm-section-order-valid? 6 13))
+          (wasm:wasm-data-count-valid? #f '#())
+          (wasm:wasm-data-count-valid? 0 '#())
+          (elf:elf-power-of-two? 0) (elf:elf-power-of-two? (expt 2 100))
+          (not (elf:elf-power-of-two? (+ 1 (expt 2 100))))
+          (elf:elf-range-valid? 1 2 3)))
+
+(mat parser-live-character-membership
+
+     ;; Retain the caller's live set string, including changes after parser construction.
+     (let* ([characters (string #\a #\x1f600)]
+            [yes (<one-of> characters)] [no (<none-of> characters)])
+       (and (char=? #\x1f600 (run-textual-parser yes (string #\x1f600)))
+            (begin (string-set! characters 0 #\z)
+                   (and (char=? #\z (run-textual-parser yes "z"))
+                        (char=? #\a (run-textual-parser no "a"))))))
+
+     (for-all
+      (lambda (parser character)
+        (let* ([source (make-string 100000 character)] [before (statistics)]
+               [result (run-textual-parser parser source)]
+               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (and (= 100000 (length result)) (< allocated 11000000))))
+      (list (<some> (<one-of> " \t")) (<some> (<none-of> "\"\\")))
+      '(#\space #\a)))
+
+(mat parser-scheme-ordinary-string-cost
+
+     (let* ([body (make-string 100000 #\a)] [source (string-append "\"" body "\"")]
+            [before (statistics)] [value (parse-scheme-datum source)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (string=? body value) (< allocated 30000000)))
+
+     (for-all
+      (lambda (newline)
+        (string=? "a\nb" (parse-scheme-datum (string-append "\"a" newline "b\""))))
+      '("\r" "\n" "\r\n" "\r\x85;" "\x85;" "\x2028;"))
+
+     (string=? (string #\return #\newline #\x2029)
+               (parse-scheme-datum "\"\\r\\n\x2029;\""))
+
+     ;; Error cases: ordinary characters must not hide invalid escapes or a missing quote.
+     (for-all (lambda (source)
+                (and (parser-error-from (lambda () (parse-scheme-datum source))) #t))
+              '("\"abc\\q\"" "\"abc")))
+
+(mat parser-wasm-sequence-lookahead-cost
+
+     (let ([bytes (make-bytevector 100001 1)])
+       (bytevector-u8-set! bytes 100000 11)
+       (let* ([before (statistics)] [body (run-binary-parser <wasm-expression> bytes)]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and (= 100000 (vector-length body))
+              (eq? 'nop (wasm-instruction-mnemonic (vector-ref body 99999)))
+              (< allocated 28000000)))))
