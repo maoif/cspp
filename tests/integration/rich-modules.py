@@ -1,10 +1,14 @@
 """Exercise rich module composition without loading the CSPP or rich facades."""
 import json
 from pathlib import Path
+import platform
 import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# RISC-V CI needs twice the x86 watchdog budget.
+TIMEOUT_SCALE = 2 if platform.machine() == "riscv64" else 1
 SCHEME = ROOT / ".chezscheme-install" / "bin" / "scheme"
 
 CASES = (
@@ -40,7 +44,7 @@ def main():
             probe = Path(directory) / (module + ".ss")
             probe.write_text(source)
             result = subprocess.run([str(SCHEME), "--script", str(probe)], cwd=ROOT,
-                                    capture_output=True, timeout=10)
+                                    capture_output=True, timeout=10 * TIMEOUT_SCALE)
             assert result.returncode == 0 and not result.stdout and not result.stderr, result
 
 

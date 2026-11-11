@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import errno
 import os
 from pathlib import Path
+import platform
 import pty
 import re
 import selectors
@@ -14,6 +15,9 @@ import unicodedata
 from importlib.util import module_from_spec, spec_from_file_location
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# RISC-V CI needs twice the x86 watchdog budget.
+TIMEOUT_SCALE = 2 if platform.machine() == "riscv64" else 1
 spec = spec_from_file_location("rich_terminal", Path(__file__).with_name("rich-terminal.py"))
 terminal = module_from_spec(spec)
 spec.loader.exec_module(terminal)
@@ -38,7 +42,7 @@ def scalar_cell_width(text):
 def check(name, width):
     args = [str(ROOT / "cspp"), "--script=examples/" + name]
     if width is None:
-        result = subprocess.run(args, cwd=ROOT, capture_output=True, timeout=30)
+        result = subprocess.run(args, cwd=ROOT, capture_output=True, timeout=30 * TIMEOUT_SCALE)
         assert result.returncode == 0 and not result.stderr, result.stderr
         output = result.stdout
         assert not SGR.search(output), f"{name}: SGR in redirected output"
@@ -55,7 +59,7 @@ def check(name, width):
                 os.close(slave)
                 slave = None
                 output = b""
-                deadline = time.monotonic() + 30
+                deadline = time.monotonic() + 30 * TIMEOUT_SCALE
                 with selectors.DefaultSelector() as selector:
                     selector.register(master, selectors.EVENT_READ)
                     while True:
@@ -71,7 +75,7 @@ def check(name, width):
                         if not data:
                             break
                         output += data
-                assert process.wait(timeout=30) == 0, name
+                assert process.wait(timeout=30 * TIMEOUT_SCALE) == 0, name
                 errors.seek(0)
                 assert not errors.read(), name
         finally:

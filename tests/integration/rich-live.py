@@ -1,9 +1,13 @@
 """Run live worker lifecycle regressions with a timeout to catch shutdown hangs."""
 from pathlib import Path
+import platform
 import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# RISC-V CI needs twice the x86 watchdog budget.
+TIMEOUT_SCALE = 2 if platform.machine() == "riscv64" else 1
 
 PAUSE = r'''
 (import (cspp))
@@ -694,7 +698,7 @@ def main():
             probe = Path(directory) / (name + ".ss")
             probe.write_text(source)
             result = subprocess.run([str(ROOT / "cspp"), "--script=" + str(probe)],
-                                    cwd=ROOT, capture_output=True, timeout=5)
+                                    cwd=ROOT, capture_output=True, timeout=5 * TIMEOUT_SCALE)
             assert result.returncode == 0 and not result.stdout and not result.stderr, result
 
 

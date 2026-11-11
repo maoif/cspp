@@ -2,6 +2,10 @@
         (cspp concurrency fiber)
         (cspp net operation))
 
+;; RISC-V CI needs twice the x86 subprocess watchdog budget.
+(define fiber-test-process-timeout
+  (if (memq (machine-type) '(rv64le trv64le)) 10000 5000))
+
 ;; Bounded adaptations of the older spawn/yield/channel cases from `fiber.ss.bak`.
 ;; That legacy file labels `loko-tests` as adapted from Loko, and the sieve and
 ;; merge-sort examples as Guile Fibers benchmarks. These cases retain that origin
@@ -1523,7 +1527,8 @@
         (guard (failure [else #f])
           (let ([result
                  (process-capture "../cspp" "--script=fiber-quantum-process.ss" "--"
-                   (car case) :timeout 5000 :stdin null :stdout capture :stderr capture)])
+                   (car case) :timeout (begin fiber-test-process-timeout)
+                   :stdin null :stdout capture :stderr capture)])
             (and (process-exit-success? (process-result-status result))
                  (string=? (cdr case) (process-result-stdout result))
                  (string=? "" (process-result-stderr result))))))
@@ -1539,7 +1544,8 @@
         (guard (failure [else #f])
           (let ([result
                  (process-capture "../cspp" "--script=fiber-inherited-timer-process.ss" "--"
-                   mode :timeout 5000 :stdin null :stdout capture :stderr null)])
+                   (begin mode) :timeout (begin fiber-test-process-timeout)
+                   :stdin null :stdout capture :stderr null)])
             (and (process-exit-success? (process-result-status result))
                  (string=? "completed\n" (process-result-stdout result))))))
       '("active" "raising" "late" "nested")))

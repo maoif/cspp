@@ -3,6 +3,7 @@ import errno
 import fcntl
 import os
 from pathlib import Path
+import platform
 import pty
 import re
 import selectors
@@ -13,13 +14,16 @@ import termios
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
+
+# RISC-V CI needs twice the x86 watchdog budget.
+TIMEOUT_SCALE = 2 if platform.machine() == "riscv64" else 1
 END = b"\x1b]0;CSPP-END\x07"
 ANSI = re.compile(rb"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 def read_frame(fd):
     result = b""
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + 10 * TIMEOUT_SCALE
     with selectors.DefaultSelector() as selector:
         selector.register(fd, selectors.EVENT_READ)
         while not result.endswith(END):
@@ -90,7 +94,7 @@ def main():
             assert sum(line.count(b"x") for line in plain[2:]) == 120, plain
             assert sum(line.count(b"z") for line in plain[2:]) == 120, plain
             assert any(line.startswith(b"+") and len(line) == 47 for line in plain), plain
-            _, error = process.communicate(timeout=10)
+            _, error = process.communicate(timeout=10 * TIMEOUT_SCALE)
             assert process.returncode == 0 and not error, error
         finally:
             if process is not None:
@@ -138,16 +142,16 @@ def password_echo():
             with selectors.DefaultSelector() as selector:
                 selector.register(master, selectors.EVENT_READ)
                 while b"Password: " not in output:
-                    assert selector.select(10), output
+                    assert selector.select(10 * TIMEOUT_SCALE), output
                     output += os.read(master, 8192)
                 assert not (termios.tcgetattr(slave)[3] & termios.ECHO), output
                 os.write(master, b"secret\n")
                 with release.open("w") as signal:
                     signal.write("continue\n")
                 while b"DONE" not in output:
-                    assert selector.select(10), output
+                    assert selector.select(10 * TIMEOUT_SCALE), output
                     output += os.read(master, 8192)
-            _, error = process.communicate(timeout=10)
+            _, error = process.communicate(timeout=10 * TIMEOUT_SCALE)
             assert process.returncode == 0 and not error, error
             assert b"secret" not in output, output
             assert termios.tcgetattr(slave) == original
@@ -199,12 +203,12 @@ def nested_password_echo():
                 for marker, answer in ((b"Inner: ", b"inside\n"),
                                        (b"OUTER-READ", b"outside\n"), (b"DONE", None)):
                     while marker not in output:
-                        assert selector.select(10), output
+                        assert selector.select(10 * TIMEOUT_SCALE), output
                         output += os.read(master, 8192)
                     if answer is not None:
                         assert not (termios.tcgetattr(slave)[3] & termios.ECHO), output
                         os.write(master, answer)
-            _, error = process.communicate(timeout=10)
+            _, error = process.communicate(timeout=10 * TIMEOUT_SCALE)
             assert process.returncode == 0 and not error, error
             assert b"inside" not in output and b"outside" not in output, output
             assert termios.tcgetattr(slave) == original

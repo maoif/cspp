@@ -8,6 +8,7 @@
  * allocation of the requested size without constraining Chez or the emulator. */
 static _Atomic size_t failure_size;
 static _Atomic int failed;
+static _Atomic(void *(*)(size_t)) real_malloc;
 
 void cspp_allocation_fixture_arm(size_t size) {
   failed = 0;
@@ -23,6 +24,12 @@ void *malloc(size_t size) {
     errno = ENOMEM;
     return NULL;
   }
-  void *(*allocate)(size_t) = dlsym(RTLD_NEXT, "malloc");
+  /* Resolve once: repeated dlsym calls can consume a dependency's dlerror state
+   * while that dependency is initializing during dlopen. */
+  void *(*allocate)(size_t) = atomic_load(&real_malloc);
+  if (allocate == NULL) {
+    allocate = dlsym(RTLD_NEXT, "malloc");
+    atomic_store(&real_malloc, allocate);
+  }
   return allocate(size);
 }

@@ -9,7 +9,8 @@
         (proc (lambda (path completed total) (void)))
         ;; Create the Rich console and progress task used throughout this download.
         (let* ([console (make-rich-console)]
-               [progress (make-rich-progress 24 (rich-progress-default-columns))]
+               ;; The recent byte rate is appended below; avoid duplicate timing columns.
+               [progress (make-rich-progress 24 '(description bar percentage completed))]
                [task (rich-progress-add-task! progress "download" #f)]
                ;; Refresh synchronously after chunks; no background thread is needed.
                [live (make-rich-live progress console 0 #f)]
@@ -51,6 +52,8 @@
                   (set! previous-total total)))))
           ;; Progress and logging share stderr; downloaded bytes go only to the file.
           (rich-console-output-port-set! console (current-error-port))
+          ;; Preserve the progress fields in redirected output; terminals wrap the live line.
+          (rich-console-soft-wrap?-set! console #t)
           (dynamic-wind
             void
             (lambda () (proc report))
