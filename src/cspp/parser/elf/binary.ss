@@ -11,7 +11,7 @@
   (define issue (lambda (offset message) (make-elf-issue offset message)))
 
   (define-record-type decoded-elf-header
-    (fields class endianness-name endianness type machine version entry phoff shoff flags
+    (fields class endianness-name type machine version entry phoff shoff flags
             header-size phentsize raw-phnum shentsize raw-shnum raw-shstrndx sizes-at))
 
   (define copy-range
@@ -500,8 +500,6 @@
      (lambda (identification)
        (let* ([class (list-ref identification 1)]
               [endianness-name (list-ref identification 2)]
-              [endianness (if (eq? endianness-name 'little)
-                              (endianness little) (endianness big))]
               [word-size (if (eq? class 'elf32) 4 8)]
               [sizes-at (if (eq? class 'elf32) 40 52)]
               [<half> (unsigned-parser 2 endianness-name)]
@@ -510,7 +508,7 @@
          (<map>
           (lambda (fields)
             (make-decoded-elf-header
-             class endianness-name endianness
+             class endianness-name
              (list-ref fields 0) (list-ref fields 1) (list-ref fields 2)
              (list-ref fields 3) (list-ref fields 4) (list-ref fields 5)
              (list-ref fields 6) (list-ref fields 7) (list-ref fields 8)

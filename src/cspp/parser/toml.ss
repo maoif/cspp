@@ -895,7 +895,7 @@
                            (</> (~> <collection-junk> (<char> #\]))
                                 (~> <collection-separator> (<char> #\]))))))))
 
-  (define <inline-key-value>
+  (define <key-value>
     (<map> (lambda (value)
              (make-key-value-event (car value) (cadr value) (list-ref value 4)))
            (<~> <pos> <key-path> <ws> (<char> #\=)
@@ -905,7 +905,7 @@
     (<~2> (<char> #\{)
           <collection-junk>
           (</> (<as> (make-toml-table '#() #t) (<char> #\}))
-               (<bind> (<~> (<sep-by1> <inline-key-value> <collection-separator>)
+               (<bind> (<~> (<sep-by1> <key-value> <collection-separator>)
                             (</> (~> <collection-junk> (<char> #\}))
                                  (~> <collection-separator> (<char> #\}))))
                        (lambda (value)
@@ -928,12 +928,6 @@
          <float-value>
          <integer-value>))
 
-  (define <key-value-statement>
-    (<map> (lambda (value)
-             (make-key-value-event (car value) (cadr value) (list-ref value 4)))
-           (<~> <pos> <key-path> <ws> (<char> #\=)
-                (~> <ws> <toml-value>))))
-
   (define <table-statement>
     (<map> (lambda (value) (make-table-event (car value) (list-ref value 3)))
            (<~> <pos> (<char> #\[) <ws> <key-path> <ws> (<char> #\]))))
@@ -946,7 +940,7 @@
   (define <statement>
     (</> <array-table-statement>
          <table-statement>
-         <key-value-statement>))
+         <key-value>))
 
   (define <statement-line>
     (<~ <statement>

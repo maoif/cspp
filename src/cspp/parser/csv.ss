@@ -112,7 +112,7 @@
               (parser-call original inp state lvl))))
       escaped-field-character-parser))
 
-  (define (<escaped-field> delimiter)
+  (define <escaped-field>
     (<~1> (<char> #\")
           (<as-string> (<many> <escaped-field-character>))
           (<char> #\")))
@@ -136,7 +136,7 @@
            (let ([padding (if (char=? delimiter #\space)
                               (<result> '())
                               (<many> (<char> #\space)))])
-             (<~> padding (<escaped-field> delimiter) padding))))
+             (<~> padding <escaped-field> padding))))
 
   (define (<field> delimiter)
     (let* ([unescaped (<unescaped-field> delimiter)]
