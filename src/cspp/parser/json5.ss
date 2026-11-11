@@ -324,7 +324,8 @@
                                (map (lambda (character) (fx- (char->integer character) 48))
                                     digits))])
                  (if negative? (- number) number))]
-              [(memv (string-ref source index) '(#\. #\e #\E)) (string->number source)]
+              [(memv (string-ref source index) '(#\. #\e #\E))
+               (parser-decimal-source->flonum source)]
               [else (loop (fx1+ index))]))))
 
   (define <json5-decimal>

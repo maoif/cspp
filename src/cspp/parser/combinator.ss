@@ -392,46 +392,22 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                  ($run-binary-parser who parser input path state)))]))
 
 
-  (define (mk-digits->num who r)
-    (lambda (d*)
-      (pcheck ([list? d*])
-              ;; Combine balanced halves instead of copying a growing bignum per digit.
-              ;; Returning the unused tail avoids copying or repeatedly splitting lists.
-              (define convert
-                (lambda (digits count)
-                  (if (fx<= count 14)
-                      (let loop ([digits digits] [count count] [number 0])
-                        (if (fxzero? count)
-                            (values number digits)
-                            (let ([digit (car digits)])
-                              (unless (and (integer? digit) (exact? digit) (<= 0 digit) (< digit r))
-                                (errorf who "bad digit ~a for base ~a" digit r))
-                              (loop (cdr digits) (fx1- count) (+ digit (* number r))))))
-                      (let* ([left-count (fxdiv count 2)]
-                             [right-count (fx- count left-count)])
-                        (let-values ([(left remaining) (convert digits left-count)])
-                          (let-values ([(right tail) (convert remaining right-count)])
-                            ;; Validate both halves before skipping a zero leading half.
-                            (values (if (zero? left) right
-                                        (+ (* left (expt r right-count)) right))
-                                    tail)))))))
-              (let-values ([(number tail) (convert d* (length d*))]) number))))
   #|proc:bindigits->num
   The `bindigits->num` procedure converts list `digits` of binary integers to a number.
   |#
-  (define-who bindigits->num (mk-digits->num who 2))
+  (define-who bindigits->num (make-parser-digit-converter who 2))
   #|proc:octdigits->num
   The `octdigits->num` procedure converts list `digits` of octal integers to a number.
   |#
-  (define-who octdigits->num (mk-digits->num who 8))
+  (define-who octdigits->num (make-parser-digit-converter who 8))
   #|proc:digits->num
   The `digits->num` procedure converts list `digits` of decimal integers to a number.
   |#
-  (define-who digits->num    (mk-digits->num who 10))
+  (define-who digits->num    (make-parser-digit-converter who 10))
   #|proc:hexdigits->num
   The `hexdigits->num` procedure converts list `digits` of hexadecimal integers to a number.
   |#
-  (define-who hexdigits->num (mk-digits->num who 16))
+  (define-who hexdigits->num (make-parser-digit-converter who 16))
 
 
 
@@ -2324,8 +2300,10 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   #|proc:parser-discard-many
   The `parser-discard-many` procedure takes `parser` and returns a parser that repeats it,
-  ignores its values, and returns the empty list. The final failed attempt restores its starting
-  cursor. A success without input progress raises an error. Callback state is not rolled back.
+  ignores its values, and returns the empty list. The argument `parser` has behavior
+  `(Input -> Any)` and must consume input on success. The final failed attempt restores its
+  starting cursor. A success without input progress raises an error. Callback state is not
+  rolled back.
   This helper is shared internally by format grammars and is excluded from the parser umbrella.
   |#
   (define (parser-discard-many parser)

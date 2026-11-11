@@ -1326,3 +1326,63 @@
           (and err (string=? "<string>" (parser-error-source err)))))
       (list parse-json5 parse-toml parse-xml parse-wasm-text-module)
       '("/*abc" "#abc\x0;" "<r \x0;/>" "(@foo abc")))
+
+(mat parser-balanced-decimal-floats
+
+     ;; Compensated long significands must not build a growing bignum once per digit.
+     (let ([source (string-append (make-string 4000 #\1) "e-4000")])
+       (for-all
+        (lambda (parse text)
+          (let* ([before (statistics)] [value (parse text)]
+                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+            (and (eqv? 0.1111111111111111 value) (< allocated 4000000))))
+        (list (lambda (text) (json5-document-value (parse-json5 text)))
+              (lambda (text) (toml-table-ref (toml-document-root (parse-toml text)) "v")))
+        (list source (string-append "v=" source))))
+
+     ;; Exact decimal halfway cases, normal/subnormal boundaries, overflow and signed zero.
+     (for-all
+      (lambda (source expected)
+        (and (eqv? expected (json5-document-value (parse-json5 source)))
+             (eqv? expected (toml-table-ref
+                             (toml-document-root (parse-toml (string-append "v=" source)))
+                             "v"))))
+      '("-0.0" "-1e-9999" "1.7976931348623159e308" "2.4703282292062327e-324"
+        "2.4703282292062328e-324" "2.2250738585072014e-308" "9007199254740993.0"
+        "1.00000000000000011102230246251565404236316680908203125"
+        "1.00000000000000011102230246251565404236316680908203126")
+      (list -0.0 -0.0 +inf.0 0.0 5e-324 2.2250738585072014e-308 9007199254740992.0
+            1.0 1.0000000000000002))
+
+     ;; The total decimal order decides overflow/underflow, including opposite exponent signs.
+     (for-all
+      (lambda (source expected)
+        (and (eqv? expected (json5-document-value (parse-json5 source)))
+             (eqv? expected (toml-table-ref
+                             (toml-document-root (parse-toml (string-append "v=" source)))
+                             "v"))))
+      (let* ([large (string-append (make-string 4000 #\1) "e-500")]
+             [small (string-append "0." (make-string 4000 #\0) "1e500")])
+        (list large (string-append "-" large) small (string-append "-" small)))
+      (list +inf.0 -inf.0 0.0 -0.0))
+
+     ;; Zero and exponent overflow retain their signs without an unbounded exponent integer.
+     (for-all
+      (lambda (prefix expected)
+        (let* ([source (string-append prefix (make-string 4000 #\9))]
+               [before (statistics)] [value (json5-document-value (parse-json5 source))]
+               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (and (eqv? expected value) (< allocated 4000000))))
+      '("0e" "-0e" "1e" "-1e-" "1e-") (list 0.0 -0.0 +inf.0 -0.0 0.0))
+
+     (eqv? 0.5 (json5-document-value (parse-json5 ".5")))
+
+     (eqv? 12.5 (toml-table-ref (toml-document-root (parse-toml "v=1_2.5_0e+0")) "v"))
+
+     ;; Error cases: the converter cannot make malformed float spellings valid.
+     (for-all (lambda (source) (and (parser-error-from (lambda () (parse-json5 source))) #t))
+              '("1e" "1e+-2" "1.0e!" ".e0"))
+
+     ;; Error cases: TOML's normalized source still comes from its strict number grammar.
+     (for-all (lambda (source) (and (parser-error-from (lambda () (parse-toml source))) #t))
+              '("v=1_.0" "v=1.0e_2" "v=1e+" "v=.5")))

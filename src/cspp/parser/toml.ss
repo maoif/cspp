@@ -595,7 +595,7 @@
       shared-prefix-parser))
 
   (define <float-value>
-    (</> (<map> string->number <regular-float-source>)
+    (</> (<map> parser-decimal-source->flonum <regular-float-source>)
          (<map> (lambda (value)
                   (if (and (char? (car value)) (char=? #\- (car value)))
                       -inf.0
