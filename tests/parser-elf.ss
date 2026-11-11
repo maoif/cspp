@@ -647,3 +647,13 @@
      )
 
 (include "parser-elf-regressions.ss")
+
+(mat elf-standard-dynamic-tag-names
+
+     (for-all (lambda (entry) (eq? (cdr entry) (elf-dynamic-tag-name (car entry))))
+              '((20 . pltrel) (21 . debug) (22 . textrel) (23 . jmprel) (24 . bind-now)
+                (25 . init-array) (26 . fini-array) (27 . init-arraysz) (28 . fini-arraysz)
+                (29 . runpath) (30 . flags) (32 . preinit-array) (33 . preinit-arraysz)
+                (34 . symtab-shndx) (35 . relrsz) (36 . relr) (37 . relrent)))
+
+     (for-all (lambda (tag) (eq? 'unknown (elf-dynamic-tag-name tag))) '(-1 31 38)))

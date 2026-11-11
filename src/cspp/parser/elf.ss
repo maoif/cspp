@@ -101,6 +101,10 @@
                 [(5) 'strtab] [(6) 'symtab] [(7) 'rela] [(8) 'relasz] [(9) 'relaent]
                 [(10) 'strsz] [(11) 'syment] [(12) 'init] [(13) 'fini] [(14) 'soname]
                 [(15) 'rpath] [(16) 'symbolic] [(17) 'rel] [(18) 'relsz] [(19) 'relent]
+                [(20) 'pltrel] [(21) 'debug] [(22) 'textrel] [(23) 'jmprel] [(24) 'bind-now]
+                [(25) 'init-array] [(26) 'fini-array] [(27) 'init-arraysz] [(28) 'fini-arraysz]
+                [(29) 'runpath] [(30) 'flags] [(32) 'preinit-array] [(33) 'preinit-arraysz]
+                [(34) 'symtab-shndx] [(35) 'relrsz] [(36) 'relr] [(37) 'relrent]
                 [else 'unknown]))))
 
   #|proc:parse-elf
