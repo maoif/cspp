@@ -442,6 +442,13 @@
        (lambda () (run-binary-parser parser bytes))
        (lambda (number) (= expected number))))))
 
+(define measure-ignored-whitespace
+  (lambda (count)
+    (let ([text (make-string count #\space)] [parser (<fully> (<result> #t))])
+      (measure-parser "Ignored token whitespace" count
+                      (lambda () (run-textual-parser parser text))
+                      (lambda (value) (eq? #t value))))))
+
 (benchmark-print-table!
  "Parser review workloads"
  '(("workload" . left) ("count/exponent" . right)
@@ -450,6 +457,7 @@
          (map measure-zero-float '(10000 100000 1000000))
          (measure-byte-vectors)
          (map measure-choice-failure '(1000 2000 4000 8000))
+         (map measure-ignored-whitespace '(100000 1000000))
          (map (lambda (count) (measure-generic-leb128 count #f)) '(1000 4000 16000 32000))
          (map (lambda (count) (measure-generic-leb128 count #t)) '(1000 4000 16000 32000))
          (map measure-nested-choice-failure '(1000 2000 4000 8000))

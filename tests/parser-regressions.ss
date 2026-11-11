@@ -1000,3 +1000,28 @@
        (and (= (ash 1 56) (run-binary-parser (<sleb128> 58) bytes))
             (parser-error? (parser-error-from
                             (lambda () (run-binary-parser (<sleb128> 57) bytes)))))))
+
+(mat parser-discarded-token-whitespace
+
+     (let* ([source (make-string 100000 #\space)] [parser (<fully> (<result> #t))]
+            [before (statistics)] [result (run-textual-parser parser source)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and result (< allocated 7500000)))
+
+     ;; Ignored whitespace must preserve callback count, caller state and result identity.
+     (let* ([state (vector 0)] [result (vector 'owned)]
+            [parser (<fully>
+                     (<token> (<map-st> (lambda (value state)
+                                          (vector-set! state 0 (+ 1 (vector-ref state 0)))
+                                          result)
+                                        (<string> "abc"))))])
+       (and (eq? result (run-textual-parser parser " \r\nabc\t\x2028; " state))
+            (= 1 (vector-ref state 0))))
+
+     ;; Error case: ignored whitespace must not consume the next non-whitespace character.
+     (let ([err (parser-error-from
+                 (lambda () (run-textual-parser (<fully> (<string> "abc"))
+                                                 "\r\nabc \r\n!")))])
+       (and err (= 8 (parser-error-offset err))
+            (= 2 (parser-error-line err)) (= 0 (parser-error-column err))
+            (char=? #\! (parser-error-found err)))))

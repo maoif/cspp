@@ -2321,13 +2321,27 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                    (<~> parser (<many> (~> separator parser))))))
 
 
+  ;; Match repetition's progress checks and rollback without retaining ignored values.
+  (define discard-many
+    (lambda (parser)
+      (define-parser discard-parser
+        (let loop ([current inp])
+          (let ([snapshot (save-input current)])
+            (let-values ([(status value next-input)
+                          (parser-call parser current state (fx1+ lvl))])
+              (if status
+                  (begin (ensure-progress '<many> snapshot next-input)
+                         (loop next-input))
+                  (values #t '() snapshot))))))
+      discard-parser))
+
   #|proc:<token>
   The `<token>` procedure takes `parser` and returns a parser that runs it, consumes any
   following whitespace, and returns its value.
   |#
   (define (<token> parser)
     (pcheck ([parser? parser])
-            (<~ parser (<many> <whitespace>))))
+            (<~ parser (discard-many <whitespace>))))
 
 
   #|proc:<fully>
@@ -2336,7 +2350,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   |#
   (define (<fully> parser)
     (pcheck ([parser? parser])
-            (<~n> 1 (<many> <whitespace>) parser (<many> <whitespace>) <eof>)))
+            (<~n> 1 (discard-many <whitespace>) parser (discard-many <whitespace>) <eof>)))
 
 
   ;; TODO These can be placed in the front at o=3, but not at o=2.
