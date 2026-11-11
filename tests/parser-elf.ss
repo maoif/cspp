@@ -376,30 +376,52 @@
 
 (define readelf-header-matches?
   (lambda (file output)
-    (let* ([identification (elf-file-identification file)]
-           [header (elf-file-header file)]
-           [class (elf-identification-class identification)]
-           [endianness (elf-identification-endianness identification)])
-      (and (string-contains?
-            output
-            (format "Class:                             ~a"
-                    (if (eq? class 'elf64) "ELF64" "ELF32")))
-           (string-contains?
-            output
-            (format "Data:                              2's complement, ~a endian"
-                    (if (eq? endianness 'little) "little" "big")))
-           (string-contains?
-            output
-            (format "Number of program headers:         ~a"
-                    (elf-header-program-header-count header)))
-           (string-contains?
-            output
-            (format "Number of section headers:         ~a"
-                    (elf-header-section-header-count header)))
-           (string-contains?
-            output
-            (format "Section header string table index: ~a"
-                    (elf-header-section-name-index header)))))))
+    (let ([fields (map (lambda (line) (map string-trim (string-split line #\:)))
+                       (string-split output #\newline))]
+          [identification (elf-file-identification file)]
+          [header (elf-file-header file)])
+      (define field=?
+        (lambda (label expected)
+          (let ([matches (filter (lambda (field) (string=? label (car field))) fields)])
+            (and (= 1 (length matches))
+                 (= 2 (length (car matches)))
+                 (string=? expected (cadar matches))))))
+      (and (field=? "Class" (if (eq? (elf-identification-class identification) 'elf64)
+                                "ELF64" "ELF32"))
+           (field=? "Data" (format "2's complement, ~a endian"
+                                    (if (eq? (elf-identification-endianness identification)
+                                             'little) "little" "big")))
+           (field=? "Number of program headers"
+                    (number->string (elf-header-program-header-count header)))
+           (field=? "Number of section headers"
+                    (number->string (elf-header-section-header-count header)))
+           (field=? "Section header string table index"
+                    (number->string (elf-header-section-name-index header)))))))
+
+(mat elf-readelf-comparison-controls
+
+     (readelf-header-matches?
+      (parse-elf (minimal-elf64le))
+      (string-append "  Class:                             ELF64\n"
+                     "  Data:                              2's complement, little endian\n"
+                     "  Number of program headers:         0\n"
+                     "  Number of section headers:         0\n"
+                     "  Section header string table index: 0\n"))
+
+     ;; Error controls: a numeric field cannot match just a decimal prefix.
+     (for-all
+      (lambda (counts)
+        (not (readelf-header-matches?
+              (parse-elf (minimal-elf64le))
+              (format
+               (string-append "  Class:                             ELF64\n"
+                              "  Data:                              2's complement, little endian\n"
+                              "  Number of program headers:         ~a\n"
+                              "  Number of section headers:         ~a\n"
+                              "  Section header string table index: ~a\n")
+               (car counts) (cadr counts) (caddr counts)))))
+      '(("01" "0" "0") ("0" "01" "0") ("0" "0" "01")
+        ("0x" "0" "0") ("0 1" "0" "0"))))
 
 (mat parse-elf-file
 

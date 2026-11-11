@@ -53,12 +53,18 @@
           (when port (close-port port))
           (when (file-exists? path) (delete-file path)))))))
 
-(define immutable-vector?
-  (lambda (value)
-    ;; An immutable vector rejects even a no-op mutation.
-    (guard (err [else #t])
-      (vector-set! value 0 (vector-ref value 0))
-      #f)))
+(mat wasm-vector-immutability
+
+     (immutable-vector? (vector->immutable-vector (vector)))
+
+     (immutable-vector? (vector->immutable-vector (vector 1)))
+
+     ;; Error controls: mutable vectors and non-vectors cannot establish immutability.
+     (not (immutable-vector? (vector)))
+
+     (not (immutable-vector? (vector 1)))
+
+     (not (immutable-vector? #f)))
 
 (define wasm-mnemonic->text
   (lambda (mnemonic)
@@ -4593,10 +4599,8 @@
     (and (wasm-custom-section? right)
          (string=? (wasm-custom-section-name left) (wasm-custom-section-name right))
          (equal? (wasm-custom-section-bytes left) (wasm-custom-section-bytes right))
-         (or (not (wasm-custom-section-after-section left))
-             (not (wasm-custom-section-after-section right))
-             (eq? (wasm-custom-section-after-section left)
-                  (wasm-custom-section-after-section right))))))
+         (eq? (wasm-custom-section-after-section left)
+              (wasm-custom-section-after-section right)))))
 
 (define wasm-instruction=?
   (lambda (left right)
@@ -4655,23 +4659,69 @@
                         (wasm-module-custom-sections right)
                         wasm-value=?))))
 
-(define wasm-section-count-matches?
-  (lambda (output label values)
-    (or (fxzero? (vector-length values))
-        (string-contains? output
-                          (format "~a[~a]:" label (vector-length values))))))
-
 (define wasm-objdump-counts-match?
   (lambda (module output)
-    (and (wasm-section-count-matches? output "Type" (wasm-module-types module))
-         (wasm-section-count-matches? output "Function" (wasm-module-functions module))
-         (wasm-section-count-matches? output "Table" (wasm-module-tables module))
-         (wasm-section-count-matches? output "Memory" (wasm-module-memories module))
-         (wasm-section-count-matches? output "Global" (wasm-module-globals module))
-         (wasm-section-count-matches? output "Export" (wasm-module-exports module))
-         (wasm-section-count-matches? output "Elem" (wasm-module-elements module))
-         (wasm-section-count-matches? output "Data" (wasm-module-data module))
-         (wasm-section-count-matches? output "Code" (wasm-module-functions module)))))
+    (let ([lines (map string-trim (string-split output #\newline))]
+          [expected
+           (list (cons "Type" (vector-length (wasm-module-types module)))
+                 (cons "Function" (vector-length (wasm-module-functions module)))
+                 (cons "Table" (vector-length (wasm-module-tables module)))
+                 (cons "Memory" (vector-length (wasm-module-memories module)))
+                 (cons "Global" (vector-length (wasm-module-globals module)))
+                 (cons "Export" (vector-length (wasm-module-exports module)))
+                 (cons "Elem" (vector-length (wasm-module-elements module)))
+                 (cons "Data" (vector-length (wasm-module-data module)))
+                 (cons "Code" (vector-length (wasm-module-functions module))))])
+      (and (member "Section Details:" lines)
+           (let loop ([lines lines] [counts '()])
+             (if (null? lines)
+                 (for-all (lambda (entry)
+                            (= (cdr entry) (cond [(assoc (car entry) counts) => cdr]
+                                                 [else 0])))
+                          expected)
+                 (let* ([line (car lines)] [bracket (string-search line #\[)]
+                        [label (and bracket (substring line 0 bracket))])
+                   (if (and label (assoc label expected))
+                       (let ([count (and (string-endswith? line "]:")
+                                         (substring line (+ bracket 1)
+                                                    (- (string-length line) 2)))])
+                         (and count (not (string-empty? count))
+                              (for-all (lambda (character) (char<=? #\0 character #\9))
+                                       (string->list count))
+                              (not (assoc label counts))
+                              (loop (cdr lines) (cons (cons label (string->number count)) counts))))
+                       (loop (cdr lines) counts)))))))))
+
+(mat wasm-fixture-comparison-controls
+
+     (let ([section (make-wasm-custom-section "x" #vu8(1) #f)])
+       (wasm-custom-section=? section (make-wasm-custom-section "x" #vu8(1) #f)))
+
+     ;; Error control: before all sections and after data are different placements.
+     (let ([first (make-wasm-custom-section "x" #vu8(1) #f)]
+           [last (make-wasm-custom-section "x" #vu8(1) 'data)])
+       (and (not (wasm-custom-section=? first last))
+            (not (wasm-custom-section=? last first))))
+
+     (wasm-objdump-counts-match?
+      (parse-wasm-text-module "(module)")
+      "empty.wasm: file format wasm 0x1\n\nSection Details:\n")
+
+     ;; Error control: missing all section summaries must not accept unrelated tool output.
+     (not (wasm-objdump-counts-match? (parse-wasm-text-module "(module)") "garbage"))
+
+     ;; Error control: an empty parsed vector cannot ignore a nonempty tool section.
+     (not (wasm-objdump-counts-match?
+           (parse-wasm-text-module "(module)")
+           "empty.wasm: file format wasm 0x1\nSection Details:\nMemory[1]:\n"))
+
+     ;; Error controls: section counts must be complete, unique decimal fields.
+     (for-all
+      (lambda (summary)
+        (not (wasm-objdump-counts-match?
+              (parse-wasm-text-module "(module (memory 1))")
+              (string-append "m.wasm: file format wasm 0x1\nSection Details:\n" summary))))
+      '("Memory[10]:\n" "Memory[1]:trailing\n" "Memory[1]:\nMemory[1]:\n")))
 
 (define wasm-file-counts-match?
   (lambda (path)
