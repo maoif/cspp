@@ -105,6 +105,11 @@
 
   #|proc:parse-elf
   The `parse-elf` procedure decodes ELF bytevector `input` and returns an `elf-file` record.
+  The input must contain a complete supported ELF32/ELF64 image in little or big byte order.
+  Program headers and sections are vectors in file/index order; section zero is retained.
+  Numeric codes and flags remain integers, with extended counts/indexes resolved.
+  Malformed structures raise `&parser-error`. Returned payloads are materialized from the input;
+  record fields retain their mutable contents and accessors return them without copying.
   Names decode as strict UTF-8 with every scalar retained, including U+FEFF. If a name is
   invalid UTF-8, each byte maps to the character with the same code point. The string-table
   records retain the original bytes independently of this display-oriented name decoding.
@@ -120,7 +125,8 @@
 
   #|proc:parse-elf-file
   The `parse-elf-file` procedure decodes the ELF file at string `path` and returns an `elf-file`
-  record. Name decoding and compressed-section support follow `parse-elf`.
+  record. `path` must name a regular file. Name decoding, returned representations, structural
+  checks, and compressed-section support follow `parse-elf`. File failures propagate.
   |#
   (define parse-elf-file
     (lambda (path)

@@ -71,8 +71,14 @@
     (lambda (value) (or (bytevector? value) (string? value))))
 
   #|proc:parse-wasm-binary-module
-  Parses a WebAssembly Core 3.0 binary module from `input`, a bytevector or regular-file path.
-  The return value is a canonical `wasm-module` record. Shared-memory limits are also supported.
+  Parses one complete WebAssembly Core 3.0 binary module from `input`, a bytevector or
+  regular-file path string, and returns a canonical `wasm-module` record. Shared-memory limits are
+  supported.
+  The parser checks binary syntax and structural constraints such as standard-section
+  order/uniqueness, function/code counts, and data-count consistency. It does not perform full
+  WebAssembly typing validation, including operand-stack typing; success does not establish that a
+  module is well typed or executable.
+  Malformed modules raise `&parser-error`; file failures propagate when a path is supplied.
   |#
   (define-who parse-wasm-binary-module
     (lambda (input)
@@ -82,8 +88,13 @@
                   (parse-wasm-binary-module-file input)))))
 
   #|proc:parse-wasm-binary-module-file
-  Parses a WebAssembly Core 3.0 binary module from regular file `path`. The return value is a
-  canonical `wasm-module` record. Shared-memory limits are also supported.
+  Parses one complete WebAssembly Core 3.0 binary module from regular-file path string `path` and
+  returns a canonical `wasm-module` record. Shared-memory limits are supported.
+  The parser checks binary syntax and structural constraints such as standard-section
+  order/uniqueness, function/code counts, and data-count consistency. It does not perform full
+  WebAssembly typing validation, including operand-stack typing; success does not establish that a
+  module is well typed or executable.
+  Malformed modules raise `&parser-error`; file failures propagate.
   |#
   (define-who parse-wasm-binary-module-file
     (lambda (path)
@@ -91,8 +102,14 @@
               (parse-binary-file <wasm-binary-module> path))))
 
   #|proc:parse-wasm-text-module
-  Parses a WebAssembly Core 3.0 text module from source string `text`, with or without its
-  outer module wrapper. Returns a canonical `wasm-module` record, supporting shared memory.
+  Parses one complete WebAssembly Core 3.0 text module from source string `text`, with or without
+  its outer module wrapper, and returns a canonical `wasm-module` record. Shared-memory limits are
+  supported. Trailing script commands are rejected.
+  Normalization resolves source names, assigns indexes and implicit function types, and expands
+  inline abbreviations into canonical records. Syntax and selected structural relationships are
+  checked, but full WebAssembly typing validation, including operand-stack typing, is not
+  performed. Success does not establish that a module is well typed or executable.
+  Syntax and normalization failures raise `&parser-error` with source positions.
   |#
   (define-who parse-wasm-text-module
     (lambda (text)
@@ -100,8 +117,15 @@
               (run-textual-parser parser-wat-module text))))
 
   #|proc:parse-wasm-text-module-file
-  Parses a WebAssembly Core 3.0 text module from regular-file path `path`, with or without its
-  outer module wrapper. Returns a canonical `wasm-module` record, supporting shared memory.
+  Parses one complete WebAssembly Core 3.0 text module from regular-file path string `path`, with
+  or without its outer module wrapper, and returns a canonical `wasm-module` record. Shared-memory
+  limits are supported. Trailing script commands are rejected.
+  Normalization resolves source names, assigns indexes and implicit function types, and expands
+  inline abbreviations into canonical records. Syntax and selected structural relationships are
+  checked, but full WebAssembly typing validation, including operand-stack typing, is not
+  performed. Success does not establish that a module is well typed or executable.
+  The file is strict UTF-8 with no newline conversion; one initial UTF-8 signature is ignored.
+  Syntax and normalization failures raise `&parser-error`; file and decoding failures propagate.
   |#
   (define-who parse-wasm-text-module-file
     (lambda (path)
