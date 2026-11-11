@@ -953,6 +953,14 @@
                                 (issue (elf-section-header-offset header)
                                        "malformed typed section")))))))))]))))
 
+  #|parser:parser-elf
+  Internal binary parser for a complete ELF32/ELF64 image. Returns an elf-file with decoded
+  headers, sections, and linked contents; malformed structures fail through the parser protocol.
+  File positions are absolute byte offsets, so run this parser at the beginning of its image.
+  Payloads are materialized from the input; returned record fields retain their contained
+  strings, vectors, and bytevectors. Structural checks do not implement loader/linker semantics.
+  Compressed-section decoding requires optional zlib support; dependency exceptions propagate.
+  |#
   (define-parser parser-elf
     (let ([bytes (binary-input-data inp)]
           [length (input-len inp)])

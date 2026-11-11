@@ -75,6 +75,13 @@
   ;; `memory-data` normalizes `(dataidx memidx)` to `(memidx dataidx)`.
   ;; `table-element` normalizes `(elemidx tableidx)` to `(tableidx elemidx)`.
   ;; The two heap-type shapes construct non-nullable or nullable reference-type records.
+  #|constant:wasm-core-3-opcodes
+  Immutable vector of canonical opcode descriptors for all 496 Core 3.0 WAT mnemonics, ordered
+  by the catalog below. Each descriptor gives its mnemonic, optional prefix byte, opcode,
+  immediate shape, and optional structured kind. The descriptors and catalog are shared.
+  Alternate binary encodings may have separate descriptors returned by wasm-opcode-by-binary;
+  this catalog contains one canonical row per mnemonic, as returned by wasm-opcode-by-mnemonic.
+  |#
   (define wasm-core-3-opcodes
     (vector->immutable-vector
      (vector

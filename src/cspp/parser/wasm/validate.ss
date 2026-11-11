@@ -13,7 +13,8 @@
             (immutable message $wasm-issue-message)))
 
   #|proc:make-wasm-issue
-  Creates a structural issue at exact nonnegative byte `offset` with diagnostic string `message`.
+  Creates a structural issue at exact nonnegative `offset` with diagnostic string `message`.
+  Offsets count bytes for binary input and decoded Scheme characters for WAT normalization.
   |#
   (define make-wasm-issue
     (lambda (offset message)
@@ -28,7 +29,7 @@
       (pcheck () ($wasm-issue? object))))
 
   #|proc:wasm-issue-offset
-  Returns the byte offset of issue `record`.
+  Returns the offset of issue `record`: bytes for binary input, decoded Scheme characters for WAT.
   |#
   (define wasm-issue-offset
     (lambda (record)

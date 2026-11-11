@@ -376,6 +376,13 @@
                                       type-indices tables memories globals value exports start
                                       elements data data-count code custom* 'tag)]))))))))))
 
+  #|parser:<wasm-binary-module>
+  Internal binary parser for a complete Core 3.0 module, including its magic and version.
+  Consumes through EOF and returns a canonical wasm-module with ordered vectors of decoded
+  records, retaining their contained objects. Invalid syntax, section structure, or supported
+  cross-reference checks fail through the parser protocol. Success does not establish full
+  WebAssembly stack/type validity or executability. Binary source positions count bytes.
+  |#
   (define <wasm-binary-module>
     (<bind> (<~> (<u8*> #x00 #x61 #x73 #x6d)
                  (<u8*> 1 0 0 0)
