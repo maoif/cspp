@@ -431,6 +431,17 @@
            (and (= count (vector-length entries)) (= #x1000 (vector-ref entries 0)))))))))
 
 (printf "~a ~a\n" (scheme-version) (machine-type))
+(define measure-generic-leb128
+  (lambda (count signed?)
+    (let ([bytes (make-bytevector count 255)]
+          [parser (if signed? (<sleb128> (* count 7)) <uleb128>)]
+          [expected (if signed? -1 (- (ash 1 (* count 7)) 1))])
+      (bytevector-u8-set! bytes (fx1- count) 127)
+      (measure-parser
+       (if signed? "Generic signed LEB" "Generic unsigned LEB") count
+       (lambda () (run-binary-parser parser bytes))
+       (lambda (number) (= expected number))))))
+
 (benchmark-print-table!
  "Parser review workloads"
  '(("workload" . left) ("count/exponent" . right)
@@ -439,6 +450,8 @@
          (map measure-zero-float '(10000 100000 1000000))
          (measure-byte-vectors)
          (map measure-choice-failure '(1000 2000 4000 8000))
+         (map (lambda (count) (measure-generic-leb128 count #f)) '(1000 4000 16000 32000))
+         (map (lambda (count) (measure-generic-leb128 count #t)) '(1000 4000 16000 32000))
          (map measure-nested-choice-failure '(1000 2000 4000 8000))
          (map measure-bounded-integer-overflow '(1000 2000 4000 8000 16000))
          (list (measure-signed-integers 100000))

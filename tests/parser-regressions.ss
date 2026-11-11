@@ -960,3 +960,43 @@
           (not (wasm-opcode-by-binary #f 255))
           (eq? 'nop (wasm-opcode-mnemonic (wasm-opcode-by-binary #f 1)))
           (eq? 'v128.load (wasm-opcode-mnemonic (wasm-opcode-by-binary 253 0)))))
+
+(mat parser-long-generic-leb128
+
+     ;; Long exact values and permitted sign padding must avoid quadratic temporary integers.
+     (let* ([count 4000] [bytes (make-bytevector count 255)]
+            [unsigned-expected (- (ash 1 (* count 7)) 1)]
+            [signed-parser (<sleb128> (* count 7))])
+       (bytevector-u8-set! bytes (- count 1) 127)
+       (for-all
+        (lambda (parser expected)
+          (let* ([before (statistics)] [value (run-binary-parser parser bytes)]
+                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+            (and (= expected value) (< allocated 2000000))))
+        (list <uleb128> signed-parser) (list unsigned-expected -1)))
+
+     ;; Cross the small-integer path boundary and include bytes whose signed bit is set.
+     (for-all
+      (lambda (count)
+        (let ([bytes (make-bytevector count 255)])
+          (bytevector-u8-set! bytes (- count 1) 127)
+          (and (= (- (ash 1 (* count 7)) 1) (run-binary-parser <uleb128> bytes))
+               (= -1 (run-binary-parser (<sleb128> (* count 7)) bytes)))))
+      '(1 7 8 9 15 16 17 128))
+
+     ;; Error cases: long unterminated inputs keep source and exact failure byte position.
+     (let ([bytes (make-bytevector 33 255)])
+       (for-all
+        (lambda (parser)
+          (let ([err (parser-error-from
+                      (lambda () (run-binary-parser/source parser bytes "long-leb")))])
+            (and err (= 33 (parser-error-offset err))
+                 (string=? "long-leb" (parser-error-source err)))))
+        (list <uleb128> (<sleb128> 1000))))
+
+     ;; Error cases: the ninth byte must obey the declared signed width's unused-bit rule.
+     (let ([bytes (make-bytevector 9 128)])
+       (bytevector-u8-set! bytes 8 1)
+       (and (= (ash 1 56) (run-binary-parser (<sleb128> 58) bytes))
+            (parser-error? (parser-error-from
+                            (lambda () (run-binary-parser (<sleb128> 57) bytes)))))))
