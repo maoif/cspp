@@ -2,6 +2,7 @@
   (export <wasm-binary-module>)
   (import (cspp chez)
           (only (cspp vector) vexists)
+          (only (cspp list) make-list-builder)
           (cspp parser combinator)
           (cspp parser wasm types)
           (cspp parser wasm validate)
@@ -235,16 +236,36 @@
          [else (<fail-with> "unknown standard WebAssembly section")]))))
 
   (define section
-    (<bind> <pos>
-            (lambda (offset)
-              (<bind> <u8>
-                      (lambda (id)
-                        (<bind> <wasm-u32>
-                                (lambda (size)
-                                  (<map>
-                                   (lambda (value)
-                                     (make-parsed-section offset id value))
-                                   (section-parser id size)))))))))
+    (lambda (previous-rank)
+      (<bind>
+       (<~> <pos> <u8>)
+       (lambda (header)
+         (let ([offset (car header)] [id (cadr header)])
+           (if (and (wasm-section-rank id)
+                    (not (wasm-section-order-valid? previous-rank id)))
+               (issue-parser
+                (make-wasm-issue offset "duplicate or out-of-order WebAssembly section"))
+               (<bind> <wasm-u32>
+                       (lambda (size)
+                         (<map> (lambda (value) (make-parsed-section offset id value))
+                                (section-parser id size))))))))))
+
+  ;; Keep rank local to this invocation; reject known order errors before decoding a payload.
+  (define-parser sections
+    (let ([builder (make-list-builder)])
+      (let loop ([input inp] [previous-rank 0])
+        (let-values ([(at-end? ignored end-input)
+                      (parser-call <eof> (save-input input) state lvl)])
+          (if at-end?
+              (values #t (builder) input)
+              (let-values ([(status parsed next-input)
+                            (parser-call (section previous-rank) input state lvl)])
+                (if status
+                    (begin
+                      (builder parsed)
+                      (loop next-input
+                            (or (wasm-section-rank (parsed-section-id parsed)) previous-rank)))
+                    (values #f #f next-input))))))))
 
   (define make-functions
     (lambda (type-indices code-bodies)
@@ -280,107 +301,103 @@
     (lambda (section*)
       (let ([section-offset* (make-vector 14 #f)])
         (let loop ([section* section*]
-                   [previous-rank 0]
                    [types '#()] [imports '#()] [type-indices '#()]
                    [tables '#()] [memories '#()] [globals '#()] [tags '#()]
                    [exports '#()] [start #f] [elements '#()] [data '#()]
                    [data-count #f] [code '#()] [custom* '()] [after #f])
-        (if (null? section*)
-            (cond
-             [(not (wasm-function-code-count-valid? type-indices code))
-              (issue-parser
-               (make-wasm-issue
-                (or (vector-ref section-offset* 10)
-                    (vector-ref section-offset* 3)
-                    8)
-                "WebAssembly function and code section lengths differ"))]
-             [(not (wasm-data-count-valid? data-count data))
-              (issue-parser
-               (make-wasm-issue
-                (or (vector-ref section-offset* 12)
-                    (vector-ref section-offset* 11)
-                    8)
-                "WebAssembly data count does not match data section"))]
-             [(and (not data-count) (code-uses-data-index? code))
-              (issue-parser
-               (make-wasm-issue (or (vector-ref section-offset* 10) 8)
-                                "WebAssembly data-index instructions require a data-count section"))]
-             [else
-              (<result>
-               (make-wasm-module
-                types imports (make-functions type-indices code)
-                tables memories globals tags exports start elements data
-                (list->vector (reverse custom*))))])
-            (let* ([parsed (car section*)]
-                   [offset (parsed-section-offset parsed)]
-                   [id (parsed-section-id parsed)]
-                   [value (parsed-section-value parsed)])
-              (if (= id 0)
-                  (loop (cdr section*) previous-rank types imports type-indices
-                        tables memories globals tags exports start elements data
-                        data-count code
-                        (cons (make-wasm-custom-section
-                               (car value) (cdr value) after)
-                              custom*)
-                        after)
-                  (begin
-                    (vector-set! section-offset* id offset)
-                    (if (not (wasm-section-order-valid? previous-rank id))
-                        (issue-parser
-                         (make-wasm-issue
-                          offset
-                          "duplicate or out-of-order WebAssembly section"))
-                        (case id
-                        [(1) (loop (cdr section*) (wasm-section-rank id) value imports
+          (if (null? section*)
+              (cond
+               [(not (wasm-function-code-count-valid? type-indices code))
+                (issue-parser
+                 (make-wasm-issue
+                  (or (vector-ref section-offset* 10)
+                      (vector-ref section-offset* 3)
+                      8)
+                  "WebAssembly function and code section lengths differ"))]
+               [(not (wasm-data-count-valid? data-count data))
+                (issue-parser
+                 (make-wasm-issue
+                  (or (vector-ref section-offset* 12)
+                      (vector-ref section-offset* 11)
+                      8)
+                  "WebAssembly data count does not match data section"))]
+               [(and (not data-count) (code-uses-data-index? code))
+                (issue-parser
+                 (make-wasm-issue (or (vector-ref section-offset* 10) 8)
+                                  "WebAssembly data-index instructions require a data-count section"))]
+               [else
+                (<result>
+                 (make-wasm-module
+                  types imports (make-functions type-indices code)
+                  tables memories globals tags exports start elements data
+                  (list->vector (reverse custom*))))])
+              (let* ([parsed (car section*)]
+                     [offset (parsed-section-offset parsed)]
+                     [id (parsed-section-id parsed)]
+                     [value (parsed-section-value parsed)])
+                (if (= id 0)
+                    (loop (cdr section*) types imports type-indices
+                          tables memories globals tags exports start elements data
+                          data-count code
+                          (cons (make-wasm-custom-section
+                                 (car value) (cdr value) after)
+                                custom*)
+                          after)
+                    (begin
+                      (vector-set! section-offset* id offset)
+                      (case id
+                        [(1) (loop (cdr section*) value imports
                                    type-indices tables memories globals tags exports start
                                    elements data data-count code custom* 'type)]
-                        [(2) (loop (cdr section*) (wasm-section-rank id) types value
+                        [(2) (loop (cdr section*) types value
                                    type-indices tables memories globals tags exports start
                                    elements data data-count code custom* 'import)]
-                        [(3) (loop (cdr section*) (wasm-section-rank id) types imports value
+                        [(3) (loop (cdr section*) types imports value
                                    tables memories globals tags exports start elements data
                                    data-count code custom* 'function)]
-                        [(4) (loop (cdr section*) (wasm-section-rank id) types imports
+                        [(4) (loop (cdr section*) types imports
                                    type-indices value memories globals tags exports start
                                    elements data data-count code custom* 'table)]
-                        [(5) (loop (cdr section*) (wasm-section-rank id) types imports
+                        [(5) (loop (cdr section*) types imports
                                    type-indices tables value globals tags exports start
                                    elements data data-count code custom* 'memory)]
-                        [(6) (loop (cdr section*) (wasm-section-rank id) types imports
+                        [(6) (loop (cdr section*) types imports
                                    type-indices tables memories value tags exports start
                                    elements data data-count code custom* 'global)]
-                        [(7) (loop (cdr section*) (wasm-section-rank id) types imports
+                        [(7) (loop (cdr section*) types imports
                                    type-indices tables memories globals tags value start
                                    elements data data-count code custom* 'export)]
-                        [(8) (loop (cdr section*) (wasm-section-rank id) types imports
+                        [(8) (loop (cdr section*) types imports
                                    type-indices tables memories globals tags exports value
                                    elements data data-count code custom* 'start)]
-                        [(9) (loop (cdr section*) (wasm-section-rank id) types imports
+                        [(9) (loop (cdr section*) types imports
                                    type-indices tables memories globals tags exports start
                                    value data data-count code custom* 'element)]
-                        [(10) (loop (cdr section*) (wasm-section-rank id) types imports
+                        [(10) (loop (cdr section*) types imports
                                     type-indices tables memories globals tags exports start
                                     elements data data-count value custom* 'code)]
-                        [(11) (loop (cdr section*) (wasm-section-rank id) types imports
+                        [(11) (loop (cdr section*) types imports
                                     type-indices tables memories globals tags exports start
                                     elements value data-count code custom* 'data)]
-                        [(12) (loop (cdr section*) (wasm-section-rank id) types imports
+                        [(12) (loop (cdr section*) types imports
                                     type-indices tables memories globals tags exports start
                                     elements data value code custom* 'data-count)]
-                          [(13) (loop (cdr section*) (wasm-section-rank id) types imports
-                                      type-indices tables memories globals value exports start
-                                      elements data data-count code custom* 'tag)]))))))))))
+                        [(13) (loop (cdr section*) types imports
+                                    type-indices tables memories globals value exports start
+                                    elements data data-count code custom* 'tag)])))))))))
 
   #|parser:<wasm-binary-module>
   Internal binary parser for a complete Core 3.0 module, including its magic and version.
   Consumes through EOF and returns a canonical wasm-module with ordered vectors of decoded
   records, retaining their contained objects. Invalid syntax, section structure, or supported
-  cross-reference checks fail through the parser protocol. Success does not establish full
-  WebAssembly stack/type validity or executability. Binary source positions count bytes.
+  cross-reference checks fail through the parser protocol. A duplicate or out-of-order section
+  fails at its ID before reading its size or payload, taking precedence over later syntax errors.
+  Success does not establish full WebAssembly stack/type validity or executability.
+  Binary source positions count bytes.
   |#
   (define <wasm-binary-module>
     (<bind> (<~> (<u8*> #x00 #x61 #x73 #x6d)
                  (<u8*> 1 0 0 0)
-                 (<many-until> section <eof>))
+                 sections)
             (lambda (fields) (assemble-module (caddr fields)))))
   )

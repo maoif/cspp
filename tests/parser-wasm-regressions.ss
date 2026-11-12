@@ -1115,3 +1115,38 @@
      (equal? '(0 0 #x8000000000000000 #x8000000000000000 #x3fe0000000000000)
              (map (lambda (source) (wasm-review-float-bits <wat-f64> source))
                   '("0.0" "0x0.000p0" "-0.00" "-0x0.0p0" "0x0.8p0"))))
+
+(mat wasm-review-early-section-order
+
+     ;; Error cases: an earlier duplicate wins over malformed duplicate or later payloads.
+     (for-all
+      (lambda (bytes)
+        (let ([failure (parser-error-from (lambda () (parse-wasm-binary-module bytes)))])
+          (and failure (= 11 (parser-error-offset failure))
+               (string=? "<fail-with>: duplicate or out-of-order WebAssembly section"
+                         (parser-error-message failure)))))
+      '(#vu8(0 97 115 109 1 0 0 0 1 1 0 1)
+        #vu8(0 97 115 109 1 0 0 0 1 1 0 1 1 0 0 2 0)))
+
+     ;; Error case: an out-of-order type ID wins over its missing size field.
+     (let ([failure
+            (parser-error-from
+             (lambda ()
+               (parse-wasm-binary-module #vu8(0 97 115 109 1 0 0 0 2 1 0 1))))])
+       (and failure (= 11 (parser-error-offset failure))
+            (string=? "<fail-with>: duplicate or out-of-order WebAssembly section"
+                      (parser-error-message failure))))
+
+     ;; Error case: a duplicate must stop before copying an unrelated 1 MiB custom payload.
+     (let* ([bytes (make-bytevector (+ 19 1048576) 0)]
+            [prefix #vu8(0 97 115 109 1 0 0 0 1 1 0 1 1 0 0 129 128 64 0)])
+       (bytevector-copy! prefix 0 bytes 0 (bytevector-length prefix))
+       (let* ([before (statistics)]
+              [failure (parser-error-from (lambda () (parse-wasm-binary-module bytes)))]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and failure (= 11 (parser-error-offset failure)) (< allocated 100000))))
+
+     ;; Custom sections may repeat and do not reset the previous standard-section rank.
+     (wasm-module?
+      (parse-wasm-binary-module
+       #vu8(0 97 115 109 1 0 0 0 0 1 0 1 1 0 0 1 0 0 1 0 2 1 0))))
