@@ -512,8 +512,12 @@
 
      ;; https://www.h-schmidt.net/FloatConverter/IEEE754.html
 ;;;; f32
-     (= +0.0   (runB <f32le> (u8vec 0 0 0 0)))
-     (= -0.0   (runB <f32le> (u8vec 0 0 0 #x80)))
+     ;; eqv? distinguishes the signs of inexact zero; numeric = does not.
+     (eqv? +0.0 (runB <f32> (u8vec 0 0 0 0)))
+     (eqv? -0.0 (runB <f32> (u8vec 0 0 0 #x80)))
+
+     (eqv? +0.0 (runB <f32le> (u8vec 0 0 0 0)))
+     (eqv? -0.0 (runB <f32le> (u8vec 0 0 0 #x80)))
      (= +inf.0 (runB <f32le> (u8vec 0 0 #x80 #x7f)))
      (= -inf.0 (runB <f32le> (u8vec 0 0 #x80 #xff)))
      (nan?     (runB <f32le> (u8vec 0 0 #xc0 #x7f)))
@@ -532,8 +536,8 @@
      (= 2.25  (runB <f32le> (u8vec #x00 #x00 #x10 #x40)))
      (= 3.75  (runB <f32le> (u8vec #x00 #x00 #x70 #x40)))
 
-     (= +0.0   (runB <f32be> (u8vec 0 0 0 0)))
-     (= -0.0   (runB <f32be> (u8vec #x80 0 0 0)))
+     (eqv? +0.0 (runB <f32be> (u8vec 0 0 0 0)))
+     (eqv? -0.0 (runB <f32be> (u8vec #x80 0 0 0)))
      (= +inf.0 (runB <f32be> (u8vec #x7f #x80 0 0)))
      (= -inf.0 (runB <f32be> (u8vec #xff #x80 0 0)))
      (nan?     (runB <f32be> (u8vec #x7f #xc0 0 0)))
@@ -553,8 +557,11 @@
      (= 3.75  (runB <f32be> (u8vec #x40 #x70 #x00 #x00)))
 
 ;;;; f64
-     (= +0.0   (runB <f64le> (u8vec 0 0 0 0 0 0 0 0)))
-     (= -0.0   (runB <f64le> (u8vec #x00 #x00 #x00 #x00 #x00 #x00 #x00 #x80)))
+     (eqv? +0.0 (runB <f64> (u8vec 0 0 0 0 0 0 0 0)))
+     (eqv? -0.0 (runB <f64> (u8vec 0 0 0 0 0 0 0 #x80)))
+
+     (eqv? +0.0 (runB <f64le> (u8vec 0 0 0 0 0 0 0 0)))
+     (eqv? -0.0 (runB <f64le> (u8vec #x00 #x00 #x00 #x00 #x00 #x00 #x00 #x80)))
      (= +inf.0 (runB <f64le> (u8vec #x00 #x00 #x00 #x00 #x00 #x00 #xF0 #x7F)))
      (= -inf.0 (runB <f64le> (u8vec #x00 #x00 #x00 #x00 #x00 #x00 #xF0 #xFF)))
      (nan?     (runB <f64le> (u8vec #x00 #x00 #x00 #x00 #x00 #x00 #xF8 #x7F)))
@@ -566,8 +573,8 @@
      (= 0.69  (runB <f64le> (u8vec #x14 #xAE #x47 #xE1 #x7A #x14 #xE6 #x3F)))  ;; ln(2)
      (= 2.3   (runB <f64le> (u8vec #x66 #x66 #x66 #x66 #x66 #x66 #x02 #x40)))  ;; ln(10)
 
-     (= +0.0   (runB <f64be> (u8vec 0 0 0 0 0 0 0 0)))
-     (= -0.0   (runB <f64be> (u8vec #x80 #x00 #x00 #x00 #x00 #x00 #x00 #x00)))
+     (eqv? +0.0 (runB <f64be> (u8vec 0 0 0 0 0 0 0 0)))
+     (eqv? -0.0 (runB <f64be> (u8vec #x80 #x00 #x00 #x00 #x00 #x00 #x00 #x00)))
      (= +inf.0 (runB <f64be> (u8vec #x7F #xF0 #x00 #x00 #x00 #x00 #x00 #x00)))
      (= -inf.0 (runB <f64be> (u8vec #xFF #xF0 #x00 #x00 #x00 #x00 #x00 #x00)))
      (nan?     (runB <f64be> (u8vec #x7F #xF8 #x00 #x00 #x00 #x00 #x00 #x00)))
