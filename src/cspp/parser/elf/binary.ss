@@ -777,20 +777,19 @@
                  (section-header-parser class endianness-name))
                 (lambda (headers)
                   (let-values ([(programs program-problem)
-                                (build-programs bytes header raw-programs)]
-                               [(raw-sections section-problem)
-                                (build-sections bytes header headers)])
-                    (cond
-                      [program-problem (problem-parser program-problem length)]
-                      [section-problem (problem-parser section-problem length)]
-                      [else
-                       (let-values ([(file finish-problem)
-                                     (finish-elf bytes header phnum shnum shstrndx
-                                                 programs headers raw-sections)])
-                         (if finish-problem
-                             (problem-parser finish-problem length)
-                             (complete-file-parser file length)))]
-                      ))))))))))
+                                (build-programs bytes header raw-programs)])
+                    (if program-problem
+                        (problem-parser program-problem length)
+                        (let-values ([(raw-sections section-problem)
+                                      (build-sections bytes header headers)])
+                          (if section-problem
+                              (problem-parser section-problem length)
+                              (let-values ([(file finish-problem)
+                                            (finish-elf bytes header phnum shnum shstrndx
+                                                        programs headers raw-sections)])
+                                (if finish-problem
+                                    (problem-parser finish-problem length)
+                                    (complete-file-parser file length)))))))))))))))
 
   ;; All file ranges and typed contents have already been checked through random access.
   (define complete-file-parser

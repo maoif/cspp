@@ -457,3 +457,29 @@
          (and (= count (vector-length entries))
               (= #x1000 (vector-ref entries 0)) (= 3 (vector-ref entries 99999))
               (< allocated 3000000)))))
+
+(mat parser-elf-program-error-short-circuit
+
+     ;; Error case: an invalid load segment must not copy a large unrelated section.
+     (let* ([payload-size (* 8 1024 1024)]
+            [bytes (make-bytevector (+ 256 payload-size) 0)]
+            [little (endianness little)])
+       (bytevector-copy! (minimal-elf64le) 0 bytes 0 64)
+       (bytevector-u64-set! bytes 32 64 little)
+       (bytevector-u64-set! bytes 40 128 little)
+       (bytevector-u16-set! bytes 56 1 little)
+       (bytevector-u16-set! bytes 60 2 little)
+       (bytevector-u32-set! bytes 64 1 little)
+       (bytevector-u64-set! bytes 72 256 little)
+       (bytevector-u64-set! bytes 96 1 little)
+       (bytevector-u32-set! bytes 196 1 little)
+       (bytevector-u64-set! bytes 216 256 little)
+       (bytevector-u64-set! bytes 224 payload-size little)
+       (let* ([before (statistics)]
+              [failure (parser-error-from (lambda () (parse-elf bytes)))]
+              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+         (and failure
+              (= 64 (parser-error-offset failure))
+              (string-contains? (parser-error-message failure)
+                                "file size exceeds memory size")
+              (< allocated 1000000)))))
