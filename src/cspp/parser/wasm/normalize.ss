@@ -386,7 +386,10 @@
     (lambda (state type-use)
       (let ([resolved (normalization-state-resolved-type-uses state)])
         (or (hashtable-ref resolved type-use #f)
-            (let* ([signature (type-use-signature state type-use)]
+            (let* ([parameters (wat-type-use-parameters type-use)]
+                   [_ (when (> (vector-length parameters) 1)
+                        (add-binding-ids! (make-eq-hashtable) parameters 0 'local))]
+                   [signature (type-use-signature state type-use)]
                    [reference (wat-type-use-index type-use)]
                    [offset (wat-type-use-pos type-use)]
                    [inline?

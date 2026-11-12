@@ -1187,3 +1187,29 @@
      (wasm-module?
       (parse-wasm-text-module
        "(module (elem (ref null func) (item ref.null func)))")))
+(mat wasm-review-type-use-parameter-identifiers
+
+     ;; Error cases: imports, tags, and functions require unique parameter bindings.
+     (for-all
+      (lambda (source)
+        (let ([failure (parser-error-from (lambda () (parse-wasm-text-module source)))])
+          (and failure
+               (string-contains? (parser-error-message failure)
+                                 "duplicate WebAssembly local identifier: $x")
+               (= (parser-error-offset failure)
+                  (string-search source "(param $x i64)")))))
+      '("(module (import \"m\" \"f\" (func (param $x i32) (param $x i64))))"
+        "(module (func (import \"m\" \"f\") (param $x i32) (param $x i64)))"
+        "(module (type $t (func (param i32 i64))) (func (import \"m\" \"f\") (type $t) (param $x i32) (param $x i64)))"
+        "(module (tag (param $x i32) (param $x i64)))"
+        "(module (import \"m\" \"t\" (tag (param $x i32) (param $x i64))))"
+        "(module (tag (import \"m\" \"t\") (param $x i32) (param $x i64)))"
+        "(module (func (param $x i32) (param $x i64)))"))
+
+     ;; Type definitions' parameter names are documentation; separate type uses have local scope.
+     (for-all
+      (lambda (source) (wasm-module? (parse-wasm-text-module source)))
+      '("(module (type (func (param $x i32) (param $x i64))))"
+        "(module (import \"m\" \"f\" (func (param $x i32) (param $y i64))))"
+        "(module (tag (param $x i32) (param $y i64)))"
+        "(module (func (param $x i32)) (func (param $x i64)))")))
