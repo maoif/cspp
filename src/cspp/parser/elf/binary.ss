@@ -149,34 +149,14 @@
       (guard (condition [(parser-error? condition) #f])
         (run-binary-parser (<bounded> (bytevector-length bytes) parser) bytes))))
 
-  (define vector-parser
-    (lambda (parser count)
-      (let ([checked-parser (<map> values parser)]
-            [fallback (<map> list->vector (<rep> parser count))])
-        (define-parser counted-parser
-          ;; Each private entry parser consumes bytes. Let impossible declared counts
-          ;; fail through the original parser before allocating their result vector.
-          (if (> count (- (input-len inp) (input-pos inp)))
-              (parser-call fallback inp state lvl)
-              (let ([result (make-vector count)])
-                (let loop ([index 0] [current inp])
-                  (if (fx= index count)
-                      (values #t result current)
-                      (let-values ([(status value next)
-                                    (parser-call checked-parser current state lvl)])
-                        (if status
-                            (begin (vector-set! result index value)
-                                   (loop (fx1+ index) next))
-                            (values #f #f next))))))))
-        counted-parser)))
-
   (define parse-word-vector
     (lambda (bytes size endianness-name)
       (let ([length (bytevector-length bytes)])
         (and (zero? (modulo length size))
              (parse-bounded-content
               bytes
-              (vector-parser (unsigned-parser size endianness-name) (/ length size)))))))
+              (parser-counted-vector
+               (unsigned-parser size endianness-name) (/ length size)))))))
 
   (define-record-type parsed-symbol
     (fields name-index info other raw-index value size))
@@ -210,8 +190,8 @@
              (let* ([count (/ size entry-size)]
                     [parsed (parse-bounded-content
                              bytes
-                             (vector-parser (symbol-entry-parser class endianness-name)
-                                            count))]
+                             (parser-counted-vector
+                              (symbol-entry-parser class endianness-name) count))]
                     [result (make-vector count)])
                (and parsed (> count 0)
                     (<= 1 (elf-section-header-info header) count)
@@ -288,7 +268,7 @@
              (let ([result
                     (parse-bounded-content
                      bytes
-                     (vector-parser
+                     (parser-counted-vector
                       (relocation-entry-parser bytes class endianness-name machine addends?)
                       (/ size entry-size)))])
                (and result (make-elf-relocation-table result addends?)))))))
@@ -369,8 +349,8 @@
            (<map>
             (lambda (table*)
               (make-elf-hash-table (car table*) (cadr table*)))
-            (<~> (vector-parser <word> (car count*))
-                 (vector-parser <word> (cadr count*)))))))))
+            (<~> (parser-counted-vector <word> (car count*))
+                 (parser-counted-vector <word> (cadr count*)))))))))
 
   (define dynamic-entry-parser
     (lambda (word endianness-name)
@@ -473,7 +453,7 @@
                     (let ([entry*
                            (parse-bounded-content
                             raw
-                            (vector-parser
+                            (parser-counted-vector
                              (dynamic-entry-parser word endianness-name)
                              (/ size (* 2 word))))])
                       (and entry* (make-elf-dynamic-table entry*))))]
@@ -589,7 +569,7 @@
       ;; Callers validate the fixed entry width. One exact bound encloses the whole table.
       (<pos-at> offset
                 (<bounded> (* entry-size count)
-                           (vector-parser entry-parser count)))))
+                           (parser-counted-vector entry-parser count)))))
 
   (define build-programs
     (lambda (bytes header raw-programs)

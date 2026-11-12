@@ -9,7 +9,7 @@
           parse-textual-file parse-binary-file
           ;; TODO remove these
           parser-call input-pos input-pos-set! input-len save-input binary-input-data
-          parser-discard-many
+          parser-discard-many parser-counted-vector
           bindigits->num octdigits->num digits->num hexdigits->num
 
           <fail> <fail-with> <eof> <result> <satisfy>
@@ -1985,6 +1985,34 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                                      (loop (+ i 1) inp2))
                               (values #f #f (ensure-parser-failure inp2 inp1))))))))
               rep-parser)))
+
+
+  #|proc:parser-counted-vector
+  The `parser-counted-vector` procedure takes `element-parser` and exact nonnegative `count`.
+  It returns a binary parser that runs `element-parser` exactly `count` times and returns a new
+  vector of the results, or fails when an element fails. The element parser has behavior
+  `(BinaryInput -> Any)` and may consume zero bytes. Counts larger than the remaining input use
+  counted list repetition to avoid preallocating a vector for a potentially malformed count.
+  This helper is shared internally by format grammars and is excluded from the parser umbrella.
+  |#
+  (define (parser-counted-vector element-parser count)
+    (pcheck ([parser? element-parser] [exact-natural? count])
+            (let ([checked-element (<map> values element-parser)]
+                  [fallback (<map> list->vector (<rep> element-parser count))])
+              (define-parser vector-parser
+                (if (> count (- (input-len inp) (input-pos inp)))
+                    (parser-call fallback inp state lvl)
+                    (let ([result (make-vector count)])
+                      (let loop ([index 0] [current inp])
+                        (if (fx= index count)
+                            (values #t result current)
+                            (let-values ([(status value next)
+                                          (parser-call checked-element current state lvl)])
+                              (if status
+                                  (begin (vector-set! result index value)
+                                         (loop (fx1+ index) next))
+                                  (values #f #f next))))))))
+              vector-parser)))
 
 
   #|proc:<skip>

@@ -967,3 +967,38 @@
      ;; Error cases: TOML's normalized source still comes from its strict number grammar.
      (for-all (lambda (source) (and (parser-error-from (lambda () (parse-toml source))) #t))
               '("v=1_.0" "v=1.0e_2" "v=1e+" "v=.5")))
+
+(mat parser-counted-vectors
+
+     ;; Compare the preallocated and short-input paths against ordinary counted repetition.
+     (let ()
+       (define-parser legacy-failure
+         (let-values ([(status value next) (parser-call <u8> inp state lvl)])
+           (values #f #f "legacy element failure")))
+       (define outcome
+         (lambda (parser bytes)
+           (guard (condition
+                   [(parser-error? condition)
+                    (list (parser-error-kind condition) (parser-error-offset condition)
+                          (parser-error-message condition) (parser-error-found condition)
+                          (parser-error->string condition))])
+             (run-binary-parser (<~> parser <pos>) bytes))))
+       (for-all
+        (lambda (count)
+          (for-all
+           (lambda (bytes)
+             (for-all
+              (lambda (element)
+                (equal? (outcome (parser-counted-vector element count) bytes)
+                        (outcome (<map> list->vector (<rep> element count)) bytes)))
+              (list <u8> <u16le> (<result> 'empty) (<uimm8> 1) legacy-failure)))
+           '(#vu8() #vu8(0) #vu8(1) #vu8(1 2) #vu8(1 2 3) #vu8(1 2 3 4))))
+        '(0 1 2 3 4 7)))
+
+     ;; Error cases: counts are exact naturals and elements must be parsers.
+     (for-all
+      (lambda (arguments)
+        (guard (condition [(and (who-condition? condition)
+                           (eq? 'pcheck (condition-who condition))) #t])
+          (apply parser-counted-vector arguments) #f))
+      (list (list <u8> -1) (list <u8> 1.0) (list <u8> 1/2) (list #f 1))))

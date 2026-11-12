@@ -99,27 +99,6 @@
   |#
   (define-who (<wasm-vector> element-parser)
     (pcheck ([parser? element-parser])
-            ;; Normalize custom failures through the same mapper used by the list path.
-            (let ([checked-element (<map> values element-parser)])
-              (<bind> <wasm-u32>
-                      (lambda (count)
-                        (define-parser vector-parser
-                          ;; Do not preallocate from a count larger than the input. Retain
-                          ;; the list path for this case, including zero-width elements.
-                          (if (> count (- (input-len inp) (input-pos inp)))
-                              (parser-call (<map> list->vector (<rep> element-parser count))
-                                           inp state lvl)
-                              (let ([result (make-vector count)])
-                                (let loop ([index 0] [current inp])
-                                  (if (fx= index count)
-                                      (values #t result current)
-                                      (let-values ([(status value next)
-                                                    (parser-call checked-element
-                                                                 current state lvl)])
-                                        (if status
-                                            (begin
-                                              (vector-set! result index value)
-                                              (loop (fx1+ index) next))
-                                            (values #f #f next))))))))
-                        vector-parser)))))
+            (<bind> <wasm-u32>
+                    (lambda (count) (parser-counted-vector element-parser count)))))
   )
