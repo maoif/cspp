@@ -171,47 +171,6 @@
           [(passive) (and (not memory-index) (not offset))]
           [else #f]))))
 
-  (define-syntax define-checked-record-type
-    (syntax-rules ()
-      [(_ internal-name public-maker public-predicate tag internal-maker internal-predicate
-          relationship-predicate
-          ([field public-accessor internal-accessor field-predicate] ...))
-       (begin
-         (define-record-type (internal-name internal-maker internal-predicate)
-           (fields (immutable field internal-accessor) ...))
-         (define-parser-record-writer internal-name tag
-           ([field internal-accessor] ...))
-         (define public-maker
-           (lambda (field ...)
-             (let ([relationship-fields (vector field ...)])
-               (pcheck ([field-predicate field] ...
-                        [relationship-predicate relationship-fields])
-                       (internal-maker field ...)))))
-         (define public-predicate
-           (lambda (object)
-             (pcheck () (internal-predicate object))))
-         (define public-accessor
-           (lambda (record)
-             (pcheck ([internal-predicate record])
-                     (internal-accessor record)))) ...)]
-      [(_ internal-name public-maker public-predicate tag internal-maker internal-predicate
-          ([field public-accessor internal-accessor field-predicate] ...))
-       (begin
-         (define-record-type (internal-name internal-maker internal-predicate)
-           (fields (immutable field internal-accessor) ...))
-         (define-parser-record-writer internal-name tag
-           ([field internal-accessor] ...))
-         (define public-maker
-           (lambda (field ...)
-             (pcheck ([field-predicate field] ...)
-                     (internal-maker field ...))))
-         (define public-predicate
-           (lambda (object)
-             (pcheck () (internal-predicate object))))
-         (define public-accessor
-           (lambda (record)
-             (pcheck ([internal-predicate record])
-                     (internal-accessor record)))) ...)]))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Canonical modules and custom sections

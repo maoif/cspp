@@ -44,26 +44,6 @@
   (define elf-value? (lambda (value) #t))
   (define elf-optional-integer? (lambda (value) (or (not value) (integer? value))))
 
-  (define-syntax define-checked-record-type
-    (syntax-rules ()
-      [(_ internal-name public-maker public-predicate tag internal-maker internal-predicate
-          ([field public-accessor internal-accessor field-predicate] ...))
-       (begin
-         (define-record-type (internal-name internal-maker internal-predicate)
-           (fields (immutable field internal-accessor) ...))
-         (define-parser-record-writer internal-name tag
-           ([field internal-accessor] ...))
-         (define public-maker
-           (lambda (field ...)
-             (pcheck ([field-predicate field] ...)
-                     (internal-maker field ...))))
-         (define public-predicate
-           (lambda (object)
-             (pcheck () (internal-predicate object))))
-         (define public-accessor
-           (lambda (record)
-             (pcheck ([internal-predicate record])
-                     (internal-accessor record)))) ...)]))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; ELF file identity and headers

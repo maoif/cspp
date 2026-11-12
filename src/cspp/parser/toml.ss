@@ -489,13 +489,6 @@
   (define <final-comment-line>
     (<as> #f (<~> <ws> <comment> <eof>)))
 
-  (define unicode-scalar-value?
-    (lambda (value)
-      (and (integer? value)
-           (exact? value)
-           (<= 0 value #x10ffff)
-           (not (<= #xd800 value #xdfff)))))
-
   (define (<unicode-escape> marker count)
     (~> (<char> marker)
         (<bind> (<rep> <digit16> count)

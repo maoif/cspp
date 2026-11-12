@@ -1,5 +1,7 @@
 (library (cspp parser private)
-  (export define-parser-record-writer parser-decode-bytes parser-read-text-file
+  (export define-parser-record-writer define-checked-record-type
+          unicode-scalar-value?
+          parser-decode-bytes parser-read-text-file
           make-parser-digit-converter parser-decimal-source->flonum)
   (import (cspp chez) (cspp file) (cspp list) (cspp utils))
 
@@ -25,6 +27,68 @@
              (list (quote label) ...)
              (list (accessor record) ...))
             (display "]" port))))]))
+
+  #|macro:define-checked-record-type
+  Defines an immutable record named `internal-name`, its internal constructor `internal-maker`
+  and predicate `internal-predicate`, a labeled writer using `tag`, and checked public bindings.
+  `public-maker` checks each `field` with its `field-predicate` (`Any -> Boolean`).
+  Optional `relationship-predicate` (`Vector -> Boolean`) checks the fields in declaration order
+  after their individual checks. `public-predicate` recognizes the record; each `public-accessor`
+  checks the record before calling its `internal-accessor`. Supplied field contents are retained.
+  |#
+  (define-syntax define-checked-record-type
+    (syntax-rules ()
+      [(_ internal-name public-maker public-predicate tag internal-maker internal-predicate
+          relationship-predicate
+          ([field public-accessor internal-accessor field-predicate] ...))
+       (begin
+         (define-record-type (internal-name internal-maker internal-predicate)
+           (fields (immutable field internal-accessor) ...))
+         (define-parser-record-writer internal-name tag
+           ([field internal-accessor] ...))
+         (define public-maker
+           (lambda (field ...)
+             (let ([relationship-fields (vector field ...)])
+               (pcheck ([field-predicate field] ...
+                        [relationship-predicate relationship-fields])
+                       (internal-maker field ...)))))
+         (define public-predicate
+           (lambda (object)
+             (pcheck () (internal-predicate object))))
+         (define public-accessor
+           (lambda (record)
+             (pcheck ([internal-predicate record])
+                     (internal-accessor record)))) ...)]
+      [(_ internal-name public-maker public-predicate tag internal-maker internal-predicate
+          ([field public-accessor internal-accessor field-predicate] ...))
+       (begin
+         (define-record-type (internal-name internal-maker internal-predicate)
+           (fields (immutable field internal-accessor) ...))
+         (define-parser-record-writer internal-name tag
+           ([field internal-accessor] ...))
+         (define public-maker
+           (lambda (field ...)
+             (pcheck ([field-predicate field] ...)
+                     (internal-maker field ...))))
+         (define public-predicate
+           (lambda (object)
+             (pcheck () (internal-predicate object))))
+         (define public-accessor
+           (lambda (record)
+             (pcheck ([internal-predicate record])
+                     (internal-accessor record)))) ...)]))
+
+  #|proc:unicode-scalar-value?
+  Returns whether arbitrary object `value` is an exact integer Unicode scalar value: from zero
+  through U+10FFFF, excluding the surrogate range U+D800 through U+DFFF.
+  |#
+  (define unicode-scalar-value?
+    (lambda (value)
+      (pcheck ()
+              (and (integer? value)
+                   (exact? value)
+                   (<= 0 value #x10ffff)
+                   (not (<= #xd800 value #xdfff))))))
 
   #|proc:make-parser-digit-converter
   The `make-parser-digit-converter` procedure takes symbol `who` for diagnostics and exact

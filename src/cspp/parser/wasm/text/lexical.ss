@@ -129,13 +129,6 @@
 ;;;; Byte strings and names
 ;;;;===----------------------------------------------------------------------===
 
-  (define unicode-scalar-value?
-    (lambda (value)
-      (and (integer? value)
-           (exact? value)
-           (<= 0 value #x10ffff)
-           (not (<= #xd800 value #xdfff)))))
-
   (define byte-fragments->bytevector
     (lambda (fragment*)
       (let* ([count (fold-left (lambda (count fragment)

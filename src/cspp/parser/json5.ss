@@ -117,13 +117,6 @@
           (char=? character (integer->char #x200c))
           (char=? character (integer->char #x200d)))))
 
-  (define unicode-scalar-value?
-    (lambda (value)
-      (and (integer? value)
-           (exact? value)
-           (<= 0 value #x10ffff)
-           (not (<= #xd800 value #xdfff)))))
-
   (define <hex-code-unit>
     (<map> hexdigits->num (<rep> <digit16> 4)))
 
