@@ -439,16 +439,18 @@
                      "Section header string table index: 65535 (65280)\n"))
 
      ;; Error controls: only the proper sentinel and one complete decimal count are allowed.
-     (for-all
-      (lambda (count)
-        (not (readelf-header-matches?
-              (parse-elf (extended-count-elf32be))
-              (string-append "Class: ELF32\nData: 2's complement, big endian\n"
-                             "Number of program headers: 65535 (65535)\n"
-                             "Number of section headers: " count "\n"
-                             "Section header string table index: 65535 (65280)\n"))))
-      '("1 (65281)" "0 (652810)" "0 (065281)" "0 (65281)x" "0 (65281) (65281)"
-        "0(65281)" "0 (65281" "0 (65281.0)" "0 (65281)\nNumber of section headers: 0 (65281)")))
+     (let ([file (parse-elf (extended-count-elf32be))])
+       (for-all
+        (lambda (count)
+          (not (readelf-header-matches?
+                file
+                (string-append "Class: ELF32\nData: 2's complement, big endian\n"
+                               "Number of program headers: 65535 (65535)\n"
+                               "Number of section headers: " count "\n"
+                               "Section header string table index: 65535 (65280)\n"))))
+        '("1 (65281)" "0 (652810)" "0 (065281)" "0 (65281)x" "0 (65281) (65281)"
+          "0(65281)" "0 (65281" "0 (65281.0)"
+          "0 (65281)\nNumber of section headers: 0 (65281)"))))
 
 (mat parse-elf-file
 
