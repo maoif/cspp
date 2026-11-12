@@ -63,3 +63,12 @@
 
      (equal? '(#() #(a) #(#(b) c))
              (parse-scheme "#( ) #(a) #(#(b) c)")))
+
+(mat parser-scheme-malformed-vector-cost
+
+     ;; Error case: nested vectors without closing delimiters must not retry each subtree.
+     (let* ([source (string-append (apply string-append (make-list 10 "#(")) "a")]
+            [before (statistics)]
+            [failure (parser-error-from (lambda () (parse-scheme-datum source)))]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and failure (< allocated 1000000))))
