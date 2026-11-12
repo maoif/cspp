@@ -745,21 +745,6 @@
     (lambda (index)
       (vector (make-wasm-instruction 'ref.func (vector index) '#() '#()))))
 
-  (define concatenate-bytevectors
-    (lambda (bytevector*)
-      (let ([length (let loop ([bytevector* bytevector*] [length 0])
-                      (if (null? bytevector*)
-                          length
-                          (loop (cdr bytevector*)
-                                (+ length (bytevector-length (car bytevector*))))))])
-        (let ([result (make-bytevector length)])
-          (let loop ([bytevector* bytevector*] [offset 0])
-            (if (null? bytevector*)
-                result
-                (let ([bytes (car bytevector*)])
-                  (bytevector-copy! bytes 0 result offset (bytevector-length bytes))
-                  (loop (cdr bytevector*) (+ offset (bytevector-length bytes))))))))))
-
   (define normalize-element
     (lambda (state syntax table-index override-mode)
       (let* ([mode (or override-mode (wat-element-segment-syntax-mode syntax))]

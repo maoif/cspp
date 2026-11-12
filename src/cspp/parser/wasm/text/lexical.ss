@@ -6,6 +6,7 @@
           (cspp parser combinator)
           (cspp parser private)
           (cspp parser wasm types)
+          (cspp parser wasm private)
           (cspp string)
           (cspp utils))
 
@@ -129,20 +130,6 @@
 ;;;; Byte strings and names
 ;;;;===----------------------------------------------------------------------===
 
-  (define byte-fragments->bytevector
-    (lambda (fragment*)
-      (let* ([count (fold-left (lambda (count fragment)
-                                (+ count (bytevector-length fragment)))
-                              0 fragment*)]
-             [bytes (make-bytevector count)])
-        (let loop ([offset 0] [fragment* fragment*])
-          (unless (null? fragment*)
-            (let* ([fragment (car fragment*)]
-                   [length (bytevector-length fragment)])
-              (bytevector-copy! fragment 0 bytes offset length)
-              (loop (fx+ offset length) (cdr fragment*)))))
-        bytes)))
-
   (define byte-fragments-length
     (lambda (fragment*)
       (fold-left (lambda (count fragment)
@@ -227,7 +214,7 @@
                  (lambda (fragments)
                    (guard (condition
                            [(i/o-decoding-error? condition) (<fail-with> "invalid UTF-8 annotation name")])
-                     (<result> (strict-utf8->string (byte-fragments->bytevector fragments))))))
+                     (<result> (strict-utf8->string (concatenate-bytevectors fragments))))))
          (<as-string> (<many> <wat-identifier-character>))))
 
   (define <wat-byte-string-raw>
@@ -259,7 +246,7 @@
                     (<char> wat-double-quote))
               (lambda (fragment*)
                 (if (< (byte-fragments-length fragment*) (ash 1 32))
-                    (<result> (byte-fragments->bytevector fragment*))
+                    (<result> (concatenate-bytevectors fragment*))
                     (<fail-with> "WebAssembly string is too long"))))))
 
   (define strict-utf8->string

@@ -1,6 +1,7 @@
 (library (cspp parser wasm binary)
   (export <wasm-binary-module>)
   (import (cspp chez)
+          (only (cspp vector) vexists)
           (cspp parser combinator)
           (cspp parser wasm types)
           (cspp parser wasm validate)
@@ -259,15 +260,9 @@
                               (vector-ref code 1)))
                 (loop (fx1+ index))))))))
 
-  (define vector-any?
-    (lambda (predicate values)
-      (let loop ([index 0])
-        (and (fx< index (vector-length values))
-             (or (predicate (vector-ref values index)) (loop (fx1+ index)))))))
-
   (define expression-uses-data-index?
     (lambda (instructions)
-      (vector-any?
+      (vexists
        (lambda (instruction)
          (let ([mnemonic (wasm-instruction-mnemonic instruction)])
            (or (memq mnemonic '(memory.init data.drop array.new-data array.init-data))
@@ -279,7 +274,7 @@
 
   (define code-uses-data-index?
     (lambda (code)
-      (vector-any? (lambda (body) (expression-uses-data-index? (vector-ref body 1))) code)))
+      (vexists (lambda (body) (expression-uses-data-index? (vector-ref body 1))) code)))
 
   (define assemble-module
     (lambda (section*)

@@ -49,17 +49,14 @@
     wasm-catch-label-index
     make-wasm-float wasm-float? wasm-float-width wasm-float-bits)
   (import (cspp chez)
+          (only (cspp vector) vfor-all)
           (cspp parser private)
           (cspp utils))
 
   (define vector-of?
     (lambda (predicate)
       (lambda (value)
-        (and (vector? value)
-             (let loop ([index 0])
-               (or (fx= index (vector-length value))
-                   (and (predicate (vector-ref value index))
-                        (loop (fx1+ index)))))))))
+        (and (vector? value) (vfor-all predicate value)))))
 
   (define optional-natural? (lambda (value) (or (not value) (natural? value))))
   (define instruction-vector?

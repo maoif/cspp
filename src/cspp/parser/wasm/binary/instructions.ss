@@ -147,31 +147,9 @@
                                      (caddr values))))
         (<~> <wasm-u32> <wasm-heap-type> <wasm-heap-type>)))))
 
-  (define instruction-lane-count
-    (lambda (mnemonic)
-      (cond [(memq mnemonic
-                   '(i8x16.extract-lane-s i8x16.extract-lane-u i8x16.replace-lane
-                     v128.load8-lane v128.store8-lane))
-             16]
-            [(memq mnemonic
-                   '(i16x8.extract-lane-s i16x8.extract-lane-u i16x8.replace-lane
-                     v128.load16-lane v128.store16-lane))
-             8]
-            [(memq mnemonic
-                   '(i32x4.extract-lane i32x4.replace-lane
-                     f32x4.extract-lane f32x4.replace-lane
-                     v128.load32-lane v128.store32-lane))
-             4]
-            [(memq mnemonic
-                   '(i64x2.extract-lane i64x2.replace-lane
-                     f64x2.extract-lane f64x2.replace-lane
-                     v128.load64-lane v128.store64-lane))
-             2]
-            [else #f])))
-
   (define lane-index-parser
     (lambda (descriptor)
-      (let ([lane-count (instruction-lane-count (wasm-opcode-mnemonic descriptor))])
+      (let ([lane-count (wasm-instruction-lane-count (wasm-opcode-mnemonic descriptor))])
         (if lane-count
             (<bind>
              <u8>

@@ -1,7 +1,8 @@
 (library (cspp parser wasm opcodes)
   (export wasm-opcode-descriptor? wasm-opcode-mnemonic wasm-opcode-prefix
           wasm-opcode-code wasm-opcode-immediate-shape wasm-opcode-structured-kind
-          wasm-core-3-opcodes wasm-opcode-by-binary wasm-opcode-by-mnemonic)
+          wasm-core-3-opcodes wasm-opcode-by-binary wasm-opcode-by-mnemonic
+          wasm-instruction-lane-count)
   (import (cspp chez)
           (cspp utils))
 
@@ -68,6 +69,33 @@
     (lambda (descriptor)
       (pcheck ([$wasm-opcode-descriptor? descriptor])
               ($wasm-opcode-structured-kind descriptor))))
+
+  #|proc:wasm-instruction-lane-count
+  Returns the SIMD lane count for instruction mnemonic symbol `mnemonic`, or `#f` if it has no
+  lane immediate. Binary and text instruction readers use this shared classification.
+  |#
+  (define wasm-instruction-lane-count
+    (lambda (mnemonic)
+      (pcheck ([symbol? mnemonic])
+              (cond [(memq mnemonic
+                           '(i8x16.extract-lane-s i8x16.extract-lane-u i8x16.replace-lane
+                             v128.load8-lane v128.store8-lane))
+                     16]
+                    [(memq mnemonic
+                           '(i16x8.extract-lane-s i16x8.extract-lane-u i16x8.replace-lane
+                             v128.load16-lane v128.store16-lane))
+                     8]
+                    [(memq mnemonic
+                           '(i32x4.extract-lane i32x4.replace-lane
+                             f32x4.extract-lane f32x4.replace-lane
+                             v128.load32-lane v128.store32-lane))
+                     4]
+                    [(memq mnemonic
+                           '(i64x2.extract-lane i64x2.replace-lane
+                             f64x2.extract-lane f64x2.replace-lane
+                             v128.load64-lane v128.store64-lane))
+                     2]
+                    [else #f]))))
 
   ;; The final Core 3.0 instruction index has 496 distinct WAT mnemonics.
   ;; `select` uses its typed encoding here because it represents the general WAT syntax.
