@@ -244,7 +244,8 @@
   (define <wat-annotation-id>
     (</> (<bind> <wat-annotation-string>
                  (lambda (fragments)
-                   (guard (condition [else (<fail-with> "invalid UTF-8 annotation name")])
+                   (guard (condition
+                           [(i/o-decoding-error? condition) (<fail-with> "invalid UTF-8 annotation name")])
                      (<result> (strict-utf8->string (byte-fragments->bytevector fragments))))))
          (<as-string> (<many> <wat-identifier-character>))))
 
@@ -286,7 +287,8 @@
   (define <wat-name-raw>
     (<bind> <wat-byte-string-raw>
             (lambda (bytes)
-              (guard (condition [else (<fail-with> "invalid UTF-8 WebAssembly name")])
+              (guard (condition
+                      [(i/o-decoding-error? condition) (<fail-with> "invalid UTF-8 WebAssembly name")])
                 (<result> (strict-utf8->string bytes))))))
 
   #|proc:<wat-string>

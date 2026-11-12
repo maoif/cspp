@@ -542,6 +542,14 @@
                     (elf-section-content (vector-ref (elf-file-sections file) 4)))])
        (string=? "\xff;NU" (elf-note-name (vector-ref notes 0))))
 
+     ;; Error case: a nonempty note name must end in NUL, reported as malformed content.
+     (parser-error?
+      (parser-error-from
+       (lambda ()
+         (let ([bytes (rich-elf64le)])
+           (bytevector-u8-set! bytes 287 65)
+           (parse-elf bytes)))))
+
      ;; error: the section-header table must fit in the input.
      (parser-error? (parser-error-from (lambda () (parse-elf (rich-elf-with-u64 40 800)))))
 

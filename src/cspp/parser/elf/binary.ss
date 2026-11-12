@@ -99,7 +99,7 @@
   (define decode-elf-name
     (lambda (bytes)
       (guard (condition
-              [else
+              [(i/o-decoding-error? condition)
                (let* ([length (bytevector-length bytes)] [text (make-string length)])
                  (do ([i 0 (fx1+ i)]) ((fx= i length) text)
                    (string-set! text i (integer->char (bytevector-u8-ref bytes i)))))])
@@ -146,7 +146,7 @@
 
   (define parse-bounded-content
     (lambda (bytes parser)
-      (guard (condition [else #f])
+      (guard (condition [(parser-error? condition) #f])
         (run-binary-parser (<bounded> (bytevector-length bytes) parser) bytes))))
 
   (define vector-parser
@@ -304,22 +304,23 @@
                   [type (list-ref header* 2)]
                   [name-padding (modulo (- (+ 12 name-size)) alignment)]
                   [descriptor-padding (modulo (- descriptor-size) alignment)])
-             (<map>
+             (<bind>
+              (<~> (<u8vec> name-size)
+                   (<skip> <u8> name-padding)
+                   (<u8vec> descriptor-size)
+                   (<skip> <u8> descriptor-padding))
               (lambda (field*)
                 (let* ([raw-name (list-ref field* 0)]
                        [terminated? (and (> name-size 0)
                                          (zero? (bytevector-u8-ref raw-name
                                                                    (- name-size 1))))]
                        [name-length (if terminated? (- name-size 1) name-size)])
-                  (unless (or (zero? name-size) terminated?)
-                    (errorf 'note-parser "unterminated ELF note name"))
-                  (make-elf-note
-                   (decode-elf-name (copy-range raw-name 0 name-length)) type
-                   (list-ref field* 2))))
-              (<~> (<u8vec> name-size)
-                   (<skip> <u8> name-padding)
-                   (<u8vec> descriptor-size)
-                   (<skip> <u8> descriptor-padding)))))))))
+                  (if (or (zero? name-size) terminated?)
+                      (<result>
+                       (make-elf-note
+                        (decode-elf-name (copy-range raw-name 0 name-length)) type
+                        (list-ref field* 2)))
+                      (<fail-with> "unterminated ELF note name")))))))))))
 
   (define decode-notes
     (lambda (bytes endianness-name alignment)

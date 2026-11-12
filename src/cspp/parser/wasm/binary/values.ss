@@ -89,7 +89,8 @@
   (define <wasm-name>
     (<bind> <wasm-byte-vector>
             (lambda (bytes)
-              (guard (condition [else (<fail-with> "invalid UTF-8 WebAssembly name")])
+              (guard (condition
+                      [(i/o-decoding-error? condition) (<fail-with> "invalid UTF-8 WebAssembly name")])
                 (<result> (strict-utf8->string bytes))))))
 
   #|proc:<wasm-vector>
