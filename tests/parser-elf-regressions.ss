@@ -360,7 +360,7 @@
                (or (= index (vector-length headers))
                    (and
                     (let ([type (elf-section-header-type (vector-ref headers index))])
-                      (or (not (memv type '(4 5 6 9 14 15 16 17 19)))
+                      (or (not (memv type '(4 5 6 9 17 19)))
                           (for-all
                            (lambda (size)
                              (let ([bytes (bytevector-copy original)]
@@ -373,6 +373,88 @@
                            '(0 1))))
                     (loop (+ index 1)))))))
          '("fixed-tables-" "fixed-relr-")))
+      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
+      (list (endianness little) (endianness big) (endianness little) (endianness big))))
+
+(define elf-review-address-array
+  (lambda (tag wide? endian type entry-size payload-size)
+    (let* ([original (read-u8vec (string-append "data/elf-review/fixed-relr-" tag ".elf"))]
+           [at (+ (if wide? 64 52) (if wide? 64 40))]
+           [offset (+ at (if wide? 64 40))]
+           [bytes (make-bytevector (+ offset payload-size) 0)]
+           [word (if wide? 8 4)]
+           [set-word! (if wide? bytevector-u64-set! bytevector-u32-set!)])
+      (bytevector-copy! original 0 bytes 0 offset)
+      (bytevector-u32-set! bytes (+ at 4) type endian)
+      (set-word! bytes (+ at (if wide? 32 20)) payload-size endian)
+      (set-word! bytes (+ at (if wide? 56 36)) entry-size endian)
+      (when (>= payload-size word)
+        (set-word! bytes offset #x1234abcd endian))
+      (when (>= payload-size (* word 2))
+        (set-word! bytes (+ offset word) (if wide? #x123456789abcdef0 #x89abcdef) endian))
+      bytes)))
+
+(mat parser-elf-address-array-entry-sizes
+
+     ;; lld leaves sh_entsize zero; addresses still use the ELF class width and byte order.
+     (for-all
+      (lambda (tag wide? endian)
+        (let ([word (if wide? 8 4)])
+          (for-all
+           (lambda (type)
+             (for-all
+              (lambda (entry-size)
+                (for-all
+                 (lambda (count expected)
+                   (let* ([bytes (elf-review-address-array
+                                  tag wide? endian type entry-size (* count word))]
+                          [section (vector-ref (elf-file-sections (parse-elf bytes)) 1)]
+                          [header (elf-section-header section)])
+                     (and (= type (elf-section-header-type header))
+                          (= entry-size (elf-section-header-entry-size header))
+                          (equal? expected (elf-word-table-entries (elf-section-content section))))))
+                 '(0 1 2)
+                 (list '#() '#(#x1234abcd)
+                       (if wide? '#(#x1234abcd #x123456789abcdef0)
+                           '#(#x1234abcd #x89abcdef)))))
+              (list 0 word)))
+           '(14 15 16))))
+      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
+      (list (endianness little) (endianness big) (endianness little) (endianness big)))
+
+     ;; Error cases: nonzero entry sizes other than the address width remain invalid.
+     (for-all
+      (lambda (tag wide? endian)
+        (let ([word (if wide? 8 4)])
+          (for-all
+           (lambda (type)
+             (for-all
+              (lambda (entry-size)
+                (parser-error?
+                 (parser-error-from
+                  (lambda ()
+                    (parse-elf (elf-review-address-array
+                                tag wide? endian type entry-size word))))))
+              (list 1 (if wide? 4 8))))
+           '(14 15 16))))
+      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
+      (list (endianness little) (endianness big) (endianness little) (endianness big)))
+
+     ;; Error cases: both entry-size spellings must reject partial address entries.
+     (for-all
+      (lambda (tag wide? endian)
+        (let ([word (if wide? 8 4)])
+          (for-all
+           (lambda (type)
+             (for-all
+              (lambda (entry-size)
+                (parser-error?
+                 (parser-error-from
+                  (lambda ()
+                    (parse-elf (elf-review-address-array
+                                tag wide? endian type entry-size (+ word 1)))))))
+              (list 0 word)))
+           '(14 15 16))))
       '("32le" "32be" "64le" "64be") '(#f #f #t #t)
       (list (endianness little) (endianness big) (endianness little) (endianness big))))
 

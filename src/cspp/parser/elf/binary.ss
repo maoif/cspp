@@ -440,9 +440,12 @@
                        (and symbol-count (= size (* symbol-count 4))))
                      (let ([entry* (parse-word-vector raw 4 endianness-name)])
                        (and entry* (make-elf-word-table entry*))))]
-          [(14 15 16) (and (= word (elf-section-header-entry-size header))
-                           (let ([entry* (parse-word-vector raw word endianness-name)])
-                             (and entry* (make-elf-word-table entry*))))]
+          [(14 15 16)
+           ;; lld leaves array entry size zero; addresses still have the class width.
+           (and (or (zero? (elf-section-header-entry-size header))
+                    (= word (elf-section-header-entry-size header)))
+                (let ([entry* (parse-word-vector raw word endianness-name)])
+                  (and entry* (make-elf-word-table entry*))))]
           [(6) (and (linked-section-type? all-headers link '(3))
                     (zero? (modulo size (* 2 word)))
                     (= (* 2 word) (elf-section-header-entry-size header))
