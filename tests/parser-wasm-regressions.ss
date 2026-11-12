@@ -1150,3 +1150,40 @@
      (wasm-module?
       (parse-wasm-binary-module
        #vu8(0 97 115 109 1 0 0 0 0 1 0 1 1 0 0 1 0 0 1 0 2 1 0))))
+
+(mat wasm-review-delimited-expression-diagnostics
+
+     ;; Error cases: missing immediates in offsets, items, and branches retain the inner error.
+     (for-all
+      (lambda (test)
+        (let ([failure
+               (parser-error-from (lambda () (parse-wasm-text-module (car test))))])
+          (and failure (= (cadr test) (parser-error-offset failure))
+               (string=? "not a digit" (parser-error-message failure)))))
+      '(("(module (memory 1) (data (offset i32.const) \"x\"))" 42)
+        ("(module (memory 1) (data (offset i32.const 0 i32.const) \"x\"))" 54)
+        ("(module (func (if (then i32.const))))" 33)
+        ("(module (func (if (then (i32.const)))))" 34)
+        ("(module (func (if (then) (else i32.const))))" 40)
+        ("(module (func (if (then) (else (i32.const)))))" 41)
+        ("(module (memory 1) (data (memory 0) (offset i32.const) \"x\"))" 53)
+        ("(module (memory 1) (data (i32.const) \"x\"))" 35)
+        ("(module (table 1 funcref) (elem funcref (item i32.const)))" 55)
+        ("(module (table 1 funcref) (elem (offset i32.const) func))" 49)
+        ("(module (table 1 funcref) (elem funcref (item ref.null func) (item i32.const)))" 76)
+        ("(module (table funcref (elem (item ref.null func) (item i32.const))))" 65)
+        ("(module (table funcref (elem funcref (item i32.const))))" 52)
+        ("(module (table 1 funcref) (elem (table 0) (offset i32.const) func))" 59)
+        ("(module (table 1 funcref) (elem (i32.const) func))" 42)))
+
+     ;; Standalone expressions still accept a successful prefix before an unrelated token.
+     (= 1 (vector-length (run-textual-parser <wat-expression> "nop ???")))
+
+     (wasm-module?
+      (parse-wasm-text-module "(module (func (if (then) (else))))")))
+
+(mat wasm-review-parenthesized-passive-element-type
+
+     (wasm-module?
+      (parse-wasm-text-module
+       "(module (elem (ref null func) (item ref.null func)))")))

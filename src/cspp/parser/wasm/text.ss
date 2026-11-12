@@ -143,12 +143,12 @@
   (define memory-use
     (wat-parenthesized "memory" <wat-index-reference>))
 
-  (define offset-clause (wat-parenthesized "offset" <wat-expression>))
+  (define offset-clause (wat-parenthesized "offset" <wat-delimited-expression>))
 
   (define direct-offset <wat-generic-parenthesized>)
 
   (define element-initializer
-    (</> (wat-parenthesized "item" <wat-expression>) <wat-generic-parenthesized>))
+    (</> (wat-parenthesized "item" <wat-delimited-expression>) <wat-generic-parenthesized>))
 
   (define segment-offset (</> offset-clause direct-offset))
 
@@ -159,7 +159,7 @@
     (<map> (lambda (value)
              (immutable-vector
               (car value) 'expressions (list->immutable-vector (cadr value))))
-           (<~> <wat-reference-type> (<many> element-initializer))))
+           (<~> <wat-reference-type> (<many-until> element-initializer wat-close))))
 
   (define indexed-element-items
     (<map> (lambda (value)
@@ -167,7 +167,7 @@
               default-function-reference-type 'indexes
               (list->immutable-vector (cadr value))))
            (<~> (<wat-keyword> "func")
-                (<many> <wat-index-reference>))))
+                (<many-until> <wat-index-reference> wat-close))))
 
   (define element-items (</> typed-element-items indexed-element-items))
 
@@ -176,7 +176,7 @@
          (<map> (lambda (indexes)
                   (immutable-vector default-function-reference-type 'indexes
                                          (list->immutable-vector indexes)))
-                (<many> <wat-index-reference>))))
+                (<many-until> <wat-index-reference> wat-close))))
 
   (define function-field
     (<bind>
@@ -210,19 +210,18 @@
                     (<as> 'i32 (<wat-keyword> "i32")))))
 
   (define table-expression-items
-    (<map> (lambda (item*)
+    (<map> (lambda (value)
              (immutable-vector 'expressions
-                                    (list->immutable-vector item*)))
-           (<some> element-initializer)))
+                               (list->immutable-vector (cons (car value) (cadr value)))))
+           (<~> element-initializer (<many-until> element-initializer wat-close))))
 
   (define table-indexed-items
     (<map> (lambda (item*)
              (immutable-vector 'indexes (list->immutable-vector item*)))
-           (<some> <wat-index-reference>)))
+           (<many-until> <wat-index-reference> wat-close)))
 
   (define table-element-items
-    (</> table-expression-items table-indexed-items
-         (<result> (immutable-vector 'indexes '#()))))
+    (</> table-expression-items table-indexed-items))
 
   (define table-abbreviation
     (<map> (lambda (value)
@@ -267,7 +266,7 @@
                            import export* #f)))
                     (<~0> (if (or import (wat-inline-abbreviation? type-or-abbreviation))
                               (<result> '#())
-                              <wat-expression>)
+                              <wat-delimited-expression>)
                           wat-close))))))))
 
   (define memory-abbreviation
@@ -381,8 +380,13 @@
   (define passive-element-prefix
     (<result> (immutable-vector 'passive #f #f)))
 
+  ;; A parenthesized passive element type starts with `ref`; other openers are active syntax.
+  (define active-element-start
+    (<not-followed-by> wat-open (<wat-keyword> "ref")))
+
   (define element-prefix
-    (</> declarative-element-prefix active-element-prefix passive-element-prefix))
+    (</> declarative-element-prefix active-element-prefix
+         (<not-followed-by> passive-element-prefix active-element-start)))
 
   (define element-field
     (<bind>
@@ -413,7 +417,9 @@
   (define passive-data-prefix
     (<result> (immutable-vector 'passive #f #f)))
 
-  (define data-prefix (</> active-data-prefix passive-data-prefix))
+  ;; Only an active data prefix can start with a parenthesis. Preserve its inner failures.
+  (define data-prefix
+    (</> active-data-prefix (<not-followed-by> passive-data-prefix wat-open)))
 
   (define data-field
     (<map>

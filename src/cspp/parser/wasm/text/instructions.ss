@@ -1,7 +1,8 @@
 (library (cspp parser wasm text instructions)
   (export make-wat-catch-syntax wat-catch-syntax? wat-catch-syntax-pos
           wat-catch-syntax-kind wat-catch-syntax-tag wat-catch-syntax-label
-          <wat-instruction> <wat-folded-instruction> <wat-expression>)
+          <wat-instruction> <wat-folded-instruction> <wat-expression>
+          <wat-delimited-expression>)
   (import (cspp chez)
           (only (cspp list) make-list-builder)
           (cspp parser combinator)
@@ -561,7 +562,9 @@
 
   (define folded-branch
     (lambda (keyword)
-      (wat-parenthesized keyword (<map> instruction-vector (<many> <wat-sequence-node>)))))
+      (wat-parenthesized keyword
+                         (<map> instruction-vector
+                                (<many-until> <wat-sequence-node> wat-close)))))
 
   (define folded-if-after
     (lambda (pos descriptor)
@@ -575,7 +578,8 @@
        (<~> (<optional> <wat-identifier>) <wat-block-type>
             (<many> <wat-folded-node>)
             (folded-branch "then")
-            (<optional> (folded-branch "else"))))))
+            (</> (folded-branch "else")
+                 (<followed-by> (<result> '()) wat-close))))))
 
   (define folded-after
     (lambda (pos descriptor)
@@ -621,8 +625,18 @@
   #|proc:<wat-expression>
   The `<wat-expression>` parser reads flat and folded Core 3.0 WAT instructions and returns one
   immutable vector in execution order. Each syntax node retains its direct nested operands.
+  A failed next instruction ends a successful prefix without consuming that instruction.
   |#
   (define <wat-expression>
     (<map> instruction-vector (<many> <wat-sequence-node>)))
+
+  #|proc:<wat-delimited-expression>
+  The `<wat-delimited-expression>` parser reads flat and folded Core 3.0 WAT instructions up to
+  an unconsumed closing parenthesis and returns an immutable vector in execution order.
+  Instruction failures before the closing delimiter propagate. Each syntax node retains its
+  direct nested operands. This parser is shared internally by delimited module productions.
+  |#
+  (define <wat-delimited-expression>
+    (<map> instruction-vector (<many-until> <wat-sequence-node> wat-close)))
 
   )
