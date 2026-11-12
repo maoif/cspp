@@ -682,7 +682,7 @@
             (loop (fx1+ index)))))))
 
   (define function-locals
-    (lambda (state type-use local*)
+    (lambda (state local*)
       (vector-map* (lambda (binding)
                      (normalize-value-type state (wat-binding-type binding)))
                    local*)))
@@ -703,7 +703,7 @@
         (add-binding-ids! locals parameter* 0 'local)
         (add-binding-ids! locals local* parameter-count 'local)
         (make-wasm-function
-         type-index (function-locals state type-use local*)
+         type-index (function-locals state local*)
          (normalize-expression state (vector-ref data 2) locals)))))
 
   (define normalize-table-type

@@ -184,8 +184,7 @@
     (lambda (bytes class endianness-name header string-bytes xindices section-count)
       (let* ([size (bytevector-length bytes)]
              [standard (if (eq? class 'elf32) 16 24)]
-             [entry-size (elf-section-header-entry-size header)]
-             [entry-size (if (zero? entry-size) standard entry-size)])
+             [entry-size (elf-section-header-entry-size header)])
         (and string-bytes (= entry-size standard) (zero? (modulo size entry-size))
              (let* ([count (/ size entry-size)]
                     [parsed (parse-bounded-content
