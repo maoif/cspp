@@ -59,7 +59,8 @@
               (case type
                 [(0) 'null] [(1) 'progbits] [(2) 'symbol-table] [(3) 'string-table]
                 [(4) 'relocation-with-addends] [(5) 'hash] [(6) 'dynamic] [(7) 'note]
-                [(8) 'no-bits] [(9) 'relocation] [(11) 'dynamic-symbol-table]
+                [(8) 'no-bits] [(9) 'relocation] [(10) 'shared-library]
+                [(11) 'dynamic-symbol-table]
                 [(14) 'init-array] [(15) 'fini-array] [(16) 'preinit-array]
                 [(17) 'group] [(18) 'symbol-table-section-indices] [(19) 'relr]
                 [else 'unknown]))))

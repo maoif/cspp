@@ -729,6 +729,10 @@
 
 (mat parser-lookup-exact-codes
 
+     (for-all
+      (lambda (code name) (eq? name (elf-section-type-name code)))
+      '(9 10 11) '(relocation shared-library dynamic-symbol-table))
+
      ;; Error cases: admitted numeric codes must be exact, including unknown codes and zero.
      (for-all
       (lambda (lookup)
