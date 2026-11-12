@@ -163,9 +163,19 @@
         (</> (<list> <left-paren> <right-paren>)
              (<list> <left-bracket> <right-bracket>)))
       (define <s-vector>
-        (</> (<as> '#() (<~> <left-vector-delim> (<many> <whitespace>) <right-paren>))
-             (<map> list->vector
-                    (<~n> 1 <left-vector-delim> (<many> <s-datum>) <right-paren>))))
+        (let* ([shared (<map> list->vector
+                             (<~n> 1 <left-vector-delim> (<many> <s-datum>) <right-paren>))]
+               ;; Keep the original alternatives on failure, including their diagnostic causes.
+               [original (</> (<as> '#() (<~> <left-vector-delim>
+                                              (<many> <whitespace>) <right-paren>))
+                              shared)])
+          (define-parser vector-parser
+            (let-values ([(status value next-input)
+                          (parser-call shared (save-input inp) state lvl)])
+              (if status
+                  (values #t value next-input)
+                  (parser-call original inp state lvl))))
+          vector-parser))
 
       (define <s-lexeme-datum> (</> <s-bool> <s-char> <s-string> <s-num> <s-symbol>))
       (define <s-compound-datum> (</> <s-abbrev> <s-list> <s-vector>))

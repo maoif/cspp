@@ -53,3 +53,13 @@
      (for-all (lambda (source)
                 (and (parser-error-from (lambda () (parse-scheme-datum source))) #t))
               '("\"abc\\q\"" "\"abc")))
+
+(mat parser-scheme-vector-prefix-cost
+
+     (let* ([source (string-append "#(" (make-string 64000 #\space) "a)")]
+            [before (statistics)] [value (parse-scheme-datum source)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (equal? '#(a) value) (< allocated 6000000)))
+
+     (equal? '(#() #(a) #(#(b) c))
+             (parse-scheme "#( ) #(a) #(#(b) c)")))
