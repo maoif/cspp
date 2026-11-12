@@ -684,6 +684,31 @@
 
 (mat parser-live-character-membership
 
+     ;; Error cases: diagnostics must describe the same live set used by the predicate.
+     (let* ([characters (string #\a)]
+            [yes (<one-of> characters)] [no (<none-of> characters)])
+       (string-set! characters 0 #\b)
+       (for-all
+        (lambda (parser text message)
+          (let ([err (parser-error-from
+                      (lambda () (run-textual-parser (<~> <item> parser) text)))])
+            (and (parser-error? err)
+                 (eq? 'predicate (parser-error-kind err))
+                 (string=? message (parser-error-message err))
+                 (= 1 (parser-error-offset err))
+                 (= 1 (parser-error-column err))
+                 (char=? (string-ref text 1) (parser-error-found err)))))
+        (list yes no) '("xa" "xb")
+        '("not one of \"b\"" "should not be one of \"b\"")))
+
+     ;; Error case: an empty input keeps the primitive EOF failure for either live set.
+     (for-all
+      (lambda (parser)
+        (let ([err (parser-error-from (lambda () (run-textual-parser parser "")))])
+          (and (parser-error? err) (eq? 'unexpected-eof (parser-error-kind err))
+               (= 0 (parser-error-offset err)))))
+      (list (<one-of> "a") (<none-of> "a")))
+
      ;; Retain the caller's live set string, including changes after parser construction.
      (let* ([characters (string #\a #\x1f600)]
             [yes (<one-of> characters)] [no (<none-of> characters)])

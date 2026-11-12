@@ -1226,6 +1226,27 @@ For simplicity, "PC" in the following documentation means "parser combinator".
         (values #f #f (parser-failure-eof inp '(item) #f))
         (values #t (get-next! inp) inp)))
 
+  ;; Delay message construction until a predicate fails; live sets use their current value.
+  (define character-parser
+    (lambda (predicate message)
+      (define-parser satisfy-character-parser
+        (if (end-of-input? inp)
+            (values #f #f (parser-failure-eof inp '(item) #f))
+            ;; Keep the starting scalars; successful reads need no cursor snapshot.
+            (let* ([start (input-pos inp)]
+                   [line (textual-input-line inp)]
+                   [column (textual-input-col inp)]
+                   [character (get-next! inp)])
+              (if (predicate character)
+                  (values #t character inp)
+                  (values #f #f
+                          (make-parser-failure
+                           'predicate (message)
+                           (make-parser-position
+                            (or (input-source inp) "<string>") start line column 'text)
+                           '() character '() '()))))))
+      satisfy-character-parser))
+
   #|proc:<satisfy-char>
   The `<satisfy-char>` procedure takes character predicate `predicate` and optional
   string `message`. The predicate must have signature `(Char -> Boolean)`. It returns a
@@ -1236,23 +1257,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
       [(predicate) (<satisfy-char> predicate "failed predicate")]
       [(predicate message)
        (pcheck ([procedure? predicate] [string? message])
-               (define-parser satisfy-character-parser
-                 (if (end-of-input? inp)
-                     (values #f #f (parser-failure-eof inp '(item) #f))
-                     ;; Keep the starting scalars; successful reads need no cursor snapshot.
-                     (let* ([start (input-pos inp)]
-                            [line (textual-input-line inp)]
-                            [column (textual-input-col inp)]
-                            [character (get-next! inp)])
-                       (if (predicate character)
-                           (values #t character inp)
-                           (values #f #f
-                                   (make-parser-failure
-                                    'predicate message
-                                    (make-parser-position
-                                     (or (input-source inp) "<string>") start line column 'text)
-                                    '() character '() '()))))))
-               satisfy-character-parser)]))
+               (character-parser predicate (lambda () message)))]))
 
   #|proc:<char>
   The `<char>` procedure takes `character` and returns a textual parser. The parser
@@ -1359,9 +1364,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   |#
   (define (<one-of> characters)
     (pcheck ([string? characters])
-            (<satisfy-char> (lambda (character)
-                              (character-in-string? character characters))
-                            (format "not one of \"~a\"" characters))))
+            (character-parser (lambda (character)
+                                (character-in-string? character characters))
+                              (lambda () (format "not one of \"~a\"" characters)))))
 
   #|proc:<none-of>
   The `<none-of>` procedure takes string `characters` and returns a parser. The parser
@@ -1369,9 +1374,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   |#
   (define (<none-of> characters)
     (pcheck ([string? characters])
-            (<satisfy-char> (lambda (character)
-                              (not (character-in-string? character characters)))
-                            (format "should not be one of \"~a\"" characters))))
+            (character-parser (lambda (character)
+                                (not (character-in-string? character characters)))
+                              (lambda () (format "should not be one of \"~a\"" characters)))))
 
 
 
