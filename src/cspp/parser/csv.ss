@@ -100,17 +100,11 @@
          (<char> #\return)))
 
   (define <escaped-field-character>
-    (let ([original (</> (<as> #\" (<string> "\"\""))
-                         (<satisfy-char>
-                          (lambda (character) (not (char=? character #\")))))])
-      ;; Only a quote can begin the doubled-quote alternative. Retain its EOF diagnostics.
-      (define-parser escaped-field-character-parser
-        (let-values ([(status character next-input)
-                      (parser-call <item> (save-input inp) state lvl)])
-          (if (and status (not (char=? character #\")))
-              (values #t character next-input)
-              (parser-call original inp state lvl))))
-      escaped-field-character-parser))
+    ;; Only a quote can begin the doubled-quote alternative. Retain its EOF diagnostics.
+    (parser-ordinary-character
+     (lambda (character) (not (char=? character #\")))
+     (</> (<as> #\" (<string> "\"\""))
+          (<satisfy-char> (lambda (character) (not (char=? character #\")))))))
 
   (define <escaped-field>
     (<~1> (<char> #\")

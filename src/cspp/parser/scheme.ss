@@ -141,17 +141,11 @@
               (</> (<string> "\r\n") (<string> "\r\x85;")
                    (<one-of> "\r\n\x85;\x2028;"))))
       (define <s-str-elements>
-        (let ([original (</> <s-literal-newline> (<none-of> "\"\\") <escape-seq>)])
-          ;; Ordinary characters need no failed newline alternatives. Keep the original
-          ;; grammar for prefixes and EOF to preserve normalization and diagnostics.
-          (define-parser ordinary-string-parser
-            (let-values ([(status character next-input)
-                          (parser-call <item> (save-input inp) state lvl)])
-              (if (and status
-                       (not (memv character '(#\\ #\" #\return #\newline #\x85 #\x2028))))
-                  (values #t character next-input)
-                  (parser-call original inp state lvl))))
-          ordinary-string-parser))
+        ;; Keep the full grammar for prefixes and EOF, including newline normalization.
+        (parser-ordinary-character
+         (lambda (character)
+           (not (memv character '(#\\ #\" #\return #\newline #\x85 #\x2028))))
+         (</> <s-literal-newline> (<none-of> "\"\\") <escape-seq>)))
       (define <s-string> (<token>
                           (</> (<as> "" (<string> "\"\""))
                                (<as-string>

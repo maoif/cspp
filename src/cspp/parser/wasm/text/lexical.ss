@@ -76,16 +76,10 @@
           <item>))
 
   (define <wat-block-comment-element>
-    (let ([original (</> <wat-block-comment> <wat-block-comment-character>)])
-      ;; Only '(' and ';' can begin a nested opener or closer. Keep both alternatives
-      ;; for these prefixes and EOF, including their complete failure causes.
-      (define-parser block-comment-element-parser
-        (let-values ([(status character next-input)
-                      (parser-call <item> (save-input inp) state lvl)])
-          (if (and status (not (memv character '(#\( #\;))))
-              (values #t character next-input)
-              (parser-call original inp state lvl))))
-      block-comment-element-parser))
+    ;; Only '(' and ';' can begin a nested opener or closer. Retain fallback diagnostics.
+    (parser-ordinary-character
+     (lambda (character) (not (memv character '(#\( #\;))))
+     (</> <wat-block-comment> <wat-block-comment-character>)))
 
   #|proc:<wat-trivia>
   The `<wat-trivia>` parser consumes WebAssembly whitespace, comments, and generic annotations.
@@ -226,20 +220,14 @@
      "invalid annotation character"))
 
   (define <wat-annotation-content>
-    (let ([original
-           (</> <wat-any-annotation> <wat-annotation-group>
-                <wat-annotation-string> <wat-block-comment> <wat-line-comment>
-                <wat-annotation-character>)])
-      (define-parser annotation-content-parser
-        (let-values ([(status character next-input)
-                      (parser-call <item> (save-input inp) state lvl)])
-          (if (and status
-                   (not (memv character '(#\( #\) #\" #\;)))
-                   (or (wat-whitespace-character? character)
-                       (char<=? #\space character #\x7e)))
-              (values #t character next-input)
-              (parser-call original inp state lvl))))
-      annotation-content-parser))
+    (parser-ordinary-character
+     (lambda (character)
+       (and (not (memv character '(#\( #\) #\" #\;)))
+            (or (wat-whitespace-character? character)
+                (char<=? #\space character #\x7e))))
+     (</> <wat-any-annotation> <wat-annotation-group>
+          <wat-annotation-string> <wat-block-comment> <wat-line-comment>
+          <wat-annotation-character>)))
 
   (define <wat-annotation-id>
     (</> (<bind> <wat-annotation-string>

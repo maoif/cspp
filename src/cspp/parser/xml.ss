@@ -290,13 +290,9 @@
   ;; Ordinary accepted characters cannot start a delimiter. Keep the original parser for
   ;; prefixes, invalid characters and EOF so its complete diagnostic causes stay unchanged.
   (define (ordinary-before-end prefix predicate original)
-    (define-parser ordinary-before-end-parser
-      (let-values ([(status character next-input)
-                    (parser-call <item> (save-input inp) state lvl)])
-        (if (and status (not (char=? character prefix)) (predicate character))
-            (values #t character next-input)
-            (parser-call original inp state lvl))))
-    ordinary-before-end-parser)
+    (parser-ordinary-character
+     (lambda (character) (and (not (char=? character prefix)) (predicate character)))
+     original))
 
   (define (attribute-value-parser quote)
     (let* ([ordinary-character?
