@@ -547,6 +547,10 @@
            (issue 20 "invalid ELF version")]
           [(not (= standard-header (decoded-elf-header-header-size header)))
            (issue sizes-at "invalid ELF header size")]
+          [(and (zero? (decoded-elf-header-raw-phnum header))
+                (not (zero? (decoded-elf-header-phoff header))))
+           (issue (if (eq? class 'elf32) 28 32)
+                  "program-header offset must be zero when the table is absent")]
           [(and (not (zero? (decoded-elf-header-raw-phnum header)))
                 (not (= standard-program (decoded-elf-header-phentsize header))))
            (issue (+ sizes-at 2) "invalid program-header entry size")]

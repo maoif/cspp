@@ -483,3 +483,36 @@
               (string-contains? (parser-error-message failure)
                                 "file size exceeds memory size")
               (< allocated 1000000)))))
+(mat parser-elf-absent-program-table-offset
+
+     ;; Error cases: an absent program table requires a zero offset in either ELF class/order.
+     (for-all
+      (lambda (class)
+        (for-all
+         (lambda (order)
+           (for-all
+            (lambda (offset)
+              (let* ([bytes (minimal-elf class order)]
+                     [wide? (eq? class 'elf64)]
+                     [at (if wide? 32 28)])
+                ((if wide? bytevector-u64-set! bytevector-u32-set!)
+                 bytes at offset (if (eq? order 'little) (endianness little) (endianness big)))
+                (let ([failure (parser-error-from (lambda () (parse-elf bytes)))])
+                  (and failure (= at (parser-error-offset failure))
+                       (string-contains? (parser-error-message failure)
+                                         "program-header offset must be zero")))))
+            (if (eq? class 'elf64) '(1 63 64) '(1 51 52))))
+         '(little big)))
+      '(elf32 elf64))
+
+     ;; Unused program entry sizes remain unconstrained when both count and offset are zero.
+     (for-all
+      (lambda (class)
+        (for-all
+         (lambda (order)
+           (let ([bytes (minimal-elf class order)])
+             (bytevector-u16-set! bytes (if (eq? class 'elf64) 54 42) 7
+                                  (if (eq? order 'little) (endianness little) (endianness big)))
+             (= 0 (vector-length (elf-file-program-headers (parse-elf bytes))))))
+         '(little big)))
+      '(elf32 elf64)))
