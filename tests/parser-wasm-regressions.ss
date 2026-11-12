@@ -1213,3 +1213,107 @@
         "(module (import \"m\" \"f\" (func (param $x i32) (param $y i64))))"
         "(module (tag (param $x i32) (param $y i64)))"
         "(module (func (param $x i32)) (func (param $x i64)))")))
+(mat wasm-review-custom-placement-order
+
+     (let* ([module
+             (parse-wasm-text-module
+              "(module (table 0 funcref) (memory 0)
+                 (@custom \"before-memory\" (before memory) \"A\")
+                 (@custom \"after-table\" (after table) \"B\"))")]
+            [custom* (wasm-module-custom-sections module)])
+       (and (equal? '#("after-table" "before-memory")
+                    (vector-map wasm-custom-section-name custom*))
+            (equal? '#(#vu8(66) #vu8(65))
+                    (vector-map wasm-custom-section-bytes custom*))
+            (equal? '#(table table)
+                    (vector-map wasm-custom-section-after-section custom*))))
+
+     (let ([module
+            (parse-wasm-text-module
+             "(module (func)
+                (@custom \"late\" (after code))
+                (@custom \"early\" (before type)))")])
+       (equal? '#("early" "late")
+               (vector-map wasm-custom-section-name (wasm-module-custom-sections module))))
+
+     ;; Identical placements retain source order, including default and explicit after-last.
+     (let ([module
+            (parse-wasm-text-module
+             "(module (table 0 funcref)
+                (@custom \"last-a\")
+                (@custom \"table-a\" (after table))
+                (@custom \"last-b\" (after last))
+                (@custom \"table-b\" (after table)))")])
+       (equal? '#("table-a" "table-b" "last-a" "last-b")
+               (vector-map wasm-custom-section-name (wasm-module-custom-sections module)))))
+
+(mat wasm-review-custom-anchor-existence
+
+     ;; Error cases: neither placement direction may target an absent ordinary section.
+     (for-all
+      (lambda (section)
+        (for-all
+         (lambda (direction)
+           (let* ([source (format "(module (@custom \"x\" (~a ~a)))" direction section)]
+                  [failure (parser-error-from (lambda () (parse-wasm-text-module source)))])
+             (and failure (= 8 (parser-error-offset failure))
+                  (string-contains? (parser-error-message failure)
+                                    "custom placement requires a nonempty section"))))
+         '(before after)))
+      '(type import func table memory tag global export start elem datacount code data))
+
+     ;; Error cases: imports alone do not emit function/code/table/memory/tag definition sections.
+     (for-all
+      (lambda (test)
+        (wasm-review-error?
+         (lambda ()
+           (parse-wasm-text-module
+            (format "(module ~a (@custom \"x\" (after ~a)))" (car test) (cadr test))))))
+      '(("(import \"m\" \"f\" (func))" func)
+        ("(import \"m\" \"f\" (func))" code)
+        ("(import \"m\" \"t\" (table 0 funcref))" table)
+        ("(import \"m\" \"m\" (memory 0))" memory)
+        ("(import \"m\" \"t\" (tag))" tag)
+        ("(data \"x\")" datacount)))
+
+     ;; Every ordinary anchor is accepted in both directions when its section is emitted.
+     (for-all
+      (lambda (test)
+        (for-all
+         (lambda (direction)
+           (wasm-module?
+            (parse-wasm-text-module
+             (format "(module ~a (@custom \"x\" (~a ~a)))"
+                     (car test) direction (cadr test)))))
+         '(before after)))
+      '(("(type (func))" type)
+        ("(import \"m\" \"f\" (func))" import)
+        ("(func)" func)
+        ("(table 0 funcref)" table)
+        ("(memory 0)" memory)
+        ("(tag)" tag)
+        ("(global i32 (i32.const 0))" global)
+        ("(func (export \"f\"))" export)
+        ("(func) (start 0)" start)
+        ("(elem func)" elem)
+        ("(func data.drop 0)" datacount)
+        ("(func)" code)
+        ("(data \"\")" data)))
+
+     ;; Inline abbreviations and implicit signatures also create anchorable sections.
+     (for-all
+      (lambda (source) (wasm-module? (parse-wasm-text-module source)))
+      '("(module (func) (@custom \"x\" (after type)))"
+        "(module (memory (data \"x\")) (@custom \"x\" (after data)))"
+        "(module (table funcref (elem)) (@custom \"x\" (after elem)))"
+        "(module (func (if (then data.drop 0))) (@custom \"x\" (after datacount)))"
+        "(module (func (if (then) (else data.drop 0))) (@custom \"x\" (after datacount)))"))
+
+     ;; Virtual anchors and defaults remain valid even in an empty module, including aliases.
+     (for-all
+      (lambda (source) (wasm-module? (parse-wasm-text-module source)))
+      '("(module (@custom \"x\"))"
+        "(module (@custom \"x\" (before first)))"
+        "(module (@custom \"x\" (after first)))"
+        "(module (@custom \"x\" (before last)))"
+        "(module (@custom \"x\" (after last)))")))

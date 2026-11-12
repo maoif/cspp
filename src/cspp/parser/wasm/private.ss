@@ -1,7 +1,27 @@
 (library (cspp parser wasm private)
-  (export list->immutable-vector concatenate-bytevectors)
+  (export list->immutable-vector concatenate-bytevectors expression-uses-data-index?)
   (import (cspp chez)
+          (only (cspp vector) vexists)
+          (only (cspp parser wasm types)
+                wasm-instruction-mnemonic wasm-instruction-body wasm-instruction-alternate)
           (cspp utils))
+
+  #|proc:expression-uses-data-index?
+  Returns whether instruction vector `instructions` references a data segment, including nested
+  bodies and both arms of `if`. Catch clauses in other structured alternates are not instructions.
+  |#
+  (define expression-uses-data-index?
+    (lambda (instructions)
+      (pcheck ([vector? instructions])
+              (vexists
+               (lambda (instruction)
+                 (let ([mnemonic (wasm-instruction-mnemonic instruction)])
+                   (or (memq mnemonic '(memory.init data.drop array.new-data array.init-data))
+                       (expression-uses-data-index? (wasm-instruction-body instruction))
+                       (and (eq? mnemonic 'if)
+                            (expression-uses-data-index?
+                             (wasm-instruction-alternate instruction))))))
+               instructions))))
 
   #|proc:list->immutable-vector
   Converts list `value*` to an immutable vector and returns that vector.

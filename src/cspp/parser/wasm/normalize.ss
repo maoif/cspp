@@ -872,23 +872,59 @@
          (lambda (name) (builder (make-wasm-export name kind index)))
          (wat-module-field-exports field)))))
 
+  (define custom-anchor-section
+    (lambda (section)
+      ;; Preserve the existing first/last aliases in either placement direction.
+      (case section [(first) 'type] [(last) 'data] [else section])))
+
+  (define standard-section-order
+    '(type import function table memory tag global export start element data-count code data))
+
   (define preceding-section
     (lambda (section)
-      (case section
-        [(type) #f] [(import) 'type] [(function) 'import] [(table) 'function]
-        [(memory) 'table] [(tag) 'memory] [(global) 'tag] [(export) 'global]
-        [(start) 'export] [(element) 'start] [(data-count) 'element]
-        [(code) 'data-count] [(data) 'code]
-        [else #f])))
+      (let loop ([sections standard-section-order] [previous #f])
+        (cond [(null? sections) #f]
+              [(eq? section (car sections)) previous]
+              [else (loop (cdr sections) (car sections))]))))
+
+  (define custom-placement-rank
+    (lambda (field)
+      (let* ([placement (vector-ref (wat-module-field-data field) 2)]
+             [after (wat-custom-placement-after placement)]
+             [section (custom-anchor-section (or after (wat-custom-placement-before placement)))])
+        (let loop ([sections standard-section-order] [rank 0])
+          (if (eq? section (car sections))
+              (+ (* 2 rank) (if after 1 0))
+              (loop (cdr sections) (+ rank 1)))))))
+
+  (define normalize-custom-sections
+    (lambda (fields section-present?)
+      (for-each
+       (lambda (field)
+         (let* ([placement (vector-ref (wat-module-field-data field) 2)]
+                [section (or (wat-custom-placement-after placement)
+                             (wat-custom-placement-before placement))])
+           (unless (or (memq section '(first last)) (section-present? section))
+             (normalization-error
+              (wat-custom-placement-pos placement)
+              "WebAssembly custom placement requires a nonempty section"))))
+       fields)
+      ;; Stable sorting preserves source order for identical placement directives.
+      (list->immutable-vector
+       (map normalize-custom-section
+            (list-sort (lambda (left right)
+                         (< (custom-placement-rank left) (custom-placement-rank right)))
+                       fields)))))
 
   (define normalize-custom-section
     (lambda (field)
       (let* ([data (wat-module-field-data field)]
              [placement (vector-ref data 2)]
-             [after (or (wat-custom-placement-after placement)
+             [after (or (and (wat-custom-placement-after placement)
+                             (custom-anchor-section (wat-custom-placement-after placement)))
                         (and (wat-custom-placement-before placement)
                              (preceding-section
-                              (wat-custom-placement-before placement))))])
+                              (custom-anchor-section (wat-custom-placement-before placement)))))])
         (make-wasm-custom-section
          (vector-ref data 0)
          (concatenate-bytevectors (vector->list (vector-ref data 1)))
@@ -906,6 +942,25 @@
             [export-builder (make-list-builder)] [element-builder (make-list-builder)]
             [data-builder (make-list-builder)] [custom-builder (make-list-builder)]
             [start #f] [start-pos #f])
+        (define section-present?
+          (lambda (section)
+            (case section
+              [(type) (pair? ((normalization-state-type-groups state)))]
+              [(import) (pair? (import-builder))]
+              [(function code) (pair? (function-builder))]
+              [(table) (pair? (table-builder))]
+              [(memory) (pair? (memory-builder))]
+              [(tag) (pair? (tag-builder))]
+              [(global) (pair? (global-builder))]
+              [(export) (pair? (export-builder))]
+              [(start) (and start #t)]
+              [(element) (pair? (element-builder))]
+              [(data) (pair? (data-builder))]
+              [(data-count)
+               (exists (lambda (function)
+                         (expression-uses-data-index? (wasm-function-body function)))
+                       (function-builder))]
+              [else #f])))
         (vector-for-each
          (lambda (field)
            (when (imported-field? field)
@@ -983,7 +1038,7 @@
                     (wat-inline-abbreviation-data
                      (wat-module-field-abbreviation field))
                     #f #f))]
-                 [(custom) (custom-builder (normalize-custom-section field))]))
+                 [(custom) (custom-builder field)]))
              (when (and (memq (field-entity-kind field)
                               '(function table memory global tag))
                         (positive? (vector-length
@@ -1001,7 +1056,7 @@
          (list->immutable-vector (export-builder)) start
          (list->immutable-vector (element-builder))
          (list->immutable-vector (data-builder))
-         (list->immutable-vector (custom-builder))))))
+         (normalize-custom-sections (custom-builder) section-present?)))))
 
   #|proc:normalize-wat-module
   Normalizes positioned WAT syntax `module` into a canonical module. Returns a `wasm-module` on

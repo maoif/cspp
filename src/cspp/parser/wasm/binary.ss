@@ -6,6 +6,7 @@
           (cspp parser combinator)
           (cspp parser wasm types)
           (cspp parser wasm validate)
+          (only (cspp parser wasm private) expression-uses-data-index?)
           (cspp parser wasm binary values)
           (cspp parser wasm binary types)
           (cspp parser wasm binary instructions))
@@ -280,18 +281,6 @@
                               (vector-ref code 0)
                               (vector-ref code 1)))
                 (loop (fx1+ index))))))))
-
-  (define expression-uses-data-index?
-    (lambda (instructions)
-      (vexists
-       (lambda (instruction)
-         (let ([mnemonic (wasm-instruction-mnemonic instruction)])
-           (or (memq mnemonic '(memory.init data.drop array.new-data array.init-data))
-               (expression-uses-data-index? (wasm-instruction-body instruction))
-               ;; Other structured alternates contain catch clauses, not instructions.
-               (and (eq? mnemonic 'if)
-                    (expression-uses-data-index? (wasm-instruction-alternate instruction))))))
-       instructions)))
 
   (define code-uses-data-index?
     (lambda (code)

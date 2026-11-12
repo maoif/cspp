@@ -449,7 +449,7 @@
             ("table" . table) ("memory" . memory) ("tag" . tag)
             ("global" . global) ("export" . export) ("start" . start)
             ("elem" . element) ("datacount" . data-count) ("code" . code) ("data" . data)
-            ("first" . type) ("last" . data)))))
+            ("first" . first) ("last" . last)))))
 
   (define custom-anchor
     (</> (<map> (lambda (section) (cons 'after section))
@@ -462,7 +462,7 @@
      (lambda (value)
        (let* ([pos (car value)] [anchor (optional-value (caddr value))]
               [before (and anchor (eq? 'before (car anchor)) (cdr anchor))]
-              [after (if anchor (and (eq? 'after (car anchor)) (cdr anchor)) 'data)])
+              [after (if anchor (and (eq? 'after (car anchor)) (cdr anchor)) 'last)])
          (field-result
           pos 'custom #f
           (immutable-vector

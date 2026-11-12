@@ -621,12 +621,12 @@
 
   #|proc:make-wat-custom-placement
   Creates and returns internal `wat-custom-placement` syntax from the supplied fields. `pos` is
-  the zero-based character offset in the decoded source string. `before` is a standard-section
-  symbol to precede, or `#f`. `after` is a standard-section symbol to follow, or `#f`; the grammar
-  defaults to `data`.
+  the zero-based character offset in the decoded source string. `before` is a section symbol to
+  precede, or `#f`. `after` is a section symbol to follow, or `#f`; the grammar defaults to `last`.
   Section symbols are `type`, `import`, `function`, `table`, `memory`, `tag`, `global`, `export`,
-  `start`, `element`, `data-count`, `code`, and `data`. The grammar sets exactly one anchor;
-  normalization maps a before-anchor to canonical preceding-section placement.
+  `start`, `element`, `data-count`, `code`, and `data`, plus virtual anchors `first` and `last`.
+  The grammar sets exactly one anchor. Normalization checks ordinary anchors against emitted
+  sections and orders annotations before mapping them to canonical preceding-section placement.
   |#
   #|proc:wat-custom-placement?
   Returns `#t` if `object` is an internal `wat-custom-placement` record, and `#f` otherwise.
@@ -638,11 +638,11 @@
   |#
   #|proc:wat-custom-placement-before
   Returns the stored `before` of internal `wat-custom-placement` record `record`. It is a
-  standard-section symbol to precede, or `#f`.
+  section symbol to precede, including virtual `first` or `last`, or `#f`.
   |#
   #|proc:wat-custom-placement-after
   Returns the stored `after` of internal `wat-custom-placement` record `record`. It is a
-  standard-section symbol to follow, or `#f`; the grammar defaults to `data`.
+  section symbol to follow, including virtual `first` or `last`, or `#f`; defaults to `last`.
   |#
   (define-record-type ($wat-custom-placement make-wat-custom-placement
                                              wat-custom-placement?)
