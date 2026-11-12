@@ -4617,12 +4617,6 @@
                (and (value=? (vector-ref left index) (vector-ref right index))
                     (loop (+ index 1))))))))
 
-(define wasm-vector-any?
-  (lambda (predicate vector)
-    (let loop ([index 0])
-      (and (< index (vector-length vector))
-           (or (predicate (vector-ref vector index)) (loop (+ index 1)))))))
-
 (define wasm-value=?
   (lambda (left right)
     (cond
@@ -5029,7 +5023,7 @@
             (= 1 (vector-length (wasm-module-data module)))
             (eq? 'active (wasm-data-mode data))
             (= 916 (bytevector-length (wasm-data-bytes data)))
-            (wasm-vector-any? (lambda (name) (string=? "name" name)) custom-name*)))
+            (vexists (lambda (name) (string=? "name" name)) custom-name*)))
 
      (or (not (external-tool-available? "wasm-objdump"))
          (wasm-file-counts-match? "data/example.wasm"))

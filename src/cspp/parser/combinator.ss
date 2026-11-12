@@ -213,14 +213,6 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                        (for-each (lambda (item) (hashtable-set! table item #t)) (builder))
                        (set! seen table))))))]))))
 
-  (define write-to-string
-    (lambda (x)
-      (let ([p (open-output-string)])
-        (write x p)
-        (let ([s (get-output-string p)])
-          (close-output-port p)
-          s))))
-
   (define format-byte
     (lambda (b)
       (let ([s (string-downcase (number->string b 16))])
@@ -230,12 +222,10 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   (define format-parser-item
     (lambda (x)
-      (cond [(char? x) (write-to-string x)]
-            [(string? x) (write-to-string x)]
-            [(eq? x 'eof) "EOF"]
+      (cond [(eq? x 'eof) "EOF"]
             [(symbol? x) (symbol->string x)]
             [(byte? x) (format-byte x)]
-            [else (write-to-string x)])))
+            [else (format "~s" x)])))
 
   (define format-parser-item-list
     (lambda (x*)

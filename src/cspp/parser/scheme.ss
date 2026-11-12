@@ -11,14 +11,6 @@
   ;; This deliberately supports a Scheme datum subset; see the public entry-point docs.
   (define-values (parser-scheme-datum parser-scheme)
     (let ()
-      (define cons-back!
-        (lambda (ls v)
-          (assert (not (null? ls)))
-          (let loop ([ls1 ls])
-            (if (null? (cdr ls1))
-                (begin (set-cdr! ls1 v)
-                       ls)
-                (loop (cdr ls1))))))
       (declare-lazy-parser <s-datum>)
 
       (define <delimiter>
@@ -171,7 +163,7 @@
                  (<bind> (<some> <s-datum>)
                          (lambda (elements)
                            (</> (<as> elements right-delimiter)
-                                (<map> (lambda (tail) (cons-back! elements tail))
+                                (<map> (lambda (tail) (append! elements tail))
                                        (<~1> <dot> <s-datum> right-delimiter))))))))
       (define <s-list>
         (</> (<list> <left-paren> <right-paren>)
