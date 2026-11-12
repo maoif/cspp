@@ -228,12 +228,15 @@
         parse-xml-file)))
 
      ;; error: malformed UTF-8 must not be replaced during decoding.
-     (error?
-      (with-parser-file (bytevector #xc3 #x28) parse-xml-file))
+     (raises-decoding-error?
+      (lambda ()
+        (with-parser-file
+         (parser-test-bytes (string->utf8 "<r>") #vu8(195 40) (string->utf8 "</r>"))
+         parse-xml-file)))
 
      ;; error: UTF-16 input must contain complete code units.
-     (error?
-      (with-parser-file (bytevector #xff #xfe #x3c) parse-xml-file))
+     (raises-decoding-error?
+      (lambda () (with-parser-file (bytevector #xff #xfe #x3c) parse-xml-file)))
 
      ;; error: the declaration encoding must agree with the detected bytes.
      (error?
@@ -242,13 +245,14 @@
        parse-xml-file))
 
      ;; error: UTF-16 input cannot contain an unpaired high surrogate.
-     (error?
-      (with-parser-file
-       (bytevector #xff #xfe
-                   #x3c #x00 #x72 #x00 #x3e #x00
-                   #x00 #xd8
-                   #x3c #x00 #x2f #x00 #x72 #x00 #x3e #x00)
-       parse-xml-file))
+     (raises-decoding-error?
+      (lambda ()
+        (with-parser-file
+         (bytevector #xff #xfe
+                     #x3c #x00 #x72 #x00 #x3e #x00
+                     #x00 #xd8
+                     #x3c #x00 #x2f #x00 #x72 #x00 #x3e #x00)
+         parse-xml-file)))
 
      )
 

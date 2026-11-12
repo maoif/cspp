@@ -286,8 +286,11 @@
            (equal? summary (successful-process-output result))))
 
      ;; error: malformed UTF-8 must not be replaced while reading TOML files.
-     (error?
-      (with-parser-file (bytevector #xc3 #x28) parse-toml-file))
+     (raises-decoding-error?
+      (lambda ()
+        (with-parser-file
+         (parser-test-bytes (string->utf8 "a=\"") #vu8(195 40) (string->utf8 "\""))
+         parse-toml-file)))
 
      )
 

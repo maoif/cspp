@@ -275,14 +275,15 @@
      (for-all
       (lambda (parser)
         (with-parser-file #vu8(34 255 34)
-          (lambda (path) (guard (err [else #t]) (parser path) #f))))
+          (lambda (path) (raises-decoding-error? (lambda () (parser path))))))
       (list parse-csv-file parse-json5-file parse-scheme-file))
 
      ;; Error case: WAT strings cannot hide malformed UTF-8 in file input.
      (with-parser-file
       (parser-test-bytes (string->utf8 "(module (import \"") #vu8(255)
                          (string->utf8 "\" \"f\" (func)))"))
-      (lambda (path) (guard (err [else #t]) (parse-wasm-text-module-file path) #f)))
+      (lambda (path)
+        (raises-decoding-error? (lambda () (parse-wasm-text-module-file path)))))
 
      ;; Error case: only the first BOM is a stream signature in XML/TOML files.
      (for-all

@@ -5,6 +5,12 @@
       (thunk)
       #f)))
 
+(define raises-decoding-error?
+  (lambda (thunk)
+    (guard (condition [(i/o-decoding-error? condition) #t])
+      (thunk)
+      #f)))
+
 (define parser-test-bytes
   (lambda bytevectors
     (let-values ([(port bytes) (open-bytevector-output-port)])
