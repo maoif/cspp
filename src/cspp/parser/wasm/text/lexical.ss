@@ -419,8 +419,10 @@
     (lambda (integral fractional digit-radix exponent-radix exponent)
       (let* ([fractional-value (car fractional)]
              [fractional-count (cdr fractional)]
-             [significand (+ (* integral (expt digit-radix fractional-count))
-                             fractional-value)]
+             [significand (if (zero? integral)
+                              fractional-value
+                              (+ (* integral (expt digit-radix fractional-count))
+                                 fractional-value))]
              [fractional-bits (if (= digit-radix 16) (* 4 fractional-count)
                                   fractional-count)])
         (vector significand exponent-radix (- exponent fractional-bits)))))

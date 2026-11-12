@@ -1104,3 +1104,14 @@
               (not (eq? (wasm-instruction-immediates first)
                         (wasm-instruction-immediates last)))
               (< allocated 12500000)))))
+
+(mat wasm-review-zero-integral-fraction-cost
+
+     (let* ([source (string-append "0." (make-string 64000 #\0))]
+            [before (statistics)] [value (parse-wat-lexeme <wat-f64> source)]
+            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (and (= 0 (wasm-float-bits value)) (< allocated 16000000)))
+
+     (equal? '(0 0 #x8000000000000000 #x8000000000000000 #x3fe0000000000000)
+             (map (lambda (source) (wasm-review-float-bits <wat-f64> source))
+                  '("0.0" "0x0.000p0" "-0.00" "-0x0.0p0" "0x0.8p0"))))
