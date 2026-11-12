@@ -149,7 +149,8 @@
   |#
   #|proc:xml-processing-instruction-data
   Returns the instruction-data string without its separator whitespace or closing delimiter from
-  record, a xml-processing-instruction record. The stored value is returned without copying.
+  record, a xml-processing-instruction record. Returns #f when data and separator are omitted,
+  or the empty string when only separator whitespace is present. Strings are returned without copying.
   |#
   (define-record-type xml-processing-instruction
     (fields (immutable target)

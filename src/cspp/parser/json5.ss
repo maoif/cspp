@@ -336,8 +336,8 @@
                 <decimal-base>
                 (<optional> <decimal-exponent>))))
 
-  ;; The grammar has already validated source. Preserve Chez's float conversion, and
-  ;; reuse balanced digit conversion only for exact decimal integers.
+  ;; The grammar has already validated source. Both integer and float paths use
+  ;; balanced digit conversion; the float helper also handles rounding and range.
   (define decimal-source->number
     (lambda (source)
       (let loop ([index 0])

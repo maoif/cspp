@@ -131,3 +131,11 @@
        (and (string=? text (make-string count #\newline))
             (char=? #\return (string-ref source 3))
             (< allocated 154000000))))
+
+(mat xml-processing-instruction-optional-data
+
+     (equal? '(#f "" "x")
+             (map (lambda (source)
+                    (xml-processing-instruction-data
+                     (vector-ref (xml-document-before-root (parse-xml source)) 0)))
+                  '("<?p?><a/>" "<?p ?><a/>" "<?p x?><a/>"))))

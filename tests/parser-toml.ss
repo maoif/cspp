@@ -114,6 +114,11 @@
 
      (let ([value (toml-value "t=1979-05-27 07:32:01.1234567899" "t")])
        (and (toml-local-date-time? value)
+            (= 1979 (toml-local-date-time-year value))
+            (= 5 (toml-local-date-time-month value))
+            (= 27 (toml-local-date-time-day value))
+            (= 7 (toml-local-date-time-hour value))
+            (= 32 (toml-local-date-time-minute value))
             (= 1 (toml-local-date-time-second value))
             (= 123456789 (toml-local-date-time-nanosecond value))))
 
@@ -124,7 +129,17 @@
             (= 2 (toml-local-date-month date))
             (= 29 (toml-local-date-day date))
             (toml-local-time? time)
-            (= 0 (toml-local-time-second time))))
+            (= 23 (toml-local-time-hour time))
+            (= 59 (toml-local-time-minute time))
+            (= 0 (toml-local-time-second time))
+            (= 0 (toml-local-time-nanosecond time))))
+
+     (let ([time (toml-value "t=07:08:09.0123" "t")])
+       (and (toml-local-time? time)
+            (= 7 (toml-local-time-hour time))
+            (= 8 (toml-local-time-minute time))
+            (= 9 (toml-local-time-second time))
+            (= 12300000 (toml-local-time-nanosecond time))))
 
      ;; error: February 29 requires a leap year.
      (parser-error? (parser-error-from (lambda () (parse-toml "d=1900-02-29"))))
