@@ -9,7 +9,7 @@
           parse-textual-file parse-binary-file
           ;; TODO remove these
           parser-call input-pos input-pos-set! input-len save-input binary-input-data
-          parser-discard-many parser-counted-vector
+          parser-discard-many parser-counted-vector parser-ordinary-character
           bindigits->num octdigits->num digits->num hexdigits->num
 
           <fail> <fail-with> <eof> <result> <satisfy>
@@ -1246,6 +1246,25 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                             (or (input-source inp) "<string>") start line column 'text)
                            '() character '() '()))))))
       satisfy-character-parser))
+
+  #|proc:parser-ordinary-character
+  The `parser-ordinary-character` procedure takes character predicate `predicate` with signature
+  `(Char -> Boolean)` and fallback parser `original` with behavior `(TextualInput -> Any)`.
+  It returns a textual parser that consumes and returns one character when `predicate` accepts
+  it. Otherwise, including at EOF, it runs `original` from the starting cursor and returns its
+  result or failure. The predicate should accept only ordinary characters known to succeed in
+  the original grammar. Callback state is not rolled back.
+  This helper is shared internally by format grammars and is excluded from the parser umbrella.
+  |#
+  (define (parser-ordinary-character predicate original)
+    (pcheck ([procedure? predicate] [parser? original])
+            (define-parser ordinary-parser
+              (let-values ([(status character next-input)
+                            (parser-call <item> (save-input inp) state lvl)])
+                (if (and status (predicate character))
+                    (values #t character next-input)
+                    (parser-call original inp state lvl))))
+            ordinary-parser))
 
   #|proc:<satisfy-char>
   The `<satisfy-char>` procedure takes character predicate `predicate` and optional

@@ -138,19 +138,9 @@
                             (<fail-with> "invalid escaped identifier character")))
                       (<fail-with> "invalid escaped identifier character"))))))
 
-  ;; Only known successful ordinary characters bypass the original grammar. Prefixes,
-  ;; invalid characters and EOF keep its complete failure positions and causes.
-  (define (ordinary-character-parser predicate original)
-    (define-parser ordinary-parser
-      (let-values ([(status character next-input)
-                    (parser-call <item> (save-input inp) state lvl)])
-        (if (and status (predicate character))
-            (values #t character next-input)
-            (parser-call original inp state lvl))))
-    ordinary-parser)
 
   (define (<identifier-character> predicate message)
-    (ordinary-character-parser
+    (parser-ordinary-character
      predicate
      (</> (<escaped-identifier-character> predicate)
           (<satisfy-char> predicate message))))
@@ -184,7 +174,7 @@
   (define <block-comment>
     (<~1> (<string> "/*")
           (parser-discard-many
-           (ordinary-character-parser
+           (parser-ordinary-character
             (lambda (character) (not (char=? character #\*)))
             (<~1> (<not-followed-by> (<result> #t) (<string> "*/")) <item>)))
           (<string> "*/")))
@@ -285,7 +275,7 @@
                   (list->string (filter char? characters)))
                 (<~1> (<char> quote)
                       (<many>
-                       (ordinary-character-parser
+                       (parser-ordinary-character
                         ordinary-character?
                         (</> <escaped-string-character>
                              (<satisfy-char> ordinary-character?

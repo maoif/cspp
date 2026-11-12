@@ -1002,3 +1002,34 @@
                            (eq? 'pcheck (condition-who condition))) #t])
           (apply parser-counted-vector arguments) #f))
       (list (list <u8> -1) (list <u8> 1.0) (list <u8> 1/2) (list #f 1))))
+
+(mat parser-ordinary-characters
+
+     ;; A fast ordinary character must agree with the full grammar, including fallback errors.
+     (let* ([original (</> (<string> "\\n")
+                          (<satisfy-char> char-alphabetic? "not a letter"))]
+            [fast (parser-ordinary-character char-alphabetic? original)])
+       (define outcome
+         (lambda (parser source)
+           (guard (condition
+                   [(parser-error? condition)
+                    (list (parser-error-kind condition) (parser-error-offset condition)
+                          (parser-error-line condition) (parser-error-column condition)
+                          (parser-error-message condition) (parser-error->string condition))])
+             (run-textual-parser (<~> (<string> "p\r\n") parser <pos>)
+                                 (string-append "p\r\n" source)))))
+       (for-all (lambda (source) (equal? (outcome original source) (outcome fast source)))
+                '("" "a" "λ" "\\n" "\\" "\\x" "!" "\n")))
+
+     ;; A zero-width fallback sees the original cursor after a rejected character or EOF.
+     (let ([parser (parser-ordinary-character char-alphabetic? (<result> 'empty))])
+       (and (equal? '(empty #\! 1) (run-textual-parser (<~> parser <item> <pos>) "!"))
+            (equal? '(empty 0) (run-textual-parser (<~> parser <pos>) ""))))
+
+     ;; Error cases: the fast predicate must be a procedure and the fallback must be a parser.
+     (for-all
+      (lambda (arguments)
+        (guard (condition [(and (who-condition? condition)
+                                (eq? 'pcheck (condition-who condition))) #t])
+          (apply parser-ordinary-character arguments) #f))
+      (list (list #f <item>) (list char-alphabetic? #f))))
