@@ -4884,10 +4884,12 @@
     (let ([lines (map string-trim (string-split output #\newline))]
           [expected
            (list (cons "Type" (vector-length (wasm-module-types module)))
+                 (cons "Import" (vector-length (wasm-module-imports module)))
                  (cons "Function" (vector-length (wasm-module-functions module)))
                  (cons "Table" (vector-length (wasm-module-tables module)))
                  (cons "Memory" (vector-length (wasm-module-memories module)))
                  (cons "Global" (vector-length (wasm-module-globals module)))
+                 (cons "Tag" (vector-length (wasm-module-tags module)))
                  (cons "Export" (vector-length (wasm-module-exports module)))
                  (cons "Elem" (vector-length (wasm-module-elements module)))
                  (cons "Data" (vector-length (wasm-module-data module)))
@@ -4934,6 +4936,22 @@
      (not (wasm-objdump-counts-match?
            (parse-wasm-text-module "(module)")
            "empty.wasm: file format wasm 0x1\nSection Details:\nMemory[1]:\n"))
+
+     ;; Error controls: imports and tags must agree in both directions, including absent sections.
+     (for-all
+      (lambda (source label other-sections)
+        (let* ([module (parse-wasm-text-module source)]
+               [prefix "m.wasm: file format wasm 0x1\nSection Details:\n"]
+               [nonempty (string-append prefix other-sections label "[1]:\n")])
+          (and (wasm-objdump-counts-match? module nonempty)
+               (not (wasm-objdump-counts-match?
+                     module (string-append prefix other-sections)))
+               (not (wasm-objdump-counts-match?
+                     (parse-wasm-text-module "(module)")
+                     (string-append prefix label "[1]:\n"))))))
+      '("(module (import \"m\" \"mem\" (memory 1)))"
+        "(module (type (func)) (tag (type 0)))")
+      '("Import" "Tag") '("" "Type[1]:\n"))
 
      ;; Error controls: section counts must be complete, unique decimal fields.
      (for-all
