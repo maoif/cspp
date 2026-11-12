@@ -54,3 +54,17 @@
      ;; Error cases: dispatch must retain illegal quotes and inconsistent record widths.
      (for-all (lambda (text) (and (parser-error-from (lambda () (parse-csv text))) #t))
               '("a\"b,c" "a,\"b\"x" "a,b\nc")))
+
+(mat parser-csv-warning-order
+
+     (let* ([document (parse-csv "a, \"b\",c\n \"d\",e, \"f\"")]
+            [warnings (csv-document-warnings document)])
+       (and (equal? '(#("a" "b" "c") #("d" "e" "f"))
+                    (map csv-record-fields
+                         (vector->list (csv-document-records document))))
+            (= 3 (vector-length warnings))
+            (equal? '((0 1) (1 0) (1 2))
+                    (map (lambda (warning)
+                           (list (csv-warning-record-index warning)
+                                 (csv-warning-field-index warning)))
+                         (vector->list warnings))))))

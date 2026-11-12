@@ -190,15 +190,15 @@
                     (parser-error->string err))))
 
      ;; error: textual file parser reports the source path.
-     (let ([path (format "parser-error-text-~a" (random 9999))])
-       (call-with-output-file path (lambda (p) (put-string p "z")))
-       (let ([err (parser-error-from
-                   (lambda () (parse-textual-file (<char> #\a) path)))])
-         (delete-file path)
-         (and (parser-error? err)
-              (equal? path (parser-error-source err))
-              (equal? (format "~a:1:1: expected #\\a, got #\\z" path)
-                      (parser-error->string err)))))
+     (with-parser-file
+      (string->utf8 "z")
+      (lambda (path)
+        (let ([err (parser-error-from
+                    (lambda () (parse-textual-file (<char> #\a) path)))])
+          (and (parser-error? err)
+               (equal? path (parser-error-source err))
+               (equal? (format "~a:1:1: expected #\\a, got #\\z" path)
+                       (parser-error->string err))))))
 
      ;; error: binary parser failure reports byte offset and found byte.
      (let ([err (parser-error-from
@@ -214,15 +214,15 @@
                     (parser-error->string err))))
 
      ;; error: binary file parser reports the source path and byte offset.
-     (let ([path (format "parser-error-bin-~a" (random 9999))])
-       (write-u8vec! path (u8vec #x20))
-       (let ([err (parser-error-from
-                   (lambda () (parse-binary-file (<uimm8> #x0b) path)))])
-         (delete-file path)
-         (and (parser-error? err)
-              (equal? path (parser-error-source err))
-              (equal? (format "~a:byte 0: expected #x0b, got #x20" path)
-                      (parser-error->string err)))))
+     (with-parser-file
+      (u8vec #x20)
+      (lambda (path)
+        (let ([err (parser-error-from
+                    (lambda () (parse-binary-file (<uimm8> #x0b) path)))])
+          (and (parser-error? err)
+               (equal? path (parser-error-source err))
+               (equal? (format "~a:byte 0: expected #x0b, got #x20" path)
+                       (parser-error->string err))))))
 
      ;; error: choice merges expected alternatives at the farthest offset.
      (let ([err (parser-error-from
