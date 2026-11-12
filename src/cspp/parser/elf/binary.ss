@@ -100,9 +100,9 @@
     (lambda (bytes)
       (guard (condition
               [(i/o-decoding-error? condition)
-               (let* ([length (bytevector-length bytes)] [text (make-string length)])
-                 (do ([i 0 (fx1+ i)]) ((fx= i length) text)
-                   (string-set! text i (integer->char (bytevector-u8-ref bytes i)))))])
+               (bytevector->string
+                bytes (make-transcoder (latin-1-codec) (eol-style none)
+                                       (error-handling-mode raise)))])
         (parser-decode-bytes bytes 'utf-8))))
 
   (define valid-string-table?
@@ -360,12 +360,9 @@
 
   (define relocation-symbols-valid?
     (lambda (relocations symbol-count)
-      (let ([relocation* (elf-relocation-table-relocations relocations)])
-        (let loop ([i 0])
-          (or (= i (vector-length relocation*))
-              (and (< (elf-relocation-symbol-index (vector-ref relocation* i))
-                      symbol-count)
-                   (loop (+ i 1))))))))
+      (vfor-all (lambda (relocation)
+                  (< (elf-relocation-symbol-index relocation) symbol-count))
+                (elf-relocation-table-relocations relocations))))
 
   (define decode-section-content
     (lambda (raw class endianness-name machine section-index header all-headers raw-sections

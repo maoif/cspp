@@ -1,7 +1,9 @@
 (library (cspp parser wasm text lexical)
   (export <wat-trivia> <wat-token> <wat-keyword> <wat-identifier> <wat-annotation-head>
           <wat-string> <wat-name> <wat-u32> <wat-u64> <wat-i8> <wat-i16> <wat-i32> <wat-i64>
-          <wat-f32> <wat-f64>)
+          <wat-f32> <wat-f64>
+          ;; Internal structural helpers shared by the WAT grammar libraries.
+          wat-open wat-close wat-head wat-parenthesized)
   (import (cspp chez)
           (cspp parser combinator)
           (cspp parser private)
@@ -125,6 +127,37 @@
                 (errorf who "keyword must not be empty")
                 (<wat-token>
                  (<not-followed-by> (<string> keyword) <wat-identifier-character>)))))
+
+  #|proc:wat-open
+  The `wat-open` parser reads an opening parenthesis and following WAT trivia, returning #\(.
+  |#
+  (define wat-open
+    (<~0> (<char> #\() <wat-trivia>))
+
+  #|proc:wat-close
+  The `wat-close` parser reads a closing parenthesis and following WAT trivia, returning #\).
+  |#
+  (define wat-close
+    (<~0> (<char> #\)) <wat-trivia>))
+
+  #|proc:wat-head
+  The `wat-head` procedure takes nonempty string `keyword` and returns a parser that reads an
+  opening parenthesis, the keyword, and following trivia. It returns the opening source position.
+  |#
+  (define wat-head
+    (lambda (keyword)
+      (pcheck ([string? keyword])
+              (<~0> <pos> wat-open (<wat-keyword> keyword)))))
+
+  #|proc:wat-parenthesized
+  The `wat-parenthesized` procedure takes nonempty string `keyword` and contents parser `parser`
+  with behavior `(TextualInput -> Any)`. It returns a parser that reads a parenthesized keyword
+  production, consumes following trivia, and returns the contents parser's value.
+  |#
+  (define wat-parenthesized
+    (lambda (keyword parser)
+      (pcheck ([string? keyword] [parser? parser])
+              (<~1> (<~0> wat-open (<wat-keyword> keyword)) parser wat-close))))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Byte strings and names

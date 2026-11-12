@@ -843,20 +843,6 @@
     (lambda (value)
       (if (null? value) #f value)))
 
-  (define wat-open
-    (<~0> (<char> #\() <wat-trivia>))
-
-  (define wat-close
-    (<~0> (<char> #\)) <wat-trivia>))
-
-  (define wat-parenthesized
-    (lambda (keyword parser)
-      (<~1> (<~0> wat-open (<wat-keyword> keyword)) parser wat-close)))
-
-  (define wat-head
-    (lambda (keyword)
-      (<~0> <pos> wat-open (<wat-keyword> keyword))))
-
   (define canonical-value-type?
     (lambda (type)
       (or (memq type '(i32 i64 f32 f64 v128))
@@ -868,11 +854,10 @@
 
   (define all-canonical-bindings?
     (lambda (binding*)
-      (let loop ([binding* binding*])
-        (or (null? binding*)
-            (and (not (wat-binding-id (car binding*)))
-                 (canonical-value-type? (wat-binding-type (car binding*)))
-                 (loop (cdr binding*)))))))
+      (for-all (lambda (binding)
+                 (and (not (wat-binding-id binding))
+                      (canonical-value-type? (wat-binding-type binding))))
+               binding*)))
 
   (define binding-type-vector
     (lambda (binding*)

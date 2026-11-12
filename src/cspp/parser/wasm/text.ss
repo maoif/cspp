@@ -18,20 +18,6 @@
     (lambda (value)
       (if (null? value) #f value)))
 
-  (define wat-open
-    (<~0> (<char> #\() <wat-trivia>))
-
-  (define wat-close
-    (<~0> (<char> #\)) <wat-trivia>))
-
-  (define wat-field-head
-    (lambda (keyword)
-      (<~0> <pos> wat-open (<wat-keyword> keyword))))
-
-  (define wat-parenthesized
-    (lambda (keyword parser)
-      (<~1> (<~0> wat-open (<wat-keyword> keyword)) parser wat-close)))
-
   (define <wat-generic-parenthesized>
     (<map> list->immutable-vector <wat-folded-instruction>))
 
@@ -77,7 +63,7 @@
     (<map> (lambda (value)
              (immutable-vector
               'function (optional-value (cadr value)) (caddr value)))
-           (<~0> (<~> (wat-field-head "func")
+           (<~0> (<~> (wat-head "func")
                       (<optional> <wat-identifier>) <wat-type-use>)
                  wat-close)))
 
@@ -85,7 +71,7 @@
     (<map> (lambda (value)
              (immutable-vector
               'table (optional-value (cadr value)) (caddr value)))
-           (<~0> (<~> (wat-field-head "table")
+           (<~0> (<~> (wat-head "table")
                       (<optional> <wat-identifier>) <wat-table-type>)
                  wat-close)))
 
@@ -93,7 +79,7 @@
     (<map> (lambda (value)
              (immutable-vector
               'memory (optional-value (cadr value)) (caddr value)))
-           (<~0> (<~> (wat-field-head "memory")
+           (<~0> (<~> (wat-head "memory")
                       (<optional> <wat-identifier>) <wat-memory-type>)
                  wat-close)))
 
@@ -101,7 +87,7 @@
     (<map> (lambda (value)
              (immutable-vector
               'global (optional-value (cadr value)) (caddr value)))
-           (<~0> (<~> (wat-field-head "global")
+           (<~0> (<~> (wat-head "global")
                       (<optional> <wat-identifier>) <wat-global-type>)
                  wat-close)))
 
@@ -109,7 +95,7 @@
     (<map> (lambda (value)
              (immutable-vector
               'tag (optional-value (cadr value)) (caddr value)))
-           (<~0> (<~> (wat-field-head "tag")
+           (<~0> (<~> (wat-head "tag")
                       (<optional> <wat-identifier>) <wat-tag-type>)
                  wat-close)))
 
@@ -128,7 +114,7 @@
                         module-name name (vector-ref description 0)
                         (vector-ref description 2))
                        #f '() #f)))
-     (<~0> (<~> (wat-field-head "import") <wat-name> <wat-name> import-description)
+     (<~0> (<~> (wat-head "import") <wat-name> <wat-name> import-description)
             wat-close)))
 
 ;;;;===----------------------------------------------------------------------===
@@ -138,7 +124,7 @@
   (define named-local-clause
     (<map> (lambda (value)
              (list (make-wat-binding (car value) (cadr value) (caddr value))))
-           (<~0> (<~> (wat-field-head "local")
+           (<~0> (<~> (wat-head "local")
                       <wat-identifier> <wat-value-type>)
                  wat-close)))
 
@@ -146,7 +132,7 @@
     (<map> (lambda (value)
              (let ([pos (car value)])
                (map (lambda (type) (make-wat-binding pos #f type)) (cadr value))))
-           (<~0> (<~> (wat-field-head "local") (<many> <wat-value-type>))
+           (<~0> (<~> (wat-head "local") (<many> <wat-value-type>))
                  wat-close)))
 
   (define local-clause (</> named-local-clause unnamed-local-clause))
@@ -194,7 +180,7 @@
 
   (define function-field
     (<bind>
-     (<~> (wat-field-head "func")
+     (<~> (wat-head "func")
           (<optional> <wat-identifier>)
           (<many> inline-export)
           (<optional> inline-import)
@@ -259,7 +245,7 @@
 
   (define table-field
     (<bind>
-     (<~> (wat-field-head "table")
+     (<~> (wat-head "table")
           (<optional> <wat-identifier>)
           (<many> inline-export)
           (<optional> inline-import))
@@ -296,7 +282,7 @@
 
   (define memory-field
     (<bind>
-     (<~> (wat-field-head "memory")
+     (<~> (wat-head "memory")
           (<optional> <wat-identifier>)
           (<many> inline-export)
           (<optional> inline-import))
@@ -319,7 +305,7 @@
 
   (define global-field
     (<bind>
-     (<~> (wat-field-head "global")
+     (<~> (wat-head "global")
           (<optional> <wat-identifier>)
           (<many> inline-export)
           (<optional> inline-import)
@@ -350,7 +336,7 @@
        (field-result (car value) 'tag (optional-value (cadr value))
                      (car (cddddr value)) (optional-value (cadddr value))
                      (caddr value) #f))
-     (<~0> (<~> (wat-field-head "tag")
+     (<~0> (<~> (wat-head "tag")
                 (<optional> <wat-identifier>)
                 (<many> inline-export)
                 (<optional> inline-import)
@@ -373,13 +359,13 @@
              (field-result (car value) 'export #f
                            (immutable-vector (cadr value) (caddr value))
                            #f '() #f))
-           (<~0> (<~> (wat-field-head "export") <wat-name> export-description)
+           (<~0> (<~> (wat-head "export") <wat-name> export-description)
                  wat-close)))
 
   (define start-field
     (<map> (lambda (value)
              (field-result (car value) 'start #f (cadr value) #f '() #f))
-           (<~0> (<~> (wat-field-head "start") <wat-index-reference>)
+           (<~0> (<~> (wat-head "start") <wat-index-reference>)
                  wat-close)))
 
   (define declarative-element-prefix
@@ -400,7 +386,7 @@
 
   (define element-field
     (<bind>
-     (<~> (wat-field-head "elem") (<optional> <wat-identifier>) element-prefix)
+     (<~> (wat-head "elem") (<optional> <wat-identifier>) element-prefix)
      (lambda (value)
        (let ([pos (car value)] [id (optional-value (cadr value))] [prefix (caddr value)])
          (<map>
@@ -444,7 +430,7 @@
             pos (vector-ref prefix 0) (vector-ref prefix 1)
             (vector-ref prefix 2) #f
             (list->immutable-vector string*))))))
-     (<~0> (<~> (wat-field-head "data")
+     (<~0> (<~> (wat-head "data")
                 (<optional> <wat-identifier>) data-prefix (<many> <wat-string>))
             wat-close)))
 
@@ -497,7 +483,7 @@
        (make-wat-module (car value) (optional-value (cadr value))
                         (list->immutable-vector (caddr value))))
      (<~1> <wat-trivia>
-            (</> (<~0> (<~> (wat-field-head "module")
+            (</> (<~0> (<~> (wat-head "module")
                              (<optional> <wat-identifier>)
                              (<many-until> module-field wat-close))
                         wat-close <eof>)

@@ -2,7 +2,7 @@
   (export normalize-wat-module)
   (import (cspp chez)
           (only (cspp list) make-list-builder)
-          (only (cspp vector) vfold-left)
+          (only (cspp vector) vfold-left vfor-all)
           (cspp parser wasm opcodes)
           (cspp parser wasm types)
           (cspp parser wasm validate)
@@ -286,11 +286,7 @@
   (define type-vector=?
     (lambda (left right)
       (and (= (vector-length left) (vector-length right))
-           (let loop ([index 0])
-             (or (fx= index (vector-length left))
-                 (and (value-type=? (vector-ref left index)
-                                    (vector-ref right index))
-                      (loop (fx1+ index))))))))
+           (vfor-all value-type=? left right))))
 
   (define function-type=?
     (lambda (left right)

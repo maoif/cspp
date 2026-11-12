@@ -150,13 +150,6 @@
                   (immutable-vector (default-index-reference) second))
                 <wat-index-reference>)))
 
-  (define wat-open (<~0> (<char> #\() <wat-trivia>))
-  (define wat-close (<~0> (<char> #\)) <wat-trivia>))
-
-  (define parenthesized
-    (lambda (keyword parser)
-      (<~1> (<~0> wat-open (<wat-keyword> keyword)) parser wat-close)))
-
   (define select-types-immediate
     (<map>
      (lambda (type**)
@@ -164,7 +157,7 @@
            empty-vector
            (immutable-vector
             (list->immutable-vector (flatten-lists type**)))))
-     (<many> (parenthesized "result" (<many> <wat-value-type>)))))
+     (<many> (wat-parenthesized "result" (<many> <wat-value-type>)))))
 
   (define call-indirect-immediate
     (<map>
@@ -568,7 +561,7 @@
 
   (define folded-branch
     (lambda (keyword)
-      (parenthesized keyword (<map> instruction-vector (<many> <wat-sequence-node>)))))
+      (wat-parenthesized keyword (<map> instruction-vector (<many> <wat-sequence-node>)))))
 
   (define folded-if-after
     (lambda (pos descriptor)
