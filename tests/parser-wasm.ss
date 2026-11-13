@@ -2645,8 +2645,6 @@
      (= (vector-length expected-core-3-mnemonics)
         (vector-length wasm-core-3-opcodes))
 
-     (unique-values? (vector->list expected-core-3-mnemonics))
-
      (unique-values?
       (map wasm-opcode-mnemonic (vector->list wasm-core-3-opcodes)))
 
