@@ -1,7 +1,9 @@
 # Chez Scheme Programming Platform (CSPP)
 
 CSPP provides libraries for Chez Scheme and a Make-based build with a `cspp` launcher.
-Import `(cspp)` for the public libraries, or import individual libraries as needed.
+Import `(cspp)` for the default language environment; import other libraries explicitly.
+The default exports are `chez`, `utils`, `control`, `match`, `adt`, `list`, `string`,
+`vector`, `for`, and `iter`. See [library imports and migration](docs/libraries.md).
 
 ## Download and run
 
@@ -79,7 +81,7 @@ make run
 Exit the REPL with `(exit)` or Ctrl + d. Import CSPP in a Scheme program:
 
 ```scheme
-(import (cspp))
+(import (cspp) (cspp io) (cspp transducer))
 
 (displayln
   (into 'list

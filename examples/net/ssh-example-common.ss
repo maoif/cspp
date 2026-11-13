@@ -1,5 +1,5 @@
 ;; Shared SSH CLI, authentication, output draining, and lifecycle helpers.
-(import (cspp system user))
+(import (cspp system user) (cspp net) (cspp cli) (cspp logging))
 (load "examples/net/net-example-common.ss")
 
 (define ssh-example-options '((port . "SSH server port, 0 through 65535 (default: 22).")

@@ -1,4 +1,4 @@
-(import (cspp) (cspp net scp) (cspp net transfer) (cspp logging))
+(import (cspp) (cspp path) (cspp net) (cspp net scp) (cspp net transfer) (cspp logging))
 (load "examples/common.ss")
 (load "examples/net/transfer-progress.ss")
 (load "examples/net/ssh-example-common.ss")

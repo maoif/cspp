@@ -1,6 +1,7 @@
 # Cryptography
 
-Cryptographic digests are available from `(cspp crypto digest)`, `(cspp crypto)`, or `(cspp)`.
+Cryptographic digests are available from `(cspp crypto digest)` or `(cspp crypto)`.
+Cryptography requires an explicit import.
 Use `digest-bytevector`, `digest-string`, and `digest-file` with an algorithm symbol, or helpers
 such as `sha256-bytevector`. Incremental operations use `make-digester`, `digester-update-*`,
 `digester-get`, `digester-reset!`, `digester-finalize!`, and `digester-destroy!`.

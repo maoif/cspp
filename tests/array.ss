@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp io) (cspp array) (cspp test))
 
 (define collect-array-iter
   (lambda (iter)

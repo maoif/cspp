@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp format scheme))
 (load "examples/common.ss")
 
 (example-run!

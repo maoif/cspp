@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp system))
 
 ;; The supervisor uses Chez spawning and nonblocking libc waitpid so a regression
 ;; in CSPP capture or GC participation cannot disable its deadline or cleanup.

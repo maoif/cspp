@@ -1,4 +1,4 @@
-(import (cspp)
+(import (cspp) (cspp io) (cspp test)
         (cspp bitvec))
 
 (define iota50000 (iota 50000))

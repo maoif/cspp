@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp system process))
 (load "generated/file-transfer.pb.ss")
 (load "generated/codegen-features.pb.ss")
 
@@ -10,7 +10,7 @@
     (eval expression generated-environment)))
 
 (define feature-environment
-  (environment '(except (cspp) envelope?)
+  (environment '(cspp)
                '(cspp tests codegen codegen-features protobuf)))
 
 (define feature-eval
@@ -77,3 +77,13 @@
             (string=? "/cspp.tests.codegen.Shapes/Client" shapes-client-method)
             (string=? "/cspp.tests.codegen.Shapes/Bidi" shapes-bidi-method)
             (positive? (bytevector-length protobuf-file-descriptor-bytes)))))
+
+(mat protobuf-generator-process
+
+     ;; A request with an empty parameter and no target files has an empty response.
+     (let ([result
+             (process-capture "../tools/protoc-gen-cspp"
+               :stdin #vu8(18 0) :encoding binary :stderr capture)])
+       (and (process-exit-success? (process-result-status result))
+            (zero? (bytevector-length (process-result-stdout result)))
+            (zero? (bytevector-length (process-result-stderr result))))))

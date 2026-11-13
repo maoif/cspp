@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp treeset))
 
 
 (define v100    (fxvshuffle! (fxviota 100)))

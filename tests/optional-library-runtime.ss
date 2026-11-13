@@ -1,4 +1,11 @@
-(import (cspp) (cspp net private ffi) (cspp net private lws-ffi) (cspp crypto private ffi))
+(import (cspp)
+        (cspp uuid)
+        (cspp hash)
+        (cspp optional-library)
+        (cspp crypto)
+        (cspp net private ffi)
+        (cspp net private lws-ffi)
+        (cspp crypto private ffi))
 
 (define dependencies '(openssl xxhash blake3 curl ssh websockets grpc zlib cares idn2 uuid))
 

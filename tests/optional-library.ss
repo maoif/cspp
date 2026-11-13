@@ -1,4 +1,10 @@
-(import (cspp) (cspp net private ffi))
+(import (cspp)
+        (cspp uuid)
+        (cspp hash)
+        (cspp optional-library)
+        (cspp crypto)
+        (cspp net)
+        (cspp net private ffi))
 
 (define disabled-api-error?
   (lambda (library operation)

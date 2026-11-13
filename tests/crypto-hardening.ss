@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp system) (cspp optional-library) (cspp crypto))
 
 (mat crypto-input-validation
   ;; Error case: invalid native arguments must raise without aborting or prompting.

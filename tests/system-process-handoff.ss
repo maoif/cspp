@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp system))
 
 ;; Run the real expert definitions and native operations, injecting only the exact escape point.
 ;; Real children and ports verify cleanup without depending on timer scheduling or stack layout.

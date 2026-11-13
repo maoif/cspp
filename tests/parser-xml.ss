@@ -1,4 +1,4 @@
-(import (cspp)
+(import (cspp) (cspp system)
         (cspp format xml))
 
 (include "parser-external-tools.ss")

@@ -1,4 +1,4 @@
-(import (cspp)
+(import (cspp) (cspp file) (cspp path)
         (cspp net)
         (cspp net private lws-http1)
         (cspp net private lws-http2)

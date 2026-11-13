@@ -1,4 +1,4 @@
-(import (cspp)
+(import (cspp) (cspp hash) (cspp crypto) (cspp concurrency)
         (cspp crypto digest))
 
 (define fail

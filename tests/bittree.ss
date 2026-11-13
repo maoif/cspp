@@ -1,4 +1,4 @@
-(import (cspp)
+(import (cspp) (cspp test)
         (cspp bittree))
 
 

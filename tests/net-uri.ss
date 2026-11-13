@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp net))
 
 (mat net-uri-raw-components
      (let ([u (string->uri "http://example.test/a%2Fb?q=%2F#frag%2F")])

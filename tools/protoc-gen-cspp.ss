@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp format protobuf))
 
 (define append-map
   (lambda (proc value*)

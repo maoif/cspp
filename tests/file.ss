@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp file) (cspp path) (cspp glob) (cspp system) (cspp concurrency))
 
 
 
@@ -1153,7 +1153,7 @@
      (for-all
       (lambda (mask)
         (= mask (eval `(fswatcher-mask ,@(fswatcher-mask->symbols mask))
-                      (environment '(cspp)))))
+                      (environment '(cspp) '(cspp file) '(cspp path) '(cspp glob) '(cspp system) '(cspp concurrency)))))
       '(1 8 24 4095 #xc0000000))
 
      ;; Error cases: generic flag operations reject noninteger operands on either side.

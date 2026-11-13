@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp transducer) (cspp navigator) (cspp array) (cspp queue))
 
 ;; Type errors must be reported before an unchecked primitive can fault.
 (define transducer-type-error?

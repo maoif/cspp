@@ -1,7 +1,7 @@
 # System APIs
 
 Import `(cspp system)` for the complete system API, or use the focused libraries below.
-`(cspp)` includes the same public bindings. API details also appear immediately above their
+System libraries require explicit imports. API details also appear immediately above their
 implementations in `src/cspp/system/`.
 
 | Library | Responsibility |
@@ -10,7 +10,7 @@ implementations in `src/cspp/system/`.
 | `(cspp system signal)` | Signal names, sending, native thread masks, and synchronous waiting |
 | `(cspp system user)` | Unix credentials, account lookup, and user/group records |
 | `(cspp system filesystem)` | Filesystem capacity and mounted-filesystem records |
-| `(cspp system info)` | Platform and host information, CPU count, and thread sleeps |
+| `(cspp system info)` | Platform and host information and CPU count |
 | `(cspp system errors)` | System conditions and their constructors/accessors |
 | `(cspp system linux)` | Linux procfs and OS-release information |
 
@@ -77,7 +77,7 @@ These are macros, not procedures with keyword parameters. A bare identifier in a
 becomes literal text. Wrap a variable in `(begin variable)` to evaluate it.
 
 ```scheme
-(import (cspp))
+(import (cspp) (cspp system process))
 
 (define text "hello")
 (define result (process-capture printf "%s" (begin text)))

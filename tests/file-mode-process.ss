@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp file) (cspp system))
 
 ;; The parent fixture has an inherited group outside this namespace's caller groups.
 ;; Run separately because dropping supplementary groups must not affect the test runner.

@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FILES = ['src/cspp/net/ffi.ss', 'src/cspp/net/lws/ffi.ss', 'src/cspp/crypto/ffi.ss',
+FILES = ['src/cspp/net/private/ffi.ss', 'src/cspp/net/private/lws-ffi.ss', 'src/cspp/crypto/private/ffi.ss',
          'src/cspp/hash.ss', 'src/cspp/uuid.ss']
 PATTERN = re.compile(r'\(foreign-procedure\s+"([^"]+)"\s+\(([^()]*)\)\s+([^()\s]+)\)')
 

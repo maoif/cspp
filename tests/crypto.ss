@@ -1,4 +1,4 @@
-(import (cspp)
+(import (cspp) (cspp file) (cspp path)
         (cspp crypto)
         (cspp crypto encoding))
 

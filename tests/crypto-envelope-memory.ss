@@ -5,7 +5,7 @@
 (unless (= 1 ((foreign-procedure "crypto_test_track_memory" () int)))
   (error 'envelope-memory "OpenSSL memory tracking initialized too late"))
 (load "cspp.lib")
-(import (cspp))
+(import (cspp) (cspp system) (cspp crypto))
 
 (define live-allocations
   (foreign-procedure "crypto_test_live_allocations" () unsigned-64))

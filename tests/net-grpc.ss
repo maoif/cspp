@@ -1,4 +1,4 @@
-(import (cspp)
+(import (cspp) (cspp path) (cspp format protobuf)
         (cspp net))
 
 (load "net-common.ss")

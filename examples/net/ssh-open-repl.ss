@@ -1,5 +1,5 @@
-(import (cspp) (cspp logging) (cspp system signal)
-        (only (cspp net ffi) ffi-ssh-terminal-size ffi-ssh-terminal-raw-start
+(import (cspp) (cspp net) (cspp logging) (cspp system signal)
+        (only (cspp net private ffi) ffi-ssh-terminal-size ffi-ssh-terminal-raw-start
                               ffi-ssh-terminal-raw-close))
 (load "examples/common.ss")
 (load "examples/net/ssh-example-common.ss")

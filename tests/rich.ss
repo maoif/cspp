@@ -1,5 +1,5 @@
 #!chezscheme
-(import (cspp)
+(import (cspp) (cspp system) (cspp rich)
         (cspp rich private common)
         (only (cspp rich renderable) rich-register-container-renderer! rich-layout-render-cache))
 

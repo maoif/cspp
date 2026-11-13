@@ -1,4 +1,4 @@
-(import (cspp)
+(import (cspp) (cspp system process)
         (cspp format toml))
 
 (include "parser-external-tools.ss")

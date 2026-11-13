@@ -1,4 +1,4 @@
-(import (cspp)
+(import (cspp) (cspp concurrency)
         (cspp net))
 
 (load "net-common.ss")

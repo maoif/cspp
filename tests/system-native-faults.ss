@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp file) (cspp system))
 
 ;; This driver runs under strace syscall injection, separately from the test runner.
 (define mode (string->symbol (cadr (command-line))))

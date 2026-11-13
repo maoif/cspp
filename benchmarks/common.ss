@@ -1,4 +1,4 @@
-(import (cspp benchmark) (cspp cli))
+(import (cspp benchmark) (cspp cli) (cspp rich))
 
 (define benchmark-option
   (lambda (name parser help)

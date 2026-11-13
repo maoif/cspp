@@ -1,5 +1,5 @@
 #!chezscheme
-(import (cspp))
+(import (cspp) (cspp path) (cspp rich) (cspp logging))
 
 (define demo-log-file "cspp-logging-example.log")
 

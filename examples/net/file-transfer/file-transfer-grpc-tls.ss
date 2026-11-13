@@ -1,4 +1,4 @@
-(import (cspp) (cspp net))
+(import (cspp) (cspp path) (cspp net))
 
 (load "examples/net/legacy-example-common.ss")
 (net-example-help! 'file-transfer-grpc-tls "Transfer a file over TLS gRPC. Positional argument: FILE-OR-DIRECTORY; CSPP_TRANSFER_ROLE=server|client.")

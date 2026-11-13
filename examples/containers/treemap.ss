@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp treemap))
 (load "examples/common.ss")
 
 (example-run!

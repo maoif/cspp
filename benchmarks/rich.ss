@@ -1,5 +1,5 @@
 #!chezscheme
-(import (cspp))
+(import (cspp) (cspp rich))
 (load "benchmarks/common.ss")
 
 ;; Run from the repository root: ./cspp --script=benchmarks/rich.ss

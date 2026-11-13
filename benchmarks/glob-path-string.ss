@@ -1,5 +1,5 @@
 #!chezscheme
-(import (cspp) (cspp glob))
+(import (cspp) (cspp file) (cspp path) (cspp glob))
 (load "benchmarks/common.ss")
 
 ;; Run from the repository root: ./cspp --script=benchmarks/glob-path-string.ss

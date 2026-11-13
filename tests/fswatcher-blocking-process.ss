@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp file))
 
 ;; Allocation on the producer must be able to collect while the consumer waits in C.
 (define root (car (command-line-arguments)))

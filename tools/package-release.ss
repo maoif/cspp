@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp regex) (cspp file) (cspp path) (cspp system))
 
 ;; Native Linux packaging. All process arguments are quoted individually; package paths
 ;; and filenames are data, including when they contain spaces or shell metacharacters.

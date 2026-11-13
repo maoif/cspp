@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp path))
 
 (define read-text-file
   (lambda (path)

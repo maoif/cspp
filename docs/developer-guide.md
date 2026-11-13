@@ -176,7 +176,7 @@ This includes correct publication and visibility of shared internal state.
 For example, separate invocations must not share traversal or collection bookkeeping:
 
 ```scheme
-(import (cspp))
+(import (cspp) (cspp concurrency))
 
 (define (collect base)
   (for/list ([i :fxiota 3])

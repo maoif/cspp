@@ -1,4 +1,4 @@
-(import (cspp))
+(import (cspp) (cspp benchmark) (cspp test) (cspp format json5))
 
 (define (benchmark-test-config)
   (benchmark-config-with (default-benchmark-config)
@@ -1541,7 +1541,7 @@
      (for-all
        (lambda (form)
          (guard (raised [else #t])
-           (eval form (environment '(cspp)))
+           (eval form (environment '(cspp) '(cspp benchmark) '(cspp test) '(cspp format json5)))
            #f))
        '((let () (define-benchmark-suite unused (:samples 0)) unused)
          (let () (define-benchmark-suite unused (:args ([n] [1]))) unused)
@@ -2025,7 +2025,7 @@
   (for-all
     (lambda (form)
       (guard (raised [else (syntax-violation? raised)])
-        (expand form (environment '(cspp)))
+        (expand form (environment '(cspp) '(cspp benchmark) '(cspp test) '(cspp format json5)))
         #f))
     '((benchmark-options (:samples 1 :samples 2))
       (benchmark-options (:setup #f :setup #f))
@@ -2056,7 +2056,7 @@
   ;; Error: suite members must be descriptors, even if the suite is never run.
   (guard (raised [else #t])
     (eval '(let () (define-benchmark-suite invalid () #f) invalid)
-          (environment '(cspp)))
+          (environment '(cspp) '(cspp benchmark) '(cspp test) '(cspp format json5)))
     #f))
 
 (mat benchmark-json-preserves-colliding-key-associations
@@ -2203,7 +2203,7 @@
   ;; Error: fixture and suite macros must validate their callback signatures at definition time.
   (for-all
     (lambda (form)
-      (guard (raised [else #t]) (eval form (environment '(cspp))) #f))
+      (guard (raised [else #t]) (eval form (environment '(cspp) '(cspp benchmark) '(cspp test) '(cspp format json5))) #f))
     '((let () (define-benchmark-fixture bad (:setup (lambda () #f))) bad)
       (let () (define-benchmark-fixture bad (:teardown (lambda (state) #f))) bad)
       (let () (define-benchmark-suite bad (:suite-setup (lambda () #f))) bad)
@@ -2396,7 +2396,7 @@
   (for-all
     (lambda (form)
       (guard (raised [else (syntax-violation? raised)])
-        (expand form (environment '(cspp)))
+        (expand form (environment '(cspp) '(cspp benchmark) '(cspp test) '(cspp format json5)))
         #f))
     '((let () (define-benchmark (bad x) () (lambda (state) #t)) bad)
       (let () (define-benchmark-fixture (bad x) ()) bad)
@@ -2573,7 +2573,7 @@
   (for-all
     (lambda (form)
       (guard (raised [else (syntax-violation? raised)])
-        (expand form (environment '(cspp)))
+        (expand form (environment '(cspp) '(cspp benchmark) '(cspp test) '(cspp format json5)))
         #f))
     '((let ()
         (define-benchmark-template sized (size) () (lambda (state) size))
@@ -2839,7 +2839,7 @@
                                   (list-tail (benchmark-registry-benchmarks
                                                (current-benchmark-registry)) before))
                              '(factory/small factory/large))))))
-      (environment '(cspp))))
+      (environment '(cspp) '(cspp benchmark) '(cspp test) '(cspp format json5))))
 
   ;; Error: an empty batch must work as the sole expression in a lexical body.
   (guard (raised [else #f])
@@ -2847,7 +2847,7 @@
       (and (eq? (eval
                   '(let ([factory (lambda (label) (error 'factory "must not be called"))])
                      (instantiate-benchmark-template factory ()))
-                  (environment '(cspp)))
+                  (environment '(cspp) '(cspp benchmark) '(cspp test) '(cspp format json5)))
                 (void))
            (eq? before (benchmark-registry-benchmarks (current-benchmark-registry)))))))
 
@@ -2863,10 +2863,10 @@
               (benchmark-config-stop-on-error? stopping)
               (not (benchmark-config-stop-on-error? running))
               (benchmark-config-stop-on-error? constructed)))
-      (environment '(cspp))))
+      (environment '(cspp) '(cspp benchmark) '(cspp test) '(cspp format json5))))
 
   ;; Error: the public reader must reject non-config arguments before accessing record fields.
   (guard (raised [else (and (condition? raised) (who-condition? raised)
                            (eq? (condition-who raised) 'pcheck))])
-    (eval '(benchmark-config-stop-on-error? #f) (environment '(cspp)))
+    (eval '(benchmark-config-stop-on-error? #f) (environment '(cspp) '(cspp benchmark) '(cspp test) '(cspp format json5)))
     #f))

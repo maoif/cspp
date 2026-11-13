@@ -1,4 +1,4 @@
-(import (cspp) (cspp crypto digest))
+(import (cspp) (cspp hash) (cspp crypto) (cspp crypto digest))
 (load "examples/common.ss")
 
 (define file-hash
