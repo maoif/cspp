@@ -2,10 +2,21 @@
 (define elf-review-file
   (lambda (name) (parse-elf-file (string-append "data/elf-review/" name ".elf"))))
 
+(define elf-review-variants
+  (list (list "32le" #f (endianness little))
+        (list "32be" #f (endianness big))
+        (list "64le" #t (endianness little))
+        (list "64be" #t (endianness big))))
+
+;; Run predicate(tag, wide?, endianness) for every class/order combination, short-circuiting.
+(define for-all-elf-variants
+  (lambda (predicate)
+    (for-all (lambda (variant) (apply predicate variant)) elf-review-variants)))
+
 (mat parser-elf-symbolless-relocations
 
-     (for-all
-      (lambda (tag)
+     (for-all-elf-variants
+      (lambda (tag wide? endian)
         (for-all
          (lambda (kind)
            (let* ([table (elf-section-content
@@ -17,8 +28,7 @@
                   (= #x1000 (elf-relocation-offset entry))
                   (equal? (if (string=? kind "rela-") -4 #f)
                           (elf-relocation-addend entry)))))
-         '("rel-" "rela-")))
-      '("32le" "32be" "64le" "64be"))
+         '("rel-" "rela-"))))
 
      ;; Error case: a nonzero symbol index still requires a linked symbol table.
      (raises-parser-error?
@@ -290,25 +300,23 @@
 (mat parser-elf-section-structure
 
      ;; Error cases: duplicate singleton tables and misaligned section addresses are rejected.
-     (for-all
-      (lambda (tag)
+     (for-all-elf-variants
+      (lambda (tag wide? endian)
         (for-all
          (lambda (name)
            (guard (condition [(parser-error? condition) #t] [else #f])
              (elf-review-file (string-append name "-" tag))
              #f))
          '("duplicate-symtab" "duplicate-dynsym" "duplicate-hash" "duplicate-dynamic"
-           "misaligned-address")))
-      '("32le" "32be" "64le" "64be"))
+           "misaligned-address"))))
 
      ;; One table of each kind, multiple string tables, and unconstrained addresses are valid.
-     (for-all
-      (lambda (tag)
+     (for-all-elf-variants
+      (lambda (tag wide? endian)
         (for-all (lambda (name)
                    (elf-file? (elf-review-file (string-append name "-" tag))))
                  '("single-tables" "multiple-strtab" "aligned-address"
-                   "unconstrained-address" "unit-alignment-address")))
-      '("32le" "32be" "64le" "64be")))
+                   "unconstrained-address" "unit-alignment-address")))))
 
 (define elf-review-rejected?
   (lambda (bytes)
@@ -319,7 +327,7 @@
 (mat parser-elf-flag-indices
 
      ;; Error cases: flag-declared section indices must name existing sections.
-     (for-all
+     (for-all-elf-variants
       (lambda (tag wide? endian)
         (let* ([original (read-u8vec (string-append "data/elf-review/aligned-address-" tag ".elf"))]
                [header (+ (if wide? 64 52) (if wide? 64 40))])
@@ -336,14 +344,12 @@
                       (elf-file? (parse-elf bytes))
                       (elf-review-rejected? bytes))))
               '(0 1 2 4294967295)))
-           '(64 128) (if wide? '(44 40) '(28 24)))))
-      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
-      (list (endianness little) (endianness big) (endianness little) (endianness big))))
+           '(64 128) (if wide? '(44 40) '(28 24)))))))
 
 (mat parser-elf-fixed-entry-sizes
 
      ;; Error cases: zero and incorrect entry sizes cannot describe fixed-size typed tables.
-     (for-all
+     (for-all-elf-variants
       (lambda (tag wide? endian)
         (for-all
          (lambda (name)
@@ -366,9 +372,7 @@
                                (elf-review-rejected? bytes)))
                            '(0 1))))
                     (loop (+ index 1)))))))
-         '("fixed-tables-" "fixed-relr-")))
-      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
-      (list (endianness little) (endianness big) (endianness little) (endianness big))))
+         '("fixed-tables-" "fixed-relr-")))))
 
 (define elf-review-address-array
   (lambda (tag wide? endian type entry-size payload-size)
@@ -391,7 +395,7 @@
 (mat parser-elf-address-array-entry-sizes
 
      ;; lld leaves sh_entsize zero; addresses still use the ELF class width and byte order.
-     (for-all
+     (for-all-elf-variants
       (lambda (tag wide? endian)
         (let ([word (if wide? 8 4)])
           (for-all
@@ -412,12 +416,10 @@
                        (if wide? '#(#x1234abcd #x123456789abcdef0)
                            '#(#x1234abcd #x89abcdef)))))
               (list 0 word)))
-           '(14 15 16))))
-      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
-      (list (endianness little) (endianness big) (endianness little) (endianness big)))
+           '(14 15 16)))))
 
      ;; Error cases: nonzero entry sizes other than the address width remain invalid.
-     (for-all
+     (for-all-elf-variants
       (lambda (tag wide? endian)
         (let ([word (if wide? 8 4)])
           (for-all
@@ -429,12 +431,10 @@
                    (parse-elf (elf-review-address-array
                                tag wide? endian type entry-size word)))))
               (list 1 (if wide? 4 8))))
-           '(14 15 16))))
-      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
-      (list (endianness little) (endianness big) (endianness little) (endianness big)))
+           '(14 15 16)))))
 
      ;; Error cases: both entry-size spellings must reject partial address entries.
-     (for-all
+     (for-all-elf-variants
       (lambda (tag wide? endian)
         (let ([word (if wide? 8 4)])
           (for-all
@@ -446,15 +446,13 @@
                    (parse-elf (elf-review-address-array
                                tag wide? endian type entry-size (+ word 1))))))
               (list 0 word)))
-           '(14 15 16))))
-      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
-      (list (endianness little) (endianness big) (endianness little) (endianness big))))
+           '(14 15 16))))))
 
 (mat parser-elf-relr-file-types
 
      ;; Error cases: gABI permits RELR only in executable and shared-object files.
-     (for-all
-      (lambda (tag endian)
+     (for-all-elf-variants
+      (lambda (tag wide? endian)
         (let ([original (read-u8vec (string-append "data/elf-review/fixed-relr-" tag ".elf"))])
           (for-all
            (lambda (type)
@@ -466,12 +464,10 @@
                             (elf-section-content (vector-ref (elf-file-sections
                                                              (parse-elf bytes)) 1))))
                    (elf-review-rejected? bytes))))
-           '(0 1 2 3 4))))
-      '("32le" "32be" "64le" "64be")
-      (list (endianness little) (endianness big) (endianness little) (endianness big)))
+           '(0 1 2 3 4)))))
 
      ;; Multi-entry RELR content is decoded in the containing file's class and byte order.
-     (for-all
+     (for-all-elf-variants
       (lambda (tag wide? endian)
         (let* ([original (read-u8vec (string-append "data/elf-review/fixed-relr-" tag ".elf"))]
                [header (elf-section-header (vector-ref (elf-file-sections
@@ -486,14 +482,12 @@
           (set-word! bytes (+ offset word) 3 endian)
           (equal? '#(#x1000 3)
                   (elf-relr-table-entries
-                   (elf-section-content (vector-ref (elf-file-sections (parse-elf bytes)) 1))))))
-      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
-      (list (endianness little) (endianness big) (endianness little) (endianness big))))
+                   (elf-section-content (vector-ref (elf-file-sections (parse-elf bytes)) 1))))))))
 
 (mat parser-elf-group-header-flags
 
      ;; Error cases: group headers require zero sh_flags; GRP_COMDAT is payload data.
-     (for-all
+     (for-all-elf-variants
       (lambda (tag wide? endian)
         (let* ([original (read-u8vec (string-append "data/elf-review/fixed-tables-" tag ".elf"))]
                [sections (elf-file-sections (parse-elf original))])
@@ -509,9 +503,7 @@
                            flags endian)
                           (elf-review-rejected? bytes)))
                       '(1 2 4 64 128))
-                     (find (+ index 1)))))))
-      '("32le" "32be" "64le" "64be") '(#f #f #t #t)
-      (list (endianness little) (endianness big) (endianness little) (endianness big))))
+                     (find (+ index 1)))))))))
 
 (mat parser-elf-direct-word-vector
 
