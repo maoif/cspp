@@ -11,29 +11,29 @@
           (cspp parser wasm binary values)
           (cspp parser wasm types))
 
-  (define abstract-heap-type
-    (lambda (value)
-      (case value
-        [(-22) 'array]
-        [(-21) 'struct]
-        [(-20) 'i31]
-        [(-19) 'eq]
-        [(-18) 'any]
-        [(-17) 'extern]
-        [(-16) 'func]
-        [(-23) 'none]
-        [(-24) 'nofunc]
-        [(-25) 'noextern]
-        [(-26) 'exn]
-        [(-27) 'noexn]
+  ;; Abstract heap types are single-byte terminals in the final Core 3.0 grammar.
+  (define abstract-heap-type-from-byte
+    (lambda (byte)
+      (case byte
+        [(#x69) 'exn] [(#x6a) 'array] [(#x6b) 'struct]
+        [(#x6c) 'i31] [(#x6d) 'eq] [(#x6e) 'any]
+        [(#x6f) 'extern] [(#x70) 'func] [(#x71) 'none]
+        [(#x72) 'noextern] [(#x73) 'nofunc] [(#x74) 'noexn]
         [else #f])))
 
+  (define abstract-heap-type-parser
+    (<bind> <u8>
+            (lambda (byte)
+              (let ([type (abstract-heap-type-from-byte byte)])
+                (if type (<result> type)
+                    (<fail-with> "undefined WebAssembly abstract heap type"))))))
+
   (define heap-type-parser
-    (<bind> <wasm-s33>
-            (lambda (value)
-              (cond [(>= value 0) (<result> value)]
-                    [(abstract-heap-type value) => <result>]
-                    [else (<fail-with> "undefined WebAssembly heap type")]))))
+    (</> abstract-heap-type-parser
+         (<bind> <wasm-s33>
+                 (lambda (value)
+                   (if (>= value 0) (<result> value)
+                       (<fail-with> "undefined WebAssembly heap type"))))))
 
   (define nullable-reference
     (lambda (heap-type)
@@ -43,24 +43,19 @@
     (lambda (heap-type)
       (make-wasm-reference-type #f heap-type)))
 
-  (define shorthand-heap-type-parser
-    (<bind> heap-type-parser
-            (lambda (heap-type)
-              (if (symbol? heap-type)
-                  (<result> heap-type)
-                  (<fail-with> "concrete reference type requires ref encoding")))))
+  (define shorthand-heap-type-parser abstract-heap-type-parser)
 
   (define mutability-parser
     (</> (<as> #f (<uimm8> 0))
          (<as> #t (<uimm8> 1))))
 
   (define limits-with-maximum
-    (lambda (address-type)
+    (lambda (address-type shared?)
       (<bind> (<~> <wasm-u64> <wasm-u64>)
               (lambda (bound*)
                 (let ([minimum (car bound*)] [maximum (cadr bound*)])
                   (if (<= minimum maximum)
-                      (<result> (make-wasm-limits address-type minimum maximum))
+                      (<result> (make-wasm-limits address-type minimum maximum shared?))
                       (<fail-with> "WebAssembly limits maximum is below minimum")))))))
 
   (define limits-without-maximum
@@ -91,17 +86,42 @@
   The `<wasm-reference-type>` parser reads an explicit or shorthand reference type.
   |#
   (define <wasm-reference-type>
-    (</> (<map> nullable-reference
-                (<~1> (<uimm8> #x63) <wasm-heap-type>))
-         (<map> non-null-reference
-                (<~1> (<uimm8> #x64) <wasm-heap-type>))
-         (<map> nullable-reference shorthand-heap-type-parser)))
+    (let ([fallback
+           (</> (<map> nullable-reference
+                       (<~1> (<uimm8> #x63) <wasm-heap-type>))
+                (<map> non-null-reference
+                       (<~1> (<uimm8> #x64) <wasm-heap-type>))
+                (<map> nullable-reference shorthand-heap-type-parser))])
+      (define-parser reference-type-parser
+        (let* ([position (input-pos inp)]
+               [type (and (fx< position (input-len inp))
+                          (abstract-heap-type-from-byte
+                           (bytevector-u8-ref (binary-input-data inp) position)))])
+          (if type
+              (begin (input-pos-set! inp (fx1+ position))
+                     (values #t (nullable-reference type) inp))
+              (parser-call fallback inp state lvl))))
+      reference-type-parser))
 
   #|proc:<wasm-value-type>
   The `<wasm-value-type>` parser reads a numeric, vector, or reference value type.
   |#
   (define <wasm-value-type>
-    (</> <wasm-number-type> <wasm-vector-type> <wasm-reference-type>))
+    (let ([fallback (</> <wasm-number-type> <wasm-vector-type> <wasm-reference-type>)])
+      (define-parser value-type-parser
+        (let* ([position (input-pos inp)]
+               [byte (and (fx< position (input-len inp))
+                          (bytevector-u8-ref (binary-input-data inp) position))]
+               [number-type (case byte
+                              [(#x7f) 'i32] [(#x7e) 'i64] [(#x7d) 'f32]
+                              [(#x7c) 'f64] [(#x7b) 'v128] [else #f])]
+               [heap-type (and byte (not number-type) (abstract-heap-type-from-byte byte))])
+          ;; Only known successful short forms bypass choice. Other forms keep full causes.
+          (if (or number-type heap-type)
+              (begin (input-pos-set! inp (fx1+ position))
+                     (values #t (or number-type (nullable-reference heap-type)) inp))
+              (parser-call fallback inp state lvl))))
+      value-type-parser))
 
   #|proc:<wasm-storage-type>
   The `<wasm-storage-type>` parser reads i8, i16, or a value type.
@@ -196,26 +216,39 @@
              (make-wasm-global-type (car field*) (cadr field*)))
            (<~> <wasm-value-type> mutability-parser)))
 
+  ;; These six compositions are independent of the declaration being parsed.
+  (define i32-minimum-limits (limits-without-maximum 'i32))
+  (define i32-bounded-limits (limits-with-maximum 'i32 #f))
+  (define i32-shared-limits (limits-with-maximum 'i32 #t))
+  (define i64-minimum-limits (limits-without-maximum 'i64))
+  (define i64-bounded-limits (limits-with-maximum 'i64 #f))
+  (define i64-shared-limits (limits-with-maximum 'i64 #t))
+
   #|proc:<wasm-limits>
-  The `<wasm-limits>` parser reads i32 or i64 minimum and optional maximum bounds.
+  The `<wasm-limits>` parser reads i32 or i64 minimum and optional maximum bounds. Shared-memory
+  extension flags are supported and require a maximum.
   |#
   (define <wasm-limits>
     (<bind> <u8>
             (lambda (flags)
               (case flags
-                [(#x00) (limits-without-maximum 'i32)]
-                [(#x01) (limits-with-maximum 'i32)]
-                [(#x04) (limits-without-maximum 'i64)]
-                [(#x05) (limits-with-maximum 'i64)]
+                [(#x00) i32-minimum-limits]
+                [(#x01) i32-bounded-limits]
+                [(#x03) i32-shared-limits]
+                [(#x04) i64-minimum-limits]
+                [(#x05) i64-bounded-limits]
+                [(#x07) i64-shared-limits]
                 [else (<fail-with> "invalid WebAssembly limits flags")]))))
 
   #|proc:<wasm-table-type>
   The `<wasm-table-type>` parser reads a reference element type and table limits.
   |#
   (define <wasm-table-type>
-    (<map> (lambda (field*)
-             (make-wasm-table-type (car field*) (cadr field*)))
-           (<~> <wasm-reference-type> <wasm-limits>)))
+    (<bind> (<~> <wasm-reference-type> <wasm-limits>)
+            (lambda (fields)
+              (if (wasm-limits-shared? (cadr fields))
+                  (<fail-with> "WebAssembly tables cannot be shared")
+                  (<result> (make-wasm-table-type (car fields) (cadr fields)))))))
 
   #|proc:<wasm-memory-type>
   The `<wasm-memory-type>` parser reads memory limits.

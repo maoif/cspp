@@ -1,7 +1,8 @@
 (library (cspp parser wasm opcodes)
   (export wasm-opcode-descriptor? wasm-opcode-mnemonic wasm-opcode-prefix
           wasm-opcode-code wasm-opcode-immediate-shape wasm-opcode-structured-kind
-          wasm-core-3-opcodes wasm-opcode-by-binary wasm-opcode-by-mnemonic)
+          wasm-core-3-opcodes wasm-opcode-by-binary wasm-opcode-by-mnemonic
+          wasm-instruction-lane-count)
   (import (cspp chez)
           (cspp utils))
 
@@ -20,7 +21,7 @@
 
   (define wasm-opcode-code?
     (lambda (value)
-      (and (natural? value) (<= value #xffffffff))))
+      (and (natural? value) (exact? value) (<= value #xffffffff))))
 
   #|proc:wasm-opcode-descriptor?
   Returns whether `object` is a WebAssembly opcode descriptor. `object` is tested.
@@ -69,12 +70,46 @@
       (pcheck ([$wasm-opcode-descriptor? descriptor])
               ($wasm-opcode-structured-kind descriptor))))
 
+  #|proc:wasm-instruction-lane-count
+  Returns the SIMD lane count for instruction mnemonic symbol `mnemonic`, or `#f` if it has no
+  lane immediate. Binary and text instruction readers use this shared classification.
+  |#
+  (define wasm-instruction-lane-count
+    (lambda (mnemonic)
+      (pcheck ([symbol? mnemonic])
+              (cond [(memq mnemonic
+                           '(i8x16.extract-lane-s i8x16.extract-lane-u i8x16.replace-lane
+                             v128.load8-lane v128.store8-lane))
+                     16]
+                    [(memq mnemonic
+                           '(i16x8.extract-lane-s i16x8.extract-lane-u i16x8.replace-lane
+                             v128.load16-lane v128.store16-lane))
+                     8]
+                    [(memq mnemonic
+                           '(i32x4.extract-lane i32x4.replace-lane
+                             f32x4.extract-lane f32x4.replace-lane
+                             v128.load32-lane v128.store32-lane))
+                     4]
+                    [(memq mnemonic
+                           '(i64x2.extract-lane i64x2.replace-lane
+                             f64x2.extract-lane f64x2.replace-lane
+                             v128.load64-lane v128.store64-lane))
+                     2]
+                    [else #f]))))
+
   ;; The final Core 3.0 instruction index has 496 distinct WAT mnemonics.
   ;; `select` uses its typed encoding here because it represents the general WAT syntax.
   ;; `type-data` and `type-element` normalize to vectors in their binary operand order.
   ;; `memory-data` normalizes `(dataidx memidx)` to `(memidx dataidx)`.
   ;; `table-element` normalizes `(elemidx tableidx)` to `(tableidx elemidx)`.
   ;; The two heap-type shapes construct non-nullable or nullable reference-type records.
+  #|constant:wasm-core-3-opcodes
+  Immutable vector of canonical opcode descriptors for all 496 Core 3.0 WAT mnemonics, ordered
+  by the catalog below. Each descriptor gives its mnemonic, optional prefix byte, opcode,
+  immediate shape, and optional structured kind. The descriptors and catalog are shared.
+  Alternate binary encodings may have separate descriptors returned by wasm-opcode-by-binary;
+  this catalog contains one canonical row per mnemonic, as returned by wasm-opcode-by-mnemonic.
+  |#
   (define wasm-core-3-opcodes
     (vector->immutable-vector
      (vector
@@ -653,7 +688,7 @@
 
   #|proc:wasm-opcode-by-binary
   Returns the exact binary descriptor for `prefix` and `code`, or `#f`. `prefix` is `#f` or a
-  prefix byte, and `code` is a u32 one-byte opcode or prefixed subopcode. A binary variant result
+  prefix byte, and `code` is an exact u32 one-byte opcode or prefixed subopcode. A variant result
   may not be a member of `wasm-core-3-opcodes`; mnemonic lookup always returns its canonical row.
   |#
   (define wasm-opcode-by-binary

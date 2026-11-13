@@ -10,55 +10,37 @@
         (cspp parser wasm text))
 
 (include "parser-external-tools.ss")
+(include "parser-test-support.ss")
 
 (mat parser-wasm-record-writers
 
-     (string=? "#[wasm-limits address-type: i64 minimum: 2 maximum: 9]"
+     (string=? "#[wasm-limits address-type: i64 minimum: 2 maximum: 9 shared?: #f]"
                (format "~s" (make-wasm-limits 'i64 2 9))))
 
 (define parse-binary
   (lambda (parser bytes)
     (run-binary-parser (<~0> parser <eof>) bytes)))
 
-(define capture-parser-error
-  (lambda (thunk)
-    (guard (err [(parser-error? err) err]
-                [else #f])
-      (thunk)
-      #f)))
-
 (define parser-rejects?
   (lambda (parser bytes)
-    (and (capture-parser-error (lambda () (parse-binary parser bytes))) #t)))
+    (raises-parser-error? (lambda () (parse-binary parser bytes)))))
 
 (define parse-wat-lexeme
   (lambda (parser text)
     (run-textual-parser (<~0> parser <eof>) text)))
 
-(define with-temporary-wat
-  (lambda (text procedure)
-    (let ([path (format "parser-wasm-~a.wat" (random 999999))]
-          [port #f])
-      (dynamic-wind
-        (lambda ()
-          (set! port
-                (open-file-output-port path
-                                       (file-options no-fail replace)
-                                       (buffer-mode block)
-                                       #f))
-          (put-bytevector port (string->utf8 text))
-          (flush-output-port port))
-        (lambda () (procedure path))
-        (lambda ()
-          (when port (close-port port))
-          (when (file-exists? path) (delete-file path)))))))
+(mat wasm-vector-immutability
 
-(define immutable-vector?
-  (lambda (value)
-    ;; An immutable vector rejects even a no-op mutation.
-    (guard (err [else #t])
-      (vector-set! value 0 (vector-ref value 0))
-      #f)))
+     (immutable-vector? (vector->immutable-vector (vector)))
+
+     (immutable-vector? (vector->immutable-vector (vector 1)))
+
+     ;; Error controls: mutable vectors and non-vectors cannot establish immutability.
+     (not (immutable-vector? (vector)))
+
+     (not (immutable-vector? (vector 1)))
+
+     (not (immutable-vector? #f)))
 
 (define wasm-mnemonic->text
   (lambda (mnemonic)
@@ -333,7 +315,7 @@
      (let* ([expression
              (parse-wat-lexeme
               <wat-expression>
-              "(block nop (nop)) (i32.add i32.const 1 (i32.const 2))")]
+              "(block nop (nop)) (i32.add (i32.const 1) (i32.const 2))")]
             [block (vector-ref expression 0)])
        (and (= 4 (vector-length expression))
             (= 2 (vector-length (wat-instruction-syntax-body block)))
@@ -341,57 +323,81 @@
                  (wat-instruction-syntax-mnemonic (vector-ref expression 3)))))
 
      ;; error: unknown instruction mnemonics are rejected.
-     (error? (parse-wat-lexeme <wat-expression> "not.an.opcode"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-expression> "not.an.opcode")))
 
      ;; error: required instruction immediates cannot be omitted.
-     (error? (parse-wat-lexeme <wat-expression> "local.get"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-expression> "local.get")))
 
      ;; error: opening and closing structured labels must match.
-     (error? (parse-wat-lexeme <wat-expression> "block $a nop end $b"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-expression> "block $a nop end $b")))
 
      ;; error: a SIMD lane must be in range for its lane shape.
-     (error? (parse-wat-lexeme <wat-expression> "i8x16.extract_lane_s 16"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-expression> "i8x16.extract_lane_s 16")))
 
      ;; error: shuffle lanes are limited to the two input vectors.
-     (error? (parse-wat-lexeme
-              <wat-expression>
-              (string-append "i8x16.shuffle" (repeated-text "32" 16))))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme
+         <wat-expression>
+         (string-append "i8x16.shuffle" (repeated-text "32" 16)))))
 
      ;; error: each memory attribute may occur at most once.
-     (error? (parse-wat-lexeme <wat-expression> "i32.load offset=1 offset=2"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-expression> "i32.load offset=1 offset=2")))
 
      ;; error: explicit memory alignment must be a positive power of two.
-     (error? (parse-wat-lexeme <wat-expression> "i32.load align=3"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-expression> "i32.load align=3")))
 
      ;; error: a memory offset must precede its alignment attribute.
-     (error? (parse-wat-lexeme <wat-expression> "i32.load align=2 offset=1"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-expression> "i32.load align=2 offset=1")))
 
      ;; error: array.new_fixed requires a numeric element count.
-     (error? (parse-wat-lexeme <wat-expression> "array.new_fixed 0 $count"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-expression> "array.new_fixed 0 $count")))
 
      ;; error: ref.test requires a reference type rather than a bare heap type.
-     (error? (parse-wat-lexeme <wat-expression> "ref.test func"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-expression> "ref.test func")))
 
      ;; error: a v128 constant requires exactly the lane count selected by its shape.
-     (error? (parse-wat-lexeme <wat-expression> "v128.const i8x16 0 1"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-expression> "v128.const i8x16 0 1")))
 
      ;; error: integer vector lanes must fit their selected lane width.
-     (error? (parse-wat-lexeme
-              <wat-expression>
-              "v128.const i8x16 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 256"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme
+         <wat-expression>
+         "v128.const i8x16 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 256")))
 
      ;; error: catch syntax rejects kinds outside the Core 3.0 catch grammar.
      (error? (make-wat-catch-syntax
               0 'wrong #f (make-wat-index-reference 0 0)))
 
      ;; error: folded instructions must have a closing parenthesis.
-     (error? (parse-wat-lexeme <wat-expression> "(i32.const 0"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-expression> "(i32.const 0")))
 
      ;; error: else and end are reserved structured terminators.
-     (error? (parse-wat-lexeme <wat-expression> "else"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-expression> "else")))
 
      ;; error: end cannot appear outside a structured instruction.
-     (error? (parse-wat-lexeme <wat-expression> "end"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-expression> "end")))
 
      )
 
@@ -432,7 +438,7 @@
             (wat-module-field? first-field)
             (eq? 'custom (wat-module-field-kind first-field))
             (= 16 (wat-module-field-pos first-field))
-            (not
+            (eq? 'last
              (wat-custom-placement-after
               (vector-ref (wat-module-field-data first-field) 2)))
             (eq? 'recursive-type (wat-module-field-kind recursive-field))
@@ -448,8 +454,8 @@
                  (wat-inline-abbreviation-kind
                   (wat-module-field-abbreviation (vector-ref field* 6))))
             (wat-element-segment-syntax?
-             (wat-inline-abbreviation-data
-              (wat-module-field-abbreviation (vector-ref field* 6))))
+             (vector-ref (wat-inline-abbreviation-data
+                          (wat-module-field-abbreviation (vector-ref field* 6))) 1))
             (eq? 'memory-data
                  (wat-inline-abbreviation-kind
                   (wat-module-field-abbreviation (vector-ref field* 8))))
@@ -473,7 +479,7 @@
                         (wat-inline-abbreviation-data
                          (wat-module-field-abbreviation
                           (vector-ref field* 15))))))
-            (eq? 'data
+            (eq? 'last
                  (wat-custom-placement-after
                   (vector-ref
                    (wat-module-field-data (vector-ref field* 17)) 2)))))
@@ -560,7 +566,7 @@
                  (@custom \"after-import\" \"payload\"))")]
             [custom (vector-ref (wat-module-fields module) 1)]
             [placement (vector-ref (wat-module-field-data custom) 2)])
-       (eq? 'import (wat-custom-placement-after placement)))
+       (eq? 'last (wat-custom-placement-after placement)))
 
      (let* ([module
              (run-textual-parser
@@ -635,12 +641,12 @@
        (and (= 4 (vector-length field*))
             (eq? 'i64
                  (wat-element-segment-syntax-address-type
-                  (wat-inline-abbreviation-data
-                   (wat-module-field-abbreviation (vector-ref field* 0)))))
+                  (vector-ref (wat-inline-abbreviation-data
+                               (wat-module-field-abbreviation (vector-ref field* 0))) 1)))
             (eq? 'i32
                  (wat-element-segment-syntax-address-type
-                  (wat-inline-abbreviation-data
-                   (wat-module-field-abbreviation (vector-ref field* 1)))))
+                  (vector-ref (wat-inline-abbreviation-data
+                               (wat-module-field-abbreviation (vector-ref field* 1))) 1)))
             (eq? 'i64
                  (wat-data-segment-syntax-address-type
                   (wat-inline-abbreviation-data
@@ -659,11 +665,11 @@
                "  (table funcref (elem (ref.func 0) (ref.func 1))))"))]
             [field* (wat-module-fields module)]
             [index-items
-             (wat-inline-abbreviation-data
-              (wat-module-field-abbreviation (vector-ref field* 0)))]
+             (vector-ref (wat-inline-abbreviation-data
+                          (wat-module-field-abbreviation (vector-ref field* 0))) 1)]
             [expression-items
-             (wat-inline-abbreviation-data
-              (wat-module-field-abbreviation (vector-ref field* 1)))])
+             (vector-ref (wat-inline-abbreviation-data
+                          (wat-module-field-abbreviation (vector-ref field* 1))) 1)])
        (and (eq? 'indexes (wat-element-segment-syntax-item-kind index-items))
             (= 2 (vector-length (wat-element-segment-syntax-items index-items)))
             (= 0 (wat-index-reference-value
@@ -672,127 +678,179 @@
                  (wat-element-segment-syntax-item-kind expression-items))
             (= 2 (vector-length (wat-element-segment-syntax-items expression-items)))
             (wat-instruction-syntax?
-             (vector-ref (wat-element-segment-syntax-items expression-items) 0))))
+             (vector-ref (vector-ref (wat-element-segment-syntax-items expression-items) 0) 0))))
 
      (let ([module
             (run-textual-parser parser-wat-module-syntax
-                                "(module (elem) (data))")])
+                                "(module (elem func) (data))")])
        (= 2 (vector-length (wat-module-fields module))))
 
      ;; error: an element segment cannot contain an untyped reserved token.
-     (error? (run-textual-parser parser-wat-module-syntax
-                                 "(module (elem nonsense))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser parser-wat-module-syntax
+                            "(module (elem nonsense))")))
 
      ;; error: a data segment contains byte strings, not numeric tokens.
-     (error? (run-textual-parser parser-wat-module-syntax
-                                 "(module (data 123))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser parser-wat-module-syntax
+                            "(module (data 123))")))
 
      ;; error: a table element abbreviation requires indexes or element expressions.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (table funcref (elem nonsense)))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (table funcref (elem nonsense)))")))
 
      ;; error: a table element abbreviation cannot mix indexes and expressions.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (table funcref (elem 0 (ref.func 0))))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (table funcref (elem 0 (ref.func 0))))")))
 
      ;; error: a table element abbreviation cannot mix expressions and indexes.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (table funcref (elem (ref.func 0) 0)))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (table funcref (elem (ref.func 0) 0)))")))
 
      ;; error: shared memory limits require an explicit maximum.
-     (error? (run-textual-parser parser-wat-module-syntax
-                                 "(module (memory 1 shared))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser parser-wat-module-syntax
+                            "(module (memory 1 shared))")))
 
      ;; error: tables cannot use shared limits.
-     (error? (run-textual-parser parser-wat-module-syntax
-                                 "(module (table 1 2 shared funcref))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser parser-wat-module-syntax
+                            "(module (table 1 2 shared funcref))")))
 
      ;; error: duplicate custom after anchors are not allowed.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (@custom \"x\" (after type) (after import) \"a\"))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (@custom \"x\" (after type) (after import) \"a\"))")))
 
      ;; error: duplicate custom before anchors are not allowed.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (@custom \"x\" (before type) (before import) \"a\"))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (@custom \"x\" (before type) (before import) \"a\"))")))
 
      ;; error: a custom annotation permits only one placement anchor in total.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (@custom \"x\" (after type) (before import) \"a\"))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (@custom \"x\" (after type) (before import) \"a\"))")))
 
      ;; error: data-count is not a supported custom annotation placement anchor.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (@custom \"x\" (after data-count) \"a\"))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (@custom \"x\" (after data-count) \"a\"))")))
 
      ;; error: custom placement anchors must name a standard section.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (@custom \"x\" (before unknown) \"a\"))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (@custom \"x\" (before unknown) \"a\"))")))
 
      ;; error: an inline-imported function cannot declare locals.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (func (import \"m\" \"f\") (local i32)))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (func (import \"m\" \"f\") (local i32)))")))
 
      ;; error: an inline import cannot precede an inline export.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (func (import \"m\" \"f\") (export \"x\")))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (func (import \"m\" \"f\") (export \"x\")))")))
 
      ;; error: a table inline import cannot precede an inline export.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (table (import \"m\" \"t\") (export \"t\") 1 funcref))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (table (import \"m\" \"t\") (export \"t\") 1 funcref))")))
 
      ;; error: a global inline import cannot precede an inline export.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (global (import \"m\" \"g\") (export \"g\") i32))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (global (import \"m\" \"g\") (export \"g\") i32))")))
 
      ;; error: the module keyword must end at a token boundary.
-     (error? (run-textual-parser parser-wat-module-syntax "(modulex)"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser parser-wat-module-syntax "(modulex)")))
 
      ;; error: a module must have a closing delimiter.
-     (error? (run-textual-parser parser-wat-module-syntax "(module (memory 1)"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser parser-wat-module-syntax "(module (memory 1)")))
 
      ;; error: a function may contain at most one inline import clause.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (func (import \"a\" \"b\") (import \"c\" \"d\")))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (func (import \"a\" \"b\") (import \"c\" \"d\")))")))
 
      ;; error: a function may contain at most one explicit type clause.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (func (type 0) (type 1)))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (func (type 0) (type 1)))")))
 
      ;; error: unknown module field keywords are rejected.
-     (error? (run-textual-parser parser-wat-module-syntax "(module (wrong 0))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser parser-wat-module-syntax "(module (wrong 0))")))
 
      ;; error: export descriptions require an index reference.
-     (error? (run-textual-parser parser-wat-module-syntax
-                                 "(module (export \"f\" (func)))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser parser-wat-module-syntax
+                            "(module (export \"f\" (func)))")))
 
      ;; error: limits reject a maximum below the minimum.
-     (error? (run-textual-parser parser-wat-module-syntax "(module (memory 4 1))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser parser-wat-module-syntax "(module (memory 4 1))")))
 
      ;; error: an inline import must precede a function type use.
-     (error? (run-textual-parser
-              parser-wat-module-syntax
-              "(module (func (param i32) (import \"a\" \"b\")))"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser
+         parser-wat-module-syntax
+         "(module (func (param i32) (import \"a\" \"b\")))")))
 
      ;; error: custom annotations must have a closing delimiter.
-     (error? (run-textual-parser parser-wat-module-syntax
-                                 "(module (@custom \"name\" \"value\")"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser parser-wat-module-syntax
+                            "(module (@custom \"name\" \"value\")")))
 
      ;; error: WAST commands after the single module are rejected.
-     (error? (run-textual-parser parser-wat-module-syntax
-                                 "(module) (invoke \"f\")"))
+     (raises-parser-error?
+      (lambda ()
+        (run-textual-parser parser-wat-module-syntax
+                            "(module) (invoke \"f\")")))
 
      )
 
@@ -808,7 +866,9 @@
                                "(@metadata value (@nested \"text)\"))"))
 
      ;; error: custom annotations remain available to the module-field grammar.
-     (error? (parse-wat-lexeme <wat-trivia> "(@custom \"name\" \"payload\")"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-trivia> "(@custom \"name\" \"payload\")")))
 
      (string=? "$type-0!" (parse-wat-lexeme <wat-identifier> "$type-0!"))
 
@@ -821,7 +881,9 @@
      (string=? "module" (parse-wat-lexeme (<wat-keyword> "module") "module (; ok ;)"))
 
      ;; error: keywords must end at a token boundary.
-     (error? (parse-wat-lexeme (<wat-keyword> "module") "modulex"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme (<wat-keyword> "module") "modulex")))
 
      (equal? #vu8(#x41 #x0a #xff)
              (parse-wat-lexeme <wat-string> "\"A\\n\\ff\""))
@@ -886,89 +948,105 @@
         (wasm-float-bits (parse-wat-lexeme <wat-f64> "-nan:0x1")))
 
      ;; error: block comments must close at their original nesting depth.
-     (error? (parse-wat-lexeme <wat-trivia> "(; outer (; inner ;)"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-trivia> "(; outer (; inner ;)")))
 
      ;; error: byte strings reject unknown escapes.
-     (error? (parse-wat-lexeme <wat-string> "\"\\q\""))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-string> "\"\\q\"")))
 
      ;; error: byte strings reject unescaped control characters.
-     (error? (parse-wat-lexeme <wat-string> "\"line\nfeed\""))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-string> "\"line\nfeed\"")))
 
      ;; error: Unicode escapes must denote scalar values.
-     (error? (parse-wat-lexeme <wat-string> "\"\\u{d800}\""))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-string> "\"\\u{d800}\"")))
 
      ;; error: Unicode escapes cannot exceed the maximum scalar value.
-     (error? (parse-wat-lexeme <wat-string> "\"\\u{110000}\""))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-string> "\"\\u{110000}\"")))
 
      ;; error: Unicode escapes require at least one hexadecimal digit.
-     (error? (parse-wat-lexeme <wat-string> "\"\\u{}\""))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-string> "\"\\u{}\"")))
 
      ;; error: Unicode escapes require a closing brace.
-     (error? (parse-wat-lexeme <wat-string> "\"\\u{41\""))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-string> "\"\\u{41\"")))
 
      ;; error: names must contain valid UTF-8 after byte escapes are decoded.
-     (error? (parse-wat-lexeme <wat-name> "\"\\c0\\af\""))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-name> "\"\\c0\\af\"")))
 
      ;; error: numeric separators cannot occur alone or consecutively.
-     (error? (parse-wat-lexeme <wat-i32> "1__0"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-i32> "1__0")))
 
      ;; error: an underscore alone is not an integer literal.
-     (error? (parse-wat-lexeme <wat-i32> "_"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-i32> "_")))
 
      ;; error: identifiers require a character after the dollar sign.
-     (error? (parse-wat-lexeme <wat-identifier> "$"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-identifier> "$")))
 
      ;; error: commas are not legal identifier characters.
-     (error? (parse-wat-lexeme <wat-identifier> "$bad,"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-identifier> "$bad,")))
 
-     ;; error: hexadecimal floats require an exponent.
-     (error? (parse-wat-lexeme <wat-f64> "0x1.5"))
+     (= #x3ff5000000000000
+        (wasm-float-bits (parse-wat-lexeme <wat-f64> "0x1.5")))
 
      ;; error: decimal exponents require digits.
-     (error? (parse-wat-lexeme <wat-f64> "1e+"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-f64> "1e+")))
 
      ;; error: numeric tokens reject trailing identifier characters.
-     (error? (parse-wat-lexeme <wat-f32> "1.0oops"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-f32> "1.0oops")))
 
      ;; error: adjacent keyword and string tokens require a separator.
-     (error? (parse-wat-lexeme (<~> (<wat-keyword> "module") <wat-string>)
-                               "module\"x\""))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme (<~> (<wat-keyword> "module") <wat-string>)
+                          "module\"x\"")))
 
      ;; error: adjacent identifier and string tokens require a separator.
-     (error? (parse-wat-lexeme (<~> <wat-identifier> <wat-string>)
-                               "$x\"y\""))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme (<~> <wat-identifier> <wat-string>)
+                          "$x\"y\"")))
 
      ;; error: adjacent string tokens require a separator.
-     (error? (parse-wat-lexeme (<~> <wat-string> <wat-string>)
-                               "\"x\"\"y\""))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme (<~> <wat-string> <wat-string>)
+                          "\"x\"\"y\"")))
 
      ;; error: adjacent float and string tokens require a separator.
-     (error? (parse-wat-lexeme (<~> <wat-f32> <wat-string>)
-                               "1e0\"y\""))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme (<~> <wat-f32> <wat-string>)
+                          "1e0\"y\"")))
 
      ;; error: finite float literals cannot round to infinity.
-     (error? (parse-wat-lexeme <wat-f32> "1e1000"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-f32> "1e1000")))
 
      ;; error: unescaped DEL is not a legal string character.
-     (error? (parse-wat-lexeme <wat-string>
-                               (string (integer->char #x22)
-                                       (integer->char #x7f)
-                                       (integer->char #x22))))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wat-lexeme <wat-string>
+                          (string (integer->char #x22)
+                                  (integer->char #x7f)
+                                  (integer->char #x22)))))
 
      ;; error: integer tokens reject trailing identifier characters.
-     (error? (parse-wat-lexeme <wat-u32> "10things"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-u32> "10things")))
 
      ;; error: unsigned 32-bit integer literals cannot overflow.
-     (error? (parse-wat-lexeme <wat-u32> "4294967296"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-u32> "4294967296")))
 
      ;; error: negative 32-bit integer spellings cannot exceed the signed range.
-     (error? (parse-wat-lexeme <wat-i32> "-2147483649"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-i32> "-2147483649")))
 
      ;; error: NaN payloads must fit the target significand.
-     (error? (parse-wat-lexeme <wat-f32> "nan:0x800000"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-f32> "nan:0x800000")))
 
      ;; error: NaN payloads must be nonzero.
-     (error? (parse-wat-lexeme <wat-f64> "nan:0x0"))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-f64> "nan:0x0")))
 
      ;; error: the token wrapper requires a parser argument.
      (error? (<wat-token> 'not-a-parser))
@@ -995,12 +1073,16 @@
      (= 0 (run-binary-parser <wasm-u32> (bytevector #x80 #x00)))
 
      ;; error: u32 has nonzero unused bits in its fifth byte.
-     (error? (run-binary-parser <wasm-u32>
-                                (bytevector #xff #xff #xff #xff #x10)))
+     (raises-parser-error?
+      (lambda ()
+        (run-binary-parser <wasm-u32>
+                           (bytevector #xff #xff #xff #xff #x10))))
 
      ;; error: u32 cannot occupy six bytes.
-     (error? (run-binary-parser <wasm-u32>
-                                (bytevector #x80 #x80 #x80 #x80 #x80 #x00)))
+     (raises-parser-error?
+      (lambda ()
+        (run-binary-parser <wasm-u32>
+                           (bytevector #x80 #x80 #x80 #x80 #x80 #x00))))
 
      (let ([type (run-binary-parser <wasm-reference-type> (bytevector #x64 #x70))])
        (and (wasm-reference-type? type)
@@ -1301,7 +1383,7 @@
                   (vector-ref expression (fx1- count))))))
 
      ;; error: memory flags are truncated before the offset.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (parse-binary <wasm-instruction> #vu8(#x28 #x02))))])
        (and (parser-error? err)
             (eq? 'unexpected-eof (parser-error-kind err))
@@ -1309,10 +1391,10 @@
             (string-contains? (parser-error->string err) "unexpected EOF")))
 
      ;; error: a memory argument is truncated before its alignment flags.
-     (error? (parse-binary <wasm-instruction> #vu8(#x28)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-instruction> #vu8(#x28))))
 
      ;; error: a continued memory alignment encoding is truncated.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (parse-binary <wasm-instruction> #vu8(#x28 #x80))))])
        (and (parser-error? err)
             (eq? 'unexpected-eof (parser-error-kind err))
@@ -1320,19 +1402,25 @@
             (string-contains? (parser-error->string err) "unexpected EOF")))
 
      ;; error: explicit-memory flags are truncated before the memory index.
-     (error? (parse-binary <wasm-instruction> #vu8(#x28 #x40)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#x28 #x40))))
 
      ;; error: explicit-memory flags are truncated before the offset.
-     (error? (parse-binary <wasm-instruction> #vu8(#x28 #x40 #x01)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#x28 #x40 #x01))))
 
      ;; error: memory argument flags 128 and above are reserved.
-     (error? (parse-binary <wasm-instruction> #vu8(#x28 #x80 #x01)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#x28 #x80 #x01))))
 
      ;; error: every unassigned final Core 3.0 one-byte opcode is rejected.
      (for-all
       (lambda (opcode)
         (let ([err
-               (capture-parser-error
+               (parser-error-from
                 (lambda ()
                   (parse-binary <wasm-instruction> (bytevector opcode))))])
           (and (parser-error? err)
@@ -1343,7 +1431,7 @@
       reserved-one-byte-opcodes)
 
      ;; error: an unknown one-byte opcode reports its consumed offset and category.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (parse-binary <wasm-instruction> #vu8(#x06))))])
        (and (parser-error? err)
             (eq? 'custom (parser-error-kind err))
@@ -1352,7 +1440,7 @@
                               "unknown WebAssembly opcode")))
 
      ;; error: an unknown opcode in an expression preserves its instruction failure.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (parse-binary <wasm-expression> #vu8(#x06 #x0b))))])
        (and (parser-error? err)
             (eq? 'custom (parser-error-kind err))
@@ -1362,7 +1450,7 @@
 
      ;; error: an unknown opcode in a block preserves its instruction failure.
      (let ([err
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-binary <wasm-instruction> #vu8(#x02 #x40 #x06 #x0b))))])
        (and (parser-error? err)
@@ -1373,7 +1461,7 @@
 
      ;; error: an unknown opcode in an if alternate preserves its instruction failure.
      (let ([err
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-binary <wasm-instruction>
                              #vu8(#x04 #x40 #x05 #x06 #x0b))))])
@@ -1390,35 +1478,47 @@
        (instruction-has-fields? instruction 'struct.get '#(1 2) '#() '#()))
 
      ;; error: an unknown aggregate subopcode is rejected.
-     (error? (parse-binary <wasm-instruction> #vu8(#xfb #x7f)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#xfb #x7f))))
 
      ;; error: an unknown miscellaneous subopcode is rejected.
-     (error? (parse-binary <wasm-instruction> #vu8(#xfc #x7f)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#xfc #x7f))))
 
      ;; error: an unknown multi-byte vector subopcode is rejected.
-     (error? (parse-binary <wasm-instruction> #vu8(#xfd #x80 #x04)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#xfd #x80 #x04))))
 
      ;; error: an aggregate prefix is truncated before its subopcode.
-     (error? (parse-binary <wasm-instruction> #vu8(#xfb)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-instruction> #vu8(#xfb))))
 
      ;; error: a miscellaneous prefix has a truncated bounded u32 subopcode.
-     (error? (parse-binary <wasm-instruction> #vu8(#xfc #x80)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#xfc #x80))))
 
      ;; error: else is a terminator, not a standalone instruction.
-     (error? (parse-binary <wasm-instruction> #vu8(#x05)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-instruction> #vu8(#x05))))
 
      ;; error: end is a terminator, not a standalone instruction.
-     (error? (parse-binary <wasm-instruction> #vu8(#x0b)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-instruction> #vu8(#x0b))))
 
      ;; error: try-table accepts only catch kind bytes zero through three.
-     (error? (parse-binary <wasm-instruction>
-                           #vu8(#x1f #x40 #x01 #x04 #x00 #x0b)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction>
+                      #vu8(#x1f #x40 #x01 #x04 #x00 #x0b))))
 
      ;; error: a block must end with an end terminator.
-     (error? (parse-binary <wasm-instruction> #vu8(#x02 #x40 #x01)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#x02 #x40 #x01))))
 
      ;; error: an expression must end with an end terminator.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (parse-binary <wasm-expression> #vu8(#x01))))])
        (and (parser-error? err)
             (eq? 'unexpected-eof (parser-error-kind err))
@@ -1426,19 +1526,29 @@
             (string-contains? (parser-error->string err) "unexpected EOF")))
 
      ;; error: else is illegal in a block body.
-     (error? (parse-binary <wasm-instruction> #vu8(#x02 #x40 #x05 #x0b)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#x02 #x40 #x05 #x0b))))
 
      ;; error: a second else is illegal in an if alternate.
-     (error? (parse-binary <wasm-instruction> #vu8(#x04 #x40 #x05 #x05 #x0b)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#x04 #x40 #x05 #x05 #x0b))))
 
      ;; error: branch table omits its default label.
-     (error? (parse-binary <wasm-instruction> #vu8(#x0e #x01 #x00)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#x0e #x01 #x00))))
 
      ;; error: indirect call omits its table index.
-     (error? (parse-binary <wasm-instruction> #vu8(#x11 #x00)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#x11 #x00))))
 
      ;; error: typed select omits its declared value type.
-     (error? (parse-binary <wasm-instruction> #vu8(#x1c #x01)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#x1c #x01))))
 
      (andmap
       (lambda (test)
@@ -1572,12 +1682,16 @@
            'i32x4.relaxed-dot-i8x16-i7x16-add-s '#() '#() '#()))
 
      ;; error: a vector constant is truncated before its sixteenth byte.
-     (error? (parse-binary <wasm-instruction>
-                           #vu8(#xfd #x0c 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction>
+                      #vu8(#xfd #x0c 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14))))
 
      ;; error: a shuffle constant is truncated before its sixteenth byte.
-     (error? (parse-binary <wasm-instruction>
-                           #vu8(#xfd #x0d 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction>
+                      #vu8(#xfd #x0d 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14))))
 
      ;; error: every shuffle position rejects the first invalid lane value 32.
      (for-all
@@ -1587,7 +1701,7 @@
       (integer-range 0 16))
 
      ;; error: shuffle lane 32 reports its exact consumed offset and category.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda ()
                    (parse-binary <wasm-instruction>
                                  (make-shuffle-instruction-bytes 0))))])
@@ -1611,7 +1725,7 @@
             #vu8(#xfd #x56 0 0 4) #vu8(#xfd #x57 0 0 2)))
 
      ;; error: an invalid direct lane reports its exact consumed offset and category.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda ()
                    (parse-binary <wasm-instruction> #vu8(#xfd #x18 8))))])
        (and (parser-error? err)
@@ -1621,10 +1735,12 @@
                               "invalid WebAssembly lane index")))
 
      ;; error: structure fields are truncated before the field index.
-     (error? (parse-binary <wasm-instruction> #vu8(#xfb #x02 #x01)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#xfb #x02 #x01))))
 
      ;; error: a truncated aggregate reports the exact missing-field offset.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda ()
                    (parse-binary <wasm-instruction> #vu8(#xfb #x02 #x01))))])
        (and (parser-error? err)
@@ -1634,7 +1750,7 @@
 
      ;; error: a malformed aggregate type index retains a stable custom failure.
      (let ([err
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-binary <wasm-instruction>
                              #vu8(#xfb #x02 #xff #xff #xff #xff #x10 #x00))))])
@@ -1645,49 +1761,61 @@
                               "integer has nonzero unused bits")))
 
      ;; error: fixed arrays are truncated before the fixed count.
-     (error? (parse-binary <wasm-instruction> #vu8(#xfb #x08 #x01)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#xfb #x08 #x01))))
 
      ;; error: array copies are truncated before the source type index.
-     (error? (parse-binary <wasm-instruction> #vu8(#xfb #x11 #x01)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#xfb #x11 #x01))))
 
      ;; error: type/data operands are truncated before the data index.
-     (error? (parse-binary <wasm-instruction> #vu8(#xfb #x12 #x01)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#xfb #x12 #x01))))
 
      ;; error: type/element operands are truncated before the element index.
-     (error? (parse-binary <wasm-instruction> #vu8(#xfb #x13 #x01)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#xfb #x13 #x01))))
 
      ;; error: reserved br-on-cast flag bits are rejected before the label.
-     (error? (parse-binary <wasm-instruction> #vu8(#xfb #x18 #x04 #x00 #x70 #x70)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#xfb #x18 #x04 #x00 #x70 #x70))))
 
      ;; error: br-on-cast fields cannot omit the second heap type.
-     (error? (parse-binary <wasm-instruction> #vu8(#xfb #x18 #x00 #x01 #x70)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction> #vu8(#xfb #x18 #x00 #x01 #x70))))
 
-     ;; error: malformed abstract source heap types retain a stable custom failure.
-     (let ([err (capture-parser-error
+     ;; error: malformed abstract source heap types retain their location and diagnostic.
+     (let ([err (parser-error-from
                  (lambda ()
                    (parse-binary <wasm-instruction> #vu8(#xfb #x18 #x00 #x00 #x64 #x70))))])
        (and (parser-error? err)
-            (eq? 'custom (parser-error-kind err))
             (= 5 (parser-error-offset err))
             (string-contains? (parser-error-message err)
                               "undefined WebAssembly heap type")))
 
      ;; error: a malformed concrete heap type exceeds the signed 33-bit encoding.
-     (error? (parse-binary <wasm-instruction>
-                           #vu8(#xfb #x14 #x80 #x80 #x80 #x80 #x10)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-instruction>
+                      #vu8(#xfb #x14 #x80 #x80 #x80 #x80 #x10))))
 
      ;; error: a representative bounded LEB failure preserves its exact location and message.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda ()
                    (parse-binary <wasm-u32> #vu8(#xff #xff #xff #xff #x10))))])
        (and (parser-error? err)
-            (eq? 'custom (parser-error-kind err))
             (= 5 (parser-error-offset err))
             (string-contains? (parser-error-message err)
                               "integer has nonzero unused bits")))
 
      ;; error: a representative malformed UTF-8 name preserves its location and message.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (parse-binary <wasm-name> #vu8(#x02 #xc3 #x28))))])
        (and (parser-error? err)
             (eq? 'custom (parser-error-kind err))
@@ -1696,103 +1824,6 @@
                               "invalid UTF-8 WebAssembly name")))
 
      )
-
-(define expected-core-3-mnemonics
-  '#(
-   ;; parametric
-   unreachable nop drop select
-   ;; control
-   block loop if else end br br-if br-table return call call-indirect br-on-null br-on-non-null
-   br-on-cast br-on-cast-fail
-   ;; exception/tail-call; final Core 3.0 has no continuation instructions
-   throw throw-ref return-call return-call-indirect call-ref return-call-ref try-table
-   ;; variable
-   local.get local.set local.tee global.get global.set
-   ;; table
-   table.get table.set table.init elem.drop table.copy table.grow table.size table.fill
-   ;; memory
-   i32.load i64.load f32.load f64.load i32.load8-s i32.load8-u i32.load16-s i32.load16-u
-   i64.load8-s i64.load8-u i64.load16-s i64.load16-u i64.load32-s i64.load32-u i32.store
-   i64.store f32.store f64.store i32.store8 i32.store16 i64.store8 i64.store16 i64.store32
-   memory.size memory.grow memory.init data.drop memory.copy memory.fill v128.load
-   v128.load8x8-s v128.load8x8-u v128.load16x4-s v128.load16x4-u v128.load32x2-s
-   v128.load32x2-u v128.load8-splat v128.load16-splat v128.load32-splat v128.load64-splat
-   v128.store v128.load8-lane v128.load16-lane v128.load32-lane v128.load64-lane
-   v128.store8-lane v128.store16-lane v128.store32-lane v128.store64-lane v128.load32-zero
-   v128.load64-zero
-   ;; numeric
-   i32.const i64.const f32.const f64.const i32.eqz i32.eq i32.ne i32.lt-s i32.lt-u i32.gt-s
-   i32.gt-u i32.le-s i32.le-u i32.ge-s i32.ge-u i64.eqz i64.eq i64.ne i64.lt-s i64.lt-u
-   i64.gt-s i64.gt-u i64.le-s i64.le-u i64.ge-s i64.ge-u f32.eq f32.ne f32.lt f32.gt f32.le
-   f32.ge f64.eq f64.ne f64.lt f64.gt f64.le f64.ge i32.clz i32.ctz i32.popcnt i32.add i32.sub
-   i32.mul i32.div-s i32.div-u i32.rem-s i32.rem-u i32.and i32.or i32.xor i32.shl i32.shr-s
-   i32.shr-u i32.rotl i32.rotr i64.clz i64.ctz i64.popcnt i64.add i64.sub i64.mul i64.div-s
-   i64.div-u i64.rem-s i64.rem-u i64.and i64.or i64.xor i64.shl i64.shr-s i64.shr-u i64.rotl
-   i64.rotr f32.abs f32.neg f32.ceil f32.floor f32.trunc f32.nearest f32.sqrt f32.add f32.sub
-   f32.mul f32.div f32.min f32.max f32.copysign f64.abs f64.neg f64.ceil f64.floor f64.trunc
-   f64.nearest f64.sqrt f64.add f64.sub f64.mul f64.div f64.min f64.max f64.copysign
-   i32.wrap-i64 i32.trunc-f32-s i32.trunc-f32-u i32.trunc-f64-s i32.trunc-f64-u
-   i64.extend-i32-s i64.extend-i32-u i64.trunc-f32-s i64.trunc-f32-u i64.trunc-f64-s
-   i64.trunc-f64-u f32.convert-i32-s f32.convert-i32-u f32.convert-i64-s f32.convert-i64-u
-   f32.demote-f64 f64.convert-i32-s f64.convert-i32-u f64.convert-i64-s f64.convert-i64-u
-   f64.promote-f32 i32.reinterpret-f32 i64.reinterpret-f64 f32.reinterpret-i32
-   f64.reinterpret-i64 i32.extend8-s i32.extend16-s i64.extend8-s i64.extend16-s i64.extend32-s
-   i32.trunc-sat-f32-s i32.trunc-sat-f32-u i32.trunc-sat-f64-s i32.trunc-sat-f64-u
-   i64.trunc-sat-f32-s i64.trunc-sat-f32-u i64.trunc-sat-f64-s i64.trunc-sat-f64-u
-   ;; reference
-   ref.null ref.is-null ref.func ref.eq ref.as-non-null ref.test ref.cast any.convert-extern
-   extern.convert-any ref.i31
-   ;; aggregate/gc
-   struct.new struct.new-default struct.get struct.get-s struct.get-u struct.set array.new
-   array.new-default array.new-fixed array.new-data array.new-elem array.get array.get-s
-   array.get-u array.set array.len array.fill array.copy array.init-data array.init-elem
-   i31.get-s i31.get-u
-   ;; vector
-   v128.const i8x16.shuffle i8x16.swizzle i8x16.splat i16x8.splat i32x4.splat i64x2.splat
-   f32x4.splat f64x2.splat i8x16.extract-lane-s i8x16.extract-lane-u i8x16.replace-lane
-   i16x8.extract-lane-s i16x8.extract-lane-u i16x8.replace-lane i32x4.extract-lane
-   i32x4.replace-lane i64x2.extract-lane i64x2.replace-lane f32x4.extract-lane
-   f32x4.replace-lane f64x2.extract-lane f64x2.replace-lane i8x16.eq i8x16.ne i8x16.lt-s
-   i8x16.lt-u i8x16.gt-s i8x16.gt-u i8x16.le-s i8x16.le-u i8x16.ge-s i8x16.ge-u i16x8.eq
-   i16x8.ne i16x8.lt-s i16x8.lt-u i16x8.gt-s i16x8.gt-u i16x8.le-s i16x8.le-u i16x8.ge-s
-   i16x8.ge-u i32x4.eq i32x4.ne i32x4.lt-s i32x4.lt-u i32x4.gt-s i32x4.gt-u i32x4.le-s
-   i32x4.le-u i32x4.ge-s i32x4.ge-u f32x4.eq f32x4.ne f32x4.lt f32x4.gt f32x4.le f32x4.ge
-   f64x2.eq f64x2.ne f64x2.lt f64x2.gt f64x2.le f64x2.ge v128.not v128.and v128.andnot v128.or
-   v128.xor v128.bitselect v128.any-true f32x4.demote-f64x2-zero f64x2.promote-low-f32x4
-   i8x16.abs i8x16.neg i8x16.popcnt i8x16.all-true i8x16.bitmask i8x16.narrow-i16x8-s
-   i8x16.narrow-i16x8-u f32x4.ceil f32x4.floor f32x4.trunc f32x4.nearest i8x16.shl i8x16.shr-s
-   i8x16.shr-u i8x16.add i8x16.add-sat-s i8x16.add-sat-u i8x16.sub i8x16.sub-sat-s
-   i8x16.sub-sat-u f64x2.ceil f64x2.floor i8x16.min-s i8x16.min-u i8x16.max-s i8x16.max-u
-   f64x2.trunc i8x16.avgr-u i16x8.extadd-pairwise-i8x16-s i16x8.extadd-pairwise-i8x16-u
-   i32x4.extadd-pairwise-i16x8-s i32x4.extadd-pairwise-i16x8-u i16x8.abs i16x8.neg
-   i16x8.q15mulr-sat-s i16x8.all-true i16x8.bitmask i16x8.narrow-i32x4-s i16x8.narrow-i32x4-u
-   i16x8.extend-low-i8x16-s i16x8.extend-high-i8x16-s i16x8.extend-low-i8x16-u
-   i16x8.extend-high-i8x16-u i16x8.shl i16x8.shr-s i16x8.shr-u i16x8.add i16x8.add-sat-s
-   i16x8.add-sat-u i16x8.sub i16x8.sub-sat-s i16x8.sub-sat-u f64x2.nearest i16x8.mul
-   i16x8.min-s i16x8.min-u i16x8.max-s i16x8.max-u i16x8.avgr-u i16x8.extmul-low-i8x16-s
-   i16x8.extmul-high-i8x16-s i16x8.extmul-low-i8x16-u i16x8.extmul-high-i8x16-u i32x4.abs
-   i32x4.neg i32x4.all-true i32x4.bitmask i32x4.extend-low-i16x8-s i32x4.extend-high-i16x8-s
-   i32x4.extend-low-i16x8-u i32x4.extend-high-i16x8-u i32x4.shl i32x4.shr-s i32x4.shr-u
-   i32x4.add i32x4.sub i32x4.mul i32x4.min-s i32x4.min-u i32x4.max-s i32x4.max-u
-   i32x4.dot-i16x8-s i32x4.extmul-low-i16x8-s i32x4.extmul-high-i16x8-s
-   i32x4.extmul-low-i16x8-u i32x4.extmul-high-i16x8-u i64x2.abs i64x2.neg i64x2.all-true
-   i64x2.bitmask i64x2.extend-low-i32x4-s i64x2.extend-high-i32x4-s i64x2.extend-low-i32x4-u
-   i64x2.extend-high-i32x4-u i64x2.shl i64x2.shr-s i64x2.shr-u i64x2.add i64x2.sub i64x2.mul
-   i64x2.eq i64x2.ne i64x2.lt-s i64x2.gt-s i64x2.le-s i64x2.ge-s i64x2.extmul-low-i32x4-s
-   i64x2.extmul-high-i32x4-s i64x2.extmul-low-i32x4-u i64x2.extmul-high-i32x4-u f32x4.abs
-   f32x4.neg f32x4.sqrt f32x4.add f32x4.sub f32x4.mul f32x4.div f32x4.min f32x4.max f32x4.pmin
-   f32x4.pmax f64x2.abs f64x2.neg f64x2.sqrt f64x2.add f64x2.sub f64x2.mul f64x2.div f64x2.min
-   f64x2.max f64x2.pmin f64x2.pmax i32x4.trunc-sat-f32x4-s i32x4.trunc-sat-f32x4-u
-   f32x4.convert-i32x4-s f32x4.convert-i32x4-u i32x4.trunc-sat-f64x2-s-zero
-   i32x4.trunc-sat-f64x2-u-zero f64x2.convert-low-i32x4-s f64x2.convert-low-i32x4-u
-   ;; relaxed-simd
-   i8x16.relaxed-swizzle i32x4.relaxed-trunc-f32x4-s i32x4.relaxed-trunc-f32x4-u
-   i32x4.relaxed-trunc-f64x2-s-zero i32x4.relaxed-trunc-f64x2-u-zero f32x4.relaxed-madd
-   f32x4.relaxed-nmadd f64x2.relaxed-madd f64x2.relaxed-nmadd i8x16.relaxed-laneselect
-   i16x8.relaxed-laneselect i32x4.relaxed-laneselect i64x2.relaxed-laneselect f32x4.relaxed-min
-   f32x4.relaxed-max f64x2.relaxed-min f64x2.relaxed-max i16x8.relaxed-q15mulr-s
-   i16x8.relaxed-dot-i8x16-i7x16-s i32x4.relaxed-dot-i8x16-i7x16-add-s
-   ))
 
 ;; Source: WebAssembly/spec `wg-3.0` commit `9d36019973201a19f9c9ebb0f10828b2fe2374aa`.
 (define expected-core-3-binary-assignments
@@ -2302,6 +2333,11 @@
    (vector #xfd #x113 'i32x4.relaxed-dot-i8x16-i7x16-add-s)
    ))
 
+(define expected-core-3-mnemonics
+  (list->vector
+   (unique eq? (map (lambda (assignment) (vector-ref assignment 2))
+                    (vector->list expected-core-3-binary-assignments)))))
+
 ;; Shapes follow the final Core 3.0 binary grammar and the normalized order below.
 (define expected-core-3-special-opcodes
   (vector
@@ -2439,35 +2475,6 @@
    (vector #xfd #x5d 'v128.load64-zero 'memory-argument #f)
    ))
 
-(define concatenate-bytevectors
-  (lambda bytevectors
-    (let* ([length (apply + (map bytevector-length bytevectors))]
-           [result (make-bytevector length)])
-      (let loop ([bytevectors bytevectors] [offset 0])
-        (if (null? bytevectors)
-            result
-            (let* ([bytes (car bytevectors)]
-                   [next-offset (fx+ offset (bytevector-length bytes))])
-              (bytevector-copy! bytes 0 result offset (bytevector-length bytes))
-              (loop (cdr bytevectors) next-offset)))))))
-
-(define byte-list->bytevector
-  (lambda (byte*)
-    (let* ([length (length byte*)] [bytes (make-bytevector length)])
-      (let loop ([index 0] [byte* byte*])
-        (unless (null? byte*)
-          (bytevector-u8-set! bytes index (car byte*))
-          (loop (fx1+ index) (cdr byte*))))
-      bytes)))
-
-(define encode-minimal-u32
-  (lambda (value)
-    (let loop ([value value] [byte* '()])
-      (let ([next (fxsra value 7)] [payload (fxand value #x7f)])
-        (if (fxzero? next)
-            (byte-list->bytevector (reverse (cons payload byte*)))
-            (loop next (cons (fxior payload #x80) byte*)))))))
-
 (define expected-special-row
   (lambda (assignment)
     (let ([prefix (vector-ref assignment 0)] [code (vector-ref assignment 1)])
@@ -2517,10 +2524,10 @@
            [shape (if special (vector-ref special 3) 'none)]
            [structured-kind (and special (vector-ref special 4))]
            [opcode (if prefix
-                       (concatenate-bytevectors (bytevector prefix)
-                                                (encode-minimal-u32 code))
+                       (parser-test-bytes (bytevector prefix)
+                                                (encode-wasm-u32 code))
                        (bytevector code))])
-      (concatenate-bytevectors opcode
+      (parser-test-bytes opcode
                                (minimal-binary-immediate shape structured-kind)))))
 
 (define expected-lane-instructions
@@ -2550,14 +2557,14 @@
 
 (define lane-instruction-test-bytes
   (lambda (expected)
-    (let* ([opcode (concatenate-bytevectors
+    (let* ([opcode (parser-test-bytes
                     (bytevector (vector-ref expected 0))
-                    (encode-minimal-u32 (vector-ref expected 1)))]
+                    (encode-wasm-u32 (vector-ref expected 1)))]
            [lane (fx1- (vector-ref expected 4))]
            [immediate (if (eq? 'lane-index (vector-ref expected 3))
                           (bytevector lane)
                           (bytevector 0 0 lane))])
-      (concatenate-bytevectors opcode immediate))))
+      (parser-test-bytes opcode immediate))))
 
 (define private-binary-variant?
   (lambda (assignment)
@@ -2637,8 +2644,6 @@
 
      (= (vector-length expected-core-3-mnemonics)
         (vector-length wasm-core-3-opcodes))
-
-     (unique-values? (vector->list expected-core-3-mnemonics))
 
      (unique-values?
       (map wasm-opcode-mnemonic (vector->list wasm-core-3-opcodes)))
@@ -2747,261 +2752,11 @@
                  (and (member (binary-assignment-pair special) official-pairs) #t))
                (vector->list expected-core-3-special-opcodes)))
 
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 0))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 1))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 2))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 3))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 4))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 5))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 6))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 7))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 8))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 9))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 10))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 11))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 12))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 13))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 14))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 15))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 16))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 17))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 18))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 19))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 20))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 21))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 22))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 23))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 24))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 25))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 26))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 27))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 28))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 29))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 30))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 31))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 32))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 33))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 34))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 35))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 36))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 37))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 38))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 39))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 40))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 41))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 42))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 43))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 44))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 45))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 46))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 47))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 48))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 49))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 50))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 51))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 52))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 53))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 54))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 55))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 56))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 57))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 58))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 59))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 60))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 61))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 62))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 63))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 64))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 65))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 66))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 67))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 68))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 69))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 70))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 71))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 72))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 73))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 74))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 75))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 76))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 77))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 78))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 79))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 80))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 81))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 82))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 83))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 84))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 85))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 86))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 87))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 88))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 89))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 90))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 91))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 92))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 93))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 94))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 95))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 96))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 97))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 98))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 99))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 100))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 101))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 102))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 103))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 104))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 105))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 106))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 107))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 108))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 109))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 110))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 111))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 112))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 113))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 114))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 115))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 116))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 117))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 118))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 119))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 120))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 121))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 122))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 123))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 124))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 125))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 126))
-
-     (special-opcode-fields=? (vector-ref expected-core-3-special-opcodes 127))
+     (andmap
+      (lambda (expected)
+        (or (special-opcode-fields=? expected)
+            (error 'wasm-core-3-opcode-table "special opcode fields differ" expected)))
+      (vector->list expected-core-3-special-opcodes))
 
      (let ([special-pairs
             (map binary-assignment-pair
@@ -3160,45 +2915,65 @@
      (= -1 (parse-binary <wasm-s64> #vu8(255 127)))
 
      ;; error: a u32 input cannot end while the continuation bit is set.
-     (error? (parse-binary <wasm-u32> #vu8(128)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-u32> #vu8(128))))
 
      ;; error: a u64 tenth byte may only carry its one remaining value bit.
-     (error? (parse-binary <wasm-u64>
-                           #vu8(128 128 128 128 128 128 128 128 128 2)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-u64>
+                      #vu8(128 128 128 128 128 128 128 128 128 2))))
 
      ;; error: a u64 encoding cannot continue beyond its tenth byte.
-     (error? (parse-binary <wasm-u64>
-                           #vu8(128 128 128 128 128 128 128 128 128 128 0)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-u64>
+                      #vu8(128 128 128 128 128 128 128 128 128 128 0))))
 
      ;; error: an s32 positive final byte has nonzero unused high bits.
-     (error? (parse-binary <wasm-s32> #vu8(128 128 128 128 8)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-s32> #vu8(128 128 128 128 8))))
 
      ;; error: an s32 negative final byte has inconsistent unused high bits.
-     (error? (parse-binary <wasm-s32> #vu8(255 255 255 255 119)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-s32> #vu8(255 255 255 255 119))))
 
      ;; error: an s33 encoding cannot continue beyond its fifth byte.
-     (error? (parse-binary <wasm-s33> #vu8(128 128 128 128 128 0)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-s33> #vu8(128 128 128 128 128 0))))
 
      ;; error: an s33 positive final byte has nonzero unused high bits.
-     (error? (parse-binary <wasm-s33> #vu8(128 128 128 128 16)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-s33> #vu8(128 128 128 128 16))))
 
      ;; error: an s33 negative final byte has inconsistent unused high bits.
-     (error? (parse-binary <wasm-s33> #vu8(255 255 255 255 111)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-s33> #vu8(255 255 255 255 111))))
 
      ;; error: an s64 input cannot end while the continuation bit is set.
-     (error? (parse-binary <wasm-s64> #vu8(128)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-s64> #vu8(128))))
 
      ;; error: an s64 positive final byte has nonzero unused high bits.
-     (error? (parse-binary <wasm-s64>
-                           #vu8(128 128 128 128 128 128 128 128 128 2)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-s64>
+                      #vu8(128 128 128 128 128 128 128 128 128 2))))
 
      ;; error: an s64 negative final byte has inconsistent unused high bits.
-     (error? (parse-binary <wasm-s64>
-                           #vu8(128 128 128 128 128 128 128 128 128 125)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-s64>
+                      #vu8(128 128 128 128 128 128 128 128 128 125))))
 
      ;; error: an s64 encoding cannot continue beyond its tenth byte.
-     (error? (parse-binary <wasm-s64>
-                           #vu8(128 128 128 128 128 128 128 128 128 128 0)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-s64>
+                      #vu8(128 128 128 128 128 128 128 128 128 128 0))))
 
      )
 
@@ -3231,10 +3006,10 @@
      (error? (<wasm-vector> 'not-a-parser))
 
      ;; error: a byte vector must contain the declared number of bytes.
-     (error? (parse-binary <wasm-byte-vector> #vu8(2 1)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-byte-vector> #vu8(2 1))))
 
      ;; error: overlong UTF-8 is not a valid WebAssembly name.
-     (error? (parse-binary <wasm-name> #vu8(2 192 175)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-name> #vu8(2 192 175))))
 
      )
 
@@ -3250,11 +3025,11 @@
      (equal? '(func extern any eq i31 struct array none nofunc noextern exn noexn)
              (map (lambda (byte)
                     (parse-binary <wasm-heap-type> (bytevector byte)))
-                  '(#x70 #x6f #x6e #x6d #x6c #x6b #x6a #x69 #x68 #x67 #x66 #x65)))
+                  '(#x70 #x6f #x6e #x6d #x6c #x6b #x6a #x71 #x73 #x72 #x69 #x74)))
 
      (= 3 (parse-binary <wasm-heap-type> #vu8(3)))
 
-     (let ([type (parse-binary <wasm-reference-type> #vu8(99 105))])
+     (let ([type (parse-binary <wasm-reference-type> #vu8(99 113))])
        (and (wasm-reference-type-nullable? type)
             (eq? 'none (wasm-reference-type-heap-type type))))
 
@@ -3266,7 +3041,7 @@
              (map (lambda (byte)
                     (wasm-reference-type-heap-type
                      (parse-binary <wasm-value-type> (bytevector byte))))
-                  '(#x70 #x6f #x6e #x6d #x6c #x6b #x6a #x69 #x68 #x67 #x66 #x65)))
+                  '(#x70 #x6f #x6e #x6d #x6c #x6b #x6a #x71 #x73 #x72 #x69 #x74)))
 
      (equal? '(i8 i16 i32 v128)
              (map (lambda (byte)
@@ -3274,10 +3049,10 @@
                   '(#x78 #x77 #x7f #x7b)))
 
      ;; error: an unassigned negative s33 value is not a heap type.
-     (error? (parse-binary <wasm-heap-type> #vu8(100)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-heap-type> #vu8(100))))
 
      ;; error: an unknown leading byte is not a value type.
-     (error? (parse-binary <wasm-value-type> #vu8(97)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-value-type> #vu8(97))))
 
      )
 
@@ -3332,13 +3107,17 @@
           (parse-binary <wasm-recursive-type> #vu8(96 0 0)))))
 
      ;; error: mutability is encoded by exactly zero or one.
-     (error? (parse-binary <wasm-field-type> #vu8(127 2)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-field-type> #vu8(127 2))))
 
      ;; error: an explicit recursive group must contain every declared subtype.
-     (error? (parse-binary <wasm-recursive-type> #vu8(78 2 96 0 0)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-recursive-type> #vu8(78 2 96 0 0))))
 
      ;; error: a recursive group cannot end in a truncated composite type.
-     (error? (parse-binary <wasm-recursive-type> #vu8(78 1 96 0)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-binary <wasm-recursive-type> #vu8(78 1 96 0))))
 
      )
 
@@ -3394,22 +3173,22 @@
                 (wasm-external-type-type tag)))))
 
      ;; error: a negative s33 value cannot be a block type index.
-     (error? (parse-binary <wasm-block-type> #vu8(100)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-block-type> #vu8(100))))
 
      ;; error: global mutability is encoded by exactly zero or one.
-     (error? (parse-binary <wasm-global-type> #vu8(127 2)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-global-type> #vu8(127 2))))
 
      ;; error: the tag attribute must be zero in Core 3.0.
-     (error? (parse-binary <wasm-tag-type> #vu8(1 0)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-tag-type> #vu8(1 0))))
 
-     ;; error: limits flags outside 0, 1, 4, and 5 are invalid.
-     (error? (parse-binary <wasm-limits> #vu8(2 0)))
+     ;; error: shared limits cannot omit their maximum bound.
+     (raises-parser-error? (lambda () (parse-binary <wasm-limits> #vu8(2 0))))
 
      ;; error: a limits maximum cannot be lower than its minimum.
-     (error? (parse-binary <wasm-limits> #vu8(1 9 2)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-limits> #vu8(1 9 2))))
 
      ;; error: external type kind five is undefined.
-     (error? (parse-binary <wasm-external-type> #vu8(5)))
+     (raises-parser-error? (lambda () (parse-binary <wasm-external-type> #vu8(5))))
 
      )
 
@@ -3782,7 +3561,7 @@
 
      ;; error: the source-string API parses a path spelling as source text.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda () (parse-wasm-text-module "data/wasm-core3.wat")))])
        (and error (string=? "<string>" (parser-error-source error))))
 
@@ -3801,7 +3580,7 @@
 
      ;; error: a type truncated inside a bounded section reports its exact byte position.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-binary-module
                 #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00 #x01 #x01 #x60))))])
@@ -3822,7 +3601,7 @@
 
      ;; error: an unknown nested folded instruction retains its source position.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-text-module
                 "(module (func (i32.add (i32.const 1) (bad))))")))])
@@ -3840,7 +3619,7 @@
 
      ;; error: an unterminated nested comment retains exact expected field alternatives.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-text-module "(module (; outer (; inner ;)")))])
        (and error
@@ -3849,20 +3628,20 @@
             (= 9 (parser-error-offset error))
             (= 0 (parser-error-line error))
             (= 9 (parser-error-column error))
-            (equal? '("@custom" "rec" "type" "import" "func" "table" "memory"
+            (equal? '("(@" "rec" "type" "import" "func" "table" "memory"
                       "global" "tag" "export" "start" "elem" "data")
                     (parser-error-expected error))
             (char=? (integer->char #x3b) (parser-error-found error))
             (string=?
              (string-append
-              "<string>:1:10: expected \"@custom\", \"rec\", \"type\", \"import\", "
+              "<string>:1:10: expected \"(@\", \"rec\", \"type\", \"import\", "
               "\"func\", \"table\", \"memory\", \"global\", \"tag\", \"export\", "
               "\"start\", \"elem\", or \"data\", got #\\;")
              (parser-error->string error))))
 
      ;; error: post-parse identifier resolution reports the original symbolic reference.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-text-module "(module\n  (func call $missing))")))])
        (and error
@@ -3881,39 +3660,15 @@
 
      )
 
-(define append-bytevectors
-  (lambda bytevector*
-    (let ([result
-           (make-bytevector
-            (fold-left (lambda (length bytes)
-                         (+ length (bytevector-length bytes)))
-                       0 bytevector*))])
-      (let loop ([bytevector* bytevector*] [offset 0])
-        (if (null? bytevector*)
-            result
-            (let* ([bytes (car bytevector*)]
-                   [length (bytevector-length bytes)])
-              (bytevector-copy! bytes 0 result offset length)
-              (loop (cdr bytevector*) (+ offset length))))))))
-
-(define encode-wasm-u32
-  (lambda (value)
-    (let loop ([value value] [byte* '()])
-      (let ([byte (logand value #x7f)]
-            [remaining (ash value -7)])
-        (if (zero? remaining)
-            (apply bytevector (reverse (cons byte byte*)))
-            (loop remaining (cons (logor byte #x80) byte*)))))))
-
 (define make-wasm-section-bytes
   (lambda (id payload)
-    (append-bytevectors (bytevector id)
+    (parser-test-bytes (bytevector id)
                         (encode-wasm-u32 (bytevector-length payload))
                         payload)))
 
 (define make-wasm-module-bytes
   (lambda section*
-    (apply append-bytevectors
+    (apply parser-test-bytes
            (cons #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00) section*))))
 
 (define standard-section-order
@@ -4083,7 +3838,7 @@
 
      ;; error: duplicate standard sections are invalid.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-binary-module
                 #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
@@ -4093,7 +3848,7 @@
      (andmap
       (lambda (section-pair)
         (let ([error
-               (capture-parser-error
+               (parser-error-from
                 (lambda ()
                   (parse-wasm-binary-module
                    (make-wasm-module-bytes
@@ -4103,18 +3858,22 @@
       reversed-standard-section-pairs)
 
      ;; error: a function section requires a code body for each function.
-     (error? (parse-wasm-binary-module
-              #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
-                    #x03 #x02 #x01 #x00)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-binary-module
+         #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
+               #x03 #x02 #x01 #x00))))
 
      ;; error: a section parser must consume the complete declared payload.
-     (error? (parse-wasm-binary-module
-              #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
-                    #x01 #x02 #x00 #x00)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-binary-module
+         #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
+               #x01 #x02 #x00 #x00))))
 
      ;; error: data-count must equal the number of data segments.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-binary-module
                 #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
@@ -4123,7 +3882,7 @@
 
      ;; error: standard sections must occur in Core 3.0 order.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-binary-module
                 #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
@@ -4131,46 +3890,64 @@
        (and error (= 11 (parser-error-offset error))))
 
      ;; error: element segment flags are limited to zero through seven.
-     (error? (parse-wasm-binary-module
-              #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
-                    #x09 #x02 #x01 #x08)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-binary-module
+         #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
+               #x09 #x02 #x01 #x08))))
 
      ;; error: a tag type attribute must be zero.
-     (error? (parse-wasm-binary-module
-              #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
-                    #x0d #x03 #x01 #x01 #x00)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-binary-module
+         #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
+               #x0d #x03 #x01 #x01 #x00))))
 
      ;; error: the binary magic must be exactly zero, a, s, m.
-     (error? (parse-wasm-binary-module
-              #vu8(#x01 #x61 #x73 #x6d #x01 #x00 #x00 #x00)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-binary-module
+         #vu8(#x01 #x61 #x73 #x6d #x01 #x00 #x00 #x00))))
 
      ;; error: only WebAssembly binary version one is accepted.
-     (error? (parse-wasm-binary-module
-              #vu8(#x00 #x61 #x73 #x6d #x02 #x00 #x00 #x00)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-binary-module
+         #vu8(#x00 #x61 #x73 #x6d #x02 #x00 #x00 #x00))))
 
      ;; error: unknown standard section IDs are rejected.
-     (error? (parse-wasm-binary-module
-              #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00 #x0e #x00)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-binary-module
+         #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00 #x0e #x00))))
 
      ;; error: custom section names must contain valid UTF-8.
-     (error? (parse-wasm-binary-module
-              #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
-                    #x00 #x03 #x02 #xc0 #xaf)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-binary-module
+         #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
+               #x00 #x03 #x02 #xc0 #xaf))))
 
      ;; error: data segment flags are limited to zero through two.
-     (error? (parse-wasm-binary-module
-              #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
-                    #x0b #x02 #x01 #x03)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-binary-module
+         #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00
+               #x0b #x02 #x01 #x03))))
 
      ;; error: a code body must contain its complete terminating expression.
-     (error? (parse-wasm-binary-module
-              (make-wasm-module-bytes
-               (make-wasm-section-bytes 3 #vu8(#x01 #x00))
-               (make-wasm-section-bytes 10 #vu8(#x01 #x02 #x00)))))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-binary-module
+         (make-wasm-module-bytes
+          (make-wasm-section-bytes 3 #vu8(#x01 #x00))
+          (make-wasm-section-bytes 10 #vu8(#x01 #x02 #x00))))))
 
      ;; error: bytes after the last complete section are not permitted.
-     (error? (parse-wasm-binary-module
-              #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00 #xff)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-binary-module
+         #vu8(#x00 #x61 #x73 #x6d #x01 #x00 #x00 #x00 #xff))))
 
      )
 
@@ -4196,8 +3973,8 @@
      (let* ([module
              (parse-wasm-text-module
               "(module
-                 (func $later (param i32) (result i32) local.get 0)
                  (import \"env\" \"first\" (func $first (param i32) (result i32)))
+                 (func $later (param i32) (result i32) local.get 0)
                  (func $again (param i32) (result i32)
                    (i32.add (call $later (local.get 0)) (call $first (local.get 0))))
                  (export \"later\" (func $later)))")]
@@ -4243,8 +4020,8 @@
      (let* ([module
              (parse-wasm-text-module
               "(module
-                 (func (result i32) i32.const 0)
-                 (import \"env\" \"later\" (func (param i64))))")]
+                 (import \"env\" \"later\" (func (param i64)))
+                 (func (result i32) i32.const 0))")]
             [type* (wasm-module-types module)]
             [first
              (wasm-subtype-composite-type
@@ -4252,8 +4029,8 @@
             [second
              (wasm-subtype-composite-type
               (vector-ref (wasm-recursive-type-subtypes (vector-ref type* 1)) 0))])
-       (and (equal? '#(i32) (wasm-function-type-results first))
-            (equal? '#(i64) (wasm-function-type-parameters second))))
+       (and (equal? '#(i64) (wasm-function-type-parameters first))
+            (equal? '#(i32) (wasm-function-type-results second))))
 
      (let* ([module
              (parse-wasm-text-module
@@ -4297,7 +4074,7 @@
                  (type $sig (func))
                  (tag $tag (type $sig))
                  (func
-                   try_table $outer (type $sig) (catch $tag $outer)
+                   try_table $outer (type $sig) (catch $tag 0)
                    end $outer))")]
             [instruction
              (vector-ref
@@ -4348,39 +4125,41 @@
 
      ;; error: symbolic references must name a declaration in the matching namespace.
      (let ([error
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (parse-wasm-text-module
                 "(module (func call $missing))")))])
        (and error (> (parser-error-offset error) 0)))
 
      ;; error: duplicate textual identifiers in one namespace are rejected.
-     (error? (parse-wasm-text-module
-              "(module (memory $m 1) (memory $m 1))"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-text-module
+         "(module (memory $m 1) (memory $m 1))")))
 
      ;; error: an inline signature must agree with its explicit function type.
-     (error? (parse-wasm-text-module
-              "(module
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-text-module
+         "(module
                  (type $sig (func (param i32)))
-                 (func (type $sig) (param i64)))"))
+                 (func (type $sig) (param i64)))")))
 
      ;; error: named parameters and locals share one function-local namespace.
-     (error? (parse-wasm-text-module
-              "(module (func (param $x i32) (local $x i64)))"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-text-module
+         "(module (func (param $x i32) (local $x i64)))")))
 
      ;; error: a symbolic branch label must name an enclosing structured instruction.
-     (error? (parse-wasm-text-module
-              "(module (func block br $missing end))"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-wasm-text-module
+         "(module (func block br $missing end))")))
 
-     ;; error: the source-string API requires a string.
-     (error? (parse-wasm-text-module #vu8()))
-
-     (with-temporary-wat
-      "(module)"
+     (with-parser-file
+      (string->utf8 "(module)")
       (lambda (path) (wasm-module? (parse-wasm-text-module-file path))))
-
-     ;; error: the file API requires a regular-file path.
-     (error? (parse-wasm-text-module-file "data/not-a-wasm-module.wat"))
 
      )
 
@@ -4392,12 +4171,6 @@
            (or (= index (vector-length left))
                (and (value=? (vector-ref left index) (vector-ref right index))
                     (loop (+ index 1))))))))
-
-(define wasm-vector-any?
-  (lambda (predicate vector)
-    (let loop ([index 0])
-      (and (< index (vector-length vector))
-           (or (predicate (vector-ref vector index)) (loop (+ index 1)))))))
 
 (define wasm-value=?
   (lambda (left right)
@@ -4492,7 +4265,8 @@
     (and (wasm-limits? right)
          (eq? (wasm-limits-address-type left) (wasm-limits-address-type right))
          (= (wasm-limits-minimum left) (wasm-limits-minimum right))
-         (equal? (wasm-limits-maximum left) (wasm-limits-maximum right)))))
+         (equal? (wasm-limits-maximum left) (wasm-limits-maximum right))
+         (eq? (wasm-limits-shared? left) (wasm-limits-shared? right)))))
 
 (define wasm-table-type=?
   (lambda (left right)
@@ -4594,10 +4368,8 @@
     (and (wasm-custom-section? right)
          (string=? (wasm-custom-section-name left) (wasm-custom-section-name right))
          (equal? (wasm-custom-section-bytes left) (wasm-custom-section-bytes right))
-         (or (not (wasm-custom-section-after-section left))
-             (not (wasm-custom-section-after-section right))
-             (eq? (wasm-custom-section-after-section left)
-                  (wasm-custom-section-after-section right))))))
+         (eq? (wasm-custom-section-after-section left)
+              (wasm-custom-section-after-section right)))))
 
 (define wasm-instruction=?
   (lambda (left right)
@@ -4656,23 +4428,87 @@
                         (wasm-module-custom-sections right)
                         wasm-value=?))))
 
-(define wasm-section-count-matches?
-  (lambda (output label values)
-    (or (fxzero? (vector-length values))
-        (string-contains? output
-                          (format "~a[~a]:" label (vector-length values))))))
-
 (define wasm-objdump-counts-match?
   (lambda (module output)
-    (and (wasm-section-count-matches? output "Type" (wasm-module-types module))
-         (wasm-section-count-matches? output "Function" (wasm-module-functions module))
-         (wasm-section-count-matches? output "Table" (wasm-module-tables module))
-         (wasm-section-count-matches? output "Memory" (wasm-module-memories module))
-         (wasm-section-count-matches? output "Global" (wasm-module-globals module))
-         (wasm-section-count-matches? output "Export" (wasm-module-exports module))
-         (wasm-section-count-matches? output "Elem" (wasm-module-elements module))
-         (wasm-section-count-matches? output "Data" (wasm-module-data module))
-         (wasm-section-count-matches? output "Code" (wasm-module-functions module)))))
+    (let ([lines (map string-trim (string-split output #\newline))]
+          [expected
+           (list (cons "Type" (vector-length (wasm-module-types module)))
+                 (cons "Import" (vector-length (wasm-module-imports module)))
+                 (cons "Function" (vector-length (wasm-module-functions module)))
+                 (cons "Table" (vector-length (wasm-module-tables module)))
+                 (cons "Memory" (vector-length (wasm-module-memories module)))
+                 (cons "Global" (vector-length (wasm-module-globals module)))
+                 (cons "Tag" (vector-length (wasm-module-tags module)))
+                 (cons "Export" (vector-length (wasm-module-exports module)))
+                 (cons "Elem" (vector-length (wasm-module-elements module)))
+                 (cons "Data" (vector-length (wasm-module-data module)))
+                 (cons "Code" (vector-length (wasm-module-functions module))))])
+      (and (member "Section Details:" lines)
+           (let loop ([lines lines] [counts '()])
+             (if (null? lines)
+                 (for-all (lambda (entry)
+                            (= (cdr entry) (cond [(assoc (car entry) counts) => cdr]
+                                                 [else 0])))
+                          expected)
+                 (let* ([line (car lines)] [bracket (string-search line #\[)]
+                        [label (and bracket (substring line 0 bracket))])
+                   (if (and label (assoc label expected))
+                       (let ([count (and (string-endswith? line "]:")
+                                         (substring line (+ bracket 1)
+                                                    (- (string-length line) 2)))])
+                         (and count (not (string-empty? count))
+                              (for-all (lambda (character) (char<=? #\0 character #\9))
+                                       (string->list count))
+                              (not (assoc label counts))
+                              (loop (cdr lines) (cons (cons label (string->number count)) counts))))
+                       (loop (cdr lines) counts)))))))))
+
+(mat wasm-fixture-comparison-controls
+
+     (let ([section (make-wasm-custom-section "x" #vu8(1) #f)])
+       (wasm-custom-section=? section (make-wasm-custom-section "x" #vu8(1) #f)))
+
+     ;; Error control: before all sections and after data are different placements.
+     (let ([first (make-wasm-custom-section "x" #vu8(1) #f)]
+           [last (make-wasm-custom-section "x" #vu8(1) 'data)])
+       (and (not (wasm-custom-section=? first last))
+            (not (wasm-custom-section=? last first))))
+
+     (wasm-objdump-counts-match?
+      (parse-wasm-text-module "(module)")
+      "empty.wasm: file format wasm 0x1\n\nSection Details:\n")
+
+     ;; Error control: missing all section summaries must not accept unrelated tool output.
+     (not (wasm-objdump-counts-match? (parse-wasm-text-module "(module)") "garbage"))
+
+     ;; Error control: an empty parsed vector cannot ignore a nonempty tool section.
+     (not (wasm-objdump-counts-match?
+           (parse-wasm-text-module "(module)")
+           "empty.wasm: file format wasm 0x1\nSection Details:\nMemory[1]:\n"))
+
+     ;; Error controls: imports and tags must agree in both directions, including absent sections.
+     (for-all
+      (lambda (source label other-sections)
+        (let* ([module (parse-wasm-text-module source)]
+               [prefix "m.wasm: file format wasm 0x1\nSection Details:\n"]
+               [nonempty (string-append prefix other-sections label "[1]:\n")])
+          (and (wasm-objdump-counts-match? module nonempty)
+               (not (wasm-objdump-counts-match?
+                     module (string-append prefix other-sections)))
+               (not (wasm-objdump-counts-match?
+                     (parse-wasm-text-module "(module)")
+                     (string-append prefix label "[1]:\n"))))))
+      '("(module (import \"m\" \"mem\" (memory 1)))"
+        "(module (type (func)) (tag (type 0)))")
+      '("Import" "Tag") '("" "Type[1]:\n"))
+
+     ;; Error controls: section counts must be complete, unique decimal fields.
+     (for-all
+      (lambda (summary)
+        (not (wasm-objdump-counts-match?
+              (parse-wasm-text-module "(module (memory 1))")
+              (string-append "m.wasm: file format wasm 0x1\nSection Details:\n" summary))))
+      '("Memory[10]:\n" "Memory[1]:trailing\n" "Memory[1]:\nMemory[1]:\n")))
 
 (define wasm-file-counts-match?
   (lambda (path)
@@ -4742,7 +4578,7 @@
             (= 1 (vector-length (wasm-module-data module)))
             (eq? 'active (wasm-data-mode data))
             (= 916 (bytevector-length (wasm-data-bytes data)))
-            (wasm-vector-any? (lambda (name) (string=? "name" name)) custom-name*)))
+            (vexists (lambda (name) (string=? "name" name)) custom-name*)))
 
      (or (not (external-tool-available? "wasm-objdump"))
          (wasm-file-counts-match? "data/example.wasm"))
@@ -4755,3 +4591,5 @@
        (wasm-module=? text-module binary-module))
 
      )
+
+(include "parser-wasm-regressions.ss")

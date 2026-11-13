@@ -12,19 +12,62 @@
           (cspp list)
           (cspp utils))
 
+  ;; Record fields are immutable. Accessors return stored strings/vectors without copying;
+  ;; these objects may be mutable, so a record wrapper does not imply deep immutability.
+
+  #|proc:json5-document?
+  Returns #t when object is a parsed JSON5 document, and #f otherwise. The object parameter may
+  be any Scheme value.
+  |#
+  #|proc:json5-document-value
+  Returns the root JSON5 value: an object, array, null record, boolean, string, or number from
+  record, a json5-document record. The stored value is returned without copying.
+  |#
   (define-record-type json5-document
     (fields (immutable value)))
 
+  #|proc:json5-object?
+  Returns #t when object is a JSON5 object, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:json5-object-members
+  Returns a vector of json5-member records in source order; duplicate names are retained from
+  record, a json5-object record. The stored value is returned without copying.
+  |#
   (define-record-type json5-object
     (fields (immutable members)))
 
+  #|proc:json5-member?
+  Returns #t when object is a JSON5 object member, and #f otherwise. The object parameter may be
+  any Scheme value.
+  |#
+  #|proc:json5-member-name
+  Returns the decoded member-name string from record, a json5-member record. The stored value is
+  returned without copying.
+  |#
+  #|proc:json5-member-value
+  Returns the member value: an object, array, null record, boolean, string, or number from
+  record, a json5-member record. The stored value is returned without copying.
+  |#
   (define-record-type json5-member
     (fields (immutable name)
             (immutable value)))
 
+  #|proc:json5-array?
+  Returns #t when object is a JSON5 array, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:json5-array-elements
+  Returns a vector of JSON5 values in source order from record, a json5-array record. The stored
+  value is returned without copying.
+  |#
   (define-record-type json5-array
     (fields (immutable elements)))
 
+  #|proc:json5-null?
+  Returns #t when object is a JSON5 null value, and #f otherwise. The object parameter may be
+  any Scheme value.
+  |#
   (define-record-type json5-null
     (fields))
 
@@ -55,9 +98,7 @@
   (define json5-whitespace?
     (lambda (character)
       (or (memv character
-                (list #\tab #\vtab #\page #\space
-                      (integer->char #xa0)
-                      (integer->char #xfeff)))
+                '(#\tab #\vtab #\page #\space #\xa0 #\xfeff))
           (json5-line-terminator? character)
           (eq? 'Zs (char-general-category character)))))
 
@@ -76,13 +117,6 @@
           (char=? character (integer->char #x200c))
           (char=? character (integer->char #x200d)))))
 
-  (define unicode-scalar-value?
-    (lambda (value)
-      (and (integer? value)
-           (exact? value)
-           (<= 0 value #x10ffff)
-           (not (<= #xd800 value #xdfff)))))
-
   (define <hex-code-unit>
     (<map> hexdigits->num (<rep> <digit16> 4)))
 
@@ -97,9 +131,12 @@
                             (<fail-with> "invalid escaped identifier character")))
                       (<fail-with> "invalid escaped identifier character"))))))
 
+
   (define (<identifier-character> predicate message)
-    (</> (<escaped-identifier-character> predicate)
-         (<satisfy-char> predicate message)))
+    (parser-ordinary-character
+     predicate
+     (</> (<escaped-identifier-character> predicate)
+          (<satisfy-char> predicate message))))
 
   (define <identifier-start>
     (<identifier-character> identifier-start-character?
@@ -111,7 +148,7 @@
 
   (define <identifier-name-raw>
     (<map> (lambda (value)
-             (apply string (cons (car value) (cadr value))))
+             (list->string (cons (car value) (cadr value))))
            (<~> <identifier-start> (<many> <identifier-part>))))
 
 ;;;;===----------------------------------------------------------------------===
@@ -123,18 +160,20 @@
 
   (define <line-comment>
     (<~1> (<string> "//")
-          (<many> (<satisfy-char>
+          (parser-discard-many (<satisfy-char>
                    (lambda (character)
                      (not (json5-line-terminator? character)))))))
 
   (define <block-comment>
     (<~1> (<string> "/*")
-          (<many> (<~1> (<not-followed-by> (<result> #t) (<string> "*/"))
-                        <item>))
+          (parser-discard-many
+           (parser-ordinary-character
+            (lambda (character) (not (char=? character #\*)))
+            (<~1> (<not-followed-by> (<result> #t) (<string> "*/")) <item>)))
           (<string> "*/")))
 
   (define <junk>
-    (<many> (</> <json5-whitespace> <line-comment> <block-comment>)))
+    (parser-discard-many (</> <json5-whitespace> <line-comment> <block-comment>)))
 
   (define (<json5-token> parser)
     (<~ parser <junk>))
@@ -218,19 +257,23 @@
 
   (define json5-string-parser
     (lambda (quote)
-      (<json5-token>
-       (<map> (lambda (characters)
-                (apply string (filter char? characters)))
-              (<~1> (<char> quote)
-                    (<many>
-                     (</> <escaped-string-character>
-                          (<satisfy-char>
-                           (lambda (character)
-                             (and (not (char=? character quote))
-                                  (not (char=? character #\\))
-                                  (not (json5-line-terminator? character))))
-                           "invalid unescaped string character")))
-                    (<char> quote))))))
+      (let ([ordinary-character?
+             (lambda (character)
+               (and (not (char=? character quote))
+                    (not (char=? character #\\))
+                    (not (char=? character #\newline))
+                    (not (char=? character #\return))))])
+        (<json5-token>
+         (<map> (lambda (characters)
+                  (list->string (filter char? characters)))
+                (<~1> (<char> quote)
+                      (<many>
+                       (parser-ordinary-character
+                        ordinary-character?
+                        (</> <escaped-string-character>
+                             (<satisfy-char> ordinary-character?
+                                            "invalid unescaped string character"))))
+                      (<char> quote)))))))
 
   (define <json5-string>
     (</> (json5-string-parser #\")
@@ -247,15 +290,33 @@
   (define <decimal-digits>
     (<as-string> (<some> <digit>)))
 
+  (define <decimal-integer>
+    (</> (<string> "0")
+         (<map> (lambda (value) (list->string (cons (car value) (cadr value))))
+                (<~> (<one-of> "123456789") (<many> <digit>)))))
+
   (define <decimal-base>
-    (</> (<map> (lambda (value)
-                  (string-append (car value) "." (caddr value)))
-                (<~> <decimal-digits> (<char> #\.)
-                     (<as-string> (<many> <digit>))))
-         (<map> (lambda (value)
-                  (string-append "." (cadr value)))
-                (<~> (<char> #\.) <decimal-digits>))
-         <decimal-digits>))
+    (let ([original
+           (</> (<map> (lambda (value)
+                         (string-append (car value) "." (caddr value)))
+                       (<~> <decimal-integer> (<char> #\.)
+                            (<as-string> (<many> <digit>))))
+                (<map> (lambda (value)
+                         (string-append "." (cadr value)))
+                       (<~> (<char> #\.) <decimal-digits>))
+                <decimal-integer>)]
+          [fraction (~> (<char> #\.) (<as-string> (<many> <digit>)))])
+      (define-parser shared-prefix-parser
+        (let-values ([(status integral next-input)
+                      (parser-call <decimal-integer> (save-input inp) state lvl)])
+          (if status
+              (let-values ([(point? fractional end-input)
+                            (parser-call fraction (save-input next-input) state lvl)])
+                (if point?
+                    (values #t (string-append integral "." fractional) end-input)
+                    (values #t integral next-input)))
+              (parser-call original inp state lvl))))
+      shared-prefix-parser))
 
   (define <decimal-exponent>
     (<map> (lambda (value)
@@ -275,9 +336,30 @@
                 <decimal-base>
                 (<optional> <decimal-exponent>))))
 
+  ;; The grammar has already validated source. Both integer and float paths use
+  ;; balanced digit conversion; the float helper also handles rounding and range.
+  (define decimal-source->number
+    (lambda (source)
+      (let loop ([index 0])
+        (cond [(fx= index (string-length source))
+               (let* ([characters (string->list source)]
+                      [negative? (char=? (car characters) #\-)]
+                      [digits (if (memv (car characters) '(#\+ #\-))
+                                  (cdr characters) characters)]
+                      [number (digits->num
+                               (map (lambda (character) (fx- (char->integer character) 48))
+                                    digits))])
+                 (if negative? (- number) number))]
+              [(memv (string-ref source index) '(#\. #\e #\E))
+               (parser-decimal-source->flonum source)]
+              [else (loop (fx1+ index))]))))
+
   (define <json5-decimal>
     (<json5-token>
-     (<map> string->number
+     (<map> (lambda (source)
+              (let ([value (decimal-source->number source)])
+                (if (and (zero? value) (char=? (string-ref source 0) #\-))
+                    -0.0 value)))
             (<not-followed-by> <decimal-source> <identifier-part>))))
 
   (define <json5-hexadecimal>
@@ -285,7 +367,7 @@
      (<map> (lambda (value)
               (let ([number (hexdigits->num (caddr value))])
                 (if (char=? (car value) #\-)
-                    (- number)
+                    (if (zero? number) -0.0 (- number))
                     number)))
             (<not-followed-by>
              (<~> (</> (<one-of> "+-") (<result> #\+))
@@ -373,6 +455,10 @@
 
   #|proc:parse-json5
   The `parse-json5` procedure parses JSON5 string `text` and returns a `json5-document`.
+  Objects preserve member order and duplicate names; arrays contain ordered value vectors.
+  Null is a `json5-null` record, distinct from boolean `#f`. Integers are exact Scheme integers;
+  decimal floats, negative zero, Infinity, and NaN are binary64 flonums.
+  Syntax failures raise `&parser-error`; the complete input must be a single JSON5 value.
   |#
   (define parse-json5
     (lambda (text)
@@ -381,7 +467,10 @@
 
   #|proc:parse-json5-file
   The `parse-json5-file` procedure parses the regular file at string `path` as JSON5 and returns
-  a `json5-document`.
+  a `json5-document`, with the value representations described by `parse-json5`.
+  Input is strict UTF-8, ignoring one initial UTF-8 signature and preserving newline characters.
+  Syntax failures raise `&parser-error` with `path` as the source. File and decoding conditions
+  propagate without being converted to parser errors.
   |#
   (define parse-json5-file
     (lambda (path)

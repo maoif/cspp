@@ -5,16 +5,20 @@
   (import (cspp chez)
           (cspp utils))
 
+  (define exact-natural?
+    (lambda (value) (and (natural? value) (exact? value))))
+
   (define-record-type ($wasm-issue $make-wasm-issue $wasm-issue?)
     (fields (immutable offset $wasm-issue-offset)
             (immutable message $wasm-issue-message)))
 
   #|proc:make-wasm-issue
-  Creates a structural issue at byte `offset` with diagnostic string `message`.
+  Creates a structural issue at exact nonnegative `offset` with diagnostic string `message`.
+  Offsets count bytes for binary input and decoded Scheme characters for WAT normalization.
   |#
   (define make-wasm-issue
     (lambda (offset message)
-      (pcheck ([natural? offset] [string? message])
+      (pcheck ([exact-natural? offset] [string? message])
               ($make-wasm-issue offset message))))
 
   #|proc:wasm-issue?
@@ -25,7 +29,7 @@
       (pcheck () ($wasm-issue? object))))
 
   #|proc:wasm-issue-offset
-  Returns the byte offset of issue `record`.
+  Returns the offset of issue `record`: bytes for binary input, decoded Scheme characters for WAT.
   |#
   (define wasm-issue-offset
     (lambda (record)
@@ -41,19 +45,20 @@
               ($wasm-issue-message record))))
 
   #|proc:wasm-standard-section?
-  Returns whether natural `id` identifies a standard Core 3.0 section.
+  Returns whether exact nonnegative `id` identifies a standard Core 3.0 section.
   |#
   (define wasm-standard-section?
     (lambda (id)
-      (pcheck ([natural? id])
+      (pcheck ([exact-natural? id])
               (<= 1 id 13))))
 
   #|proc:wasm-section-rank
-  Returns the Core 3.0 order rank for natural section `id`, or `#f` for a custom or unknown ID.
+  Returns the Core 3.0 order rank for exact nonnegative integer section `id`, or `#f` for a
+  custom or unknown ID.
   |#
   (define wasm-section-rank
     (lambda (id)
-      (pcheck ([natural? id])
+      (pcheck ([exact-natural? id])
               (case id
                 [(1) 1] [(2) 2] [(3) 3] [(4) 4] [(5) 5] [(13) 6]
                 [(6) 7] [(7) 8] [(8) 9] [(9) 10] [(12) 11]
@@ -61,11 +66,12 @@
                 [else #f]))))
 
   #|proc:wasm-section-order-valid?
-  Returns whether natural section `id` follows natural `previous-rank` without duplication.
+  Returns whether section `id` follows `previous-rank` without duplication. Both arguments
+  must be exact nonnegative integers.
   |#
   (define wasm-section-order-valid?
     (lambda (previous-rank id)
-      (pcheck ([natural? previous-rank id])
+      (pcheck ([exact-natural? previous-rank id])
               (let ([rank (wasm-section-rank id)])
                 (and rank (> rank previous-rank))))))
 
@@ -78,11 +84,11 @@
               (= (vector-length type-indices) (vector-length code-bodies)))))
 
   #|proc:wasm-data-count-valid?
-  Returns whether optional natural `declared` matches vector `data-segments`.
+  Returns whether optional exact nonnegative `declared` matches vector `data-segments`.
   |#
   (define wasm-data-count-valid?
     (lambda (declared data-segments)
-      (pcheck ([(lambda (value) (or (not value) (natural? value))) declared]
+      (pcheck ([(lambda (value) (or (not value) (exact-natural? value))) declared]
                [vector? data-segments])
               (or (not declared) (= declared (vector-length data-segments))))))
   )

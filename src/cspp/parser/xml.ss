@@ -16,37 +16,143 @@
           (cspp parser combinator)
           (cspp file)
           (cspp list)
+          (only (cspp string) string-contains?)
           (cspp utils))
 
+  ;; Record fields are immutable. Accessors return stored strings/vectors without copying;
+  ;; these objects may be mutable, so a record wrapper does not imply deep immutability.
+
+  #|proc:xml-document?
+  Returns #t when object is a parsed XML document, and #f otherwise. The object parameter may be
+  any Scheme value.
+  |#
+  #|proc:xml-document-declaration
+  Returns an xml-declaration record or #f when no declaration was supplied from record, a
+  xml-document record. The stored value is returned without copying.
+  |#
+  #|proc:xml-document-before-root
+  Returns a vector of comments and processing instructions before the root, in order from
+  record, a xml-document record. The stored value is returned without copying.
+  |#
+  #|proc:xml-document-root
+  Returns the root xml-element record from record, a xml-document record. The stored value is
+  returned without copying.
+  |#
+  #|proc:xml-document-after-root
+  Returns a vector of comments and processing instructions after the root, in order from record,
+  a xml-document record. The stored value is returned without copying.
+  |#
   (define-record-type xml-document
     (fields (immutable declaration)
             (immutable before-root)
             (immutable root)
             (immutable after-root)))
 
+  #|proc:xml-declaration?
+  Returns #t when object is a XML declaration, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:xml-declaration-version
+  Returns the XML version string, currently "1.0" from record, a xml-declaration record. The
+  stored value is returned without copying.
+  |#
+  #|proc:xml-declaration-encoding
+  Returns the declared encoding-name string or #f when omitted from record, a xml-declaration
+  record. The stored value is returned without copying.
+  |#
+  #|proc:xml-declaration-standalone
+  Returns the symbol yes or no, or #f when the standalone declaration was omitted from record, a
+  xml-declaration record. The stored value is returned without copying.
+  |#
   (define-record-type xml-declaration
     (fields (immutable version)
             (immutable encoding)
             (immutable standalone)))
 
+  #|proc:xml-element?
+  Returns #t when object is a XML element, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:xml-element-name
+  Returns the decoded element-name string, retaining any namespace prefix from record, a
+  xml-element record. The stored value is returned without copying.
+  |#
+  #|proc:xml-element-attributes
+  Returns a vector of xml-attribute records in source order from record, a xml-element record.
+  The stored value is returned without copying.
+  |#
+  #|proc:xml-element-children
+  Returns a vector of element, text, CDATA, comment, or processing-instruction records from
+  record, a xml-element record. The stored value is returned without copying.
+  |#
   (define-record-type xml-element
     (fields (immutable name)
             (immutable attributes)
             (immutable children)))
 
+  #|proc:xml-attribute?
+  Returns #t when object is a XML attribute, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:xml-attribute-name
+  Returns the decoded attribute-name string, retaining any namespace prefix from record, a
+  xml-attribute record. The stored value is returned without copying.
+  |#
+  #|proc:xml-attribute-value
+  Returns the string after XML attribute whitespace normalization and reference expansion from
+  record, a xml-attribute record. The stored value is returned without copying.
+  |#
   (define-record-type xml-attribute
     (fields (immutable name)
             (immutable value)))
 
+  #|proc:xml-text?
+  Returns #t when object is a XML text node, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:xml-text-value
+  Returns the decoded character-data string; adjacent ordinary text is merged from record, a
+  xml-text record. The stored value is returned without copying.
+  |#
   (define-record-type xml-text
     (fields (immutable value)))
 
+  #|proc:xml-cdata?
+  Returns #t when object is a XML CDATA node, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:xml-cdata-value
+  Returns the literal CDATA string after XML newline normalization from record, a xml-cdata
+  record. The stored value is returned without copying.
+  |#
   (define-record-type xml-cdata
     (fields (immutable value)))
 
+  #|proc:xml-comment?
+  Returns #t when object is a XML comment, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:xml-comment-value
+  Returns the comment-content string without its opening and closing delimiters from record, a
+  xml-comment record. The stored value is returned without copying.
+  |#
   (define-record-type xml-comment
     (fields (immutable value)))
 
+  #|proc:xml-processing-instruction?
+  Returns #t when object is a XML processing instruction, and #f otherwise. The object parameter
+  may be any Scheme value.
+  |#
+  #|proc:xml-processing-instruction-target
+  Returns the processing-instruction target string from record, a xml-processing-instruction
+  record. The stored value is returned without copying.
+  |#
+  #|proc:xml-processing-instruction-data
+  Returns the instruction-data string without its separator whitespace or closing delimiter from
+  record, a xml-processing-instruction record. Returns #f when data and separator are omitted,
+  or the empty string when only separator whitespace is present. Strings are returned without
+  copying.
+  |#
   (define-record-type xml-processing-instruction
     (fields (immutable target)
             (immutable data)))
@@ -133,14 +239,14 @@
 
   (define <name>
     (<map> (lambda (value)
-             (apply string (cons (car value) (cadr value))))
+             (list->string (cons (car value) (cadr value))))
            (<~> <name-start-character> (<many> <name-character>))))
 
   (define <whitespace-character>
     (<one-of> "\x20;\x9;\xA;"))
 
-  (define <S> (<some> <whitespace-character>))
-  (define <S?> (<many> <whitespace-character>))
+  (define <S> (~> <whitespace-character> (parser-discard-many <whitespace-character>)))
+  (define <S?> (parser-discard-many <whitespace-character>))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; References and quoted values
@@ -149,7 +255,11 @@
   (define (<validated-character-reference> parser radix)
     (<bind> parser
             (lambda (digits)
-              (let ([value (string->number (apply string digits) radix)])
+              ;; Once the scalar bound is exceeded, more digits cannot restore validity.
+              (let ([value (fold-left
+                            (lambda (value digit)
+                              (if (> value #x10ffff) value (+ (* value radix) digit)))
+                            0 digits)])
                 (if (and value
                          (<= value #x10ffff)
                          (not (<= #xd800 value #xdfff))
@@ -159,12 +269,12 @@
 
   (define <decimal-character-reference>
     (<~1> (<string> "&#")
-          (<validated-character-reference> (<some> <digit>) 10)
+          (<validated-character-reference> (<some> <digit10>) 10)
           (<char> #\;)))
 
   (define <hexadecimal-character-reference>
     (<~1> (<string> "&#x")
-          (<validated-character-reference> (<some> <hexdigit>) 16)
+          (<validated-character-reference> (<some> <digit16>) 16)
           (<char> #\;)))
 
   (define <predefined-reference>
@@ -179,19 +289,36 @@
          <decimal-character-reference>
          <predefined-reference>))
 
+  ;; Ordinary accepted characters cannot start a delimiter. Keep the original parser for
+  ;; prefixes, invalid characters and EOF so its complete diagnostic causes stay unchanged.
+  (define (ordinary-before-end prefix predicate original)
+    (parser-ordinary-character
+     (lambda (character) (and (not (char=? character prefix)) (predicate character)))
+     original))
+
   (define (attribute-value-parser quote)
-    (<map> (lambda (characters) (apply string characters))
-           (<~1> (<char> quote)
-                 (<many>
-                  (</> <reference>
-                       (<satisfy-char>
-                        (lambda (character)
-                          (and (xml-character? character)
-                               (not (char=? character #\<))
-                               (not (char=? character #\&))
-                               (not (char=? character quote))))
-                        "invalid XML attribute character")))
-                 (<char> quote))))
+    (let* ([ordinary-character?
+            (lambda (character)
+              (and (xml-character? character)
+                   (not (char=? character #\<))
+                   (not (char=? character #\&))
+                   (not (char=? character quote))))]
+           [original (</> <reference>
+                          (<as> #\space (<one-of> "\t\n\r"))
+                          (<satisfy-char> ordinary-character?
+                                           "invalid XML attribute character"))])
+      (<map> list->string
+             (<~1> (<char> quote)
+                   (<many>
+                    (ordinary-before-end
+                     #\&
+                     (lambda (character)
+                       (and (ordinary-character? character)
+                            (not (char=? character #\tab))
+                            (not (char=? character #\newline))
+                            (not (char=? character #\return))))
+                     original))
+                   (<char> quote)))))
 
   (define <attribute-value>
     (</> (attribute-value-parser #\")
@@ -215,25 +342,44 @@
 
   (define <comment>
     (<map> (lambda (pieces)
-             (make-xml-comment (apply string (apply append pieces))))
+             (make-xml-comment
+              (let* ([length (fold-left (lambda (sum piece) (fx+ sum (length piece))) 0 pieces)]
+                     [text (make-string length)])
+                (let loop ([pieces pieces] [index 0])
+                  (if (null? pieces)
+                      text
+                      (let copy ([piece (car pieces)] [index index])
+                        (if (null? piece)
+                            (loop (cdr pieces) index)
+                            (begin
+                              (string-set! text index (car piece))
+                              (copy (cdr piece) (fx1+ index))))))))))
            (<~1> (<string> "<!--")
                  (<many> <comment-piece>)
                  (<string> "-->"))))
 
-  (define <not-cdata-end>
+  (define <not-cdata-end-fallback>
     (<~1> (<not-followed-by> (<result> #t) (<string> "]]>") )
           <xml-character>))
 
+  (define <not-cdata-end>
+    (ordinary-before-end
+     #\] xml-character? <not-cdata-end-fallback>))
+
   (define <cdata>
     (<map> (lambda (characters)
-             (make-xml-cdata (apply string characters)))
+             (make-xml-cdata (list->string characters)))
            (<~1> (<string> "<![CDATA[")
                  (<many> <not-cdata-end>)
                  (<string> "]]>"))))
 
-  (define <not-processing-instruction-end>
+  (define <not-processing-instruction-end-fallback>
     (<~1> (<not-followed-by> (<result> #t) (<string> "?>"))
           <xml-character>))
+
+  (define <not-processing-instruction-end>
+    (ordinary-before-end
+     #\? xml-character? <not-processing-instruction-end-fallback>))
 
   (define <processing-instruction>
     (<~1> (<string> "<?")
@@ -275,9 +421,16 @@
 
   (define <encoding-name>
     (<map> (lambda (value)
-             (apply string (cons (car value) (cadr value))))
-           (<~> <letter>
-                (<many> (</> <letter> <digit> (<one-of> "._-"))))))
+             (list->string (cons (car value) (cadr value))))
+           (<~> (<satisfy-char> (lambda (character)
+                                  (or (char<=? #\a character #\z)
+                                      (char<=? #\A character #\Z))))
+                (<many> (<satisfy-char>
+                         (lambda (character)
+                           (or (char<=? #\a character #\z)
+                               (char<=? #\A character #\Z)
+                               (char<=? #\0 character #\9)
+                               (memv character '(#\. #\_ #\-)))))))))
 
   (define <encoding-info>
     (<~2> (<string> "encoding") <equals> (<quoted-text> <encoding-name>)))
@@ -315,48 +468,62 @@
 
   (define duplicate-attribute?
     (lambda (attributes)
-      (let loop ([attributes attributes] [name* '()])
-        (cond [(null? attributes) #f]
-              [(exists (lambda (name)
-                         (string=? name
-                                   (xml-attribute-name (car attributes))))
-                       name*)
-               #t]
-              [else
-               (loop (cdr attributes)
-                     (cons (xml-attribute-name (car attributes)) name*))]))))
+      (let ([seen (make-hashtable string-hash string=?)])
+        (let loop ([attributes attributes])
+          (and (pair? attributes)
+               (let ([name (xml-attribute-name (car attributes))])
+                 (if (hashtable-contains? seen name) #t
+                     (begin (hashtable-set! seen name #t)
+                            (loop (cdr attributes))))))))))
 
   (define merge-adjacent-text
     (lambda (nodes)
-      (let loop ([nodes nodes] [result '()])
-        (cond [(null? nodes) (reverse result)]
-              [(and (xml-text? (car nodes))
-                    (pair? result)
-                    (xml-text? (car result)))
-               (loop (cdr nodes)
-                     (cons (make-xml-text
-                            (string-append (xml-text-value (car result))
-                                           (xml-text-value (car nodes))))
-                           (cdr result)))]
-              [else (loop (cdr nodes) (cons (car nodes) result))]))))
+      (let ([builder (make-list-builder)])
+        (let loop ([nodes nodes])
+          (cond [(null? nodes) (builder)]
+                [(xml-text? (car nodes))
+                 ;; Size each text run first, then copy each fragment exactly once.
+                 (let scan ([end (cdr nodes)]
+                            [length (string-length (xml-text-value (car nodes)))])
+                   (if (and (pair? end) (xml-text? (car end)))
+                       (scan (cdr end)
+                             (fx+ length (string-length (xml-text-value (car end)))))
+                       (begin
+                         (if (eq? end (cdr nodes))
+                             (builder (car nodes))
+                             (let ([text (make-string length)])
+                               (let copy ([parts nodes] [offset 0])
+                                 (unless (eq? parts end)
+                                   (let* ([part (xml-text-value (car parts))]
+                                          [size (string-length part)])
+                                     (string-copy! part 0 text offset size)
+                                     (copy (cdr parts) (fx+ offset size)))))
+                               (builder (make-xml-text text))))
+                         (loop end))))]
+                [else (builder (car nodes)) (loop (cdr nodes))])))))
 
   (define <reference-text>
     (<map> (lambda (character)
              (make-xml-text (string character)))
            <reference>))
 
-  (define <character-data-character>
+  (define character-data-character?
+    (lambda (character)
+      (and (xml-character? character)
+           (not (char=? character #\<))
+           (not (char=? character #\&)))))
+
+  (define <character-data-character-fallback>
     (<~1> (<not-followed-by> (<result> #t) (<string> "]]>") )
-          (<satisfy-char>
-           (lambda (character)
-             (and (xml-character? character)
-                  (not (char=? character #\<))
-                  (not (char=? character #\&))))
-           "invalid XML character data")))
+          (<satisfy-char> character-data-character? "invalid XML character data")))
+
+  (define <character-data-character>
+    (ordinary-before-end
+     #\] character-data-character? <character-data-character-fallback>))
 
   (define <character-data>
     (<map> (lambda (characters)
-             (make-xml-text (apply string characters)))
+             (make-xml-text (list->string characters)))
            (<some> <character-data-character>)))
 
   (declare-lazy-parser <element>)
@@ -375,34 +542,25 @@
   (define <element-parser>
     (<bind> (<~1> (<char> #\<) <name>)
             (lambda (name)
-              (<bind> (<~> (<many> (~> <S> <attribute>)) <S?>)
-                      (lambda (value)
-                        (let ([attributes (car value)])
-                          (if (duplicate-attribute? attributes)
-                              (<fail-with> "duplicate XML attribute")
-                              (</> (<as> (make-xml-element
-                                          name
-                                          (list->vector attributes)
-                                          '#())
-                                        (<string> "/>"))
-                                   (~> (<char> #\>)
-                                       (<bind> (<many> <content-node>)
-                                               (lambda (children)
-                                                 (<bind> <end-tag>
-                                                         (lambda (end-name)
-                                                           (if (string=? name end-name)
-                                                               (<result>
-                                                                (make-xml-element
-                                                                 name
-                                                                 (list->vector attributes)
-                                                                 (list->vector
-                                                                  (merge-adjacent-text
-                                                                   children))))
-                                                               (<fail-with>
-                                                                (string-append
-                                                                 "end tag does not match "
-                                                                 "open tag"))))))
-                                                         ))))))))))
+              (<bind> (<~ (<many> (~> <S> <attribute>)) <S?>)
+                      (lambda (attributes)
+                        (if (duplicate-attribute? attributes)
+                            (<fail-with> "duplicate XML attribute")
+                            (</> (<as> (make-xml-element name (list->vector attributes) '#())
+                                       (<string> "/>"))
+                                 (~> (<char> #\>)
+                                     (<bind> (<many> <content-node>)
+                                             (lambda (children)
+                                               (<bind> <end-tag>
+                                                       (lambda (end-name)
+                                                         (if (string=? name end-name)
+                                                             (<result>
+                                                              (make-xml-element
+                                                               name (list->vector attributes)
+                                                               (list->vector
+                                                                (merge-adjacent-text children))))
+                                                             (<fail-with>
+                                                              "end tag does not match open tag"))))))))))))))
 
   (define <misc-node>
     (</> <comment>
@@ -432,24 +590,26 @@
 
   (define normalize-xml-newlines
     (lambda (text)
-      (let* ([length (string-length text)]
-             [normalized (make-string length)])
-        (let loop ([source-index 0] [target-index 0])
-          (if (= source-index length)
-              (substring normalized 0 target-index)
-              (let ([character (string-ref text source-index)])
-                (if (char=? character #\return)
-                    (begin
-                      (string-set! normalized target-index #\newline)
-                      (loop (if (and (< (fx1+ source-index) length)
-                                     (char=? (string-ref text (fx1+ source-index))
-                                             #\newline))
-                                (fx+ source-index 2)
-                                (fx1+ source-index))
-                            (fx1+ target-index)))
-                    (begin
-                      (string-set! normalized target-index character)
-                      (loop (fx1+ source-index) (fx1+ target-index))))))))))
+      (if (not (string-contains? text #\return))
+          text
+          (let* ([length (string-length text)]
+                 [normalized (make-string length)])
+            (let loop ([source-index 0] [target-index 0])
+              (if (= source-index length)
+                  (string-truncate! normalized target-index)
+                  (let ([character (string-ref text source-index)])
+                    (if (char=? character #\return)
+                        (begin
+                          (string-set! normalized target-index #\newline)
+                          (loop (if (and (< (fx1+ source-index) length)
+                                         (char=? (string-ref text (fx1+ source-index))
+                                                 #\newline))
+                                    (fx+ source-index 2)
+                                    (fx1+ source-index))
+                                (fx1+ target-index)))
+                        (begin
+                          (string-set! normalized target-index character)
+                          (loop (fx1+ source-index) (fx1+ target-index)))))))))))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; File decoding
@@ -457,10 +617,12 @@
 
   (define bytevector-slice
     (lambda (bytevector start)
-      (let* ([length (- (bytevector-length bytevector) start)]
-             [result (make-bytevector length 0)])
-        (bytevector-copy! bytevector start result 0 length)
-        result)))
+      (if (fxzero? start)
+          bytevector
+          (let* ([length (fx- (bytevector-length bytevector) start)]
+                 [result (make-bytevector length 0)])
+            (bytevector-copy! bytevector start result 0 length)
+            result))))
 
   (define detect-xml-encoding
     (lambda (bytevector)
@@ -490,24 +652,12 @@
                (values 'utf-16le 0)]
               [else (values 'utf-8 0)]))))
 
-  (define xml-transcoder
-    (lambda (encoding)
-      (make-transcoder
-       (case encoding
-         [(utf-8) (utf-8-codec)]
-         [(utf-16le) (utf-16-codec (endianness little))]
-         [(utf-16be) (utf-16-codec (endianness big))]
-         [else (assert-unreachable)])
-       (eol-style none)
-       (error-handling-mode raise))))
-
   (define decode-xml-bytevector
     (lambda (bytevector)
       (let-values ([(encoding signature-length)
                     (detect-xml-encoding bytevector)])
         (values
-         (bytevector->string (bytevector-slice bytevector signature-length)
-                             (xml-transcoder encoding))
+         (parser-decode-bytes (bytevector-slice bytevector signature-length) encoding)
          encoding))))
 
   (define encoding-declaration-compatible?
@@ -529,7 +679,11 @@
 
   #|proc:parse-xml
   The `parse-xml` procedure parses XML 1.0 string `text` and returns an `xml-document`.
-  Document type declarations and declared general entities are not supported.
+  Document type declarations and declared general entities are not supported. Error offsets
+  refer to text after CR and CRLF are normalized to LF; lines and columns are zero-based.
+  The complete document must have one root; syntax failures raise `&parser-error`.
+  Names retain prefixes without namespace resolution. Children preserve element, text, CDATA,
+  comment, and processing-instruction nodes; adjacent ordinary text nodes are merged.
   |#
   (define parse-xml
     (lambda (text)
@@ -539,13 +693,19 @@
   #|proc:parse-xml-file
   The `parse-xml-file` procedure parses the regular XML file at string `path` and returns an
   `xml-document`. Document type declarations and declared general entities are not supported.
+  Syntax failures raise `&parser-error` with `path` as the source and offsets in newline-normalized
+  text. Input supports strict UTF-8 and UTF-16LE/BE, detected from a stream signature or leading
+  UTF-16 markup bytes; otherwise UTF-8 is used. One detected signature is removed. An encoding
+  declaration must agree with detected encoding; UTF-16 also accepts its matching explicit endian
+  name. File, decoding, and encoding-declaration conflicts propagate as non-parser exceptions.
   |#
   (define parse-xml-file
     (lambda (path)
       (pcheck ([file-regular? path])
               (let-values ([(text encoding)
                             (decode-xml-bytevector (read-u8vec path))])
-                (let* ([document (parse-xml text)]
+                (let* ([document (run-textual-parser/source
+                                  parser-xml (normalize-xml-newlines text) path)]
                        [declaration (xml-document-declaration document)]
                        [declared (and declaration
                                       (xml-declaration-encoding declaration))])

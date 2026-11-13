@@ -2,6 +2,7 @@
         (cspp parser xml))
 
 (include "parser-external-tools.ss")
+(include "parser-test-support.ss")
 
 (define xml-child-elements
   (lambda (element)
@@ -20,46 +21,12 @@
   (lambda (element)
     (xml-text-value (vector-ref (xml-element-children element) 0))))
 
-(define bytevector-concatenate
-  (lambda bytevectors
-    (let* ([length (fold-left
-                    (lambda (length bytevector)
-                      (+ length (bytevector-length bytevector)))
-                    0
-                    bytevectors)]
-           [result (make-bytevector length 0)])
-      (let loop ([bytevectors bytevectors] [offset 0])
-        (if (null? bytevectors)
-            result
-            (let* ([bytevector (car bytevectors)]
-                   [length (bytevector-length bytevector)])
-              (bytevector-copy! bytevector 0 result offset length)
-              (loop (cdr bytevectors) (+ offset length))))))))
-
 (define bytevector-drop
   (lambda (bytevector count)
     (let* ([length (- (bytevector-length bytevector) count)]
            [result (make-bytevector length 0)])
       (bytevector-copy! bytevector count result 0 length)
       result)))
-
-(define with-temporary-xml-bytes
-  (lambda (bytes procedure)
-    (let ([path (format "parser-xml-~a.xml" (random 999999))]
-          [port #f])
-      (dynamic-wind
-        (lambda ()
-          (set! port
-                (open-file-output-port path
-                                       (file-options no-fail replace)
-                                       (buffer-mode block)
-                                       #f))
-          (put-bytevector port bytes)
-          (flush-output-port port))
-        (lambda () (procedure path))
-        (lambda ()
-          (when port (close-port port))
-          (when (file-exists? path) (delete-file path)))))))
 
 (mat parse-xml-records
 
@@ -94,13 +61,13 @@
                        (vector-ref (xml-element-children root) 0)))))
 
      ;; error: a name cannot start with an ASCII digit.
-     (error? (parse-xml "<1root/>"))
+     (raises-parser-error? (lambda () (parse-xml "<1root/>")))
 
      ;; error: a numeric reference must denote an XML Char.
-     (error? (parse-xml "<root>&#0;</root>"))
+     (raises-parser-error? (lambda () (parse-xml "<root>&#0;</root>")))
 
      ;; error: undeclared general entities are unavailable when DTDs are unsupported.
-     (error? (parse-xml "<root>&custom;</root>"))
+     (raises-parser-error? (lambda () (parse-xml "<root>&custom;</root>")))
 
      (let ([document
             (parse-xml "<?build release?><root><!--ok--><![CDATA[a<b&c]]></root>")])
@@ -112,13 +79,15 @@
              (vector-ref (xml-element-children (xml-document-root document)) 1))))
 
      ;; error: XML comments cannot contain a double hyphen.
-     (error? (parse-xml "<root><!-- bad -- comment --></root>"))
+     (raises-parser-error?
+      (lambda ()
+        (parse-xml "<root><!-- bad -- comment --></root>")))
 
      ;; error: CDATA closing delimiters cannot occur in character data.
-     (error? (parse-xml "<root><![CDATA[a]]>b]]></root>"))
+     (raises-parser-error? (lambda () (parse-xml "<root><![CDATA[a]]>b]]></root>")))
 
      ;; error: processing-instruction targets cannot case-insensitively equal xml.
-     (error? (parse-xml "<?XML data?><root/>"))
+     (raises-parser-error? (lambda () (parse-xml "<?XML data?><root/>")))
 
      )
 
@@ -134,16 +103,16 @@
             (eq? 'yes (xml-declaration-standalone declaration))))
 
      ;; error: an end tag must match the open element name.
-     (error? (parse-xml "<a></b>"))
+     (raises-parser-error? (lambda () (parse-xml "<a></b>")))
 
      ;; error: an element cannot repeat an attribute name.
-     (error? (parse-xml "<a x='1' x='2'/>"))
+     (raises-parser-error? (lambda () (parse-xml "<a x='1' x='2'/>")))
 
      ;; error: an XML document must contain exactly one root element.
-     (error? (parse-xml "<a/><b/>"))
+     (raises-parser-error? (lambda () (parse-xml "<a/><b/>")))
 
      ;; error: document type declarations are not supported.
-     (error? (parse-xml "<!DOCTYPE root><root/>"))
+     (raises-parser-error? (lambda () (parse-xml "<!DOCTYPE root><root/>")))
 
      (string=? "a\nb\nc"
                (xml-text-value
@@ -212,14 +181,14 @@
            (equal? summary (successful-process-output result))))
 
      (xml-document?
-      (with-temporary-xml-bytes
-       (bytevector-concatenate (bytevector #xef #xbb #xbf)
+      (with-parser-file
+       (parser-test-bytes (bytevector #xef #xbb #xbf)
                                (string->utf8 "<root/>"))
        parse-xml-file))
 
      (and
       (xml-document?
-       (with-temporary-xml-bytes
+       (with-parser-file
         (string->bytevector
          "<?xml version='1.0' encoding='UTF-16'?><root/>"
          (make-transcoder (utf-16-codec (endianness little))
@@ -227,7 +196,7 @@
                           (error-handling-mode raise)))
         parse-xml-file))
       (xml-document?
-       (with-temporary-xml-bytes
+       (with-parser-file
         (string->bytevector
          "<?xml version='1.0' encoding='UTF-16'?><root/>"
          (make-transcoder (utf-16-codec (endianness big))
@@ -237,7 +206,7 @@
 
      (and
       (xml-document?
-       (with-temporary-xml-bytes
+       (with-parser-file
         (bytevector-drop
          (string->bytevector
           "<?xml version='1.0' encoding='UTF-16'?><root/>"
@@ -247,7 +216,7 @@
          2)
         parse-xml-file))
       (xml-document?
-       (with-temporary-xml-bytes
+       (with-parser-file
         (bytevector-drop
          (string->bytevector
           "<?xml version='1.0' encoding='UTF-16'?><root/>"
@@ -258,26 +227,32 @@
         parse-xml-file)))
 
      ;; error: malformed UTF-8 must not be replaced during decoding.
-     (error?
-      (with-temporary-xml-bytes (bytevector #xc3 #x28) parse-xml-file))
+     (raises-decoding-error?
+      (lambda ()
+        (with-parser-file
+         (parser-test-bytes (string->utf8 "<r>") #vu8(195 40) (string->utf8 "</r>"))
+         parse-xml-file)))
 
      ;; error: UTF-16 input must contain complete code units.
-     (error?
-      (with-temporary-xml-bytes (bytevector #xff #xfe #x3c) parse-xml-file))
+     (raises-decoding-error?
+      (lambda () (with-parser-file (bytevector #xff #xfe #x3c) parse-xml-file)))
 
      ;; error: the declaration encoding must agree with the detected bytes.
      (error?
-      (with-temporary-xml-bytes
+      (with-parser-file
        (string->utf8 "<?xml version='1.0' encoding='UTF-16'?><root/>")
        parse-xml-file))
 
      ;; error: UTF-16 input cannot contain an unpaired high surrogate.
-     (error?
-      (with-temporary-xml-bytes
-       (bytevector #xff #xfe
-                   #x3c #x00 #x72 #x00 #x3e #x00
-                   #x00 #xd8
-                   #x3c #x00 #x2f #x00 #x72 #x00 #x3e #x00)
-       parse-xml-file))
+     (raises-decoding-error?
+      (lambda ()
+        (with-parser-file
+         (bytevector #xff #xfe
+                     #x3c #x00 #x72 #x00 #x3e #x00
+                     #x00 #xd8
+                     #x3c #x00 #x2f #x00 #x72 #x00 #x3e #x00)
+         parse-xml-file)))
 
      )
+
+(include "parser-xml-regressions.ss")

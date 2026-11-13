@@ -43,40 +43,47 @@
           (cspp parser elf validate)
           (cspp utils))
 
+  (define exact-integer?
+    (lambda (value) (and (integer? value) (exact? value))))
+
+  (define exact-natural?
+    (lambda (value) (and (natural? value) (exact? value))))
+
   #|proc:elf-section-type-name
-  The `elf-section-type-name` procedure returns the symbolic name of numeric section `type`, or
-  `unknown` when the code is not a standard ELF section type.
+  The `elf-section-type-name` procedure returns the symbolic name of exact nonnegative section
+  code `type`, or `unknown` when the code is not a standard ELF section type.
   |#
   (define elf-section-type-name
     (lambda (type)
-      (pcheck ([natural? type])
+      (pcheck ([exact-natural? type])
               (case type
                 [(0) 'null] [(1) 'progbits] [(2) 'symbol-table] [(3) 'string-table]
                 [(4) 'relocation-with-addends] [(5) 'hash] [(6) 'dynamic] [(7) 'note]
-                [(8) 'no-bits] [(9) 'relocation] [(11) 'dynamic-symbol-table]
+                [(8) 'no-bits] [(9) 'relocation] [(10) 'shared-library]
+                [(11) 'dynamic-symbol-table]
                 [(14) 'init-array] [(15) 'fini-array] [(16) 'preinit-array]
                 [(17) 'group] [(18) 'symbol-table-section-indices] [(19) 'relr]
                 [else 'unknown]))))
 
   #|proc:elf-program-type-name
-  The `elf-program-type-name` procedure returns the symbolic name of numeric segment `type`, or
-  `unknown` when the code is not a standard ELF program-header type.
+  The `elf-program-type-name` procedure returns the symbolic name of exact nonnegative segment
+  code `type`, or `unknown` when the code is not a standard ELF program-header type.
   |#
   (define elf-program-type-name
     (lambda (type)
-      (pcheck ([natural? type])
+      (pcheck ([exact-natural? type])
               (case type
                 [(0) 'null] [(1) 'load] [(2) 'dynamic] [(3) 'interpreter] [(4) 'note]
                 [(5) 'shared-library] [(6) 'program-header] [(7) 'tls]
                 [else 'unknown]))))
 
   #|proc:elf-machine-name
-  The `elf-machine-name` procedure returns the symbolic name of numeric machine code `machine`,
-  or `unknown` when the machine is not known.
+  The `elf-machine-name` procedure returns the symbolic name of exact nonnegative machine
+  code `machine`, or `unknown` when the machine is not known.
   |#
   (define elf-machine-name
     (lambda (machine)
-      (pcheck ([natural? machine])
+      (pcheck ([exact-natural? machine])
               (case machine
                 [(0) 'none] [(2) 'sparc] [(3) 'i386] [(8) 'mips] [(20) 'powerpc]
                 [(21) 'powerpc64] [(22) 's390] [(40) 'arm] [(50) 'ia64] [(62) 'x86-64]
@@ -84,21 +91,37 @@
                 [else 'unknown]))))
 
   #|proc:elf-dynamic-tag-name
-  The `elf-dynamic-tag-name` procedure returns the symbolic name of integer dynamic `tag`, or
+  The `elf-dynamic-tag-name` procedure returns the symbolic name of exact integer dynamic `tag`, or
   `unknown` when the tag is not a standard ELF dynamic tag.
   |#
   (define elf-dynamic-tag-name
     (lambda (tag)
-      (pcheck ([integer? tag])
+      (pcheck ([exact-integer? tag])
               (case tag
                 [(0) 'null] [(1) 'needed] [(2) 'pltrelsz] [(3) 'pltgot] [(4) 'hash]
                 [(5) 'strtab] [(6) 'symtab] [(7) 'rela] [(8) 'relasz] [(9) 'relaent]
                 [(10) 'strsz] [(11) 'syment] [(12) 'init] [(13) 'fini] [(14) 'soname]
                 [(15) 'rpath] [(16) 'symbolic] [(17) 'rel] [(18) 'relsz] [(19) 'relent]
+                [(20) 'pltrel] [(21) 'debug] [(22) 'textrel] [(23) 'jmprel] [(24) 'bind-now]
+                [(25) 'init-array] [(26) 'fini-array] [(27) 'init-arraysz] [(28) 'fini-arraysz]
+                [(29) 'runpath] [(30) 'flags] [(32) 'preinit-array] [(33) 'preinit-arraysz]
+                [(34) 'symtab-shndx] [(35) 'relrsz] [(36) 'relr] [(37) 'relrent]
                 [else 'unknown]))))
 
   #|proc:parse-elf
   The `parse-elf` procedure decodes ELF bytevector `input` and returns an `elf-file` record.
+  The input must contain a complete supported ELF32/ELF64 image in little or big byte order.
+  Program headers and sections are vectors in file/index order; section zero is retained.
+  Numeric codes and flags remain integers, with extended counts/indexes resolved.
+  Malformed structures raise `&parser-error`. Returned payloads are materialized from the input;
+  record fields retain their mutable contents and accessors return them without copying.
+  Names decode as strict UTF-8 with every scalar retained, including U+FEFF. If a name is
+  invalid UTF-8, each byte maps to the character with the same code point. The string-table
+  records retain the original bytes independently of this display-oriented name decoding.
+  Compressed sections use zlib; contents and linked names are decoded while headers retain
+  physical file sizes, offsets, and flags. Unsupported methods and malformed streams raise
+  `&parser-error`. Compressed input lengths must fit signed 32 bits, and decoded sizes must
+  be less than 2^31 - 1 bytes. Missing optional zlib support raises a dependency error.
   |#
   (define parse-elf
     (lambda (input)
@@ -107,7 +130,8 @@
 
   #|proc:parse-elf-file
   The `parse-elf-file` procedure decodes the ELF file at string `path` and returns an `elf-file`
-  record.
+  record. `path` must name a regular file. Name decoding, returned representations, structural
+  checks, and compressed-section support follow `parse-elf`. File failures propagate.
   |#
   (define parse-elf-file
     (lambda (path)

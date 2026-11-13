@@ -44,53 +44,45 @@
   (define elf-value? (lambda (value) #t))
   (define elf-optional-integer? (lambda (value) (or (not value) (integer? value))))
 
-  (define-syntax define-checked-record-type
-    (syntax-rules ()
-      [(_ internal-name public-maker public-predicate tag internal-maker internal-predicate
-          ([field public-accessor internal-accessor field-predicate] ...))
-       (begin
-         (define-record-type (internal-name internal-maker internal-predicate)
-           (fields (immutable field internal-accessor) ...))
-         (define-parser-record-writer internal-name tag
-           ([field internal-accessor] ...))
-         (define public-maker
-           (lambda (field ...)
-             (pcheck ([field-predicate field] ...)
-                     (internal-maker field ...))))
-         (define public-predicate
-           (lambda (object)
-             (pcheck () (internal-predicate object))))
-         (define public-accessor
-           (lambda (record)
-             (pcheck ([internal-predicate record])
-                     (internal-accessor record)))) ...)]))
+
+;;;;===----------------------------------------------------------------------===
+;;;; ELF file identity and headers
+;;;;===----------------------------------------------------------------------===
+
+  ;; Constructors check the declared field predicates, not complete ELF relationships or vector
+  ;; element types. Descriptions distinguish those accepted fields from parser-produced values.
+  ;; Parsed numeric fields are exact integers. Records retain all supplied contents by reference;
+  ;; immutable record fields do not imply immutable strings, vectors, or bytevectors.
 
   #|proc:make-elf-file
-  The `make-elf-file` procedure creates an ELF file record.
-  The `identification` parameter supplies the record's `identification` field.
-  The `header` parameter supplies the record's `header` field.
-  The `program-headers` parameter supplies the record's `program-headers` field.
-  The `sections` parameter supplies the record's `sections` field.
+  Creates and returns an `elf-file` record. `identification` is an `elf-identification` record
+  describing class and encoding. `header` is an `elf-header` record containing resolved extended
+  counts. `program-headers` is a vector; parsers populate it with `elf-program-header` records in
+  file order. `sections` is a vector; parsers populate it with `elf-section` records in
+  section-index order, including section zero. Supplied strings, vectors, bytevectors, and nested
+  records are retained without copying.
   |#
   #|proc:elf-file?
-  The `elf-file?` procedure returns whether `object` is an ELF file record.
-  The `object` parameter is the object to test.
+  The `elf-file?` procedure returns whether `object` is an ELF file record. The `object` parameter
+  is the object to test.
   |#
   #|proc:elf-file-identification
-  The `elf-file-identification` procedure returns the `identification` field of `record`.
-  The `record` parameter is an ELF file record.
+  Returns the stored `identification` of `elf-file` record `record`. It is an `elf-identification`
+  record describing class and encoding.
   |#
   #|proc:elf-file-header
-  The `elf-file-header` procedure returns the `header` field of `record`.
-  The `record` parameter is an ELF file record.
+  Returns the stored `header` of `elf-file` record `record`. It is an `elf-header` record
+  containing resolved extended counts.
   |#
   #|proc:elf-file-program-headers
-  The `elf-file-program-headers` procedure returns the `program-headers` field of `record`.
-  The `record` parameter is an ELF file record.
+  Returns the stored `program-headers` of `elf-file` record `record`. It is a vector; parsers
+  populate it with `elf-program-header` records in file order. Mutable contents are returned by
+  reference.
   |#
   #|proc:elf-file-sections
-  The `elf-file-sections` procedure returns the `sections` field of `record`.
-  The `record` parameter is an ELF file record.
+  Returns the stored `sections` of `elf-file` record `record`. It is a vector; parsers populate it
+  with `elf-section` records in section-index order, including section zero. Mutable contents are
+  returned by reference.
   |#
   (define-checked-record-type $elf-file make-elf-file elf-file? elf-file
     $make-elf-file $elf-file?
@@ -100,36 +92,36 @@
      [program-headers elf-file-program-headers $elf-file-program-headers vector?]
      [sections elf-file-sections $elf-file-sections vector?]))
   #|proc:make-elf-identification
-  The `make-elf-identification` procedure creates an ELF identification record.
-  The `class` parameter supplies the record's `class` field.
-  The `endianness` parameter supplies the record's `endianness` field.
-  The `version` parameter supplies the record's `version` field.
-  The `osabi` parameter supplies the record's `osabi` field.
-  The `abi-version` parameter supplies the record's `abi-version` field.
+  Creates and returns an `elf-identification` record. `class` is a symbol; parsed files use
+  `elf32` or `elf64`. `endianness` is a symbol; parsed files use `little` or `big`. `version` is
+  the natural identification-version code, parsed as 1. `osabi` is the natural numeric
+  operating-system/ABI code. `abi-version` is the natural ABI-version code. The constructor checks
+  symbols and natural numbers without restricting them to parser-supported encoding codes.
+  Supplied strings, vectors, bytevectors, and nested records are retained without copying.
   |#
   #|proc:elf-identification?
   The `elf-identification?` procedure returns whether `object` is an ELF identification record.
   The `object` parameter is the object to test.
   |#
   #|proc:elf-identification-class
-  The `elf-identification-class` procedure returns the `class` field of `record`.
-  The `record` parameter is an ELF identification record.
+  Returns the stored `class` of `elf-identification` record `record`. It is a symbol; parsed files
+  use `elf32` or `elf64`.
   |#
   #|proc:elf-identification-endianness
-  The `elf-identification-endianness` procedure returns the `endianness` field of `record`.
-  The `record` parameter is an ELF identification record.
+  Returns the stored `endianness` of `elf-identification` record `record`. It is a symbol; parsed
+  files use `little` or `big`.
   |#
   #|proc:elf-identification-version
-  The `elf-identification-version` procedure returns the `version` field of `record`.
-  The `record` parameter is an ELF identification record.
+  Returns the stored `version` of `elf-identification` record `record`. It is the natural
+  identification-version code, parsed as 1.
   |#
   #|proc:elf-identification-osabi
-  The `elf-identification-osabi` procedure returns the `osabi` field of `record`.
-  The `record` parameter is an ELF identification record.
+  Returns the stored `osabi` of `elf-identification` record `record`. It is the natural numeric
+  operating-system/ABI code.
   |#
   #|proc:elf-identification-abi-version
-  The `elf-identification-abi-version` procedure returns the `abi-version` field of `record`.
-  The `record` parameter is an ELF identification record.
+  Returns the stored `abi-version` of `elf-identification` record `record`. It is the natural
+  ABI-version code.
   |#
   (define-checked-record-type $elf-identification
     make-elf-identification elf-identification? elf-identification
@@ -140,82 +132,76 @@
      [osabi elf-identification-osabi $elf-identification-osabi natural?]
      [abi-version elf-identification-abi-version $elf-identification-abi-version natural?]))
   #|proc:make-elf-header
-  The `make-elf-header` procedure creates an ELF header record.
-  The `type` parameter supplies the record's `type` field.
-  The `machine` parameter supplies the record's `machine` field.
-  The `version` parameter supplies the record's `version` field.
-  The `entry` parameter supplies the record's `entry` field.
-  The `program-header-offset` parameter supplies the record's `program-header-offset` field.
-  The `section-header-offset` parameter supplies the record's `section-header-offset` field.
-  The `flags` parameter supplies the record's `flags` field.
-  The `header-size` parameter supplies the record's `header-size` field.
-  The `program-header-entry-size` parameter supplies the record's `program-header-entry-size` field.
-  The `program-header-count` parameter supplies the record's `program-header-count` field.
-  The `section-header-entry-size` parameter supplies the record's `section-header-entry-size` field.
-  The `section-header-count` parameter supplies the record's `section-header-count` field.
-  The `section-name-index` parameter supplies the record's `section-name-index` field.
+  Creates and returns an `elf-header` record. `type` is the natural numeric ELF object-type code.
+  `machine` is the natural numeric target-machine code. `version` is the natural ELF
+  format-version code. `entry` is the natural entry-point virtual address in bytes, or zero if
+  absent. `program-header-offset` is the natural byte offset of the program-header table from the
+  file start. `section-header-offset` is the natural byte offset of the section-header table from
+  the file start. `flags` is the natural architecture-specific flags bitmask. `header-size` is the
+  natural ELF-header size in bytes. `program-header-entry-size` is the natural program-header
+  stride in bytes. `program-header-count` is the natural program-header count, with extended
+  numbering resolved by parsers. `section-header-entry-size` is the natural section-header stride
+  in bytes. `section-header-count` is the natural section count including section zero, with
+  extended numbering resolved by parsers. `section-name-index` is the natural section index of the
+  section-name string table, or zero if absent; parsers resolve extended numbering. Supplied
+  strings, vectors, bytevectors, and nested records are retained without copying.
   |#
   #|proc:elf-header?
-  The `elf-header?` procedure returns whether `object` is an ELF header record.
-  The `object` parameter is the object to test.
+  The `elf-header?` procedure returns whether `object` is an ELF header record. The `object`
+  parameter is the object to test.
   |#
   #|proc:elf-header-type
-  The `elf-header-type` procedure returns the `type` field of `record`.
-  The `record` parameter is an ELF header record.
+  Returns the stored `type` of `elf-header` record `record`. It is the natural numeric ELF
+  object-type code.
   |#
   #|proc:elf-header-machine
-  The `elf-header-machine` procedure returns the `machine` field of `record`.
-  The `record` parameter is an ELF header record.
+  Returns the stored `machine` of `elf-header` record `record`. It is the natural numeric
+  target-machine code.
   |#
   #|proc:elf-header-version
-  The `elf-header-version` procedure returns the `version` field of `record`.
-  The `record` parameter is an ELF header record.
+  Returns the stored `version` of `elf-header` record `record`. It is the natural ELF
+  format-version code.
   |#
   #|proc:elf-header-entry
-  The `elf-header-entry` procedure returns the `entry` field of `record`.
-  The `record` parameter is an ELF header record.
+  Returns the stored `entry` of `elf-header` record `record`. It is the natural entry-point
+  virtual address in bytes, or zero if absent.
   |#
   #|proc:elf-header-program-header-offset
-  The `elf-header-program-header-offset` procedure returns the `program-header-offset`
-  field of `record`.
-  The `record` parameter is an ELF header record.
+  Returns the stored `program-header-offset` of `elf-header` record `record`. It is the natural
+  byte offset of the program-header table from the file start.
   |#
   #|proc:elf-header-section-header-offset
-  The `elf-header-section-header-offset` procedure returns the `section-header-offset`
-  field of `record`.
-  The `record` parameter is an ELF header record.
+  Returns the stored `section-header-offset` of `elf-header` record `record`. It is the natural
+  byte offset of the section-header table from the file start.
   |#
   #|proc:elf-header-flags
-  The `elf-header-flags` procedure returns the `flags` field of `record`.
-  The `record` parameter is an ELF header record.
+  Returns the stored `flags` of `elf-header` record `record`. It is the natural
+  architecture-specific flags bitmask.
   |#
   #|proc:elf-header-header-size
-  The `elf-header-header-size` procedure returns the `header-size` field of `record`.
-  The `record` parameter is an ELF header record.
+  Returns the stored `header-size` of `elf-header` record `record`. It is the natural ELF-header
+  size in bytes.
   |#
   #|proc:elf-header-program-header-entry-size
-  The `elf-header-program-header-entry-size` procedure returns the
-  `program-header-entry-size` field of `record`.
-  The `record` parameter is an ELF header record.
+  Returns the stored `program-header-entry-size` of `elf-header` record `record`. It is the
+  natural program-header stride in bytes.
   |#
   #|proc:elf-header-program-header-count
-  The `elf-header-program-header-count` procedure returns the `program-header-count`
-  field of `record`.
-  The `record` parameter is an ELF header record.
+  Returns the stored `program-header-count` of `elf-header` record `record`. It is the natural
+  program-header count, with extended numbering resolved by parsers.
   |#
   #|proc:elf-header-section-header-entry-size
-  The `elf-header-section-header-entry-size` procedure returns the
-  `section-header-entry-size` field of `record`.
-  The `record` parameter is an ELF header record.
+  Returns the stored `section-header-entry-size` of `elf-header` record `record`. It is the
+  natural section-header stride in bytes.
   |#
   #|proc:elf-header-section-header-count
-  The `elf-header-section-header-count` procedure returns the `section-header-count`
-  field of `record`.
-  The `record` parameter is an ELF header record.
+  Returns the stored `section-header-count` of `elf-header` record `record`. It is the natural
+  section count including section zero, with extended numbering resolved by parsers.
   |#
   #|proc:elf-header-section-name-index
-  The `elf-header-section-name-index` procedure returns the `section-name-index` field of `record`.
-  The `record` parameter is an ELF header record.
+  Returns the stored `section-name-index` of `elf-header` record `record`. It is the natural
+  section index of the section-name string table, or zero if absent; parsers resolve extended
+  numbering. Mutable contents are returned by reference.
   |#
   (define-checked-record-type $elf-header make-elf-header elf-header? elf-header
     $make-elf-header $elf-header?
@@ -240,58 +226,56 @@
      [section-name-index elf-header-section-name-index
                          $elf-header-section-name-index natural?]))
   #|proc:make-elf-program-header
-  The `make-elf-program-header` procedure creates an ELF program header record.
-  The `type` parameter supplies the record's `type` field.
-  The `flags` parameter supplies the record's `flags` field.
-  The `offset` parameter supplies the record's `offset` field.
-  The `virtual-address` parameter supplies the record's `virtual-address` field.
-  The `physical-address` parameter supplies the record's `physical-address` field.
-  The `file-size` parameter supplies the record's `file-size` field.
-  The `memory-size` parameter supplies the record's `memory-size` field.
-  The `alignment` parameter supplies the record's `alignment` field.
-  The `data` parameter supplies the record's `data` field.
+  Creates and returns an `elf-program-header` record. `type` is the natural numeric segment-type
+  code. `flags` is the natural segment-permission bitmask. `offset` is the natural byte offset of
+  the segment from the file start. `virtual-address` is the natural segment virtual address in
+  bytes. `physical-address` is the natural segment physical address in bytes. `file-size` is the
+  natural segment size in file bytes. `memory-size` is the natural segment size in memory bytes.
+  `alignment` is the natural segment alignment in bytes; zero or one imposes no alignment. `data`
+  is any supplied value; parsers return a copied bytevector of segment bytes, empty for null
+  segments. Supplied strings, vectors, bytevectors, and nested records are retained without
+  copying.
   |#
   #|proc:elf-program-header?
   The `elf-program-header?` procedure returns whether `object` is an ELF program header record.
   The `object` parameter is the object to test.
   |#
   #|proc:elf-program-header-type
-  The `elf-program-header-type` procedure returns the `type` field of `record`.
-  The `record` parameter is an ELF program header record.
+  Returns the stored `type` of `elf-program-header` record `record`. It is the natural numeric
+  segment-type code.
   |#
   #|proc:elf-program-header-flags
-  The `elf-program-header-flags` procedure returns the `flags` field of `record`.
-  The `record` parameter is an ELF program header record.
+  Returns the stored `flags` of `elf-program-header` record `record`. It is the natural
+  segment-permission bitmask.
   |#
   #|proc:elf-program-header-offset
-  The `elf-program-header-offset` procedure returns the `offset` field of `record`.
-  The `record` parameter is an ELF program header record.
+  Returns the stored `offset` of `elf-program-header` record `record`. It is the natural byte
+  offset of the segment from the file start.
   |#
   #|proc:elf-program-header-virtual-address
-  The `elf-program-header-virtual-address` procedure returns the `virtual-address`
-  field of `record`.
-  The `record` parameter is an ELF program header record.
+  Returns the stored `virtual-address` of `elf-program-header` record `record`. It is the natural
+  segment virtual address in bytes.
   |#
   #|proc:elf-program-header-physical-address
-  The `elf-program-header-physical-address` procedure returns the `physical-address`
-  field of `record`.
-  The `record` parameter is an ELF program header record.
+  Returns the stored `physical-address` of `elf-program-header` record `record`. It is the natural
+  segment physical address in bytes.
   |#
   #|proc:elf-program-header-file-size
-  The `elf-program-header-file-size` procedure returns the `file-size` field of `record`.
-  The `record` parameter is an ELF program header record.
+  Returns the stored `file-size` of `elf-program-header` record `record`. It is the natural
+  segment size in file bytes.
   |#
   #|proc:elf-program-header-memory-size
-  The `elf-program-header-memory-size` procedure returns the `memory-size` field of `record`.
-  The `record` parameter is an ELF program header record.
+  Returns the stored `memory-size` of `elf-program-header` record `record`. It is the natural
+  segment size in memory bytes.
   |#
   #|proc:elf-program-header-alignment
-  The `elf-program-header-alignment` procedure returns the `alignment` field of `record`.
-  The `record` parameter is an ELF program header record.
+  Returns the stored `alignment` of `elf-program-header` record `record`. It is the natural
+  segment alignment in bytes; zero or one imposes no alignment.
   |#
   #|proc:elf-program-header-data
-  The `elf-program-header-data` procedure returns the `data` field of `record`.
-  The `record` parameter is an ELF program header record.
+  Returns the stored `data` of `elf-program-header` record `record`. It is any supplied value;
+  parsers return a copied bytevector of segment bytes, empty for null segments. Mutable contents
+  are returned by reference.
   |#
   (define-checked-record-type $elf-program-header
     make-elf-program-header elf-program-header? elf-program-header
@@ -307,89 +291,100 @@
      [memory-size elf-program-header-memory-size $elf-program-header-memory-size natural?]
      [alignment elf-program-header-alignment $elf-program-header-alignment natural?]
      [data elf-program-header-data $elf-program-header-data elf-value?]))
+;;;;===----------------------------------------------------------------------===
+;;;; Sections and typed content
+;;;;===----------------------------------------------------------------------===
+
   #|proc:make-elf-section
-  The `make-elf-section` procedure creates an ELF section record.
-  The `header` parameter supplies the record's `header` field.
-  The `content` parameter supplies the record's `content` field.
+  Creates and returns an `elf-section` record. `header` is an `elf-section-header` record.
+  `content` is any supplied value; parsers return a typed content record as described below.
+  Parsed content is an `elf-raw-section`, `elf-string-table`, `elf-symbol-table`,
+  `elf-relocation-table`, `elf-relr-table`, `elf-hash-table`, `elf-group-section`,
+  `elf-word-table`, `elf-dynamic-table`, or `elf-note-table`, according to the section type.
+  Unsupported types remain raw. Compressed sections expose decoded content while the header
+  retains physical metadata. Supplied strings, vectors, bytevectors, and nested records are
+  retained without copying.
   |#
   #|proc:elf-section?
-  The `elf-section?` procedure returns whether `object` is an ELF section record.
-  The `object` parameter is the object to test.
+  The `elf-section?` procedure returns whether `object` is an ELF section record. The `object`
+  parameter is the object to test.
   |#
   #|proc:elf-section-header
-  The `elf-section-header` procedure returns the `header` field of `record`.
-  The `record` parameter is an ELF section record.
+  Returns the stored `header` of `elf-section` record `record`. It is an `elf-section-header`
+  record.
   |#
   #|proc:elf-section-content
-  The `elf-section-content` procedure returns the `content` field of `record`.
-  The `record` parameter is an ELF section record.
+  Returns the stored `content` of `elf-section` record `record`. It is any supplied value; parsers
+  return a typed content record as described below. Mutable contents are returned by reference.
   |#
   (define-checked-record-type $elf-section make-elf-section elf-section? elf-section
     $make-elf-section $elf-section?
     ([header elf-section-header $elf-section-header elf-section-header?]
      [content elf-section-content $elf-section-content elf-value?]))
   #|proc:make-elf-section-header
-  The `make-elf-section-header` procedure creates an ELF section header record.
-  The `name-index` parameter supplies the record's `name-index` field.
-  The `name` parameter supplies the record's `name` field.
-  The `type` parameter supplies the record's `type` field.
-  The `flags` parameter supplies the record's `flags` field.
-  The `address` parameter supplies the record's `address` field.
-  The `offset` parameter supplies the record's `offset` field.
-  The `size` parameter supplies the record's `size` field.
-  The `link` parameter supplies the record's `link` field.
-  The `info` parameter supplies the record's `info` field.
-  The `address-alignment` parameter supplies the record's `address-alignment` field.
-  The `entry-size` parameter supplies the record's `entry-size` field.
+  Creates and returns an `elf-section-header` record. `name-index` is the natural byte offset of
+  the section name in the section-name string table. `name` is the decoded section-name string,
+  empty when unnamed. `type` is the natural numeric section-type code. `flags` is the natural
+  section-flags bitmask. `address` is the natural section virtual address in bytes, or zero if not
+  allocated. `offset` is the natural physical byte offset from the file start. `size` is the
+  natural physical section size in bytes, or memory size for a no-bits section. `link` is the
+  natural section-type-dependent linked section index, or zero when unused. `info` is the natural
+  section-type-dependent auxiliary value, such as a symbol or section index. `address-alignment`
+  is the natural alignment in bytes; zero or one imposes no alignment. `entry-size` is the natural
+  fixed entry stride in bytes, or zero for variable/no entries. For compressed sections, `offset`,
+  `size`, and `flags` retain the physical file representation rather than the decompressed payload
+  dimensions. Supplied strings, vectors, bytevectors, and nested records are retained without
+  copying.
   |#
   #|proc:elf-section-header?
   The `elf-section-header?` procedure returns whether `object` is an ELF section header record.
   The `object` parameter is the object to test.
   |#
   #|proc:elf-section-header-name-index
-  The `elf-section-header-name-index` procedure returns the `name-index` field of `record`.
-  The `record` parameter is an ELF section header record.
+  Returns the stored `name-index` of `elf-section-header` record `record`. It is the natural byte
+  offset of the section name in the section-name string table. Mutable contents are returned by
+  reference.
   |#
   #|proc:elf-section-header-name
-  The `elf-section-header-name` procedure returns the `name` field of `record`.
-  The `record` parameter is an ELF section header record.
+  Returns the stored `name` of `elf-section-header` record `record`. It is the decoded
+  section-name string, empty when unnamed. Mutable contents are returned by reference.
   |#
   #|proc:elf-section-header-type
-  The `elf-section-header-type` procedure returns the `type` field of `record`.
-  The `record` parameter is an ELF section header record.
+  Returns the stored `type` of `elf-section-header` record `record`. It is the natural numeric
+  section-type code.
   |#
   #|proc:elf-section-header-flags
-  The `elf-section-header-flags` procedure returns the `flags` field of `record`.
-  The `record` parameter is an ELF section header record.
+  Returns the stored `flags` of `elf-section-header` record `record`. It is the natural
+  section-flags bitmask.
   |#
   #|proc:elf-section-header-address
-  The `elf-section-header-address` procedure returns the `address` field of `record`.
-  The `record` parameter is an ELF section header record.
+  Returns the stored `address` of `elf-section-header` record `record`. It is the natural section
+  virtual address in bytes, or zero if not allocated.
   |#
   #|proc:elf-section-header-offset
-  The `elf-section-header-offset` procedure returns the `offset` field of `record`.
-  The `record` parameter is an ELF section header record.
+  Returns the stored `offset` of `elf-section-header` record `record`. It is the natural physical
+  byte offset from the file start.
   |#
   #|proc:elf-section-header-size
-  The `elf-section-header-size` procedure returns the `size` field of `record`.
-  The `record` parameter is an ELF section header record.
+  Returns the stored `size` of `elf-section-header` record `record`. It is the natural physical
+  section size in bytes, memory size for a no-bits section, or the extended section count in
+  section zero.
   |#
   #|proc:elf-section-header-link
-  The `elf-section-header-link` procedure returns the `link` field of `record`.
-  The `record` parameter is an ELF section header record.
+  Returns the stored `link` of `elf-section-header` record `record`. It is the natural
+  section-type-dependent linked section index, or zero when unused.
   |#
   #|proc:elf-section-header-info
-  The `elf-section-header-info` procedure returns the `info` field of `record`.
-  The `record` parameter is an ELF section header record.
+  Returns the stored `info` of `elf-section-header` record `record`. It is the natural
+  section-type-dependent auxiliary value, such as a symbol or section index.
   |#
   #|proc:elf-section-header-address-alignment
-  The `elf-section-header-address-alignment` procedure returns the `address-alignment`
-  field of `record`.
-  The `record` parameter is an ELF section header record.
+  Returns the stored `address-alignment` of `elf-section-header` record `record`. It is the
+  natural alignment in bytes; zero or one imposes no alignment.
   |#
   #|proc:elf-section-header-entry-size
-  The `elf-section-header-entry-size` procedure returns the `entry-size` field of `record`.
-  The `record` parameter is an ELF section header record.
+  Returns the stored `entry-size` of `elf-section-header` record `record`. It is the natural fixed
+  entry stride in bytes, or zero for variable/no entries.
   |#
   (define-checked-record-type $elf-section-header-record
     make-elf-section-header elf-section-header? elf-section-header
@@ -407,90 +402,103 @@
                         $elf-section-header-address-alignment natural?]
      [entry-size elf-section-header-entry-size $elf-section-header-entry-size natural?]))
   #|proc:make-elf-raw-section
-  The `make-elf-raw-section` procedure creates a raw section from bytevector `bytes`.
+  Creates and returns an `elf-raw-section` record. `bytes` is a bytevector of uninterpreted
+  section bytes; parsed null/no-bits sections have no payload. Supplied strings, vectors,
+  bytevectors, and nested records are retained without copying.
   |#
   #|proc:elf-raw-section?
-  The `elf-raw-section?` procedure returns whether `object` is a raw section record.
-  The `object` parameter is the object to test.
+  The `elf-raw-section?` procedure returns whether `object` is a raw section record. The `object`
+  parameter is the object to test.
   |#
   #|proc:elf-raw-section-bytes
-  The `elf-raw-section-bytes` procedure returns the bytevector stored in `record`.
-  The `record` parameter is a raw section record.
+  Returns the stored `bytes` of `elf-raw-section` record `record`. It is a bytevector of
+  uninterpreted section bytes; parsed null/no-bits sections have no payload. Mutable contents are
+  returned by reference.
   |#
   (define-checked-record-type $elf-raw-section make-elf-raw-section elf-raw-section? elf-raw-section
     $make-elf-raw-section $elf-raw-section?
     ([bytes elf-raw-section-bytes $elf-raw-section-bytes bytevector?]))
 
   #|proc:make-elf-string-table
-  The `make-elf-string-table` procedure creates a string table from bytevector `bytes`.
+  Creates and returns an `elf-string-table` record. `bytes` is a bytevector of raw NUL-delimited
+  string data, retaining original name encodings. Supplied strings, vectors, bytevectors, and
+  nested records are retained without copying.
   |#
   #|proc:elf-string-table?
-  The `elf-string-table?` procedure returns whether `object` is a string table record.
-  The `object` parameter is the object to test.
+  The `elf-string-table?` procedure returns whether `object` is a string table record. The
+  `object` parameter is the object to test.
   |#
   #|proc:elf-string-table-bytes
-  The `elf-string-table-bytes` procedure returns the bytevector stored in `record`.
-  The `record` parameter is a string table record.
+  Returns the stored `bytes` of `elf-string-table` record `record`. It is a bytevector of raw
+  NUL-delimited string data, retaining original name encodings. Mutable contents are returned by
+  reference.
   |#
   (define-checked-record-type $elf-string-table make-elf-string-table elf-string-table? elf-string-table
     $make-elf-string-table $elf-string-table?
     ([bytes elf-string-table-bytes $elf-string-table-bytes bytevector?]))
 
+;;;;===----------------------------------------------------------------------===
+;;;; Symbols and relocations
+;;;;===----------------------------------------------------------------------===
+
   #|proc:make-elf-symbol-table
-  The `make-elf-symbol-table` procedure creates a symbol table from vector `symbols`.
+  Creates and returns an `elf-symbol-table` record. `symbols` is a vector; parsers populate it
+  with `elf-symbol` records in symbol-index order. Supplied strings, vectors, bytevectors, and
+  nested records are retained without copying.
   |#
   #|proc:elf-symbol-table?
-  The `elf-symbol-table?` procedure returns whether `object` is a symbol table record.
-  The `object` parameter is the object to test.
+  The `elf-symbol-table?` procedure returns whether `object` is a symbol table record. The
+  `object` parameter is the object to test.
   |#
   #|proc:elf-symbol-table-symbols
-  The `elf-symbol-table-symbols` procedure returns the symbol vector stored in `record`.
-  The `record` parameter is a symbol table record.
+  Returns the stored `symbols` of `elf-symbol-table` record `record`. It is a vector; parsers
+  populate it with `elf-symbol` records in symbol-index order. Mutable contents are returned by
+  reference.
   |#
   (define-checked-record-type $elf-symbol-table make-elf-symbol-table elf-symbol-table? elf-symbol-table
     $make-elf-symbol-table $elf-symbol-table?
     ([symbols elf-symbol-table-symbols $elf-symbol-table-symbols vector?]))
   #|proc:make-elf-symbol
-  The `make-elf-symbol` procedure creates an ELF symbol record.
-  The `name-index` parameter supplies the record's `name-index` field.
-  The `name` parameter supplies the record's `name` field.
-  The `info` parameter supplies the record's `info` field.
-  The `other` parameter supplies the record's `other` field.
-  The `section-index` parameter supplies the record's `section-index` field.
-  The `value` parameter supplies the record's `value` field.
-  The `size` parameter supplies the record's `size` field.
+  Creates and returns an `elf-symbol` record. `name-index` is the natural byte offset into the
+  linked string table. `name` is the decoded symbol-name string, empty when unnamed. `info` is the
+  natural raw binding/type byte (binding in the high nibble). `other` is the natural raw
+  visibility/target-specific byte. `section-index` is the natural section index or reserved
+  special index; parsers resolve SHN_XINDEX via its companion table. `value` is the natural symbol
+  value, interpreted as an address or section offset according to ELF type. `size` is the natural
+  symbol size in bytes, or zero when unspecified. Supplied strings, vectors, bytevectors, and
+  nested records are retained without copying.
   |#
   #|proc:elf-symbol?
-  The `elf-symbol?` procedure returns whether `object` is an ELF symbol record.
-  The `object` parameter is the object to test.
+  The `elf-symbol?` procedure returns whether `object` is an ELF symbol record. The `object`
+  parameter is the object to test.
   |#
   #|proc:elf-symbol-name-index
-  The `elf-symbol-name-index` procedure returns the `name-index` field of `record`.
-  The `record` parameter is an ELF symbol record.
+  Returns the stored `name-index` of `elf-symbol` record `record`. It is the natural byte offset
+  into the linked string table. Mutable contents are returned by reference.
   |#
   #|proc:elf-symbol-name
-  The `elf-symbol-name` procedure returns the `name` field of `record`.
-  The `record` parameter is an ELF symbol record.
+  Returns the stored `name` of `elf-symbol` record `record`. It is the decoded symbol-name string,
+  empty when unnamed. Mutable contents are returned by reference.
   |#
   #|proc:elf-symbol-info
-  The `elf-symbol-info` procedure returns the `info` field of `record`.
-  The `record` parameter is an ELF symbol record.
+  Returns the stored `info` of `elf-symbol` record `record`. It is the natural raw binding/type
+  byte (binding in the high nibble).
   |#
   #|proc:elf-symbol-other
-  The `elf-symbol-other` procedure returns the `other` field of `record`.
-  The `record` parameter is an ELF symbol record.
+  Returns the stored `other` of `elf-symbol` record `record`. It is the natural raw
+  visibility/target-specific byte.
   |#
   #|proc:elf-symbol-section-index
-  The `elf-symbol-section-index` procedure returns the `section-index` field of `record`.
-  The `record` parameter is an ELF symbol record.
+  Returns the stored `section-index` of `elf-symbol` record `record`. It is the natural section
+  index or reserved special index; parsers resolve SHN_XINDEX via its companion table.
   |#
   #|proc:elf-symbol-value
-  The `elf-symbol-value` procedure returns the `value` field of `record`.
-  The `record` parameter is an ELF symbol record.
+  Returns the stored `value` of `elf-symbol` record `record`. It is the natural symbol value,
+  interpreted as an address or section offset according to ELF type.
   |#
   #|proc:elf-symbol-size
-  The `elf-symbol-size` procedure returns the `size` field of `record`.
-  The `record` parameter is an ELF symbol record.
+  Returns the stored `size` of `elf-symbol` record `record`. It is the natural symbol size in
+  bytes, or zero when unspecified.
   |#
   (define-checked-record-type $elf-symbol make-elf-symbol elf-symbol? elf-symbol
     $make-elf-symbol $elf-symbol?
@@ -502,21 +510,23 @@
      [value elf-symbol-value $elf-symbol-value natural?]
      [size elf-symbol-size $elf-symbol-size natural?]))
   #|proc:make-elf-relocation-table
-  The `make-elf-relocation-table` procedure creates an ELF relocation table record.
-  The `relocations` parameter supplies the record's `relocations` field.
-  The `with-addends?` parameter supplies the record's `with-addends?` field.
+  Creates and returns an `elf-relocation-table` record. `relocations` is a vector; parsers
+  populate it with `elf-relocation` records in table order. `with-addends?` is a boolean: `#t` for
+  RELA entries with explicit addends and `#f` for REL entries. Supplied strings, vectors,
+  bytevectors, and nested records are retained without copying.
   |#
   #|proc:elf-relocation-table?
-  The `elf-relocation-table?` procedure returns whether `object` is an ELF relocation table record.
-  The `object` parameter is the object to test.
+  The `elf-relocation-table?` procedure returns whether `object` is an ELF relocation table
+  record. The `object` parameter is the object to test.
   |#
   #|proc:elf-relocation-table-relocations
-  The `elf-relocation-table-relocations` procedure returns the `relocations` field of `record`.
-  The `record` parameter is an ELF relocation table record.
+  Returns the stored `relocations` of `elf-relocation-table` record `record`. It is a vector;
+  parsers populate it with `elf-relocation` records in table order. Mutable contents are returned
+  by reference.
   |#
   #|proc:elf-relocation-table-with-addends?
-  The `elf-relocation-table-with-addends?` procedure returns the `with-addends?` field of `record`.
-  The `record` parameter is an ELF relocation table record.
+  Returns the stored `with-addends?` of `elf-relocation-table` record `record`. It is a boolean:
+  `#t` for RELA entries with explicit addends and `#f` for REL entries.
   |#
   (define-checked-record-type $elf-relocation-table
     make-elf-relocation-table elf-relocation-table? elf-relocation-table
@@ -526,36 +536,39 @@
      [with-addends? elf-relocation-table-with-addends?
                     $elf-relocation-table-with-addends? boolean?]))
   #|proc:make-elf-relocation
-  The `make-elf-relocation` procedure creates an ELF relocation record.
-  The `offset` parameter supplies the record's `offset` field.
-  The `info` parameter supplies the record's `info` field.
-  The `symbol-index` parameter supplies the record's `symbol-index` field.
-  The `type` parameter supplies the record's `type` field.
-  The `addend` parameter supplies the record's `addend` field.
+  Creates and returns an `elf-relocation` record. `offset` is the natural relocation target
+  address or section-relative byte offset, according to ELF type. `info` is the natural raw
+  relocation info word read using the file byte order. `symbol-index` is the natural decoded index
+  in the linked symbol table. `type` is the natural decoded machine-specific relocation code.
+  `addend` is an integer explicit RELA addend, or `#f` for REL without an explicit addend.
+  Machine-specific layouts, including MIPS64EL, are decoded into `symbol-index` and `type`
+  separately from the raw `info` word. Supplied strings, vectors, bytevectors, and nested records
+  are retained without copying.
   |#
   #|proc:elf-relocation?
-  The `elf-relocation?` procedure returns whether `object` is an ELF relocation record.
-  The `object` parameter is the object to test.
+  The `elf-relocation?` procedure returns whether `object` is an ELF relocation record. The
+  `object` parameter is the object to test.
   |#
   #|proc:elf-relocation-offset
-  The `elf-relocation-offset` procedure returns the `offset` field of `record`.
-  The `record` parameter is an ELF relocation record.
+  Returns the stored `offset` of `elf-relocation` record `record`. It is the natural relocation
+  target address or section-relative byte offset, according to ELF type.
   |#
   #|proc:elf-relocation-info
-  The `elf-relocation-info` procedure returns the `info` field of `record`.
-  The `record` parameter is an ELF relocation record.
+  Returns the stored `info` of `elf-relocation` record `record`. It is the natural raw relocation
+  info word read using the file byte order. Machine-specific layouts, including MIPS64EL, are
+  decoded separately into the symbol-index and type fields.
   |#
   #|proc:elf-relocation-symbol-index
-  The `elf-relocation-symbol-index` procedure returns the `symbol-index` field of `record`.
-  The `record` parameter is an ELF relocation record.
+  Returns the stored `symbol-index` of `elf-relocation` record `record`. It is the natural decoded
+  index in the linked symbol table.
   |#
   #|proc:elf-relocation-type
-  The `elf-relocation-type` procedure returns the `type` field of `record`.
-  The `record` parameter is an ELF relocation record.
+  Returns the stored `type` of `elf-relocation` record `record`. It is the natural decoded
+  machine-specific relocation code.
   |#
   #|proc:elf-relocation-addend
-  The `elf-relocation-addend` procedure returns the `addend` field of `record`.
-  The `record` parameter is an ELF relocation record.
+  Returns the stored `addend` of `elf-relocation` record `record`. It is an integer explicit RELA
+  addend, or `#f` for REL without an explicit addend.
   |#
   (define-checked-record-type $elf-relocation make-elf-relocation elf-relocation? elf-relocation
     $make-elf-relocation $elf-relocation?
@@ -564,37 +577,47 @@
      [symbol-index elf-relocation-symbol-index $elf-relocation-symbol-index natural?]
      [type elf-relocation-type $elf-relocation-type natural?]
      [addend elf-relocation-addend $elf-relocation-addend elf-optional-integer?]))
+;;;;===----------------------------------------------------------------------===
+;;;; Packed relocations and auxiliary tables
+;;;;===----------------------------------------------------------------------===
+
   #|proc:make-elf-relr-table
-  The `make-elf-relr-table` procedure creates a RELR table from vector `entries`.
+  Creates and returns an `elf-relr-table` record. `entries` is a vector; parsers populate it with
+  unsigned native-class words encoding RELR addresses/bitmaps, not expanded relocation records.
+  Supplied strings, vectors, bytevectors, and nested records are retained without copying.
   |#
   #|proc:elf-relr-table?
-  The `elf-relr-table?` procedure returns whether `object` is a RELR table record.
-  The `object` parameter is the object to test.
+  The `elf-relr-table?` procedure returns whether `object` is a RELR table record. The `object`
+  parameter is the object to test.
   |#
   #|proc:elf-relr-table-entries
-  The `elf-relr-table-entries` procedure returns the entry vector stored in `record`.
-  The `record` parameter is a RELR table record.
+  Returns the stored `entries` of `elf-relr-table` record `record`. It is a vector; parsers
+  populate it with unsigned native-class words encoding RELR addresses/bitmaps, not expanded
+  relocation records. Mutable contents are returned by reference.
   |#
   (define-checked-record-type $elf-relr-table make-elf-relr-table elf-relr-table? elf-relr-table
     $make-elf-relr-table $elf-relr-table?
     ([entries elf-relr-table-entries $elf-relr-table-entries vector?]))
 
   #|proc:make-elf-hash-table
-  The `make-elf-hash-table` procedure creates a hash table.
-  The `buckets` parameter is the bucket vector.
-  The `chains` parameter is the chain vector.
+  Creates and returns an `elf-hash-table` record. `buckets` is a vector; parsers populate it with
+  unsigned 32-bit symbol indexes for SysV hash buckets. `chains` is a vector; parsers populate it
+  with unsigned 32-bit symbol indexes for SysV hash chains. Supplied strings, vectors,
+  bytevectors, and nested records are retained without copying.
   |#
   #|proc:elf-hash-table?
-  The `elf-hash-table?` procedure returns whether `object` is an ELF hash table record.
-  The `object` parameter is the object to test.
+  The `elf-hash-table?` procedure returns whether `object` is an ELF hash table record. The
+  `object` parameter is the object to test.
   |#
   #|proc:elf-hash-table-buckets
-  The `elf-hash-table-buckets` procedure returns the bucket vector stored in `record`.
-  The `record` parameter is an ELF hash table record.
+  Returns the stored `buckets` of `elf-hash-table` record `record`. It is a vector; parsers
+  populate it with unsigned 32-bit symbol indexes for SysV hash buckets. Mutable contents are
+  returned by reference.
   |#
   #|proc:elf-hash-table-chains
-  The `elf-hash-table-chains` procedure returns the chain vector stored in `record`.
-  The `record` parameter is an ELF hash table record.
+  Returns the stored `chains` of `elf-hash-table` record `record`. It is a vector; parsers
+  populate it with unsigned 32-bit symbol indexes for SysV hash chains. Mutable contents are
+  returned by reference.
   |#
   (define-checked-record-type $elf-hash-table make-elf-hash-table elf-hash-table? elf-hash-table
     $make-elf-hash-table $elf-hash-table?
@@ -602,21 +625,23 @@
      [chains elf-hash-table-chains $elf-hash-table-chains vector?]))
 
   #|proc:make-elf-group-section
-  The `make-elf-group-section` procedure creates a section group.
-  The `flags` parameter is the group flags word.
-  The `members` parameter is the section-index vector.
+  Creates and returns an `elf-group-section` record. `flags` is the natural group-flags word,
+  including bit 0 for COMDAT. `members` is a vector; parsers populate it with nonzero section
+  indexes in group order. Supplied strings, vectors, bytevectors, and nested records are retained
+  without copying.
   |#
   #|proc:elf-group-section?
-  The `elf-group-section?` procedure returns whether `object` is a section group record.
-  The `object` parameter is the object to test.
+  The `elf-group-section?` procedure returns whether `object` is a section group record. The
+  `object` parameter is the object to test.
   |#
   #|proc:elf-group-section-flags
-  The `elf-group-section-flags` procedure returns the flags stored in `record`.
-  The `record` parameter is a section group record.
+  Returns the stored `flags` of `elf-group-section` record `record`. It is the natural group-flags
+  word, including bit 0 for COMDAT.
   |#
   #|proc:elf-group-section-members
-  The `elf-group-section-members` procedure returns the member vector stored in `record`.
-  The `record` parameter is a section group record.
+  Returns the stored `members` of `elf-group-section` record `record`. It is a vector; parsers
+  populate it with nonzero section indexes in group order. Mutable contents are returned by
+  reference.
   |#
   (define-checked-record-type $elf-group-section
     make-elf-group-section elf-group-section? elf-group-section
@@ -625,30 +650,36 @@
      [members elf-group-section-members $elf-group-section-members vector?]))
 
   #|proc:make-elf-word-table
-  The `make-elf-word-table` procedure creates a word table from vector `entries`.
+  Creates and returns an `elf-word-table` record. `entries` is a vector; parsers use unsigned
+  address words for init/fini/preinit arrays or unsigned 32-bit section indexes for SHNDX tables.
+  Supplied strings, vectors, bytevectors, and nested records are retained without copying.
   |#
   #|proc:elf-word-table?
-  The `elf-word-table?` procedure returns whether `object` is a word table record.
-  The `object` parameter is the object to test.
+  The `elf-word-table?` procedure returns whether `object` is a word table record. The `object`
+  parameter is the object to test.
   |#
   #|proc:elf-word-table-entries
-  The `elf-word-table-entries` procedure returns the entry vector stored in `record`.
-  The `record` parameter is a word table record.
+  Returns the stored `entries` of `elf-word-table` record `record`. It is a vector; parsers use
+  unsigned address words for init/fini/preinit arrays or unsigned 32-bit section indexes for SHNDX
+  tables. Mutable contents are returned by reference.
   |#
   (define-checked-record-type $elf-word-table make-elf-word-table elf-word-table? elf-word-table
     $make-elf-word-table $elf-word-table?
     ([entries elf-word-table-entries $elf-word-table-entries vector?]))
 
   #|proc:make-elf-dynamic-table
-  The `make-elf-dynamic-table` procedure creates a dynamic table from vector `entries`.
+  Creates and returns an `elf-dynamic-table` record. `entries` is a vector; parsers populate it
+  with `elf-dynamic-entry` records in table order, retaining null entries. Supplied strings,
+  vectors, bytevectors, and nested records are retained without copying.
   |#
   #|proc:elf-dynamic-table?
-  The `elf-dynamic-table?` procedure returns whether `object` is a dynamic table record.
-  The `object` parameter is the object to test.
+  The `elf-dynamic-table?` procedure returns whether `object` is a dynamic table record. The
+  `object` parameter is the object to test.
   |#
   #|proc:elf-dynamic-table-entries
-  The `elf-dynamic-table-entries` procedure returns the entry vector stored in `record`.
-  The `record` parameter is a dynamic table record.
+  Returns the stored `entries` of `elf-dynamic-table` record `record`. It is a vector; parsers
+  populate it with `elf-dynamic-entry` records in table order, retaining null entries. Mutable
+  contents are returned by reference.
   |#
   (define-checked-record-type $elf-dynamic-table
     make-elf-dynamic-table elf-dynamic-table? elf-dynamic-table
@@ -656,21 +687,21 @@
     ([entries elf-dynamic-table-entries $elf-dynamic-table-entries vector?]))
 
   #|proc:make-elf-dynamic-entry
-  The `make-elf-dynamic-entry` procedure creates a dynamic entry.
-  The `tag` parameter is the signed dynamic tag.
-  The `value` parameter is the unsigned entry value.
+  Creates and returns an `elf-dynamic-entry` record. `tag` is an integer signed dynamic tag code.
+  `value` is the natural unsigned dynamic value, interpreted by tag as an address, size, index, or
+  flags. Supplied strings, vectors, bytevectors, and nested records are retained without copying.
   |#
   #|proc:elf-dynamic-entry?
-  The `elf-dynamic-entry?` procedure returns whether `object` is a dynamic entry record.
-  The `object` parameter is the object to test.
+  The `elf-dynamic-entry?` procedure returns whether `object` is a dynamic entry record. The
+  `object` parameter is the object to test.
   |#
   #|proc:elf-dynamic-entry-tag
-  The `elf-dynamic-entry-tag` procedure returns the tag stored in `record`.
-  The `record` parameter is a dynamic entry record.
+  Returns the stored `tag` of `elf-dynamic-entry` record `record`. It is an integer signed dynamic
+  tag code.
   |#
   #|proc:elf-dynamic-entry-value
-  The `elf-dynamic-entry-value` procedure returns the value stored in `record`.
-  The `record` parameter is a dynamic entry record.
+  Returns the stored `value` of `elf-dynamic-entry` record `record`. It is the natural unsigned
+  dynamic value, interpreted by tag as an address, size, index, or flags.
   |#
   (define-checked-record-type $elf-dynamic-entry
     make-elf-dynamic-entry elf-dynamic-entry? elf-dynamic-entry
@@ -678,41 +709,47 @@
     ([tag elf-dynamic-entry-tag $elf-dynamic-entry-tag integer?]
      [value elf-dynamic-entry-value $elf-dynamic-entry-value natural?]))
 
+;;;;===----------------------------------------------------------------------===
+;;;; ELF notes
+;;;;===----------------------------------------------------------------------===
+
   #|proc:make-elf-note-table
-  The `make-elf-note-table` procedure creates a note table from vector `notes`.
+  Creates and returns an `elf-note-table` record. `notes` is a vector; parsers populate it with
+  `elf-note` records in source order. Supplied strings, vectors, bytevectors, and nested records
+  are retained without copying.
   |#
   #|proc:elf-note-table?
-  The `elf-note-table?` procedure returns whether `object` is a note table record.
-  The `object` parameter is the object to test.
+  The `elf-note-table?` procedure returns whether `object` is a note table record. The `object`
+  parameter is the object to test.
   |#
   #|proc:elf-note-table-notes
-  The `elf-note-table-notes` procedure returns the note vector stored in `record`.
-  The `record` parameter is a note table record.
+  Returns the stored `notes` of `elf-note-table` record `record`. It is a vector; parsers populate
+  it with `elf-note` records in source order. Mutable contents are returned by reference.
   |#
   (define-checked-record-type $elf-note-table make-elf-note-table elf-note-table? elf-note-table
     $make-elf-note-table $elf-note-table?
     ([notes elf-note-table-notes $elf-note-table-notes vector?]))
   #|proc:make-elf-note
-  The `make-elf-note` procedure creates an ELF note record.
-  The `name` parameter supplies the record's `name` field.
-  The `type` parameter supplies the record's `type` field.
-  The `descriptor` parameter supplies the record's `descriptor` field.
+  Creates and returns an `elf-note` record. `name` is the decoded owner-name string without its
+  final NUL terminator. `type` is the natural owner-specific numeric note-type code. `descriptor`
+  is a bytevector of descriptor bytes excluding alignment padding. Supplied strings, vectors,
+  bytevectors, and nested records are retained without copying.
   |#
   #|proc:elf-note?
-  The `elf-note?` procedure returns whether `object` is an ELF note record.
-  The `object` parameter is the object to test.
+  The `elf-note?` procedure returns whether `object` is an ELF note record. The `object` parameter
+  is the object to test.
   |#
   #|proc:elf-note-name
-  The `elf-note-name` procedure returns the `name` field of `record`.
-  The `record` parameter is an ELF note record.
+  Returns the stored `name` of `elf-note` record `record`. It is the decoded owner-name string
+  without its final NUL terminator. Mutable contents are returned by reference.
   |#
   #|proc:elf-note-type
-  The `elf-note-type` procedure returns the `type` field of `record`.
-  The `record` parameter is an ELF note record.
+  Returns the stored `type` of `elf-note` record `record`. It is the natural owner-specific
+  numeric note-type code.
   |#
   #|proc:elf-note-descriptor
-  The `elf-note-descriptor` procedure returns the `descriptor` field of `record`.
-  The `record` parameter is an ELF note record.
+  Returns the stored `descriptor` of `elf-note` record `record`. It is a bytevector of descriptor
+  bytes excluding alignment padding. Mutable contents are returned by reference.
   |#
   (define-checked-record-type $elf-note make-elf-note elf-note? elf-note
     $make-elf-note $elf-note?

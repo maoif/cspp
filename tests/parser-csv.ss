@@ -2,6 +2,7 @@
         (cspp parser csv))
 
 (include "parser-external-tools.ss")
+(include "parser-test-support.ss")
 
 (define csv-fields
   (lambda (document)
@@ -55,19 +56,19 @@
              (csv-fields (parse-csv "a;b\n1;2" #\;)))
 
      ;; error: a quoted field must end with a double quote.
-     (error? (parse-csv "a,\"unterminated"))
+     (raises-parser-error? (lambda () (parse-csv "a,\"unterminated")))
 
      ;; error: a double quote cannot occur inside an unquoted field.
-     (error? (parse-csv "a,b\"c"))
+     (raises-parser-error? (lambda () (parse-csv "a,b\"c")))
 
      ;; error: non-space data cannot follow a closing quote before the delimiter.
-     (error? (parse-csv "a,\"b\"x,c"))
+     (raises-parser-error? (lambda () (parse-csv "a,\"b\"x,c")))
 
      ;; error: a line break cannot be used as the field delimiter.
      (error? (parse-csv "a\nb" #\newline))
 
      ;; error: every record must contain the same number of fields.
-     (error? (parse-csv "a,b\n1,2,3"))
+     (raises-parser-error? (lambda () (parse-csv "a,b\n1,2,3")))
 
      (let ([document (parse-csv "a,  \"b,c\"  ,d")])
        (and (equal? '(("a" "b,c" "d")) (csv-fields document))
@@ -107,3 +108,5 @@
            (equal? (csv-summary records) (successful-process-output result))))
 
      )
+
+(include "parser-csv-regressions.ss")

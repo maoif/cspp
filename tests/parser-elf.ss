@@ -3,6 +3,7 @@
         (cspp parser elf types))
 
 (include "parser-external-tools.ss")
+(include "parser-test-support.ss")
 
 (mat parser-elf-record-writers
 
@@ -194,6 +195,8 @@
            [bytes (make-bytevector 1400 0)]
            [header (minimal-elf class endianness-name)])
       (bytevector-copy! header 0 bytes 0 (bytevector-length header))
+      ;; Section groups belong to ET_REL objects and their members carry SHF_GROUP.
+      (bytevector-u16-set! bytes 16 1 endianness)
       (if elf64?
           (bytevector-u64-set! bytes 40 table-offset endianness)
           (bytevector-u32-set! bytes 32 table-offset endianness))
@@ -237,7 +240,13 @@
       (set-elf-section! bytes class endianness table-offset 1 3 128 3 0 0)
       (set-elf-section! bytes class endianness table-offset 2 2 144 (* 2 symbol-size)
                         1 symbol-size)
-      (set-elf-section! bytes class endianness table-offset 3 19 208 (* 2 word) 0 word)
+      ;; Symbol zero is local; symbol one is the first nonlocal entry.
+      (bytevector-u32-set! bytes
+                           (+ table-offset (* 2 (if elf64? 64 40)) (if elf64? 44 28))
+                           1 endianness)
+      ;; RELR cannot coexist with GROUP: the former requires ET_EXEC/ET_DYN,
+      ;; while this fixture exercises GROUP in ET_REL. Keep these bytes untyped.
+      (set-elf-section! bytes class endianness table-offset 3 1 208 (* 2 word) 0 0)
       (set-elf-section! bytes class endianness table-offset 4 5 240 20 2 4)
       (set-elf-section! bytes class endianness table-offset 5 17 272 8 2 4)
       (set-elf-section! bytes class endianness table-offset 6 14 288 (* 2 word) 0 word)
@@ -246,6 +255,8 @@
       (set-elf-section! bytes class endianness table-offset 9 6 400 (* 4 word) 1
                         (* 2 word))
       (set-elf-section! bytes class endianness table-offset 10 18 480 8 2 4)
+      (set-elf-word! bytes (+ table-offset (* 6 (if elf64? 64 40)) 8)
+                     word #x200 endianness)
       bytes)))
 
 (define typed-elf-with-section-size
@@ -339,19 +350,19 @@
       '((elf32 little) (elf32 big) (elf64 little) (elf64 big)))
 
      ;; error: the four-byte ELF magic must match exactly.
-     (error? (parse-elf (elf-with-u8 'elf64 'little 0 0)))
+     (raises-parser-error? (lambda () (parse-elf (elf-with-u8 'elf64 'little 0 0))))
 
      ;; error: the ELF class byte must identify ELF32 or ELF64.
-     (error? (parse-elf (elf-with-u8 'elf64 'little 4 3)))
+     (raises-parser-error? (lambda () (parse-elf (elf-with-u8 'elf64 'little 4 3))))
 
      ;; error: the ELF data byte must identify little- or big-endian encoding.
-     (error? (parse-elf (elf-with-u8 'elf64 'little 5 0)))
+     (raises-parser-error? (lambda () (parse-elf (elf-with-u8 'elf64 'little 5 0))))
 
      ;; error: the declared ELF header size must match the selected class.
-     (error? (parse-elf (elf-with-u16 'elf32 'big 40 51)))
+     (raises-parser-error? (lambda () (parse-elf (elf-with-u16 'elf32 'big 40 51))))
 
      ;; error: a complete class-specific ELF header is required.
-     (error? (parse-elf (truncated-elf-header)))
+     (raises-parser-error? (lambda () (parse-elf (truncated-elf-header))))
 
      )
 
@@ -366,30 +377,80 @@
 
 (define readelf-header-matches?
   (lambda (file output)
-    (let* ([identification (elf-file-identification file)]
-           [header (elf-file-header file)]
-           [class (elf-identification-class identification)]
-           [endianness (elf-identification-endianness identification)])
-      (and (string-contains?
-            output
-            (format "Class:                             ~a"
-                    (if (eq? class 'elf64) "ELF64" "ELF32")))
-           (string-contains?
-            output
-            (format "Data:                              2's complement, ~a endian"
-                    (if (eq? endianness 'little) "little" "big")))
-           (string-contains?
-            output
-            (format "Number of program headers:         ~a"
-                    (elf-header-program-header-count header)))
-           (string-contains?
-            output
-            (format "Number of section headers:         ~a"
-                    (elf-header-section-header-count header)))
-           (string-contains?
-            output
-            (format "Section header string table index: ~a"
-                    (elf-header-section-name-index header)))))))
+    (let ([fields (map (lambda (line) (map string-trim (string-split line #\:)))
+                       (string-split output #\newline))]
+          [identification (elf-file-identification file)]
+          [header (elf-file-header file)])
+      (define field=?
+        (lambda (label expected)
+          (let ([matches (filter (lambda (field) (string=? label (car field))) fields)])
+            (and (= 1 (length matches))
+                 (= 2 (length (car matches)))
+                 (string=? expected (cadar matches))))))
+      (define count=?
+        (lambda (label count sentinel threshold)
+          (or (field=? label (number->string count))
+              (and (>= count threshold)
+                   (field=? label (format "~a (~a)" sentinel count))))))
+      (and (field=? "Class" (if (eq? (elf-identification-class identification) 'elf64)
+                                "ELF64" "ELF32"))
+           (field=? "Data" (format "2's complement, ~a endian"
+                                    (if (eq? (elf-identification-endianness identification)
+                                             'little) "little" "big")))
+           (count=? "Number of program headers"
+                    (elf-header-program-header-count header) 65535 65535)
+           (count=? "Number of section headers"
+                    (elf-header-section-header-count header) 0 65280)
+           (count=? "Section header string table index"
+                    (elf-header-section-name-index header) 65535 65280)))))
+
+(mat elf-readelf-comparison-controls
+
+     (readelf-header-matches?
+      (parse-elf (minimal-elf64le))
+      (string-append "  Class:                             ELF64\n"
+                     "  Data:                              2's complement, little endian\n"
+                     "  Number of program headers:         0\n"
+                     "  Number of section headers:         0\n"
+                     "  Section header string table index: 0\n"))
+
+     ;; Error controls: a numeric field cannot match just a decimal prefix.
+     (for-all
+      (lambda (counts)
+        (not (readelf-header-matches?
+              (parse-elf (minimal-elf64le))
+              (format
+               (string-append "  Class:                             ELF64\n"
+                              "  Data:                              2's complement, little endian\n"
+                              "  Number of program headers:         ~a\n"
+                              "  Number of section headers:         ~a\n"
+                              "  Section header string table index: ~a\n")
+               (car counts) (cadr counts) (caddr counts)))))
+      '(("01" "0" "0") ("0" "01" "0") ("0" "0" "01")
+        ("0x" "0" "0") ("0 1" "0" "0"))))
+
+(mat elf-readelf-extended-comparison
+
+     (readelf-header-matches?
+      (parse-elf (extended-count-elf32be))
+      (string-append "Class: ELF32\nData: 2's complement, big endian\n"
+                     "Number of program headers: 65535 (65535)\n"
+                     "Number of section headers: 0 (65281)\n"
+                     "Section header string table index: 65535 (65280)\n"))
+
+     ;; Error controls: only the proper sentinel and one complete decimal count are allowed.
+     (let ([file (parse-elf (extended-count-elf32be))])
+       (for-all
+        (lambda (count)
+          (not (readelf-header-matches?
+                file
+                (string-append "Class: ELF32\nData: 2's complement, big endian\n"
+                               "Number of program headers: 65535 (65535)\n"
+                               "Number of section headers: " count "\n"
+                               "Section header string table index: 65535 (65280)\n"))))
+        '("1 (65281)" "0 (652810)" "0 (065281)" "0 (65281)x" "0 (65281) (65281)"
+          "0(65281)" "0 (65281" "0 (65281.0)"
+          "0 (65281)\nNumber of section headers: 0 (65281)"))))
 
 (mat parse-elf-file
 
@@ -454,33 +515,42 @@
             (= -4 (elf-relocation-addend (vector-ref relocations 0)))))
 
      ;; error: a symbol table must link to a string table.
-     (error? (parse-elf (rich-elf-with-u32 (+ 512 (* 3 64) 40) 4)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-elf (rich-elf-with-u32 (+ 512 (* 3 64) 40) 4))))
 
      ;; error: a symbol name index must identify a terminated linked-table string.
-     (error? (parse-elf (rich-elf-with-u32 232 99)))
+     (raises-parser-error? (lambda () (parse-elf (rich-elf-with-u32 232 99))))
 
      ;; error: a relocation table must link to a symbol table.
-     (error? (parse-elf (rich-elf-with-u32 (+ 512 (* 5 64) 40) 2)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-elf (rich-elf-with-u32 (+ 512 (* 5 64) 40) 2))))
 
-     ;; error: note name padding bytes must be zero.
-     (error?
+     ;; Note padding aligns fields but has no required byte value.
+     (elf-file?
       (let ([bytes (rich-elf-with-u32 272 2)])
         (bytevector-u8-set! bytes 284 (char->integer #\G))
         (bytevector-u8-set! bytes 285 0)
         (bytevector-u8-set! bytes 286 1)
         (parse-elf bytes)))
 
-     ;; error: malformed UTF-8 in a note name must retain the section byte offset.
-     (guard (condition
-             [(parser-error? condition) (= 272 (parser-error-offset condition))]
-             [else #f])
-       (let ([bytes (rich-elf64le)])
-         (bytevector-u8-set! bytes 284 #xff)
-         (parse-elf bytes)
-         #f))
+     (let* ([bytes (rich-elf64le)]
+            [unused (bytevector-u8-set! bytes 284 #xff)]
+            [file (parse-elf bytes)]
+            [notes (elf-note-table-notes
+                    (elf-section-content (vector-ref (elf-file-sections file) 4)))])
+       (string=? "\xff;NU" (elf-note-name (vector-ref notes 0))))
+
+     ;; Error case: a nonempty note name must end in NUL, reported as malformed content.
+     (raises-parser-error?
+      (lambda ()
+        (let ([bytes (rich-elf64le)])
+          (bytevector-u8-set! bytes 287 65)
+          (parse-elf bytes))))
 
      ;; error: the section-header table must fit in the input.
-     (error? (parse-elf (rich-elf-with-u64 40 800)))
+     (raises-parser-error? (lambda () (parse-elf (rich-elf-with-u64 40 800))))
 
      )
 
@@ -505,7 +575,6 @@
                [endianness-name (cadr configuration)]
                [file (parse-elf (typed-elf class endianness-name))]
                [sections (elf-file-sections file)]
-               [relr (elf-section-content (vector-ref sections 3))]
                [hash (elf-section-content (vector-ref sections 4))]
                [group (elf-section-content (vector-ref sections 5))]
                [init (elf-section-content (vector-ref sections 6))]
@@ -514,8 +583,7 @@
                [dynamic (elf-section-content (vector-ref sections 9))]
                [dynamic* (elf-dynamic-table-entries dynamic)]
                [xindex (elf-section-content (vector-ref sections 10))])
-          (and (equal? '#(#x1000 3) (elf-relr-table-entries relr))
-               (equal? '#(1) (elf-hash-table-buckets hash))
+          (and (equal? '#(1) (elf-hash-table-buckets hash))
                (equal? '#(0 1) (elf-hash-table-chains hash))
                (= 1 (elf-group-section-flags group))
                (equal? '#(6) (elf-group-section-members group))
@@ -529,28 +597,40 @@
       '((elf32 little) (elf32 big) (elf64 little) (elf64 big)))
 
      ;; error: an SHT_RELR payload must contain complete class-sized words.
-     (error? (parse-elf (typed-elf-with-section-size 'elf32 'little 3 5)))
+     (raises-parser-error?
+      (lambda ()
+        (let ([bytes (read-u8vec "data/elf-review/fixed-relr-32le.elf")])
+          (bytevector-u32-set! bytes (+ 52 40 20) 3 (endianness little))
+          (parse-elf bytes))))
 
      ;; error: an SHT_HASH payload must match its declared bucket and chain counts.
-     (error?
-      (let ([bytes (typed-elf 'elf64 'big)])
-        (bytevector-u32-set! bytes 240 2 (endianness big))
-        (parse-elf bytes)))
+     (raises-parser-error?
+      (lambda ()
+        (let ([bytes (typed-elf 'elf64 'big)])
+          (bytevector-u32-set! bytes 240 2 (endianness big))
+          (parse-elf bytes))))
 
      ;; error: an SHT_GROUP payload must contain a flags word and complete members.
-     (error? (parse-elf (typed-elf-with-section-size 'elf64 'little 5 6)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-elf (typed-elf-with-section-size 'elf64 'little 5 6))))
 
      ;; error: an address-array payload must contain complete class-sized words.
-     (error? (parse-elf (typed-elf-with-section-size 'elf32 'big 6 5)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-elf (typed-elf-with-section-size 'elf32 'big 6 5))))
 
      ;; error: an SHT_DYNAMIC payload must contain complete tag/value pairs.
-     (error? (parse-elf (typed-elf-with-section-size 'elf64 'big 9 17)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-elf (typed-elf-with-section-size 'elf64 'big 9 17))))
 
      ;; error: unused SHT_SYMTAB_SHNDX entries must be zero.
-     (error?
-      (let ([bytes (typed-elf 'elf32 'little)])
-        (bytevector-u32-set! bytes 480 1 (endianness little))
-        (parse-elf bytes)))
+     (raises-parser-error?
+      (lambda ()
+        (let ([bytes (typed-elf 'elf32 'little)])
+          (bytevector-u32-set! bytes 480 1 (endianness little))
+          (parse-elf bytes))))
 
      )
 
@@ -570,21 +650,45 @@
             (= 0 (bytevector-length (elf-raw-section-bytes zero)))))
 
      ;; error: an extended section count must be in the reserved-index range.
-     (error? (parse-elf (elf32be-with-section-zero 0 0 0 2 0 0)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-elf (elf32be-with-section-zero 0 0 0 2 0 0))))
 
      ;; error: an extended program-header count must be at least PN_XNUM.
-     (error? (parse-elf (elf32be-with-section-zero #xffff 1 0 0 0 2)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-elf (elf32be-with-section-zero #xffff 1 0 0 0 2))))
 
      ;; error: an extended section-name index must be in the reserved-index range.
-     (error? (parse-elf (elf32be-with-section-zero 0 1 #xffff 0 2 0)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-elf (elf32be-with-section-zero 0 1 #xffff 0 2 0))))
 
      ;; error: section zero must not carry an extended count when e_shnum is ordinary.
-     (error? (parse-elf (elf32be-with-section-zero 0 1 0 2 0 0)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-elf (elf32be-with-section-zero 0 1 0 2 0 0))))
 
      ;; error: section zero must not carry PN_XNUM data when e_phnum is ordinary.
-     (error? (parse-elf (elf32be-with-section-zero 0 1 0 0 0 2)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-elf (elf32be-with-section-zero 0 1 0 0 0 2))))
 
      ;; error: section zero must not carry SHN_XINDEX data when e_shstrndx is ordinary.
-     (error? (parse-elf (elf32be-with-section-zero 0 1 0 0 2 0)))
+     (raises-parser-error?
+      (lambda ()
+        (parse-elf (elf32be-with-section-zero 0 1 0 0 2 0))))
 
      )
+
+(include "parser-elf-regressions.ss")
+
+(mat elf-standard-dynamic-tag-names
+
+     (for-all (lambda (entry) (eq? (cdr entry) (elf-dynamic-tag-name (car entry))))
+              '((20 . pltrel) (21 . debug) (22 . textrel) (23 . jmprel) (24 . bind-now)
+                (25 . init-array) (26 . fini-array) (27 . init-arraysz) (28 . fini-arraysz)
+                (29 . runpath) (30 . flags) (32 . preinit-array) (33 . preinit-arraysz)
+                (34 . symtab-shndx) (35 . relrsz) (36 . relr) (37 . relrent)))
+
+     (for-all (lambda (tag) (eq? 'unknown (elf-dynamic-tag-name tag))) '(-1 31 38)))

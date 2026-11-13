@@ -11,76 +11,22 @@
           (cspp parser wasm validate))
 
 ;;;;===----------------------------------------------------------------------===
-;;;; Module grammar helpers and instruction placeholders
+;;;; Module grammar helpers
 ;;;;===----------------------------------------------------------------------===
-
-  (define make-immutable-vector
-    (lambda value*
-      (list->immutable-vector value*)))
 
   (define optional-value
     (lambda (value)
       (if (null? value) #f value)))
 
-  (define wat-open
-    (<~0> (<char> #\() <wat-trivia>))
-
-  (define wat-close
-    (<~0> (<char> #\)) <wat-trivia>))
-
-  (define wat-double-quote (integer->char #x22))
-  (define wat-semicolon (integer->char #x3b))
-
-  (define wat-field-head
-    (lambda (keyword)
-      (<~0> <pos> wat-open (<wat-keyword> keyword))))
-
-  (define wat-parenthesized
-    (lambda (keyword parser)
-      (<~1> (<~0> wat-open (<wat-keyword> keyword)) parser wat-close)))
-
-  (define reserved-character?
-    (lambda (character)
-      (and (not (memv character
-                      (list #\space #\tab #\newline #\return #\( #\)
-                            wat-double-quote)))
-           (not (char=? character wat-semicolon)))))
-
-  (define <wat-reserved>
-    (<wat-token>
-     (<as-string>
-      (<some> (<satisfy-char> reserved-character? "not a WebAssembly reserved character")))))
-
-  (define forbidden-placeholder-head?
-    (lambda (head)
-      (member head '("import" "export" "param" "result" "local" "type"))))
-
-  (declare-lazy-parser <wat-generic-item>)
-
   (define <wat-generic-parenthesized>
-    (<map> (lambda (instruction*) (car (reverse instruction*)))
-           <wat-folded-instruction>))
-
-  (define <wat-positioned-identifier>
-    (<map> (lambda (value) (make-wat-index-reference (car value) (cadr value)))
-           (<~> <pos> <wat-identifier>)))
-
-  (define <wat-generic-atom>
-    <wat-instruction>)
+    (<map> list->immutable-vector <wat-folded-instruction>))
 
   (define generic-body
-    (begin
-      (install-lazy-parser!
-       <wat-generic-item>
-       (</> <wat-generic-parenthesized> <wat-generic-atom>))
-      (<map>
-       (lambda (instruction**)
-         (apply append instruction**))
-       (<~0>
-        (<many-until>
-         (</> (<map> list <wat-instruction>) <wat-folded-instruction>)
-         wat-close)
-        wat-close))))
+    (<map> (lambda (instruction**) (apply append instruction**))
+           (<~0> (<many-until>
+                  (</> (<map> list <wat-instruction>) <wat-folded-instruction>)
+                  wat-close)
+                 wat-close)))
 
   (define inline-import
     (<map> list->immutable-vector
@@ -104,7 +50,7 @@
        (let* ([pos (car value)] [subtype (cadr value)]
               [recursive-type
                (make-wat-recursive-type-syntax
-                pos (make-immutable-vector subtype))])
+                pos (immutable-vector subtype))])
          (field-result pos 'recursive-type #f recursive-type #f '() #f)))
      (<~> <pos> <wat-type-definition>)))
 
@@ -115,41 +61,41 @@
 
   (define function-import-description
     (<map> (lambda (value)
-             (make-immutable-vector
+             (immutable-vector
               'function (optional-value (cadr value)) (caddr value)))
-           (<~0> (<~> (wat-field-head "func")
+           (<~0> (<~> (wat-head "func")
                       (<optional> <wat-identifier>) <wat-type-use>)
                  wat-close)))
 
   (define table-import-description
     (<map> (lambda (value)
-             (make-immutable-vector
+             (immutable-vector
               'table (optional-value (cadr value)) (caddr value)))
-           (<~0> (<~> (wat-field-head "table")
+           (<~0> (<~> (wat-head "table")
                       (<optional> <wat-identifier>) <wat-table-type>)
                  wat-close)))
 
   (define memory-import-description
     (<map> (lambda (value)
-             (make-immutable-vector
+             (immutable-vector
               'memory (optional-value (cadr value)) (caddr value)))
-           (<~0> (<~> (wat-field-head "memory")
+           (<~0> (<~> (wat-head "memory")
                       (<optional> <wat-identifier>) <wat-memory-type>)
                  wat-close)))
 
   (define global-import-description
     (<map> (lambda (value)
-             (make-immutable-vector
+             (immutable-vector
               'global (optional-value (cadr value)) (caddr value)))
-           (<~0> (<~> (wat-field-head "global")
+           (<~0> (<~> (wat-head "global")
                       (<optional> <wat-identifier>) <wat-global-type>)
                  wat-close)))
 
   (define tag-import-description
     (<map> (lambda (value)
-             (make-immutable-vector
+             (immutable-vector
               'tag (optional-value (cadr value)) (caddr value)))
-           (<~0> (<~> (wat-field-head "tag")
+           (<~0> (<~> (wat-head "tag")
                       (<optional> <wat-identifier>) <wat-tag-type>)
                  wat-close)))
 
@@ -164,11 +110,11 @@
               [name (caddr value)] [description (cadddr value)]
               [id (vector-ref description 1)])
          (field-result pos 'import id
-                       (make-immutable-vector
+                       (immutable-vector
                         module-name name (vector-ref description 0)
                         (vector-ref description 2))
                        #f '() #f)))
-     (<~0> (<~> (wat-field-head "import") <wat-name> <wat-name> import-description)
+     (<~0> (<~> (wat-head "import") <wat-name> <wat-name> import-description)
             wat-close)))
 
 ;;;;===----------------------------------------------------------------------===
@@ -178,7 +124,7 @@
   (define named-local-clause
     (<map> (lambda (value)
              (list (make-wat-binding (car value) (cadr value) (caddr value))))
-           (<~0> (<~> (wat-field-head "local")
+           (<~0> (<~> (wat-head "local")
                       <wat-identifier> <wat-value-type>)
                  wat-close)))
 
@@ -186,7 +132,7 @@
     (<map> (lambda (value)
              (let ([pos (car value)])
                (map (lambda (type) (make-wat-binding pos #f type)) (cadr value))))
-           (<~0> (<~> (wat-field-head "local") (<many> <wat-value-type>))
+           (<~0> (<~> (wat-head "local") (<many> <wat-value-type>))
                  wat-close)))
 
   (define local-clause (</> named-local-clause unnamed-local-clause))
@@ -197,39 +143,44 @@
   (define memory-use
     (wat-parenthesized "memory" <wat-index-reference>))
 
-  (define offset-clause
-    (<map> list->immutable-vector
-           (wat-parenthesized "offset" (<many> <wat-generic-item>))))
+  (define offset-clause (wat-parenthesized "offset" <wat-delimited-expression>))
 
-  (define direct-offset
-    (<map> (lambda (instruction)
-             (make-immutable-vector instruction))
-           <wat-generic-parenthesized>))
+  (define direct-offset <wat-generic-parenthesized>)
+
+  (define element-initializer
+    (</> (wat-parenthesized "item" <wat-delimited-expression>) <wat-generic-parenthesized>))
 
   (define segment-offset (</> offset-clause direct-offset))
 
   (define default-function-reference-type
-    (make-wasm-reference-type #t 'func))
+    (make-wasm-reference-type #f 'func))
 
   (define typed-element-items
     (<map> (lambda (value)
-             (make-immutable-vector
+             (immutable-vector
               (car value) 'expressions (list->immutable-vector (cadr value))))
-           (<~> <wat-reference-type> (<many> <wat-generic-parenthesized>))))
+           (<~> <wat-reference-type> (<many-until> element-initializer wat-close))))
 
   (define indexed-element-items
     (<map> (lambda (value)
-             (make-immutable-vector
+             (immutable-vector
               default-function-reference-type 'indexes
               (list->immutable-vector (cadr value))))
-           (<~> (<optional> (<wat-keyword> "func"))
-                (<many> <wat-index-reference>))))
+           (<~> (<wat-keyword> "func")
+                (<many-until> <wat-index-reference> wat-close))))
 
   (define element-items (</> typed-element-items indexed-element-items))
 
+  (define legacy-element-items
+    (</> element-items
+         (<map> (lambda (indexes)
+                  (immutable-vector default-function-reference-type 'indexes
+                                         (list->immutable-vector indexes)))
+                (<many-until> <wat-index-reference> wat-close))))
+
   (define function-field
     (<bind>
-     (<~> (wat-field-head "func")
+     (<~> (wat-head "func")
           (<optional> <wat-identifier>)
           (<many> inline-export)
           (<optional> inline-import)
@@ -249,7 +200,7 @@
                        (<result>
                         (field-result
                          pos 'function id
-                         (make-immutable-vector
+                         (immutable-vector
                           type-use (list->immutable-vector (apply append local**))
                           (list->immutable-vector body))
                          import export* #f)))))))))
@@ -259,34 +210,41 @@
                     (<as> 'i32 (<wat-keyword> "i32")))))
 
   (define table-expression-items
-    (<map> (lambda (item*)
-             (make-immutable-vector 'expressions
-                                    (list->immutable-vector item*)))
-           (<some> <wat-generic-parenthesized>)))
+    (<map> (lambda (value)
+             (immutable-vector 'expressions
+                               (list->immutable-vector (cons (car value) (cadr value)))))
+           (<~> element-initializer (<many-until> element-initializer wat-close))))
 
   (define table-indexed-items
     (<map> (lambda (item*)
-             (make-immutable-vector 'indexes (list->immutable-vector item*)))
-           (<some> <wat-index-reference>)))
+             (immutable-vector 'indexes (list->immutable-vector item*)))
+           (<many-until> <wat-index-reference> wat-close)))
 
   (define table-element-items
-    (</> table-expression-items table-indexed-items
-         (<result> (make-immutable-vector 'indexes '#()))))
+    (</> table-expression-items table-indexed-items))
 
   (define table-abbreviation
     (<map> (lambda (value)
-             (make-wat-inline-abbreviation
-              (car value) 'table-element
-              (make-wat-element-segment-syntax
-               (car value) 'abbreviation #f #f (optional-value (cadr value))
-               (caddr value) (vector-ref (cadddr value) 0)
-               (vector-ref (cadddr value) 1))))
+             (let* ([table-type (caddr value)] [items (cadddr value)]
+                    ;; The normative list declares its own type; legacy bare lists
+                    ;; inherit the table type, as they did before.
+                    [typed? (= 3 (vector-length items))]
+                    [element-type (if typed? (vector-ref items 0) table-type)]
+                    [kind (vector-ref items (if typed? 1 0))]
+                    [initializers (vector-ref items (if typed? 2 1))])
+               (make-wat-inline-abbreviation
+                (car value) 'table-element
+                (immutable-vector
+                 table-type
+                 (make-wat-element-segment-syntax
+                  (car value) 'abbreviation #f #f (optional-value (cadr value))
+                  element-type kind initializers)))))
            (<~> <pos> optional-address-type <wat-reference-type>
-                (wat-parenthesized "elem" table-element-items))))
+                (wat-parenthesized "elem" (</> element-items table-element-items)))))
 
   (define table-field
     (<bind>
-     (<~> (wat-field-head "table")
+     (<~> (wat-head "table")
           (<optional> <wat-identifier>)
           (<many> inline-export)
           (<optional> inline-import))
@@ -298,13 +256,18 @@
          (<bind> (if import <wat-table-type> (</> table-abbreviation <wat-table-type>))
                  (lambda (type-or-abbreviation)
                    (<map>
-                    (lambda (unused)
+                    (lambda (initializer)
                       (if (wat-inline-abbreviation? type-or-abbreviation)
-                          (field-result pos 'table id #f #f export*
-                                        type-or-abbreviation)
-                          (field-result pos 'table id type-or-abbreviation
-                                        import export* #f)))
-                    wat-close)))))))
+                          (field-result pos 'table id #f #f export* type-or-abbreviation)
+                          (field-result
+                           pos 'table id
+                           (if (zero? (vector-length initializer)) type-or-abbreviation
+                               (vector type-or-abbreviation initializer))
+                           import export* #f)))
+                    (<~0> (if (or import (wat-inline-abbreviation? type-or-abbreviation))
+                              (<result> '#())
+                              <wat-delimited-expression>)
+                          wat-close))))))))
 
   (define memory-abbreviation
     (<map> (lambda (value)
@@ -318,7 +281,7 @@
 
   (define memory-field
     (<bind>
-     (<~> (wat-field-head "memory")
+     (<~> (wat-head "memory")
           (<optional> <wat-identifier>)
           (<many> inline-export)
           (<optional> inline-import))
@@ -341,7 +304,7 @@
 
   (define global-field
     (<bind>
-     (<~> (wat-field-head "global")
+     (<~> (wat-head "global")
           (<optional> <wat-identifier>)
           (<many> inline-export)
           (<optional> inline-import)
@@ -362,7 +325,7 @@
                           (<result>
                            (field-result
                             pos 'global id
-                            (make-immutable-vector
+                            (immutable-vector
                              type (list->immutable-vector body))
                             import export* #f))])))))))
 
@@ -372,7 +335,7 @@
        (field-result (car value) 'tag (optional-value (cadr value))
                      (car (cddddr value)) (optional-value (cadddr value))
                      (caddr value) #f))
-     (<~0> (<~> (wat-field-head "tag")
+     (<~0> (<~> (wat-head "tag")
                 (<optional> <wat-identifier>)
                 (<many> inline-export)
                 (<optional> inline-import)
@@ -393,62 +356,70 @@
   (define export-field
     (<map> (lambda (value)
              (field-result (car value) 'export #f
-                           (make-immutable-vector (cadr value) (caddr value))
+                           (immutable-vector (cadr value) (caddr value))
                            #f '() #f))
-           (<~0> (<~> (wat-field-head "export") <wat-name> export-description)
+           (<~0> (<~> (wat-head "export") <wat-name> export-description)
                  wat-close)))
 
   (define start-field
     (<map> (lambda (value)
              (field-result (car value) 'start #f (cadr value) #f '() #f))
-           (<~0> (<~> (wat-field-head "start") <wat-index-reference>)
+           (<~0> (<~> (wat-head "start") <wat-index-reference>)
                  wat-close)))
 
   (define declarative-element-prefix
-    (<as> (make-immutable-vector 'declarative #f #f)
+    (<as> (immutable-vector 'declarative #f #f)
           (<wat-keyword> "declare")))
 
   (define active-element-prefix
     (<map> (lambda (value)
-             (make-immutable-vector
+             (immutable-vector
               'active (optional-value (car value)) (cadr value)))
            (<~> (<optional> table-use) segment-offset)))
 
   (define passive-element-prefix
-    (<result> (make-immutable-vector 'passive #f #f)))
+    (<result> (immutable-vector 'passive #f #f)))
+
+  ;; A parenthesized passive element type starts with `ref`; other openers are active syntax.
+  (define active-element-start
+    (<not-followed-by> wat-open (<wat-keyword> "ref")))
 
   (define element-prefix
-    (</> declarative-element-prefix active-element-prefix passive-element-prefix))
+    (</> declarative-element-prefix active-element-prefix
+         (<not-followed-by> passive-element-prefix active-element-start)))
 
   (define element-field
-    (<map>
+    (<bind>
+     (<~> (wat-head "elem") (<optional> <wat-identifier>) element-prefix)
      (lambda (value)
-       (let ([pos (car value)]
-             [id (optional-value (cadr value))]
-             [prefix (caddr value)]
-             [items (cadddr value)])
-         (field-result
-          pos 'element id #f #f '()
-          (make-wat-inline-abbreviation
-           pos 'element
-           (make-wat-element-segment-syntax
-            pos (vector-ref prefix 0) (vector-ref prefix 1)
-            (vector-ref prefix 2) #f (vector-ref items 0)
-            (vector-ref items 1) (vector-ref items 2))))))
-     (<~0> (<~> (wat-field-head "elem")
-                (<optional> <wat-identifier>) element-prefix element-items)
-            wat-close)))
+       (let ([pos (car value)] [id (optional-value (cadr value))] [prefix (caddr value)])
+         (<map>
+          (lambda (items)
+            (field-result
+             pos 'element id #f #f '()
+             (make-wat-inline-abbreviation
+              pos 'element
+              (make-wat-element-segment-syntax
+               pos (vector-ref prefix 0) (vector-ref prefix 1)
+               (vector-ref prefix 2) #f (vector-ref items 0)
+               (vector-ref items 1) (vector-ref items 2)))))
+          (<~0> (if (and (eq? 'active (vector-ref prefix 0))
+                         (not (vector-ref prefix 1)))
+                    legacy-element-items element-items)
+                 wat-close))))))
 
   (define active-data-prefix
     (<map> (lambda (value)
-             (make-immutable-vector
+             (immutable-vector
               'active (optional-value (car value)) (cadr value)))
            (<~> (<optional> memory-use) segment-offset)))
 
   (define passive-data-prefix
-    (<result> (make-immutable-vector 'passive #f #f)))
+    (<result> (immutable-vector 'passive #f #f)))
 
-  (define data-prefix (</> active-data-prefix passive-data-prefix))
+  ;; Only an active data prefix can start with a parenthesis. Preserve its inner failures.
+  (define data-prefix
+    (</> active-data-prefix (<not-followed-by> passive-data-prefix wat-open)))
 
   (define data-field
     (<map>
@@ -465,7 +436,7 @@
             pos (vector-ref prefix 0) (vector-ref prefix 1)
             (vector-ref prefix 2) #f
             (list->immutable-vector string*))))))
-     (<~0> (<~> (wat-field-head "data")
+     (<~0> (<~> (wat-head "data")
                 (<optional> <wat-identifier>) data-prefix (<many> <wat-string>))
             wat-close)))
 
@@ -474,10 +445,11 @@
      </>
      (map (lambda (entry)
             (<as> (cdr entry) (<wat-keyword> (car entry))))
-          '(("type" . type) ("import" . import) ("function" . function)
+          '(("type" . type) ("import" . import) ("func" . function)
             ("table" . table) ("memory" . memory) ("tag" . tag)
             ("global" . global) ("export" . export) ("start" . start)
-            ("elem" . element) ("code" . code) ("data" . data)))))
+            ("elem" . element) ("datacount" . data-count) ("code" . code) ("data" . data)
+            ("first" . first) ("last" . last)))))
 
   (define custom-anchor
     (</> (<map> (lambda (section) (cons 'after section))
@@ -490,14 +462,14 @@
      (lambda (value)
        (let* ([pos (car value)] [anchor (optional-value (caddr value))]
               [before (and anchor (eq? 'before (car anchor)) (cdr anchor))]
-              [after (and anchor (eq? 'after (car anchor)) (cdr anchor))])
+              [after (if anchor (and (eq? 'after (car anchor)) (cdr anchor)) 'last)])
          (field-result
           pos 'custom #f
-          (make-immutable-vector
+          (immutable-vector
            (cadr value) (list->immutable-vector (cadddr value))
            (make-wat-custom-placement pos before after))
           #f '() #f)))
-     (<~0> (<~> (wat-field-head "@custom")
+     (<~0> (<~> (<~0> <pos> (<wat-annotation-head> "custom"))
                 <wat-name> (<optional> custom-anchor) (<many> <wat-string>))
             wat-close)))
 
@@ -506,58 +478,22 @@
          table-field memory-field global-field tag-field export-field start-field
          element-field data-field))
 
-  (define module-field-section
-    (lambda (field)
-      (let ([kind (wat-module-field-kind field)])
-        (if (wat-module-field-import field)
-            'import
-            (case kind
-              [(recursive-type) 'type]
-              [(element) 'element]
-              [(function import table memory tag global export start data) kind]
-              [else #f])))))
-
-  (define anchor-custom-fields
-    (lambda (field*)
-      (let loop ([field* field*] [anchor #f] [result '()])
-        (if (null? field*)
-            (list->immutable-vector (reverse result))
-            (let* ([field (car field*)] [kind (wat-module-field-kind field)])
-              (if (eq? kind 'custom)
-                  (let* ([data (wat-module-field-data field)]
-                         [placement (vector-ref data 2)]
-                         [placement
-                          (if (or (wat-custom-placement-before placement)
-                                  (wat-custom-placement-after placement))
-                              placement
-                              (make-wat-custom-placement
-                               (wat-custom-placement-pos placement) #f anchor))])
-                    (loop
-                     (cdr field*) anchor
-                     (cons
-                      (make-wat-module-field
-                       (wat-module-field-pos field) kind #f
-                       (make-immutable-vector
-                        (vector-ref data 0) (vector-ref data 1) placement)
-                       #f '#() #f)
-                      result)))
-                  (loop (cdr field*) (or (module-field-section field) anchor)
-                        (cons field result))))))))
-
   #|proc:parser-wat-module-syntax
   The `parser-wat-module-syntax` parser reads exactly one Core 3.0 text module and returns an
-  internal positioned module syntax record. Trailing WebAssembly script commands are rejected.
+  internal positioned module syntax record. Source files may omit the module wrapper.
+  Trailing WebAssembly script commands are rejected.
   |#
   (define parser-wat-module-syntax
     (<map>
      (lambda (value)
        (make-wat-module (car value) (optional-value (cadr value))
-                        (anchor-custom-fields (caddr value))))
+                        (list->immutable-vector (caddr value))))
      (<~1> <wat-trivia>
-            (<~0> (<~> (wat-field-head "module")
-                       (<optional> <wat-identifier>)
-                       (<many-until> module-field wat-close))
-                  wat-close <eof>))))
+            (</> (<~0> (<~> (wat-head "module")
+                             (<optional> <wat-identifier>)
+                             (<many-until> module-field wat-close))
+                        wat-close <eof>)
+                 (<~0> (<~> <pos> (<result> #f) (<many> module-field)) <eof>)))))
 
   #|proc:parser-wat-module
   The `parser-wat-module` parser reads exactly one Core 3.0 text module and returns its canonical

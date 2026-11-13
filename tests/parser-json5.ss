@@ -2,6 +2,7 @@
         (cspp parser json5))
 
 (include "parser-external-tools.ss")
+(include "parser-test-support.ss")
 
 (define json5-value
   (lambda (text)
@@ -50,7 +51,7 @@
      (= 1 (json5-value "/* before */ 1 // after"))
 
      ;; error: a block comment must terminate.
-     (error? (parse-json5 "/* unterminated"))
+     (raises-parser-error? (lambda () (parse-json5 "/* unterminated")))
 
      (json5-object?
       (json5-value "{$value: 1, _x: 2, cafe\x301;: 3, null: 4}"))
@@ -62,13 +63,13 @@
                  0)))
 
      ;; error: an identifier name cannot start with an ASCII digit.
-     (error? (parse-json5 "{1name: true}"))
+     (raises-parser-error? (lambda () (parse-json5 "{1name: true}")))
 
      ;; error: a literal token cannot be followed by an identifier character.
-     (error? (parse-json5 "trueValue"))
+     (raises-parser-error? (lambda () (parse-json5 "trueValue")))
 
      ;; error: Infinity must be a complete numeric token.
-     (error? (parse-json5 "Infinityx"))
+     (raises-parser-error? (lambda () (parse-json5 "Infinityx")))
 
      )
 
@@ -91,10 +92,10 @@
      (string=? "\x1F3BC;" (json5-value "'\\uD83C\\uDFBC'"))
 
      ;; error: a zero escape cannot be followed by a decimal digit.
-     (error? (parse-json5 "'\\01'"))
+     (raises-parser-error? (lambda () (parse-json5 "'\\01'")))
 
      ;; error: a high surrogate escape must be followed by a low surrogate escape.
-     (error? (parse-json5 "'\\uD83C'"))
+     (raises-parser-error? (lambda () (parse-json5 "'\\uD83C'")))
 
      )
 
@@ -111,10 +112,10 @@
           (nan? (json5-value "-NaN")))
 
      ;; error: hexadecimal syntax requires at least one digit.
-     (error? (parse-json5 "0x"))
+     (raises-parser-error? (lambda () (parse-json5 "0x")))
 
      ;; error: an exponent requires at least one digit.
-     (error? (parse-json5 "1e+"))
+     (raises-parser-error? (lambda () (parse-json5 "1e+")))
 
      )
 
@@ -147,10 +148,10 @@
               (json5-object? (json5-member-value (vector-ref members 2))))))
 
      ;; error: arrays permit at most one trailing comma.
-     (error? (parse-json5 "[1,,]"))
+     (raises-parser-error? (lambda () (parse-json5 "[1,,]")))
 
      ;; error: objects permit at most one trailing comma.
-     (error? (parse-json5 "{a: 1,,}"))
+     (raises-parser-error? (lambda () (parse-json5 "{a: 1,,}")))
 
      )
 
@@ -205,3 +206,5 @@
            (equal? summary (successful-process-output result))))
 
      )
+
+(include "parser-json5-regressions.ss")

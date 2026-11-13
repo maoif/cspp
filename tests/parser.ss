@@ -5,9 +5,11 @@
         (cspp system process)
         (cspp utils)
         (cspp parser combinator)
-        (cspp parser wasm))
+        (cspp parser wasm)
+        (cspp parser scheme))
 
 (include "parser-external-tools.ss")
+(include "parser-test-support.ss")
 
 (mat parser-external-tools
 
@@ -28,13 +30,6 @@
     [(p in st) (run-binary-parser p in st)]))
 
 (define u8vec bytevector)
-
-(define capture-parser-error
-  (lambda (thunk)
-    (guard (err [(parser-error? err) err]
-                [else #f])
-      (thunk)
-      #f)))
 
 (define-parser <defined-item>
   (parser-call <item> inp state lvl))
@@ -118,15 +113,8 @@
 
 (mat parser-consumers
 
-     (let ([path (format "parser-wasm-minimal-~a.wasm" (random 9999))])
-       (dynamic-wind
-         (lambda ()
-           (write-u8vec path (u8vec #x00 #x61 #x73 #x6d 1 0 0 0)))
-         (lambda ()
-           (wasm-module? (parse-wasm-binary-module path)))
-         (lambda ()
-           (when (file-exists? path)
-             (delete-file path)))))
+     (with-parser-file #vu8(0 97 115 109 1 0 0 0)
+       (lambda (path) (wasm-module? (parse-wasm-binary-module path))))
 
      )
 
@@ -169,7 +157,7 @@
 (mat parser-errors
 
      ;; error: textual parser failure exposes string source and zero-based position fields.
-     (let ([err (capture-parser-error (lambda () (runT (<char> #\a) "xb")))])
+     (let ([err (parser-error-from (lambda () (runT (<char> #\a) "xb")))])
        (and (parser-error? err)
             (eq? 'run-textual-parser (parser-error-who err))
             (eq? 'expected (parser-error-kind err))
@@ -183,7 +171,7 @@
                     (parser-error->string err))))
 
      ;; error: newline tracking reports the failure line and column.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (runT (<~> (<string> "aa\nbb\n") (<char> #\c))
                                   "aa\nbb\nx")))])
        (and (parser-error? err)
@@ -194,7 +182,7 @@
                     (parser-error->string err))))
 
      ;; error: source-aware textual runner uses the supplied source.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (run-textual-parser/source (<char> #\a) "z" "input.ss")))])
        (and (parser-error? err)
             (equal? "input.ss" (parser-error-source err))
@@ -202,18 +190,18 @@
                     (parser-error->string err))))
 
      ;; error: textual file parser reports the source path.
-     (let ([path (format "parser-error-text-~a" (random 9999))])
-       (call-with-output-file path (lambda (p) (put-string p "z")))
-       (let ([err (capture-parser-error
-                   (lambda () (parse-textual-file (<char> #\a) path)))])
-         (delete-file path)
-         (and (parser-error? err)
-              (equal? path (parser-error-source err))
-              (equal? (format "~a:1:1: expected #\\a, got #\\z" path)
-                      (parser-error->string err)))))
+     (with-parser-file
+      (string->utf8 "z")
+      (lambda (path)
+        (let ([err (parser-error-from
+                    (lambda () (parse-textual-file (<char> #\a) path)))])
+          (and (parser-error? err)
+               (equal? path (parser-error-source err))
+               (equal? (format "~a:1:1: expected #\\a, got #\\z" path)
+                       (parser-error->string err))))))
 
      ;; error: binary parser failure reports byte offset and found byte.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (runB (<uimm8> #x0b) (u8vec #x20))))])
        (and (parser-error? err)
             (equal? "<bytevector>" (parser-error-source err))
@@ -226,18 +214,18 @@
                     (parser-error->string err))))
 
      ;; error: binary file parser reports the source path and byte offset.
-     (let ([path (format "parser-error-bin-~a" (random 9999))])
-       (write-u8vec! path (u8vec #x20))
-       (let ([err (capture-parser-error
-                   (lambda () (parse-binary-file (<uimm8> #x0b) path)))])
-         (delete-file path)
-         (and (parser-error? err)
-              (equal? path (parser-error-source err))
-              (equal? (format "~a:byte 0: expected #x0b, got #x20" path)
-                      (parser-error->string err)))))
+     (with-parser-file
+      (u8vec #x20)
+      (lambda (path)
+        (let ([err (parser-error-from
+                    (lambda () (parse-binary-file (<uimm8> #x0b) path)))])
+          (and (parser-error? err)
+               (equal? path (parser-error-source err))
+               (equal? (format "~a:byte 0: expected #x0b, got #x20" path)
+                       (parser-error->string err))))))
 
      ;; error: choice merges expected alternatives at the farthest offset.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (runT (</> (<string> "abx") (<string> "aby")) "abz")))])
        (and (parser-error? err)
             (= 2 (parser-error-offset err))
@@ -247,7 +235,7 @@
                     (parser-error->string err))))
 
      ;; error: sequence propagates the child failure without nested failed prefixes.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (runT (<~> (<char> #\a) (<char> #\b)) "ac")))])
        (and (parser-error? err)
             (not (string-contains? (parser-error->string err) "failed <~>"))
@@ -255,7 +243,7 @@
                     (parser-error->string err))))
 
      ;; error: <pos-at> recomputes text line and column for random access.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda () (runT (<pos-at> 3 (<char> #\z)) "a\nbx")))])
        (and (parser-error? err)
             (= 3 (parser-error-offset err))
@@ -265,7 +253,7 @@
                     (parser-error->string err))))
 
      ;; error: <u8vec> short input is a parser error, not a generic API error.
-     (let ([err (capture-parser-error (lambda () (runB (<u8vec> 3) (u8vec 1 2))))])
+     (let ([err (parser-error-from (lambda () (runB (<u8vec> 3) (u8vec 1 2))))])
        (and (parser-error? err)
             (eq? 'unexpected-eof (parser-error-kind err))
             (equal? "<bytevector>:byte 0: unexpected EOF while reading u8vec"
@@ -281,7 +269,8 @@
 
      (equal? #\a (runT <item> "a"))
      (equal? #\a (runT <item> "ab"))
-     (error? (runT <item> ""))
+     ;; Error case: an item is required at EOF.
+     (raises-parser-error? (lambda () (runT <item> "")))
 
      ;; TODO <fail> <pos> <msg> ...
 
@@ -291,16 +280,22 @@
 (mat text-prims
 
      (equal? #\a (runT (<char> #\a) "a"))
-     (error? (runT (<char> #\a) "b"))
+     ;; Error case: the next character must match a.
+     (raises-parser-error? (lambda () (runT (<char> #\a) "b")))
 
-     (error? (runT <letter> ""))
+     ;; Error case: a letter is required at EOF.
+     (raises-parser-error? (lambda () (runT <letter> "")))
+
      (equal? #\a (runT <letter> "a"))
 
-     (error? (runT <upper> "a"))
+     ;; Error case: a lowercase character is not uppercase.
+     (raises-parser-error? (lambda () (runT <upper> "a")))
+
      (equal? #\A (runT <upper> "A"))
 
      (equal? #\0 (runT <digit> "0"))
-     (error?  (runT <digit> "a"))
+     ;; Error case: a letter is not an ASCII decimal digit.
+     (raises-parser-error? (lambda () (runT <digit> "a")))
 
      (begin (define 0-9  (iota 10))
             (define 0-7  (iota 8))
@@ -350,26 +345,45 @@
                (equal? n (runT <upper-digit16> s)))
              0-15 (append 0-9-str A-F-str))
 
-     (error? (runT <bindigit> "3"))
-     (error? (runT <octdigit> "8"))
-     (error? (runT <hexdigit> "g"))
-     (error? (runT <upper-hexdigit> "a"))
-     (error? (runT <lower-hexdigit> "A"))
-     (error? (runT <digit2> "3"))
-     (error? (runT <digit8> "8"))
-     (error? (runT <digit10> "a"))
-     (error? (runT <upper-digit16> "a"))
-     (error? (runT <lower-digit16> "A"))
+     ;; Error case: 3 is not a binary digit.
+     (raises-parser-error? (lambda () (runT <bindigit> "3")))
+
+     ;; Error case: 8 is not an octal digit.
+     (raises-parser-error? (lambda () (runT <octdigit> "8")))
+
+     ;; Error case: g is not a hexadecimal digit.
+     (raises-parser-error? (lambda () (runT <hexdigit> "g")))
+
+     ;; Error case: a is not an uppercase hexadecimal digit.
+     (raises-parser-error? (lambda () (runT <upper-hexdigit> "a")))
+
+     ;; Error case: A is not a lowercase hexadecimal digit.
+     (raises-parser-error? (lambda () (runT <lower-hexdigit> "A")))
+
+     ;; Error case: 3 is not a base-two digit.
+     (raises-parser-error? (lambda () (runT <digit2> "3")))
+
+     ;; Error case: 8 is not a base-eight digit.
+     (raises-parser-error? (lambda () (runT <digit8> "8")))
+
+     ;; Error case: a is not a decimal digit.
+     (raises-parser-error? (lambda () (runT <digit10> "a")))
+
+     ;; Error case: a is not an uppercase base-sixteen digit.
+     (raises-parser-error? (lambda () (runT <upper-digit16> "a")))
+
+     ;; Error case: A is not a lowercase base-sixteen digit.
+     (raises-parser-error? (lambda () (runT <lower-digit16> "A")))
 
 
      (equal? #\a (runT (<one-of> "abc") "a"))
      (equal? #\b (runT (<one-of> "abc") "b"))
      ;; error
-     (error? (runT (<one-of> "abc") "d"))
+     (raises-parser-error? (lambda () (runT (<one-of> "abc") "d")))
 
      (equal? #\d (runT (<none-of> "abc") "d"))
      ;; error
-     (error? (runT (<none-of> "abc") "b"))
+     (raises-parser-error? (lambda () (runT (<none-of> "abc") "b")))
 
 
      )
@@ -383,7 +397,10 @@
      (= 1 (runB (</> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3)) (u8vec 1)))
      (= 2 (runB (</> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3)) (u8vec 2)))
      (= 3 (runB (</> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3)) (u8vec 3)))
-     (error? (runB (</> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3)) (u8vec 4)))
+     ;; Error case: none of the immediate-byte alternatives matches 4.
+     (raises-parser-error?
+      (lambda ()
+        (runB (</> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3)) (u8vec 4))))
 
      (equal? '(1 64)
              (runB (</> (<~> (<uimm8> 1) <u8>)
@@ -391,19 +408,27 @@
                         (<~> (<uimm8> 3) <u8>))
                    (u8vec 1 64)))
      ;; error
-     (error? (runB (</> (<~> (<uimm8> 1) <u8>)
-                     (<~> (<uimm8> 2) <u8>)
-                     (<~> (<uimm8> 3) <u8>))
-                (u8vec 4 64)))
+     (raises-parser-error?
+      (lambda ()
+        (runB (</> (<~> (<uimm8> 1) <u8>)
+                (<~> (<uimm8> 2) <u8>)
+                (<~> (<uimm8> 3) <u8>))
+           (u8vec 4 64))))
 
      (equal? '(1 2 3)
              (runB (<~> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3))
                    (u8vec 1 2 3)))
      ;; error
-     (error? (runB (<~> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3))
-                (u8vec 1 3)))
-     (error? (runB (<~> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3))
-                (u8vec 2 2 3)))
+     (raises-parser-error?
+      (lambda ()
+        (runB (<~> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3))
+           (u8vec 1 3))))
+
+     ;; Error case: the first byte violates the immediate sequence.
+     (raises-parser-error?
+      (lambda ()
+        (runB (<~> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3))
+           (u8vec 2 2 3))))
 
      (equal? '((3 33) (1 11) (2 22))
              (runB (<rep> (</> (<~> (<uimm8> 1) <u8>)
@@ -418,11 +443,13 @@
                           2)
                    (u8vec 3 33 1 11 2 22)))
      ;; error
-     (error? (runB (<rep> (</> (<~> (<uimm8> 1) <u8>)
-                        (<~> (<uimm8> 2) <u8>)
-                        (<~> (<uimm8> 3) <u8>))
-                   4)
-            (u8vec 3 33 1 11 2 22)))
+     (raises-parser-error?
+      (lambda ()
+        (runB (<rep> (</> (<~> (<uimm8> 1) <u8>)
+                   (<~> (<uimm8> 2) <u8>)
+                   (<~> (<uimm8> 3) <u8>))
+              4)
+       (u8vec 3 33 1 11 2 22))))
 
      (equal? '(6 6 6 6)
              (runB (<bind> (<uimm8> 4)
@@ -480,8 +507,12 @@
 
      ;; https://www.h-schmidt.net/FloatConverter/IEEE754.html
 ;;;; f32
-     (= +0.0   (runB <f32le> (u8vec 0 0 0 0)))
-     (= -0.0   (runB <f32le> (u8vec 0 0 0 #x80)))
+     ;; eqv? distinguishes the signs of inexact zero; numeric = does not.
+     (eqv? +0.0 (runB <f32> (u8vec 0 0 0 0)))
+     (eqv? -0.0 (runB <f32> (u8vec 0 0 0 #x80)))
+
+     (eqv? +0.0 (runB <f32le> (u8vec 0 0 0 0)))
+     (eqv? -0.0 (runB <f32le> (u8vec 0 0 0 #x80)))
      (= +inf.0 (runB <f32le> (u8vec 0 0 #x80 #x7f)))
      (= -inf.0 (runB <f32le> (u8vec 0 0 #x80 #xff)))
      (nan?     (runB <f32le> (u8vec 0 0 #xc0 #x7f)))
@@ -500,8 +531,8 @@
      (= 2.25  (runB <f32le> (u8vec #x00 #x00 #x10 #x40)))
      (= 3.75  (runB <f32le> (u8vec #x00 #x00 #x70 #x40)))
 
-     (= +0.0   (runB <f32be> (u8vec 0 0 0 0)))
-     (= -0.0   (runB <f32be> (u8vec #x80 0 0 0)))
+     (eqv? +0.0 (runB <f32be> (u8vec 0 0 0 0)))
+     (eqv? -0.0 (runB <f32be> (u8vec #x80 0 0 0)))
      (= +inf.0 (runB <f32be> (u8vec #x7f #x80 0 0)))
      (= -inf.0 (runB <f32be> (u8vec #xff #x80 0 0)))
      (nan?     (runB <f32be> (u8vec #x7f #xc0 0 0)))
@@ -521,8 +552,11 @@
      (= 3.75  (runB <f32be> (u8vec #x40 #x70 #x00 #x00)))
 
 ;;;; f64
-     (= +0.0   (runB <f64le> (u8vec 0 0 0 0 0 0 0 0)))
-     (= -0.0   (runB <f64le> (u8vec #x00 #x00 #x00 #x00 #x00 #x00 #x00 #x80)))
+     (eqv? +0.0 (runB <f64> (u8vec 0 0 0 0 0 0 0 0)))
+     (eqv? -0.0 (runB <f64> (u8vec 0 0 0 0 0 0 0 #x80)))
+
+     (eqv? +0.0 (runB <f64le> (u8vec 0 0 0 0 0 0 0 0)))
+     (eqv? -0.0 (runB <f64le> (u8vec #x00 #x00 #x00 #x00 #x00 #x00 #x00 #x80)))
      (= +inf.0 (runB <f64le> (u8vec #x00 #x00 #x00 #x00 #x00 #x00 #xF0 #x7F)))
      (= -inf.0 (runB <f64le> (u8vec #x00 #x00 #x00 #x00 #x00 #x00 #xF0 #xFF)))
      (nan?     (runB <f64le> (u8vec #x00 #x00 #x00 #x00 #x00 #x00 #xF8 #x7F)))
@@ -534,8 +568,8 @@
      (= 0.69  (runB <f64le> (u8vec #x14 #xAE #x47 #xE1 #x7A #x14 #xE6 #x3F)))  ;; ln(2)
      (= 2.3   (runB <f64le> (u8vec #x66 #x66 #x66 #x66 #x66 #x66 #x02 #x40)))  ;; ln(10)
 
-     (= +0.0   (runB <f64be> (u8vec 0 0 0 0 0 0 0 0)))
-     (= -0.0   (runB <f64be> (u8vec #x80 #x00 #x00 #x00 #x00 #x00 #x00 #x00)))
+     (eqv? +0.0 (runB <f64be> (u8vec 0 0 0 0 0 0 0 0)))
+     (eqv? -0.0 (runB <f64be> (u8vec #x80 #x00 #x00 #x00 #x00 #x00 #x00 #x00)))
      (= +inf.0 (runB <f64be> (u8vec #x7F #xF0 #x00 #x00 #x00 #x00 #x00 #x00)))
      (= -inf.0 (runB <f64be> (u8vec #xFF #xF0 #x00 #x00 #x00 #x00 #x00 #x00)))
      (nan?     (runB <f64be> (u8vec #x7F #xF8 #x00 #x00 #x00 #x00 #x00 #x00)))
@@ -651,12 +685,12 @@
                                   (apply append
                                          (map (lambda (n) (encode-uleb128 n)) n*)))])
                   (equal? n* (runB (<rep> <uleb128> 20) bv)))
-                (let* ([n* (random-list (lambda () (random (expt 2 bits))) 20 21)]
+                (let* ([n* (random-list (lambda () (random (expt 2 (fx1- bits)))) 20 21)]
                        [bv (apply bytevector
                                   (apply append
                                          (map (lambda (n) (encode-sleb128 bits n)) n*)))])
                   (equal? n* (runB (<rep> (<sleb128> bits) 20) bv)))
-                (let* ([n* (random-list (lambda () (- (random (expt 2 bits)))) 20 21)]
+                (let* ([n* (random-list (lambda () (- (random (expt 2 (fx1- bits))))) 20 21)]
                        [bv (apply bytevector
                                   (apply append
                                          (map (lambda (n) (encode-sleb128 bits n)) n*)))])
@@ -673,7 +707,8 @@
              (runB (<u8*> 1 2) (u8vec 1 2 3)))
      (equal? '(1 2 3)
              (runB (<u8*> 1 2 3) (u8vec 1 2 3)))
-     (error? (runB (<u8*> 1 2 3) (u8vec 1 3 3)))
+     ;; Error case: the byte sequence differs at its second byte.
+     (raises-parser-error? (lambda () (runB (<u8*> 1 2 3) (u8vec 1 3 3))))
 
      ;; Large 64-bit immediate values are valid even when they are not fixnums.
      (= #xffffffffffffffff
@@ -707,13 +742,13 @@
                    (u8vec 9 1 2 8)))
 
      ;; error: the bounded parser must consume every declared byte.
-     (error? (runB (<bounded> 2 <u8>) (u8vec 1 2)))
+     (raises-parser-error? (lambda () (runB (<bounded> 2 <u8>) (u8vec 1 2))))
 
      ;; error: the declared range cannot extend beyond the binary input.
-     (error? (runB (<bounded> 3 (<rep> <u8> 3)) (u8vec 1 2)))
+     (raises-parser-error? (lambda () (runB (<bounded> 3 (<rep> <u8> 3)) (u8vec 1 2))))
 
      ;; error: failures inside a bounded parser retain the absolute byte offset.
-     (let ([err (capture-parser-error
+     (let ([err (parser-error-from
                  (lambda ()
                    (runB (<~> (<uimm8> 9)
                               (<bounded> 2 (<~> (<uimm8> 1) (<uimm8> 2))))
@@ -772,7 +807,7 @@
 
      ;; error: a partially consumed item reports its own exact failure.
      (let ([err
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (runT (<many-until> (<~> (<char> #\a) (<char> #\b))
                                    (<char> #\x3b))
@@ -786,7 +821,7 @@
 
      ;; error: EOF without a terminator propagates the item parser's EOF failure.
      (let ([err
-            (capture-parser-error
+            (parser-error-from
              (lambda ()
                (runT (<many-until> (<char> #\a) (<char> #\x3b)) "aa")))])
        (and (parser-error? err)
@@ -806,7 +841,7 @@
      (error? (<many-until> (<char> #\a) 'not-a-parser))
 
      ;; error
-     (error? (runT (<some> (<char> #\a)) ""))
+     (raises-parser-error? (lambda () (runT (<some> (<char> #\a)) "")))
 
      (equal? '(#\a)
              (runT (<some> (<char> #\a)) "a"))
@@ -815,7 +850,9 @@
      (equal? '(#\a #\a #\a)
              (runT (<some> (<char> #\a)) "aaabbc"))
 
-     (error? (runT (<some> <item>) ""))
+     ;; Error case: one or more items are required at EOF.
+     (raises-parser-error? (lambda () (runT (<some> <item>) "")))
+
      (equal? '(#\a #\b #\c)
              (runT (<some> <item>) "abc"))
 
@@ -824,7 +861,7 @@
      (equal? #\0 (runT (</> <letter> <digit> <whitespace>) "0"))
      (equal? #\space (runT (</> <letter> <digit> <whitespace>) " "))
      ;; error
-     (error? (runT (</> <letter> <digit> <whitespace>) "!"))
+     (raises-parser-error? (lambda () (runT (</> <letter> <digit> <whitespace>) "!")))
 
      (equal? '(#\d #\e #\f #\1 #\2 #\3 #\a #\b #\c)
              (runT (<many> (</> <digit> <letter>)) "def123abc"))
@@ -836,7 +873,9 @@
      (equal? '(#\A #\9 #\space)
              (runT (<~> <letter> <digit> <whitespace>) "A9 "))
      ;; error
-     (error? (runT (<~> <letter> <digit> <whitespace>) " A9 "))
+     (raises-parser-error?
+      (lambda ()
+        (runT (<~> <letter> <digit> <whitespace>) " A9 ")))
 
      (equal? '(#\space #\A #\9 #\space)
              (runT (<~> <whitespace> <letter> (</> <digit> <upper>) <whitespace>)
@@ -845,8 +884,10 @@
              (runT (<~> <whitespace> <letter> (</> <digit> <upper>) <whitespace>)
                    " AU "))
      ;; error
-     (error? (runT (<~> <whitespace> <letter> (</> <digit> <upper>) <whitespace>)
-                   " Aa "))
+     (raises-parser-error?
+      (lambda ()
+        (runT (<~> <whitespace> <letter> (</> <digit> <upper>) <whitespace>)
+              " Aa ")))
 
      (equal? '((#\a #\b #\c) (#\space #\space))
              (runT (<~> (<some> <letter>) (<many> <whitespace>)) "abc  "))
@@ -855,14 +896,17 @@
      (equal? '(#\) #\) #\)) (runT (<rep> (<char> #\)) 3) ")))"))
      (equal? '(#\a #\a #\a) (runT (<rep> (<char> #\a) 3) "aaaa"))
      ;; error
-     (error? (runT (<rep> (<char> #\a) 3) "aa"))
+     (raises-parser-error? (lambda () (runT (<rep> (<char> #\a) 3) "aa")))
 
      (equal? #\a (runT (<~n> 0 <letter> <digit> <letter>) "a1c"))
      (equal? #\1 (runT (<~n> 1 <letter> <digit> <letter>) "a1c"))
      (equal? #\c (runT (<~n> 2 <letter> <digit> <letter>) "a1c"))
      ;; error
-     (error? (runT (<~n> 0 <letter> <digit> <letter>) "a12"))
-     (error? (runT (<~n> 2 <letter> <digit> <letter>) "a12"))
+     (raises-parser-error? (lambda () (runT (<~n> 0 <letter> <digit> <letter>) "a12")))
+
+     ;; Error case: the indexed letter parser cannot accept a digit.
+     (raises-parser-error? (lambda () (runT (<~n> 2 <letter> <digit> <letter>) "a12")))
+
      (error? (runT (<~n> -1 <letter> <digit> <letter>) "a1c"))
      (error? (runT (<~n> 3 <letter> <digit> <letter>) "a1c"))
 
@@ -922,8 +966,10 @@
      (equal? '((#\a) (#\b) (#\c))
              (runT <anbncn> "abcc"))
      ;; error
-     (error? (runT <anbncn> "aabc"))
-     (error? (runT <anbncn> "abbc"))
+     (raises-parser-error? (lambda () (runT <anbncn> "aabc")))
+
+     ;; Error case: the grammar requires equal runs of a, b, and c.
+     (raises-parser-error? (lambda () (runT <anbncn> "abbc")))
 
      (begin (define (<onion> c)
               (<bind> (<some> (<char> #\())
@@ -940,8 +986,10 @@
      ;; still ok
      (equal? #\a (runT (<onion> #\a) "((a)))"))
      ;; error
-     (error? (runT (<~> (<onion> #\a) <eof>) "((a)))"))
-     (error? (runT (<onion> #\a) "(((a))"))
+     (raises-parser-error? (lambda () (runT (<~> (<onion> #\a) <eof>) "((a)))")))
+
+     ;; Error case: the nested form is missing a closing parenthesis.
+     (raises-parser-error? (lambda () (runT (<onion> #\a) "(((a))")))
 
 
      (begin (define <lines>
@@ -957,9 +1005,13 @@
      (equal? '("aa" "bb" "cc" "dd" "ff")
              (runT <lines> "aa\nbb\ncc\ndd\nff"))
      ;; error: no content
-     (error? (runT <lines> ""))
-     (error? (runT <lines> "\n"))
-     (error? (runT <lines> "\n\n\n"))
+     (raises-parser-error? (lambda () (runT <lines> "")))
+
+     ;; Error case: a blank line cannot supply the required word.
+     (raises-parser-error? (lambda () (runT <lines> "\n")))
+
+     ;; Error case: multiple blank lines cannot supply the required word.
+     (raises-parser-error? (lambda () (runT <lines> "\n\n\n")))
 
      ;; TODO states <map-st> <bind-st>
 
@@ -970,18 +1022,38 @@
      (equal? '("" #\a) (runT (<~> (<string> "") <item>) "a"))
 
      ;; Empty choice should fail rather than act as a zero-width successful parser.
-     (error? (runT (</>) "abc"))
+     (raises-parser-error? (lambda () (runT (</>) "abc")))
 
      (begin (define arabic-indic-one (string (integer->char #x0661))) #t)
 
      ;; error: digit parser rejects non-ASCII numeric characters.
-     (error? (runT <digit> arabic-indic-one))
+     (raises-parser-error? (lambda () (runT <digit> arabic-indic-one)))
 
      ;; error: numeric digit parser rejects non-ASCII numeric characters.
-     (error? (runT <digit10> arabic-indic-one))
+     (raises-parser-error? (lambda () (runT <digit10> arabic-indic-one)))
 
      ;; Repetition over zero-width success is an invalid parser shape.
      (error? (runT (<many> (<result> 1)) ""))
      (error? (runT (<some> (<result> 1)) ""))
 
      )
+
+(include "parser-scheme-regressions.ss")
+
+(mat parser-error-capture-contract
+
+     (not (parser-error-from (lambda () (parse-scheme-datum "1"))))
+
+     (not (raises-parser-error? (lambda () (parse-scheme-datum "1"))))
+
+     ;; Error case: malformed syntax returns its structured condition.
+     (parser-error? (parser-error-from (lambda () (parse-scheme-datum "("))))
+
+     ;; Error control: unrelated implementation conditions must propagate by identity.
+     (for-all
+      (lambda (capture)
+        (let ([sentinel (make-assertion-violation)])
+          (guard (condition [else (eq? condition sentinel)])
+            (capture (lambda () (raise sentinel)))
+            #f)))
+      (list parser-error-from raises-parser-error?)))

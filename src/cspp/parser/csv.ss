@@ -14,14 +14,57 @@
           (cspp io)
           (cspp utils))
 
+  ;; Record fields are immutable. Accessors return stored strings/vectors without copying;
+  ;; these objects may be mutable, so a record wrapper does not imply deep immutability.
+
+  #|proc:csv-document?
+  Returns #t when object is a parsed CSV document, and #f otherwise. The object parameter may be
+  any Scheme value.
+  |#
+  #|proc:csv-document-delimiter
+  Returns the delimiter character used for parsing from record, a csv-document record. The
+  stored value is returned without copying.
+  |#
+  #|proc:csv-document-records
+  Returns a vector of csv-record records in source order from record, a csv-document record. The
+  stored value is returned without copying.
+  |#
+  #|proc:csv-document-warnings
+  Returns a vector of csv-warning records in record/field order from record, a csv-document
+  record. The stored value is returned without copying.
+  |#
   (define-record-type csv-document
     (fields (immutable delimiter)
             (immutable records)
             (immutable warnings)))
 
+  #|proc:csv-record?
+  Returns #t when object is a CSV record, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:csv-record-fields
+  Returns a vector of field strings in source order, including empty fields from record, a
+  csv-record record. The stored value is returned without copying.
+  |#
   (define-record-type csv-record
     (fields (immutable fields)))
 
+  #|proc:csv-warning?
+  Returns #t when object is a CSV warning, and #f otherwise. The object parameter may be any
+  Scheme value.
+  |#
+  #|proc:csv-warning-record-index
+  Returns the zero-based record index from record, a csv-warning record. The stored value is
+  returned without copying.
+  |#
+  #|proc:csv-warning-field-index
+  Returns the zero-based field index within that record from record, a csv-warning record. The
+  stored value is returned without copying.
+  |#
+  #|proc:csv-warning-message
+  Returns the warning string describing removed spaces around a quoted field from record, a
+  csv-warning record. The stored value is returned without copying.
+  |#
   (define-record-type csv-warning
     (fields (immutable record-index)
             (immutable field-index)
@@ -56,13 +99,16 @@
          (<char> #\newline)
          (<char> #\return)))
 
-  (define (<escaped-field> delimiter)
+  (define <escaped-field-character>
+    ;; Only a quote can begin the doubled-quote alternative. Retain its EOF diagnostics.
+    (parser-ordinary-character
+     (lambda (character) (not (char=? character #\")))
+     (</> (<as> #\" (<string> "\"\""))
+          (<satisfy-char> (lambda (character) (not (char=? character #\")))))))
+
+  (define <escaped-field>
     (<~1> (<char> #\")
-          (<as-string>
-           (<many> (</> (<as> #\" (<string> "\"\""))
-                         (<satisfy-char>
-                          (lambda (character)
-                            (not (char=? character #\")))))))
+          (<as-string> (<many> <escaped-field-character>))
           (<char> #\")))
 
   (define (<unescaped-field> delimiter)
@@ -81,13 +127,21 @@
              (make-parsed-csv-field
               (cadr value)
               (or (pair? (car value)) (pair? (caddr value)))))
-           (<~> (<many> (<char> #\space))
-                (<escaped-field> delimiter)
-                (<many> (<char> #\space)))))
+           (let ([padding (if (char=? delimiter #\space)
+                              (<result> '())
+                              (<many> (<char> #\space)))])
+             (<~> padding <escaped-field> padding))))
 
   (define (<field> delimiter)
-    (</> (<quoted-field> delimiter)
-         (<unescaped-field> delimiter)))
+    (let* ([unescaped (<unescaped-field> delimiter)]
+           [original (</> (<quoted-field> delimiter) unescaped)])
+      (define-parser field-parser
+        (let-values ([(status character next-input)
+                      (parser-call <item> (save-input inp) state lvl)])
+          (parser-call
+           (if (and status (not (memv character '(#\space #\")))) unescaped original)
+           inp state lvl)))
+      field-parser))
 
   (define (<record> delimiter)
     (<map> (lambda (value)
@@ -182,7 +236,11 @@
 
   #|proc:parse-csv
   The `parse-csv` procedure parses string `text` as CSV using optional character `delimiter`.
+  Returns a `csv-document` with ordered record and warning vectors; empty input has no records.
+  Every record must have the same field count. Line endings may be CR, LF, or CRLF.
+  Spaces around quoted fields are removed with warnings; unquoted spaces remain field data.
   The delimiter defaults to comma and cannot be double quote, carriage return, or line feed.
+  Syntax and inconsistent-width failures raise `&parser-error`.
   |#
   (define parse-csv
     (case-lambda
@@ -195,8 +253,11 @@
 
   #|proc:parse-csv-file
   The `parse-csv-file` procedure parses the regular file at string `path` as CSV using optional
-  character `delimiter`. The delimiter defaults to comma and cannot be double quote, carriage
-  return, or line feed.
+  character `delimiter`, and returns a `csv-document` as described by `parse-csv`.
+  The delimiter defaults to comma and cannot be double quote, carriage return, or line feed.
+  Input is strict UTF-8, ignoring one initial UTF-8 signature and preserving newline characters.
+  Syntax failures raise `&parser-error` with `path` as the source. File and decoding conditions
+  propagate without being converted to parser errors.
   |#
   (define parse-csv-file
     (case-lambda

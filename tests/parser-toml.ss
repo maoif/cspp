@@ -2,6 +2,7 @@
         (cspp parser toml))
 
 (include "parser-external-tools.ss")
+(include "parser-test-support.ss")
 
 (define toml-root
   (lambda (text)
@@ -10,24 +11,6 @@
 (define toml-value
   (lambda (text key)
     (toml-table-ref (toml-root text) key)))
-
-(define with-temporary-toml-bytes
-  (lambda (bytes procedure)
-    (let ([path (format "parser-toml-~a.toml" (random 999999))]
-          [port #f])
-      (dynamic-wind
-        (lambda ()
-          (set! port
-                (open-file-output-port path
-                                       (file-options no-fail replace)
-                                       (buffer-mode block)
-                                       #f))
-          (put-bytevector port bytes)
-          (flush-output-port port))
-        (lambda () (procedure path))
-        (lambda ()
-          (when port (close-port port))
-          (when (file-exists? path) (delete-file path)))))))
 
 (mat parse-toml-records
 
@@ -71,10 +54,12 @@
                (toml-value "s = \"A\\e\\xE9\"" "s"))
 
      ;; error: unrecognized escape sequences are reserved.
-     (error? (parse-toml "s = \"\\q\""))
+     (raises-parser-error? (lambda () (parse-toml "s = \"\\q\"")))
 
      ;; error: a basic string cannot contain an unescaped control character.
-     (error? (parse-toml (string #\s #\space #\= #\space #\" #\x7F #\")))
+     (raises-parser-error?
+      (lambda ()
+        (parse-toml (string #\s #\space #\= #\space #\" #\x7F #\"))))
 
      (and (= 0 (toml-value "x=0" "x"))
           (= 0 (toml-value "x=-0" "x"))
@@ -88,25 +73,27 @@
           (nan? (toml-value "x=nan" "x")))
 
      ;; error: decimal integers cannot contain leading zeros.
-     (error? (parse-toml "x=0123"))
+     (raises-parser-error? (lambda () (parse-toml "x=0123")))
 
      ;; error: underscores must be surrounded by digits.
-     (error? (parse-toml "x=1__0"))
+     (raises-parser-error? (lambda () (parse-toml "x=1__0")))
 
      ;; error: TOML special floats are lowercase.
-     (error? (parse-toml "x=Infinity"))
+     (raises-parser-error? (lambda () (parse-toml "x=Infinity")))
 
      ;; error: ordinary key/value pairs cannot share a line.
-     (error? (parse-toml "a=1 b=2"))
+     (raises-parser-error? (lambda () (parse-toml "a=1 b=2")))
 
      ;; error: a bare carriage return is not a TOML newline.
-     (error? (parse-toml "a=1\rb=2"))
+     (raises-parser-error? (lambda () (parse-toml "a=1\rb=2")))
 
      (and (= 1 (toml-table-ref (toml-root "a=1\r\n") "a"))
           (= 2 (toml-table-ref (toml-root "a=1\r\nb=2") "b")))
 
      ;; error: comments cannot contain forbidden control characters.
-     (error? (parse-toml (string-append "a=1 #" (string #\x7f))))
+     (raises-parser-error?
+      (lambda ()
+        (parse-toml (string-append "a=1 #" (string #\x7f)))))
 
      )
 
@@ -125,6 +112,11 @@
 
      (let ([value (toml-value "t=1979-05-27 07:32:01.1234567899" "t")])
        (and (toml-local-date-time? value)
+            (= 1979 (toml-local-date-time-year value))
+            (= 5 (toml-local-date-time-month value))
+            (= 27 (toml-local-date-time-day value))
+            (= 7 (toml-local-date-time-hour value))
+            (= 32 (toml-local-date-time-minute value))
             (= 1 (toml-local-date-time-second value))
             (= 123456789 (toml-local-date-time-nanosecond value))))
 
@@ -135,25 +127,35 @@
             (= 2 (toml-local-date-month date))
             (= 29 (toml-local-date-day date))
             (toml-local-time? time)
-            (= 0 (toml-local-time-second time))))
+            (= 23 (toml-local-time-hour time))
+            (= 59 (toml-local-time-minute time))
+            (= 0 (toml-local-time-second time))
+            (= 0 (toml-local-time-nanosecond time))))
+
+     (let ([time (toml-value "t=07:08:09.0123" "t")])
+       (and (toml-local-time? time)
+            (= 7 (toml-local-time-hour time))
+            (= 8 (toml-local-time-minute time))
+            (= 9 (toml-local-time-second time))
+            (= 12300000 (toml-local-time-nanosecond time))))
 
      ;; error: February 29 requires a leap year.
-     (error? (parse-toml "d=1900-02-29"))
+     (raises-parser-error? (lambda () (parse-toml "d=1900-02-29")))
 
      ;; error: a month must be between 1 and 12.
-     (error? (parse-toml "d=2000-13-01"))
+     (raises-parser-error? (lambda () (parse-toml "d=2000-13-01")))
 
      ;; error: an hour must be between 0 and 23.
-     (error? (parse-toml "t=24:00"))
+     (raises-parser-error? (lambda () (parse-toml "t=24:00")))
 
      ;; error: a minute must be between 0 and 59.
-     (error? (parse-toml "t=12:60"))
+     (raises-parser-error? (lambda () (parse-toml "t=12:60")))
 
-     ;; error: a second must be between 0 and 59.
-     (error? (parse-toml "t=12:00:60"))
+     ;; error: a second cannot exceed the leap-second value 60.
+     (raises-parser-error? (lambda () (parse-toml "t=12:00:61")))
 
      ;; error: an offset hour must be between 0 and 23.
-     (error? (parse-toml "t=1979-05-27T07:32+24:00"))
+     (raises-parser-error? (lambda () (parse-toml "t=1979-05-27T07:32+24:00")))
 
      (let ([array (toml-value
                    "a = [1, 'two', [3], # comment\n true,]"
@@ -207,31 +209,33 @@
                        "name"))))
 
      ;; error: a key cannot be defined twice.
-     (error? (parse-toml "a=1\na=2"))
+     (raises-parser-error? (lambda () (parse-toml "a=1\na=2")))
 
      ;; error: bare and quoted spellings define the same key.
-     (error? (parse-toml "a=1\n'a'=2"))
+     (raises-parser-error? (lambda () (parse-toml "a=1\n'a'=2")))
 
      ;; error: a scalar cannot be extended as a table.
-     (error? (parse-toml "a=1\n[a.b]"))
+     (raises-parser-error? (lambda () (parse-toml "a=1\n[a.b]")))
 
      ;; error: an explicitly defined table cannot be redefined.
-     (error? (parse-toml "[a]\n[a]"))
+     (raises-parser-error? (lambda () (parse-toml "[a]\n[a]")))
 
      ;; error: a dotted-key table cannot later be explicitly defined.
-     (error? (parse-toml "a.b=1\n[a]"))
+     (raises-parser-error? (lambda () (parse-toml "a.b=1\n[a]")))
 
      ;; error: inline tables cannot be extended later.
-     (error? (parse-toml "a={b=1}\na.c=2"))
+     (raises-parser-error? (lambda () (parse-toml "a={b=1}\na.c=2")))
 
      ;; error: a static array cannot become an array of tables.
-     (error? (parse-toml "a=[]\n[[a]]"))
+     (raises-parser-error? (lambda () (parse-toml "a=[]\n[[a]]")))
 
      ;; error: a table cannot become an array of tables.
-     (error? (parse-toml "[a]\n[[a]]"))
+     (raises-parser-error? (lambda () (parse-toml "[a]\n[[a]]")))
 
-     ;; error: a nested array of tables requires an existing array parent.
-     (error? (parse-toml "[[a.b]]\nx=1"))
+     ;; An ordinary table parent is created implicitly for a nested array of tables.
+     (let* ([root (toml-document-root (parse-toml "[[a.b]]\nx=1"))]
+            [array (toml-table-ref (toml-table-ref root "a") "b")])
+       (= 1 (toml-table-ref (vector-ref (toml-array-elements array) 0) "x")))
 
      )
 
@@ -295,7 +299,46 @@
            (equal? summary (successful-process-output result))))
 
      ;; error: malformed UTF-8 must not be replaced while reading TOML files.
-     (error?
-      (with-temporary-toml-bytes (bytevector #xc3 #x28) parse-toml-file))
+     (raises-decoding-error?
+      (lambda ()
+        (with-parser-file
+         (parser-test-bytes (string->utf8 "a=\"") #vu8(195 40) (string->utf8 "\""))
+         parse-toml-file)))
 
      )
+
+(mat parse-toml-leap-seconds
+
+     (let ([value (toml-value "t=2016-12-31T23:59:60Z" "t")])
+       (and (= 60 (toml-offset-date-time-second value))
+            (= 0 (toml-offset-date-time-offset-seconds value))))
+
+     (let ([value (toml-value "t=2017-01-01T00:59:60.125+01:00" "t")])
+       (and (= 60 (toml-offset-date-time-second value))
+            (= 125000000 (toml-offset-date-time-nanosecond value))
+            (= 3600 (toml-offset-date-time-offset-seconds value))))
+
+     (= 60 (toml-local-date-time-second
+            (toml-value "t=2016-12-31T23:59:60" "t")))
+
+     (= 60 (toml-local-time-second (toml-value "t=23:59:60" "t"))))
+
+(mat parse-toml-inline-error-positions
+
+     ;; Error cases: duplicate and conflicting inline keys point to the offending key,
+     ;; including nested tables/arrays and multiline TOML 1.1 inline tables.
+     (for-all
+      (lambda (source offset line column)
+        (guard (condition
+                [(parser-error? condition)
+                 (and (= offset (parser-error-offset condition))
+                      (= line (parser-error-line condition))
+                      (= column (parser-error-column condition)))])
+          (parse-toml source)
+          #f))
+      '("a={x=1,x=2}" "a={x=1,x.y=2}" "a={x.y=1,x=2}"
+        "a={\n x=1,\n x=2\n}" "a=[{x=1,x=2}]" "a={outer={x=1,x=2}}"
+        "x=1\nx=2")
+      '(7 7 9 11 8 14 4) '(0 0 0 2 0 0 1) '(7 7 9 1 8 14 0)))
+
+(include "parser-toml-regressions.ss")

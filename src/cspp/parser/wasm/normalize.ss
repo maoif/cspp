@@ -2,6 +2,7 @@
   (export normalize-wat-module)
   (import (cspp chez)
           (only (cspp list) make-list-builder)
+          (only (cspp vector) vfold-left vfor-all)
           (cspp parser wasm opcodes)
           (cspp parser wasm types)
           (cspp parser wasm validate)
@@ -16,7 +17,8 @@
 
   (define-record-type normalization-state
     (fields fields namespaces field-indices field-namespaces
-            (mutable type-groups) (mutable type-catalog)))
+            type-groups (mutable type-catalog) (mutable type-count)
+            function-types resolved-type-uses deferred-type-uses))
 
   (define vector-map*
     (lambda (procedure vector)
@@ -27,13 +29,6 @@
               (begin
                 (vector-set! result index (procedure (vector-ref vector index)))
                 (loop (fx1+ index))))))))
-
-  (define vector->list*
-    (lambda (vector)
-      (let loop ([index (fx1- (vector-length vector))] [result '()])
-        (if (fx< index 0)
-            result
-            (loop (fx1- index) (cons (vector-ref vector index) result))))))
 
   (define identifier-key
     (lambda (identifier)
@@ -120,12 +115,27 @@
          field*)
         table)))
 
+  (define check-import-order!
+    (lambda (fields)
+      (let loop ([index 0] [defined? #f])
+        (unless (fx= index (vector-length fields))
+          (let* ([field (vector-ref fields index)] [imported? (imported-field? field)])
+            (when (and imported? defined?)
+              (normalization-error (wat-module-field-pos field)
+                                   "WebAssembly imports must precede entity definitions"))
+            (loop (fx1+ index)
+                  (or defined?
+                      (and (not imported?)
+                           (memq (field-entity-kind field)
+                                 '(function table memory global tag))))))))))
+
   (define build-state
     (lambda (module)
       (let* ([field* (wat-module-fields module)]
              [namespaces (make-eq-hashtable)]
              [field-indices (make-eq-hashtable)]
              [field-namespaces (make-eq-hashtable)])
+        (check-import-order! field*)
         (hashtable-set! namespaces 'type (build-type-namespace! field*))
         (for-each
          (lambda (kind)
@@ -136,7 +146,9 @@
                 (build-entity-namespace! field* kind field-indices))))
          '(function table memory global tag element data))
         (make-normalization-state
-         field* namespaces field-indices field-namespaces '() '#()))))
+         field* namespaces field-indices field-namespaces
+         (make-list-builder) (make-vector 16 #f) 0
+         (make-hashtable function-type-hash equal?) (make-eq-hashtable) (make-list-builder)))))
 
   (define resolve-reference
     (lambda (state kind reference)
@@ -230,8 +242,7 @@
 
   (define normalize-explicit-types!
     (lambda (state)
-      (let ([group-builder (make-list-builder)]
-            [catalog-builder (make-list-builder)] [type-index 0])
+      (let ([group-builder (normalization-state-type-groups state)] [type-index 0])
         (vector-for-each
          (lambda (field)
            (when (eq? 'recursive-type (wat-module-field-kind field))
@@ -249,17 +260,18 @@
                            state (wat-subtype-syntax-composite-type syntax)
                            type-index))])
                     (subtype-builder subtype)
-                    (catalog-builder subtype)
+                    (append-type!
+                     state subtype
+                     (= 1 (vector-length
+                           (wat-recursive-type-syntax-subtypes
+                            (wat-module-field-data field)))))
                     (set! type-index (fx1+ type-index))))
                 (wat-recursive-type-syntax-subtypes
                  (wat-module-field-data field)))
                (group-builder
                 (make-wasm-recursive-type
                  (list->immutable-vector (subtype-builder)))))))
-         (normalization-state-fields state))
-        (normalization-state-type-groups-set! state (group-builder))
-        (normalization-state-type-catalog-set!
-         state (list->immutable-vector (catalog-builder))))))
+         (normalization-state-fields state)))))
 
   (define value-type=?
     (lambda (left right)
@@ -274,11 +286,7 @@
   (define type-vector=?
     (lambda (left right)
       (and (= (vector-length left) (vector-length right))
-           (let loop ([index 0])
-             (or (fx= index (vector-length left))
-                 (and (value-type=? (vector-ref left index)
-                                    (vector-ref right index))
-                      (loop (fx1+ index))))))))
+           (vfor-all value-type=? left right))))
 
   (define function-type=?
     (lambda (left right)
@@ -290,7 +298,7 @@
   (define function-type-at
     (lambda (state index offset)
       (let ([catalog (normalization-state-type-catalog state)])
-        (if (< index (vector-length catalog))
+        (if (< index (normalization-state-type-count state))
             (let ([composite (wasm-subtype-composite-type
                               (vector-ref catalog index))])
               (if (wasm-function-type? composite)
@@ -302,34 +310,68 @@
   (define known-function-type-at
     (lambda (state index)
       (let ([catalog (normalization-state-type-catalog state)])
-        (and (< index (vector-length catalog))
+        (and (< index (normalization-state-type-count state))
              (let ([composite
                     (wasm-subtype-composite-type (vector-ref catalog index))])
                (and (wasm-function-type? composite) composite))))))
 
+  ;; Structural keys keep reference-type signatures comparable across distinct records.
+  (define function-type-key
+    (lambda (type)
+      (define value-key
+        (lambda (value)
+          (if (wasm-reference-type? value)
+              (cons (wasm-reference-type-nullable? value) (wasm-reference-type-heap-type value))
+              value)))
+      (cons (vector-map* value-key (wasm-function-type-parameters type))
+            (vector-map* value-key (wasm-function-type-results type)))))
+
+  ;; equal-hash bounds its traversal, so hash every component of these flat signature keys.
+  (define function-type-hash
+    (lambda (key)
+      (define mix
+        (lambda (hash value)
+          (fxlogand (most-positive-fixnum)
+                    (fx+/wraparound (fx*/wraparound hash 31) (equal-hash value)))))
+      (define hash-vector
+        (lambda (hash types)
+          (vfold-left mix (mix hash (vector-length types)) types)))
+      (hash-vector (hash-vector 0 (car key)) (cdr key))))
+
+  (define append-type!
+    (lambda (state subtype singular?)
+      (let* ([index (normalization-state-type-count state)]
+             [catalog (normalization-state-type-catalog state)]
+             [type (wasm-subtype-composite-type subtype)])
+        (when (fx= index (vector-length catalog))
+          (let ([grown (make-vector (fx* 2 (vector-length catalog)) #f)])
+            (vector-copy! catalog 0 grown 0 index)
+            (normalization-state-type-catalog-set! state grown)
+            (set! catalog grown)))
+        (vector-set! catalog index subtype)
+        (normalization-state-type-count-set! state (fx1+ index))
+        ;; Type-use abbreviations match only singular final function types without supertypes.
+        (when (and singular? (wasm-subtype-final? subtype)
+                   (zero? (vector-length (wasm-subtype-supertypes subtype)))
+                   (wasm-function-type? type))
+          (let ([key (function-type-key type)]
+                [signatures (normalization-state-function-types state)])
+            ;; Preserve the earliest explicit or implicit match, including index zero.
+            (unless (hashtable-contains? signatures key)
+              (hashtable-set! signatures key index))))
+        index)))
+
   (define append-implicit-function-type!
     (lambda (state type)
-      (let* ([index (vector-length (normalization-state-type-catalog state))]
-             [subtype (make-wasm-subtype #t '#() type)]
-             [group (make-wasm-recursive-type (vector subtype))])
-        (normalization-state-type-groups-set!
-         state (append (normalization-state-type-groups state) (list group)))
-        (normalization-state-type-catalog-set!
-         state (vector-append (normalization-state-type-catalog state)
-                              (vector subtype)))
+      (let* ([subtype (make-wasm-subtype #t '#() type)]
+             [index (append-type! state subtype #t)])
+        ((normalization-state-type-groups state)
+         (make-wasm-recursive-type (vector subtype)))
         index)))
 
   (define find-function-type
     (lambda (state type)
-      (let ([catalog (normalization-state-type-catalog state)])
-        (let loop ([index 0])
-          (cond [(fx= index (vector-length catalog)) #f]
-                [(let ([composite
-                        (wasm-subtype-composite-type (vector-ref catalog index))])
-                   (and (wasm-function-type? composite)
-                        (function-type=? composite type)))
-                 index]
-                [else (loop (fx1+ index))])))))
+      (hashtable-ref (normalization-state-function-types state) (function-type-key type) #f)))
 
   (define type-use-signature
     (lambda (state type-use)
@@ -342,47 +384,77 @@
 
   (define resolve-type-use
     (lambda (state type-use)
-      (let* ([signature (type-use-signature state type-use)]
-             [reference (wat-type-use-index type-use)])
-        (if reference
-            (let* ([index (resolve-reference state 'type reference)]
-                   [numeric? (natural? (wat-index-reference-value reference))]
-                   [explicit (if numeric?
-                                 (known-function-type-at state index)
-                                 (function-type-at
-                                  state index (wat-type-use-pos type-use)))]
+      (let ([resolved (normalization-state-resolved-type-uses state)])
+        (or (hashtable-ref resolved type-use #f)
+            (let* ([parameters (wat-type-use-parameters type-use)]
+                   [_ (when (> (vector-length parameters) 1)
+                        (add-binding-ids! (make-eq-hashtable) parameters 0 'local))]
+                   [signature (type-use-signature state type-use)]
+                   [reference (wat-type-use-index type-use)]
+                   [offset (wat-type-use-pos type-use)]
                    [inline?
-                    (or (positive? (vector-length
-                                    (wasm-function-type-parameters signature)))
-                        (positive? (vector-length
-                                    (wasm-function-type-results signature))))])
-              (when (and inline? explicit
-                         (not (function-type=? explicit signature)))
-                (normalization-error
-                 (wat-type-use-pos type-use)
-                 "inline WebAssembly signature conflicts with its type use"))
-              index)
-            (let ([index (find-function-type state signature)])
-              (or index (append-implicit-function-type! state signature)))))))
+                    (or (positive? (vector-length (wasm-function-type-parameters signature)))
+                        (positive? (vector-length (wasm-function-type-results signature))))]
+                   [index
+                    (if reference
+                        (let ([index (resolve-reference state 'type reference)])
+                          (if inline?
+                              ;; Numeric references may name types generated by later fields or bodies.
+                              ((normalization-state-deferred-type-uses state)
+                               (list index signature offset))
+                              (unless (natural? (wat-index-reference-value reference))
+                                (function-type-at state index offset)))
+                          index)
+                        (or (find-function-type state signature)
+                            (append-implicit-function-type! state signature)))])
+              (hashtable-set! resolved type-use index)
+              index)))))
 
-  (define field-type-use
-    (lambda (field)
-      (let ([kind (wat-module-field-kind field)]
-            [data (wat-module-field-data field)])
-        (cond [(eq? kind 'function) (vector-ref data 0)]
-              [(eq? kind 'tag) data]
-              [(and (eq? kind 'import)
-                    (memq (vector-ref data 2) '(function tag)))
-               (vector-ref data 3)]
-              [else #f]))))
+  (define check-deferred-type-uses!
+    (lambda (state)
+      (for-each
+       (lambda (use)
+         (unless (function-type=? (function-type-at state (car use) (caddr use)) (cadr use))
+           (normalization-error
+            (caddr use) "inline WebAssembly signature conflicts with its type use")))
+       ((normalization-state-deferred-type-uses state)))))
 
   (define intern-implicit-types!
     (lambda (state)
-      (vector-for-each
-       (lambda (field)
-         (let ([type-use (field-type-use field)])
-           (when type-use (resolve-type-use state type-use))))
-       (normalization-state-fields state))))
+      (let ([uses (make-list-builder)])
+        (define visit
+          (lambda (syntax)
+            (cond
+              [(wat-type-use? syntax) (uses syntax)]
+              [(wat-block-type-syntax? syntax)
+               (let ([use (wat-block-type-syntax-type-use syntax)])
+                 (when (or (wat-type-use-index use)
+                           (positive? (vector-length (wat-type-use-parameters use)))
+                           (> (vector-length (wat-type-use-results use)) 1))
+                   (uses use)))]
+              [(wat-instruction-syntax? syntax)
+               (visit (wat-instruction-syntax-immediates syntax))
+               (visit (wat-instruction-syntax-body syntax))
+               (visit (wat-instruction-syntax-alternate syntax))]
+              [(wat-inline-abbreviation? syntax)
+               (visit (wat-inline-abbreviation-data syntax))]
+              [(wat-element-segment-syntax? syntax)
+               (visit (wat-element-segment-syntax-offset syntax))
+               (visit (wat-element-segment-syntax-items syntax))]
+              [(wat-data-segment-syntax? syntax)
+               (visit (wat-data-segment-syntax-offset syntax))]
+              [(vector? syntax) (vector-for-each visit syntax)])))
+        (vector-for-each
+         (lambda (field)
+           (visit (wat-module-field-data field))
+           (visit (wat-module-field-abbreviation field)))
+         (normalization-state-fields state))
+        ;; Execution vectors contain each operand once; do not revisit retained operand trees.
+        ;; Sort source offsets because folded headers precede their operands in source order.
+        (for-each
+         (lambda (use) (resolve-type-use state use))
+         (list-sort (lambda (left right) (< (wat-type-use-pos left) (wat-type-use-pos right)))
+                    (uses))))))
 
   (define normalize-block-type
     (lambda (state syntax)
@@ -409,18 +481,16 @@
 ;;;;===----------------------------------------------------------------------===
 
   (define resolve-label
-    (lambda (reference label*)
+    (lambda (reference labels depth)
       (let ([value (wat-index-reference-value reference)])
         (if (natural? value)
             value
-            (let ([key (identifier-key value)])
-              (let loop ([label* label*] [depth 0])
-                (cond [(null? label*)
-                       (normalization-error
-                        (wat-index-reference-pos reference)
-                        (format "unknown WebAssembly label identifier: ~a" value))]
-                      [(eq? key (car label*)) depth]
-                      [else (loop (cdr label*) (fx1+ depth))])))))))
+            (let ([binding-depth (hashtable-ref labels (identifier-key value) #f)])
+              (if binding-depth
+                  (fx- depth binding-depth)
+                  (normalization-error
+                   (wat-index-reference-pos reference)
+                   (format "unknown WebAssembly label identifier: ~a" value))))))))
 
   (define resolve-local
     (lambda (reference locals)
@@ -462,18 +532,24 @@
               (resolve-reference state second-kind (vector-ref immediate* 1)))))
 
   (define normalize-immediates
-    (lambda (state instruction locals label*)
+    (lambda (state instruction locals labels depth)
       (let* ([mnemonic (wat-instruction-syntax-mnemonic instruction)]
              [descriptor (wasm-opcode-by-mnemonic mnemonic)]
              [shape (wasm-opcode-immediate-shape descriptor)]
              [immediate* (wat-instruction-syntax-immediates instruction)])
         (case shape
-          [(none i32 i64 f32 f64 vector-bytes shuffle-bytes lane-index)
-           immediate*]
+          [(none f32 f64 vector-bytes shuffle-bytes lane-index) immediate*]
+          [(i32 i64)
+           ;; WAT integer literals are unsigned bit patterns; binary constants are signed.
+           (let* ([width (if (eq? shape 'i32) 32 64)]
+                  [value (vector-ref immediate* 0)])
+             (vector (if (logbit? (fx1- width) value)
+                         (- value (ash 1 width))
+                         value)))]
           [(block-type try-table)
            (vector (normalize-block-type state (vector-ref immediate* 0)))]
           [(label-index)
-           (vector (resolve-label (vector-ref immediate* 0) label*))]
+           (vector (resolve-label (vector-ref immediate* 0) labels depth))]
           [(function-index)
            (vector (resolve-reference state 'function (vector-ref immediate* 0)))]
           [(type-index)
@@ -515,8 +591,8 @@
                    (vector-ref immediate* 1))]
           [(label-vector)
            (let ([target* (vector-ref immediate* 0)])
-             (vector (vector-map* (lambda (target) (resolve-label target label*)) target*)
-                     (resolve-label (vector-ref immediate* 1) label*)))]
+             (vector (vector-map* (lambda (target) (resolve-label target labels depth)) target*)
+                     (resolve-label (vector-ref immediate* 1) labels depth)))]
           [(table-pair)
            (normalize-index-pair state 'table 'table immediate*)]
           [(memory-pair)
@@ -540,7 +616,7 @@
            (vector (resolve-reference state 'type (vector-ref immediate* 0))
                    (vector-ref immediate* 1))]
           [(br-on-cast)
-           (vector (resolve-label (vector-ref immediate* 0) label*)
+           (vector (resolve-label (vector-ref immediate* 0) labels depth)
                    (normalize-reference-type state (vector-ref immediate* 1))
                    (normalize-reference-type state (vector-ref immediate* 2)))]
           [else
@@ -549,38 +625,47 @@
             (format "unsupported WebAssembly normalization shape: ~a" shape))]))))
 
   (define normalize-expression
-    (lambda (state instruction* locals label*)
-      (vector-map*
-       (lambda (instruction)
-         (let* ([label (wat-instruction-syntax-label instruction)]
-                [nested-label* (cons (identifier-key label) label*)]
-                [body (normalize-expression
-                       state (wat-instruction-syntax-body instruction)
-                       locals nested-label*)]
-                [alternate-syntax (wat-instruction-syntax-alternate instruction)]
-                [alternate
-                 (cond [(not alternate-syntax) '#()]
-                       [(or (zero? (vector-length alternate-syntax))
-                            (wat-instruction-syntax?
-                             (vector-ref alternate-syntax 0)))
-                        (normalize-expression state alternate-syntax
-                                              locals nested-label*)]
-                       [else
-                        (vector-map*
-                         (lambda (catch)
-                           (make-wasm-catch
-                            (wat-catch-syntax-kind catch)
-                            (and (wat-catch-syntax-tag catch)
-                                 (resolve-reference
-                                  state 'tag (wat-catch-syntax-tag catch)))
-                            (resolve-label (wat-catch-syntax-label catch)
-                                           nested-label*)))
-                         alternate-syntax)])])
-           (make-wasm-instruction
-            (wat-instruction-syntax-mnemonic instruction)
-            (normalize-immediates state instruction locals label*)
-            body alternate)))
-       instruction*)))
+    (lambda (state instruction* locals)
+      ;; Each expression owns its table. Bind absolute depths while traversing a body,
+      ;; then restore the shadowed binding before processing siblings or catch targets.
+      (let ([labels (make-eq-hashtable)])
+        (let normalize ([instruction* instruction*] [depth 0])
+          (vector-map*
+           (lambda (instruction)
+             (let* ([label (identifier-key (wat-instruction-syntax-label instruction))]
+                    [previous (and label (hashtable-ref labels label #f))]
+                    [body
+                     (begin
+                       (when label (hashtable-set! labels label (fx1+ depth)))
+                       (normalize (wat-instruction-syntax-body instruction) (fx1+ depth)))]
+                    [alternate-syntax (wat-instruction-syntax-alternate instruction)]
+                    [catches? (and alternate-syntax
+                                   (positive? (vector-length alternate-syntax))
+                                   (wat-catch-syntax? (vector-ref alternate-syntax 0)))]
+                    [alternate
+                     (if (or (not alternate-syntax) catches?)
+                         '#()
+                         (normalize alternate-syntax (fx1+ depth)))])
+               (when label
+                 (if previous
+                     (hashtable-set! labels label previous)
+                     (hashtable-delete! labels label)))
+               (make-wasm-instruction
+                (wat-instruction-syntax-mnemonic instruction)
+                (normalize-immediates state instruction locals labels depth)
+                body
+                (if catches?
+                    ;; try_table catches target the enclosing scope, not its body label.
+                    (vector-map*
+                     (lambda (catch)
+                       (make-wasm-catch
+                        (wat-catch-syntax-kind catch)
+                        (and (wat-catch-syntax-tag catch)
+                             (resolve-reference state 'tag (wat-catch-syntax-tag catch)))
+                        (resolve-label (wat-catch-syntax-label catch) labels depth)))
+                     alternate-syntax)
+                    alternate))))
+           instruction*)))))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Entity and abbreviation normalization
@@ -596,7 +681,7 @@
             (loop (fx1+ index)))))))
 
   (define function-locals
-    (lambda (state type-use local*)
+    (lambda (state local*)
       (vector-map* (lambda (binding)
                      (normalize-value-type state (wat-binding-type binding)))
                    local*)))
@@ -617,8 +702,8 @@
         (add-binding-ids! locals parameter* 0 'local)
         (add-binding-ids! locals local* parameter-count 'local)
         (make-wasm-function
-         type-index (function-locals state type-use local*)
-         (normalize-expression state (vector-ref data 2) locals '())))))
+         type-index (function-locals state local*)
+         (normalize-expression state (vector-ref data 2) locals)))))
 
   (define normalize-table-type
     (lambda (state type)
@@ -638,7 +723,8 @@
              (make-wasm-limits
               (wat-limits-syntax-address-type limits)
               (wat-limits-syntax-minimum limits)
-              (wat-limits-syntax-maximum limits)))))))
+              (wat-limits-syntax-maximum limits)
+              (wat-limits-syntax-shared? limits)))))))
 
   (define normalize-global-type
     (lambda (state type)
@@ -658,21 +744,6 @@
     (lambda (index)
       (vector (make-wasm-instruction 'ref.func (vector index) '#() '#()))))
 
-  (define concatenate-bytevectors
-    (lambda (bytevector*)
-      (let ([length (let loop ([bytevector* bytevector*] [length 0])
-                      (if (null? bytevector*)
-                          length
-                          (loop (cdr bytevector*)
-                                (+ length (bytevector-length (car bytevector*))))))])
-        (let ([result (make-bytevector length)])
-          (let loop ([bytevector* bytevector*] [offset 0])
-            (if (null? bytevector*)
-                result
-                (let ([bytes (car bytevector*)])
-                  (bytevector-copy! bytes 0 result offset (bytevector-length bytes))
-                  (loop (cdr bytevector*) (+ offset (bytevector-length bytes))))))))))
-
   (define normalize-element
     (lambda (state syntax table-index override-mode)
       (let* ([mode (or override-mode (wat-element-segment-syntax-mode syntax))]
@@ -691,7 +762,7 @@
                    (if (wat-element-segment-syntax-offset syntax)
                        (normalize-expression
                         state (wat-element-segment-syntax-offset syntax)
-                        (make-eq-hashtable) '())
+                        (make-eq-hashtable))
                        (zero-expression
                         (or (wat-element-segment-syntax-address-type syntax) 'i32))))]
              [items (wat-element-segment-syntax-items syntax)]
@@ -704,8 +775,7 @@
                   items)
                   (vector-map*
                    (lambda (expression)
-                     (normalize-expression state (vector expression)
-                                           (make-eq-hashtable) '()))
+                     (normalize-expression state expression (make-eq-hashtable)))
                    items))])
         (make-wasm-element mode reference-type table offset initializers))))
 
@@ -724,23 +794,23 @@
                    (if (wat-data-segment-syntax-offset syntax)
                        (normalize-expression
                         state (wat-data-segment-syntax-offset syntax)
-                        (make-eq-hashtable) '())
+                        (make-eq-hashtable))
                        (zero-expression
                         (or (wat-data-segment-syntax-address-type syntax) 'i32))))])
         (make-wasm-data
          mode memory offset
          (concatenate-bytevectors
-          (vector->list* (wat-data-segment-syntax-strings syntax)))))))
+          (vector->list (wat-data-segment-syntax-strings syntax)))))))
 
   (define normalize-inline-table
     (lambda (state field abbreviation)
-      (let* ([syntax (wat-inline-abbreviation-data abbreviation)]
+      (let* ([data (wat-inline-abbreviation-data abbreviation)]
+             [syntax (vector-ref data 1)]
              [count (vector-length (wat-element-segment-syntax-items syntax))]
              [address-type
               (or (wat-element-segment-syntax-address-type syntax) 'i32)]
              [type (make-wasm-table-type
-                    (normalize-reference-type
-                     state (wat-element-segment-syntax-reference-type syntax))
+                    (normalize-reference-type state (vector-ref data 0))
                     (make-wasm-limits address-type count count))]
              [index (hashtable-ref
                      (normalization-state-field-indices state) field #f)])
@@ -751,7 +821,7 @@
     (lambda (state field abbreviation)
       (let* ([syntax (wat-inline-abbreviation-data abbreviation)]
              [bytes (concatenate-bytevectors
-                     (vector->list* (wat-data-segment-syntax-strings syntax)))]
+                     (vector->list (wat-data-segment-syntax-strings syntax)))]
              [pages (quotient (+ (bytevector-length bytes) 65535) 65536)]
              [address-type (or (wat-data-segment-syntax-address-type syntax) 'i32)]
              [index (hashtable-ref
@@ -802,25 +872,62 @@
          (lambda (name) (builder (make-wasm-export name kind index)))
          (wat-module-field-exports field)))))
 
+  (define custom-anchor-section
+    (lambda (section)
+      ;; Preserve the existing first/last aliases in either placement direction.
+      (case section [(first) 'type] [(last) 'data] [else section])))
+
+  (define standard-section-order
+    '(type import function table memory tag global export start element data-count code data))
+
   (define preceding-section
     (lambda (section)
-      (case section
-        [(type) #f] [(import) 'type] [(function) 'import] [(table) 'function]
-        [(memory) 'table] [(tag) 'memory] [(global) 'tag] [(export) 'global]
-        [(start) 'export] [(element) 'start] [(code) 'element] [(data) 'code]
-        [else #f])))
+      (let loop ([sections standard-section-order] [previous #f])
+        (cond [(null? sections) #f]
+              [(eq? section (car sections)) previous]
+              [else (loop (cdr sections) (car sections))]))))
+
+  (define custom-placement-rank
+    (lambda (field)
+      (let* ([placement (vector-ref (wat-module-field-data field) 2)]
+             [after (wat-custom-placement-after placement)]
+             [section (custom-anchor-section (or after (wat-custom-placement-before placement)))])
+        (let loop ([sections standard-section-order] [rank 0])
+          (if (eq? section (car sections))
+              (+ (* 2 rank) (if after 1 0))
+              (loop (cdr sections) (+ rank 1)))))))
+
+  (define normalize-custom-sections
+    (lambda (fields section-present?)
+      (for-each
+       (lambda (field)
+         (let* ([placement (vector-ref (wat-module-field-data field) 2)]
+                [section (or (wat-custom-placement-after placement)
+                             (wat-custom-placement-before placement))])
+           (unless (or (memq section '(first last)) (section-present? section))
+             (normalization-error
+              (wat-custom-placement-pos placement)
+              "WebAssembly custom placement requires a nonempty section"))))
+       fields)
+      ;; Stable sorting preserves source order for identical placement directives.
+      (list->immutable-vector
+       (map normalize-custom-section
+            (list-sort (lambda (left right)
+                         (< (custom-placement-rank left) (custom-placement-rank right)))
+                       fields)))))
 
   (define normalize-custom-section
     (lambda (field)
       (let* ([data (wat-module-field-data field)]
              [placement (vector-ref data 2)]
-             [after (or (wat-custom-placement-after placement)
+             [after (or (and (wat-custom-placement-after placement)
+                             (custom-anchor-section (wat-custom-placement-after placement)))
                         (and (wat-custom-placement-before placement)
                              (preceding-section
-                              (wat-custom-placement-before placement))))])
+                              (custom-anchor-section (wat-custom-placement-before placement)))))])
         (make-wasm-custom-section
          (vector-ref data 0)
-         (concatenate-bytevectors (vector->list* (vector-ref data 1)))
+         (concatenate-bytevectors (vector->list (vector-ref data 1)))
          after))))
 
 ;;;;===----------------------------------------------------------------------===
@@ -835,6 +942,25 @@
             [export-builder (make-list-builder)] [element-builder (make-list-builder)]
             [data-builder (make-list-builder)] [custom-builder (make-list-builder)]
             [start #f] [start-pos #f])
+        (define section-present?
+          (lambda (section)
+            (case section
+              [(type) (pair? ((normalization-state-type-groups state)))]
+              [(import) (pair? (import-builder))]
+              [(function code) (pair? (function-builder))]
+              [(table) (pair? (table-builder))]
+              [(memory) (pair? (memory-builder))]
+              [(tag) (pair? (tag-builder))]
+              [(global) (pair? (global-builder))]
+              [(export) (pair? (export-builder))]
+              [(start) (and start #t)]
+              [(element) (pair? (element-builder))]
+              [(data) (pair? (data-builder))]
+              [(data-count)
+               (exists (lambda (function)
+                         (expression-uses-data-index? (wasm-function-body function)))
+                       (function-builder))]
+              [else #f])))
         (vector-for-each
          (lambda (field)
            (when (imported-field? field)
@@ -852,9 +978,14 @@
                                     (normalize-inline-table
                                      state field (wat-module-field-abbreviation field))])
                         (table-builder table) (element-builder element))
-                      (table-builder
-                       (make-wasm-table
-                        (normalize-table-type state (wat-module-field-data field)) #f)))]
+                      (let* ([data (wat-module-field-data field)]
+                             [initialized? (vector? data)])
+                        (table-builder
+                         (make-wasm-table
+                          (normalize-table-type state (if initialized? (vector-ref data 0) data))
+                          (and initialized?
+                               (normalize-expression state (vector-ref data 1)
+                                                     (make-eq-hashtable)))))))]
                  [(memory)
                   (if (wat-module-field-abbreviation field)
                       (let-values ([(memory data)
@@ -870,7 +1001,7 @@
                      (make-wasm-global
                       (normalize-global-type state (vector-ref data 0))
                       (normalize-expression state (vector-ref data 1)
-                                            (make-eq-hashtable) '()))))]
+                                            (make-eq-hashtable)))))]
                  [(tag)
                   (tag-builder
                    (make-wasm-tag
@@ -907,7 +1038,7 @@
                     (wat-inline-abbreviation-data
                      (wat-module-field-abbreviation field))
                     #f #f))]
-                 [(custom) (custom-builder (normalize-custom-section field))]))
+                 [(custom) (custom-builder field)]))
              (when (and (memq (field-entity-kind field)
                               '(function table memory global tag))
                         (positive? (vector-length
@@ -915,7 +1046,7 @@
                (append-inline-exports! field export-builder state))))
          (normalization-state-fields state))
         (make-wasm-module
-         (list->immutable-vector (normalization-state-type-groups state))
+         (list->immutable-vector ((normalization-state-type-groups state)))
          (list->immutable-vector (import-builder))
          (list->immutable-vector (function-builder))
          (list->immutable-vector (table-builder))
@@ -925,7 +1056,7 @@
          (list->immutable-vector (export-builder)) start
          (list->immutable-vector (element-builder))
          (list->immutable-vector (data-builder))
-         (list->immutable-vector (custom-builder))))))
+         (normalize-custom-sections (custom-builder) section-present?)))))
 
   #|proc:normalize-wat-module
   Normalizes positioned WAT syntax `module` into a canonical module. Returns a `wasm-module` on
@@ -938,6 +1069,8 @@
                 (let ([state (build-state module)])
                   (normalize-explicit-types! state)
                   (intern-implicit-types! state)
-                  (assemble-module state))))))
+                  (let ([module (assemble-module state)])
+                    (check-deferred-type-uses! state)
+                    module))))))
 
   )

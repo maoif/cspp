@@ -9,6 +9,7 @@
           parse-textual-file parse-binary-file
           ;; TODO remove these
           parser-call input-pos input-pos-set! input-len save-input binary-input-data
+          parser-discard-many parser-counted-vector parser-ordinary-character
           bindigits->num octdigits->num digits->num hexdigits->num
 
           <fail> <fail-with> <eof> <result> <satisfy>
@@ -65,10 +66,24 @@
           (cspp vector)
           (cspp io)
           (cspp file)
+          (cspp parser private)
           (cspp utils))
 
 
 #|
+Independent parses may share a parser across threads. Each invocation owns its input cursor and
+result builders. Callers must synchronize mutation of shared input, callback state, and values
+returned by `<result>` or `<as>`. Complete lazy-parser installation before concurrent parsing;
+synchronize any later replacement with all parses using that lazy parser.
+
+Fiber safety is not guaranteed. Resuming a continuation captured in a parser callback has
+undefined behavior. Backtracking and lookahead restore the input cursor only: mutations by
+callbacks to caller-owned state are not rolled back. Callbacks may run in unsuccessful branches.
+
+Text positions use zero-based character offsets, lines, and columns. CR, LF, U+2028, and U+2029
+start a new line; CRLF counts as one line break, even across primitive parser boundaries.
+Binary positions use zero-based byte offsets and have no line or column.
+
 For simplicity, "PC" in the following documentation means "parser combinator".
 |#
 
@@ -80,7 +95,56 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-  ;; TODO mrv stuff
+  #|proc:parser-error?
+  Returns #t when object has the parser-error condition type, and #f otherwise. The object
+  parameter may be any Scheme value.
+  |#
+  #|proc:parser-error-who
+  Returns the symbol naming the runner that raised err. The err parameter must satisfy
+  parser-error?.
+  |#
+  #|proc:parser-error-kind
+  Returns the failure-category symbol of err, such as expected, unexpected-eof, custom, or
+  predicate. The err parameter must satisfy parser-error?.
+  |#
+  #|proc:parser-error-message
+  Returns the diagnostic message string of err, without a source/position prefix. The err
+  parameter must satisfy parser-error?.
+  |#
+  #|proc:parser-error-source
+  Returns the source-label string of err; default labels are <string> and <bytevector>. The err
+  parameter must satisfy parser-error?.
+  |#
+  #|proc:parser-error-offset
+  Returns the zero-based absolute character offset for text or byte offset for binary input in
+  err. The err parameter must satisfy parser-error?.
+  |#
+  #|proc:parser-error-line
+  Returns the zero-based line number of textual err, or #f for a binary error. The err parameter
+  must satisfy parser-error?.
+  |#
+  #|proc:parser-error-column
+  Returns the zero-based character column of textual err, or #f for a binary error. The err
+  parameter must satisfy parser-error?.
+  |#
+  #|proc:parser-error-expected
+  Returns the list of expected token descriptions of err, in first-occurrence order; it may be
+  empty. The err parameter must satisfy parser-error?.
+  |#
+  #|proc:parser-error-found
+  Returns the found value in err, usually a character or byte. The symbol eof means end of input;
+  #f means unspecified or an actual parsed #f. Predicate failures may report any parsed value.
+  The err parameter must satisfy parser-error?.
+  |#
+  #|proc:parser-error-context
+  Returns the list of parser-context labels of err; it may be empty. The err parameter must
+  satisfy parser-error?.
+  |#
+  #|proc:parser-error-causes
+  Returns the list of opaque internal failure records contributing to err; it may be empty.
+  These records are not public parser-error conditions and cannot be inspected with these
+  accessors. The err parameter must satisfy parser-error?.
+  |#
 
   (define-condition-type &parser-error &error
     %make-parser-error
@@ -113,33 +177,41 @@ For simplicity, "PC" in the following documentation means "parser combinator".
             (immutable context)
             (immutable causes)))
 
-  (define parser-position-offset<?
-    (lambda (a b)
-      (< (parser-position-offset a) (parser-position-offset b))))
+  ;; Keep failed alternatives as a tree; summarize their diagnostics only at the runner.
+  (define-record-type parser-choice-failure
+    (parent parser-failure)
+    (fields))
 
   (define parser-failure-offset
     (lambda (failure)
       (parser-position-offset (parser-failure-position failure))))
 
+  (define exact-natural?
+    (lambda (value) (and (natural? value) (exact? value))))
+
   (define byte?
     (lambda (x)
       (and (integer? x) (exact? x) (<= 0 x #xff))))
 
-  (define unique-cons
-    (lambda (x x*)
-      (if (exists (lambda (y) (equal? x y)) x*) x* (append x* (list x)))))
-
-  (define unique-append
-    (lambda (x* y*)
-      (fold-left (lambda (res x) (unique-cons x res)) x* y*)))
-
-  (define write-to-string
-    (lambda (x)
-      (let ([p (open-output-string)])
-        (write x p)
-        (let ([s (get-output-string p)])
-          (close-output-port p)
-          s))))
+  ;; Small failures avoid a hash table; wide choices switch to indexed deduplication.
+  (define make-unique-builder
+    (lambda ()
+      (let ([seen #f] [count 0] [builder (make-list-builder)])
+        (case-lambda
+          [() (builder)]
+          [(value)
+           (unless (if seen
+                       (hashtable-contains? seen value)
+                       (member value (builder)))
+             (builder value)
+             (if seen
+                 (hashtable-set! seen value #t)
+                 (begin
+                   (set! count (fx1+ count))
+                   (when (fx= count 16)
+                     (let ([table (make-hashtable equal-hash equal?)])
+                       (for-each (lambda (item) (hashtable-set! table item #t)) (builder))
+                       (set! seen table))))))]))))
 
   (define format-byte
     (lambda (b)
@@ -150,12 +222,10 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   (define format-parser-item
     (lambda (x)
-      (cond [(char? x) (write-to-string x)]
-            [(string? x) (write-to-string x)]
-            [(eq? x 'eof) "EOF"]
+      (cond [(eq? x 'eof) "EOF"]
             [(symbol? x) (symbol->string x)]
             [(byte? x) (format-byte x)]
-            [else (write-to-string x)])))
+            [else (format "~s" x)])))
 
   (define format-parser-item-list
     (lambda (x*)
@@ -165,12 +235,16 @@ For simplicity, "PC" in the following documentation means "parser combinator".
              (format "~a or ~a" (format-parser-item (car x*))
                      (format-parser-item (cadr x*)))]
             [else
-             (let loop ([x* x*] [res ""])
-               (cond [(null? (cdr x*))
-                      (format "~aor ~a" res (format-parser-item (car x*)))]
-                     [else
-                      (loop (cdr x*)
-                            (format "~a~a, " res (format-parser-item (car x*))))]))])))
+             (call-with-port (open-output-string)
+               (lambda (port)
+                 (let loop ([items x*])
+                   (if (null? (cdr items))
+                       (begin (display "or " port)
+                              (display (format-parser-item (car items)) port))
+                       (begin (display (format-parser-item (car items)) port)
+                              (display ", " port)
+                              (loop (cdr items)))))
+                 (get-output-string port)))])))
 
   (define parser-failure-message*
     (lambda (failure)
@@ -195,7 +269,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   #|proc:parser-error->string
   The `parser-error->string` procedure formats parser error condition `err` as a
-  stable one-line message with source and position.
+  message with source and position. Textual line/column displays are one-based; binary offsets
+  stay zero-based. Source labels and custom messages are not escaped, so they can contain newlines.
   |#
   (define parser-error->string
     (lambda (err)
@@ -211,7 +286,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   (define parser-failure->condition
     (lambda (who failure)
-      (let* ([failure (ensure-parser-failure failure #f)]
+      (let* ([failure (summarize-parser-failure (ensure-parser-failure failure #f))]
              [position (parser-failure-position failure)]
              [message (parser-failure-message* failure)])
         (%make-parser-error who
@@ -241,28 +316,29 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   (define $run-textual-parser
     (lambda (who p in source state)
       (pcheck ([parser? p] [string? in])
-              (let-values ([(stt val inp/err)
-                            (parser-call p
-                                         (make-textual-input
-                                          (string-length in) source 0 in 0 0)
-                                         state 0)])
-                (if stt val (raise-parser-error who inp/err))))))
+              (let ([inp (make-textual-input (string-length in) source 0 in 0 0)])
+                (let-values ([(stt val inp/err) (parser-call p inp state 0)])
+                  (if stt val
+                      (raise-parser-error who (ensure-parser-failure inp/err inp))))))))
 
 
   (define $run-binary-parser
     (lambda (who p in source state)
       (pcheck ([parser? p] [bytevector? in])
-              (let-values ([(stt val inp/err)
-                            (parser-call p
-                                         (make-binary-input
-                                          (bytevector-length in) source 0 in)
-                                         state 0)])
-                (if stt val (raise-parser-error who inp/err))))))
+              (let ([inp (make-binary-input (bytevector-length in) source 0 in 0)])
+                (let-values ([(stt val inp/err) (parser-call p inp state 0)])
+                  (if stt val
+                      (raise-parser-error who (ensure-parser-failure inp/err inp))))))))
 
   #|proc:run-textual-parser/source
   The `run-textual-parser/source` procedure runs textual `parser` over string `input`.
   The `source` parameter is `#f` or a string used in displayed parser errors. The
   optional `state` parameter is passed through to state-aware parser combinators.
+  Returns the parse value, or raises `&parser-error` on syntax failure. Independent parses may
+  share `parser` across threads. Fiber safety is not guaranteed; callback continuation resumption
+  is undefined. Shared mutable input, state, and callback results require caller synchronization.
+  Successful prefix parsing is allowed; the runner does not require EOF. Use an explicit <eof>
+  sequence or the appropriate complete grammar when trailing input must be rejected.
   |#
   (define-who run-textual-parser/source
     (case-lambda
@@ -275,6 +351,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   The `run-binary-parser/source` procedure runs binary `parser` over bytevector `input`.
   The `source` parameter is `#f` or a string used in displayed parser errors. The
   optional `state` parameter is passed through to state-aware parser combinators.
+  Returns the parse value, or raises `&parser-error` on syntax failure. Independent parses may
+  share `parser` across threads. Fiber safety is not guaranteed; callback continuation resumption
+  is undefined. Shared mutable input, state, and callback results require caller synchronization.
+  Successful prefix parsing is allowed; the runner does not require EOF. Use an explicit <eof>
+  sequence or the appropriate complete grammar when trailing input must be rejected.
   |#
   (define-who run-binary-parser/source
     (case-lambda
@@ -288,7 +369,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   The `run-textual-parser` procedure runs textual `parser` over string `input` and
   returns the parse value. Optional `state` is passed to state-aware combinators and
   defaults to `#f`.
-  If the parse process fails, an error with condition type &parser-error is raised.
+  If parsing fails, an error with condition type `&parser-error` is raised. Independent parses may
+  share `parser` across threads. Fiber safety is not guaranteed; callback continuation resumption
+  is undefined. Shared mutable input, state, and callback results require caller synchronization.
+  Successful prefix parsing is allowed; the runner does not require EOF. Use an explicit <eof>
+  sequence or the appropriate complete grammar when trailing input must be rejected.
   |#
   (define-who run-textual-parser
     (case-lambda
@@ -302,7 +387,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   The `run-binary-parser` procedure runs binary `parser` over bytevector `input` and
   returns the parse value. Optional `state` is passed to state-aware combinators and
   defaults to `#f`.
-  If the parse process fails, an error with condition type &parser-error is raised.
+  If parsing fails, an error with condition type `&parser-error` is raised. Independent parses may
+  share `parser` across threads. Fiber safety is not guaranteed; callback continuation resumption
+  is undefined. Shared mutable input, state, and callback results require caller synchronization.
+  Successful prefix parsing is allowed; the runner does not require EOF. Use an explicit <eof>
+  sequence or the appropriate complete grammar when trailing input must be rejected.
   |#
   (define-who run-binary-parser
     (case-lambda
@@ -313,17 +402,22 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:parse-textual-file
-  The `parse-textual-file` procedure runs textual `parser` over the regular text file at
-  string `path` and returns the parse value. Optional `state` is passed to state-aware
+  The `parse-textual-file` procedure runs textual `parser` over the regular UTF-8 file at
+  string `path` and returns the parse value. Malformed UTF-8 raises a decoding condition.
+  Optional `state` is passed to state-aware
   combinators and defaults to `#f`.
-  If the parse process fails, an error with condition type &parser-error is raised.
+  If parsing fails, an error with condition type `&parser-error` is raised. Independent parses may
+  share `parser` across threads. Fiber safety is not guaranteed; callback continuation resumption
+  is undefined. Shared mutable input, state, and callback results require caller synchronization.
+  Successful prefix parsing is allowed; the runner does not require EOF. Use an explicit <eof>
+  sequence or the appropriate complete grammar when trailing input must be rejected.
   |#
   (define-who parse-textual-file
     (case-lambda
       [(parser path) (parse-textual-file parser path #f)]
       [(parser path state)
        (pcheck ([parser? parser] [file-regular? path])
-               (let ([input (read-string path)])
+               (let ([input (parser-read-text-file path)])
                  ($run-textual-parser who parser input path state)))]))
 
 
@@ -331,7 +425,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   The `parse-binary-file` procedure runs binary `parser` over the regular binary file at
   string `path` and returns the parse value. Optional `state` is passed to state-aware
   combinators and defaults to `#f`.
-  If the parse process fails, an error with condition type &parser-error is raised.
+  If parsing fails, an error with condition type `&parser-error` is raised. Independent parses may
+  share `parser` across threads. Fiber safety is not guaranteed; callback continuation resumption
+  is undefined. Shared mutable input, state, and callback results require caller synchronization.
+  Successful prefix parsing is allowed; the runner does not require EOF. Use an explicit <eof>
+  sequence or the appropriate complete grammar when trailing input must be rejected.
   |#
   (define-who parse-binary-file
     (case-lambda
@@ -342,29 +440,30 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                  ($run-binary-parser who parser input path state)))]))
 
 
-  (define (mk-digits->num who r)
-    (lambda (d*)
-      (pcheck ([list? d*])
-              (fold-left (lambda (n d)
-                           (when (>= d r)
-                             (errorf who "bad digit ~a for base ~a" d r))
-                           (+ d (* n r))) 0 d*))))
   #|proc:bindigits->num
-  The `bindigits->num` procedure converts list `digits` of binary integers to a number.
+  Converts proper list digits, in most-significant-first order, to an exact integer in radix 2.
+  Each digit must be an exact integer from zero through 1. An empty list returns zero; invalid
+  digits raise an argument error in list order.
   |#
-  (define-who bindigits->num (mk-digits->num who 2))
+  (define-who bindigits->num (make-parser-digit-converter who 2))
   #|proc:octdigits->num
-  The `octdigits->num` procedure converts list `digits` of octal integers to a number.
+  Converts proper list digits, in most-significant-first order, to an exact integer in radix 8.
+  Each digit must be an exact integer from zero through 7. An empty list returns zero; invalid
+  digits raise an argument error in list order.
   |#
-  (define-who octdigits->num (mk-digits->num who 8))
+  (define-who octdigits->num (make-parser-digit-converter who 8))
   #|proc:digits->num
-  The `digits->num` procedure converts list `digits` of decimal integers to a number.
+  Converts proper list digits, in most-significant-first order, to an exact integer in radix 10.
+  Each digit must be an exact integer from zero through 9. An empty list returns zero; invalid
+  digits raise an argument error in list order.
   |#
-  (define-who digits->num    (mk-digits->num who 10))
+  (define-who digits->num    (make-parser-digit-converter who 10))
   #|proc:hexdigits->num
-  The `hexdigits->num` procedure converts list `digits` of hexadecimal integers to a number.
+  Converts proper list digits, in most-significant-first order, to an exact integer in radix 16.
+  Each digit must be an exact integer from zero through 15. An empty list returns zero; invalid
+  digits raise an argument error in list order.
   |#
-  (define-who hexdigits->num (mk-digits->num who 16))
+  (define-who hexdigits->num (make-parser-digit-converter who 16))
 
 
 
@@ -384,7 +483,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   #|macro:declare-lazy-parser
   The `declare-lazy-parser` macro defines `name` as a lazy parser whose body can be
-  installed or replaced with `install-lazy-parser!`.
+  installed or replaced with `install-lazy-parser!`. Install before sharing the parser across
+  threads; synchronize later replacements with all parses that use it.
   |#
   (define-syntax declare-lazy-parser
     (lambda (stx)
@@ -402,7 +502,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   #|proc:install-lazy-parser!
   The `install-lazy-parser!` procedure installs the body of `parser` in lazy parser
-  `target`. A later call can replace the installed body.
+  `target` and returns unspecified values. A later call can replace the installed body. Complete
+  installation before concurrent parsing, or synchronize replacement with all affected parses.
   |#
   (define-who (install-lazy-parser! target parser)
     (pcheck ([lazy-parser? target] [parser? parser])
@@ -410,7 +511,12 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   #|macro:define-parser
   The `define-parser` macro defines parser `name` with body expression `body`. Within
-  `body`, `inp`, `state`, and `lvl` are the current input, parser state, and nesting level.
+  `body`, `inp`, `state`, and `lvl` are the current input, caller-supplied state, and nesting level.
+  The body must return three values: `#t`, the parse value, and the resulting input on success;
+  or `#f`, `#f`, and a failure on failure. Delegate to `parser-call` and existing combinators to
+  preserve this protocol. Legacy string or `#f` failures use the available caller cursor;
+  a private cursor discarded by the body cannot be recovered. Input cursors must belong to the
+  invocation. Fiber safety is not guaranteed; callback continuation resumption is undefined.
   |#
   (define-syntax define-parser
     (lambda (stx)
@@ -424,7 +530,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                (make-parser (lambda (inp state lvl) body))))])))
 
   #|macro:parser-call
-  The `parser-call` macro invokes `parser` with `input`, `state`, and nesting `level`.
+  The `parser-call` macro invokes `parser` with its input cursor `input`, caller-supplied `state`,
+  and fixnum nesting `level`. It returns the three values described by `define-parser`.
   |#
   (define-syntax parser-call
     (lambda (stx)
@@ -435,6 +542,19 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                      ((parser-body parser-value) input state level)))])))
 ;;;; input logic
 
+  #|proc:input-len
+  Internal cursor accessor: returns the exclusive input limit of cursor inp as an exact integer.
+  Units are characters for text and bytes for binary input; bounded binary limits are absolute.
+  |#
+  #|proc:input-pos
+  Internal cursor accessor: returns cursor inp's zero-based absolute next-input position.
+  Units are characters for text and bytes for binary input.
+  |#
+  #|proc:input-pos-set!
+  Internal raw setter: changes cursor inp's absolute position to position and returns unspecified
+  values. It does not update textual line/column tracking; use <pos-at> for textual random access.
+  The caller is responsible for keeping position within the cursor's valid input bounds.
+  |#
   (define-record-type input
     (fields (immutable len)
             (immutable source)
@@ -445,11 +565,20 @@ For simplicity, "PC" in the following documentation means "parser combinator".
     (parent input)
     (fields (immutable str) (mutable line) (mutable col)))
 
+  #|proc:binary-input-data
+  Internal cursor accessor: returns the backing bytevector of binary cursor inp without copying.
+  A bounded cursor shares that bytevector; its legal positions still follow the cursor bounds.
+  |#
   (define-record-type binary-input
     (parent input)
     ;; bytevector
-    (fields (immutable data)))
+    (fields (immutable data) (immutable start)))
 
+  #|proc:save-input
+  Internal cursor helper: returns a fresh snapshot of cursor inp's position and bounds, retaining
+  the same source and input string/bytevector. Text snapshots also retain line/column state.
+  Mutating the snapshot cursor does not move inp. Caller-owned data and callback state are shared.
+  |#
   (define save-input
     (lambda (inp)
       (cond
@@ -466,8 +595,20 @@ For simplicity, "PC" in the following documentation means "parser combinator".
          (input-len inp)
          (input-source inp)
          (input-pos inp)
-         (binary-input-data inp))]
+         (binary-input-data inp)
+         (binary-input-start inp))]
        [else (assert-unreachable)])))
+
+  ;; The index addresses the character being consumed in the original string. Looking
+  ;; behind it makes CRLF handling independent of parser boundaries and backtracking.
+  (define text-line-break?
+    (lambda (text index character)
+      (or (char=? character #\return)
+          (char=? character #\x2028)
+          (char=? character #\x2029)
+          (and (char=? character #\newline)
+               (or (fxzero? index)
+                   (not (char=? (string-ref text (fx1- index)) #\return)))))))
 
   (define scan-text-position
     (lambda (str start target line col)
@@ -475,9 +616,10 @@ For simplicity, "PC" in the following documentation means "parser combinator".
         (if (fx= i target)
             (values line col)
             (let ([c (string-ref str i)])
-              (if (char=? c #\newline)
-                  (loop (fx1+ i) (fx1+ line) 0)
-                  (loop (fx1+ i) line (fx1+ col))))))))
+              (cond [(text-line-break? str i c)
+                     (loop (fx1+ i) (fx1+ line) 0)]
+                    [(char=? c #\newline) (loop (fx1+ i) line 0)]
+                    [else (loop (fx1+ i) line (fx1+ col))]))))))
 
   (define recompute-text-position
     (lambda (str target)
@@ -485,7 +627,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   (define-who set-input-position!
     (lambda (inp pos)
-      (pcheck ([natural? pos])
+      (pcheck ([exact-natural? pos])
               (when (> pos (input-len inp))
                 (errorf who "position ~a is past input length ~a" pos (input-len inp)))
               (cond
@@ -550,7 +692,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   (define parser-failure-add-context
     (lambda (failure context)
       (let ([failure (ensure-parser-failure failure #f)])
-        (make-parser-failure (parser-failure-kind failure)
+        ((if (parser-choice-failure? failure) make-parser-choice-failure make-parser-failure)
+                             (parser-failure-kind failure)
                              (parser-failure-message failure)
                              (parser-failure-position failure)
                              (parser-failure-expected failure)
@@ -567,20 +710,38 @@ For simplicity, "PC" in the following documentation means "parser combinator".
             [(null? (cdr failure*))
              (parser-failure-add-context (car failure*) '</>)]
             [else
-             (let* ([first (car failure*)]
-                    [expected (fold-left
-                               (lambda (res failure)
-                                 (unique-append res (parser-failure-expected failure)))
-                               '()
-                               failure*)]
-                    [found (parser-failure-found first)])
-               (make-parser-failure 'expected
-                                    #f
-                                    (parser-failure-position first)
-                                    expected
-                                    found
-                                    '(</>)
-                                    failure*))])))
+             (let ([first (car failure*)])
+               (make-parser-choice-failure
+                'expected #f (parser-failure-position first) '()
+                (parser-failure-found first) '(</>) failure*))])))
+
+  (define summarize-parser-failure
+    (lambda (failure)
+      (if (not (parser-choice-failure? failure))
+          failure
+          (let ([expected (make-unique-builder)] [messages (make-unique-builder)])
+            ;; Each choice and leaf is visited once, in original alternative order.
+            (let loop ([pending (list failure)])
+              (unless (null? pending)
+                (let ([current (car pending)])
+                  (if (parser-choice-failure? current)
+                      (loop (append (parser-failure-causes current) (cdr pending)))
+                      (begin
+                        (for-each expected (parser-failure-expected current))
+                        (let ([message (parser-failure-message current)])
+                          (when message (messages message)))
+                        (loop (cdr pending)))))))
+            (let ([messages (messages)])
+              (make-parser-failure
+               (parser-failure-kind failure)
+               (and (pair? messages)
+                    (apply string-append
+                           (cons (car messages)
+                                 (map (lambda (message) (string-append "; " message))
+                                      (cdr messages)))))
+               (parser-failure-position failure) (expected)
+               (parser-failure-found failure) (parser-failure-context failure)
+               (parser-failure-causes failure)))))))
 
   (define ensure-parser-failure
     (case-lambda
@@ -621,20 +782,22 @@ For simplicity, "PC" in the following documentation means "parser combinator".
     (case-lambda
       [(inp) (advance! inp 1)]
       [(inp n)
-       (pcheck ([natural? n])
+       (pcheck ([exact-natural? n])
                (let ([len (input-len inp)] [pos (input-pos inp)])
                  (cond [(zero? n) (void)]
                        [(= len pos) (errorf who "already at eof")]
                        [else (input-pos-set! inp (min len (+ pos n)))])))]))
 
   (define update-line/col!
-    (lambda (inp c)
+    (lambda (inp character)
       (let ([line (textual-input-line inp)]
-            [col  (textual-input-col  inp)])
-        (if (char=? c #\newline)
-            (begin (textual-input-line-set! inp (fx1+ line))
-                   (textual-input-col-set!  inp 0))
-            (textual-input-col-set! inp (fx1+ col))))))
+            [column (textual-input-col inp)]
+            [index (fx1- (input-pos inp))])
+        (cond [(text-line-break? (textual-input-str inp) index character)
+               (textual-input-line-set! inp (fx1+ line))
+               (textual-input-col-set! inp 0)]
+              [(char=? character #\newline) (textual-input-col-set! inp 0)]
+              [else (textual-input-col-set! inp (fx1+ column))]))))
 
   (define end-of-input?
     (lambda (inp)
@@ -682,9 +845,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                   (values #t line col)
                   (let ([c1 (string-ref str i)] [c2 (string-ref substr j)])
                     (if (char=? c1 c2)
-                        (if (char=? c1 #\newline)
-                            (loop (fx1+ i) (fx1+ j) (fx1+ line) 0)
-                            (loop (fx1+ i) (fx1+ j) line        (fx1+ col)))
+                        (cond [(text-line-break? str i c1)
+                               (loop (fx1+ i) (fx1+ j) (fx1+ line) 0)]
+                              [(char=? c1 #\newline)
+                               (loop (fx1+ i) (fx1+ j) line 0)]
+                              [else (loop (fx1+ i) (fx1+ j) line (fx1+ col))])
                         (values #f #f #f))))))))
       (let ([len (input-len inp)] [pos (input-pos inp)] [strlen (string-length str)])
         (if (< (+ pos strlen -1) len)
@@ -785,7 +950,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   (gen-fpeek! peek-f32be! bytevector-ieee-single-ref 4 (endianness big))
   (gen-fpeek! peek-f64be! bytevector-ieee-double-ref 8 (endianness big))
 
-;;;; peek for arbirary value
+;;;; peek for arbitrary value
   (define-syntax gen-peek8
     (syntax-rules ()
       [(_ name ref step)
@@ -847,7 +1012,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
     result-parser)
 
 
-  #|doc
+  #|parser:<fail>
   `<fail>` is a parser that always fails when invoked.
   |#
   (define-who <fail>
@@ -867,7 +1032,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
     fail-with-parser)
 
 
-  #|doc
+  #|parser:<eof>
   `<eof>` is a parser that tries to match the end of the input, be it textual or binary.
   |#
   (define-parser <eof>
@@ -890,19 +1055,20 @@ For simplicity, "PC" in the following documentation means "parser combinator".
       [(parser predicate message)
        (pcheck ([parser? parser] [procedure? predicate] [string? message])
                (define-parser satisfy-parser
-                 (let-values ([(status value next-input)
-                               (parser-call parser inp state lvl)])
-                   (if status
-                       (if (predicate value)
-                           (values #t value next-input)
-                           (values #f #f
-                                   (parser-failure-at inp 'predicate message
-                                                      '() value)))
-                       (values #f #f next-input))))
+                 (let ([start-input (save-input inp)])
+                   (let-values ([(status value next-input)
+                                 (parser-call parser inp state lvl)])
+                     (if status
+                         (if (predicate value)
+                             (values #t value next-input)
+                             (values #f #f
+                                     (parser-failure-at start-input 'predicate message
+                                                        '() value)))
+                         (values #f #f (ensure-parser-failure next-input inp))))))
                satisfy-parser)]))
 
 
-  #|doc
+  #|parser:<pos>
   Return the current parse position in the input.
   |#
   (define-parser <pos>
@@ -910,20 +1076,22 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:<pos-at>
-  The `<pos-at>` procedure takes natural `position` and `parser`. The returned parser
-  runs `parser` at `position` and restores the original input position on success.
+  The `<pos-at>` procedure takes exact nonnegative integer `position` and `parser`. The returned
+  parser runs `parser` at `position` and restores the original input position on success.
   It is an error when `position` is greater than the input length at parse time.
   |#
   (define-who (<pos-at> position parser)
-    (pcheck ([natural? position] [parser? parser])
+    (pcheck ([exact-natural? position] [parser? parser])
             (define-parser pos-at-parser
               ;; TODO error report
-              (if (> position (input-len inp))
+              (if (or (> position (input-len inp))
+                      (and (binary-input? inp) (< position (binary-input-start inp))))
                   (values #f #f
                           (parser-failure-custom
                            inp
                            (format "invalid position ~a, should be between ~a and ~a"
-                                   position 0 (input-len inp))))
+                                   position (if (binary-input? inp) (binary-input-start inp) 0)
+                                   (input-len inp))))
                   (let ([new-inp (save-input inp)])
                 (set-input-position! new-inp position)
                 (let-values ([(stt val inp1)
@@ -935,12 +1103,14 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:<bounded>
-  The `<bounded>` procedure takes natural `count` and binary `parser`. It returns a parser that
-  runs `parser` over exactly the next `count` bytes. The returned parser fails if the range
-  exceeds the input, if `parser` fails, or if `parser` does not consume the complete range.
+  The `<bounded>` procedure takes exact nonnegative integer `count` and binary `parser`. It returns
+  a parser that runs `parser` over exactly the next `count` bytes.
+  Random access must stay within that range.
+  The returned parser fails if the range exceeds the input, if `parser` fails, or if `parser`
+  does not consume the complete range.
   |#
   (define-who (<bounded> count parser)
-    (pcheck ([natural? count] [parser? parser])
+    (pcheck ([exact-natural? count] [parser? parser])
             (define-parser bounded-parser
               (if (not (binary-input? inp))
                   (values #f #f
@@ -955,11 +1125,12 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                                         end
                                         (input-source inp)
                                         start
-                                        (binary-input-data inp))])
+                                        (binary-input-data inp) start)])
                           (let-values ([(status value next-input)
                                         (parser-call parser limited state (fx1+ lvl))])
                             (cond
-                             [(not status) (values #f #f next-input)]
+                             [(not status)
+                              (values #f #f (ensure-parser-failure next-input limited))]
                              [(not (= end (input-pos next-input)))
                               (values #f #f
                                       (parser-failure-custom
@@ -973,17 +1144,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:<msg-t>
-  `msg` should be a printable value; `who`, if present, should also be a
-  printable value that can be use to identify the message generator.
-
-  `<msg-t>` receives a printable value `msg` and optionally a printable value `who`
-  and returns a parser that when invoked, will print the current parse information
-  containing `who`, `msg`, and the current input position, and succeeds unconditionally.
-
-  This combinator facilitates debugging and can be used in `<~>`.
-  However, it must be noted that when this combinator appears last in a `<~>`
-  that is supposed to fail, and the `<~>` is further wrapped by a `<many>`,
-  then there may be a dead loop, since the parser created by `<msg-t>` always succeeds.
+  Takes printable message msg and optional printable label who, which defaults to <msg-t>.
+  Returns a parser that prints the label, message, and current offset/input length, then
+  succeeds with the formatted message string without consuming input. Repeating this parser
+  alone with <many>, <some>, or <many-until> raises a progress error; it cannot supply input
+  progress for an enclosing sequence.
   |#
   (define-who <msg-t>
     (case-lambda
@@ -997,12 +1162,10 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:<msg-f>
-  `msg` should be a printable value. `who`, if present, should also be a
-  printable value that can be use to identify the message generator.
-
-  `<msg-f>` receives a printable value `msg` and optionally a printable value `who`
-  and returns a parser that when invoked, will print the current parse information
-  containing `who`, `msg`, and the current input position, and fails unconditionally.
+  Takes printable message msg and optional printable label who, which defaults to <msg-f>.
+  Returns a parser that prints the label, message, and current offset/input length, then fails
+  with that formatted message without consuming input. This parser is intended for tracing
+  failed grammar branches.
   |#
   (define-who <msg-f>
     (case-lambda
@@ -1010,6 +1173,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
       [(who msg)
        (define-parser msg-f-parser
          (let ([msg (format "~a: ~a (~a/~a)" who msg (input-pos inp) (input-len inp))])
+           (println msg)
            (values #f msg (parser-failure-custom inp msg))))
        msg-f-parser]))
 
@@ -1043,7 +1207,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
           (fx- (char->integer c) 48)
           (errorf who "not a digit: ~a" c))))
 
-  #|doc
+  #|parser:<item>
   Parse and return the current character unconditionally.
   `<item>` fails only if EOF is reached.
   |#
@@ -1052,6 +1216,46 @@ For simplicity, "PC" in the following documentation means "parser combinator".
         (values #f #f (parser-failure-eof inp '(item) #f))
         (values #t (get-next! inp) inp)))
 
+  ;; Delay message construction until a predicate fails; live sets use their current value.
+  (define character-parser
+    (lambda (predicate message)
+      (define-parser satisfy-character-parser
+        (if (end-of-input? inp)
+            (values #f #f (parser-failure-eof inp '(item) #f))
+            ;; Keep the starting scalars; successful reads need no cursor snapshot.
+            (let* ([start (input-pos inp)]
+                   [line (textual-input-line inp)]
+                   [column (textual-input-col inp)]
+                   [character (get-next! inp)])
+              (if (predicate character)
+                  (values #t character inp)
+                  (values #f #f
+                          (make-parser-failure
+                           'predicate (message)
+                           (make-parser-position
+                            (or (input-source inp) "<string>") start line column 'text)
+                           '() character '() '()))))))
+      satisfy-character-parser))
+
+  #|proc:parser-ordinary-character
+  The `parser-ordinary-character` procedure takes character predicate `predicate` with signature
+  `(Char -> Boolean)` and fallback parser `original` with behavior `(TextualInput -> Any)`.
+  It returns a textual parser that consumes and returns one character when `predicate` accepts
+  it. Otherwise, including at EOF, it runs `original` from the starting cursor and returns its
+  result or failure. The predicate should accept only ordinary characters known to succeed in
+  the original grammar. Callback state is not rolled back.
+  This helper is shared internally by format grammars and is excluded from the parser umbrella.
+  |#
+  (define (parser-ordinary-character predicate original)
+    (pcheck ([procedure? predicate] [parser? original])
+            (define-parser ordinary-parser
+              (let-values ([(status character next-input)
+                            (parser-call <item> (save-input inp) state lvl)])
+                (if (and status (predicate character))
+                    (values #t character next-input)
+                    (parser-call original inp state lvl))))
+            ordinary-parser))
+
   #|proc:<satisfy-char>
   The `<satisfy-char>` procedure takes character predicate `predicate` and optional
   string `message`. The predicate must have signature `(Char -> Boolean)`. It returns a
@@ -1059,12 +1263,10 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   |#
   (define <satisfy-char>
     (case-lambda
-      [(predicate)
-       (pcheck ([procedure? predicate])
-               (<satisfy> <item> predicate "failed predicate"))]
+      [(predicate) (<satisfy-char> predicate "failed predicate")]
       [(predicate message)
        (pcheck ([procedure? predicate] [string? message])
-               (<satisfy> <item> predicate message))]))
+               (character-parser predicate (lambda () message)))]))
 
   #|proc:<char>
   The `<char>` procedure takes `character` and returns a textual parser. The parser
@@ -1095,67 +1297,75 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                             (failure-at-position inp pos (list text) found)))))
             string-parser))
 
-  #|doc
-  Parse and return an arbirary letter character.
+  #|parser:<letter>
+  Parse and return an arbitrary letter character.
   |#
   (define <letter>
     (<satisfy-char> char-alphabetic? "not a letter"))
 
-  #|doc
-  Parse and return an arbirary upper-case letter character.
+  #|parser:<upper>
+  Parse and return an arbitrary upper-case letter character.
   |#
   (define <upper>
     (<satisfy-char> char-upper-case? "not uppercase latter"))
 
-  #|doc
-  Parse and return an arbirary lower-case letter character.
+  #|parser:<lower>
+  Parse and return an arbitrary lower-case letter character.
   |#
   (define <lower>
     (<satisfy-char> char-lower-case? "not lowercase latter"))
 
-  #|doc
-  Parse and return an arbirary whitespace character.
+  #|parser:<whitespace>
+  Parse and return an arbitrary whitespace character.
   |#
   (define <whitespace>
     (<satisfy-char> char-whitespace? "not a whitespace"))
 
-  #|doc
-  Parse a deciaml digit and return the corresponding character.
+  #|parser:<digit>
+  Parse a decimal digit and return the corresponding character.
   |#
   (define <digit>
     (<satisfy-char> ascii-digit? "not a digit"))
 
-  #|doc
+  #|parser:<bindigit>
   Parse a binary digit and return the corresponding character.
   |#
   (define <bindigit>
     (<satisfy-char> ascii-bindigit? "not a binary digit"))
 
-  #|doc
+  #|parser:<hexdigit>
   Parse a hex digit and return the corresponding character.
   |#
   (define <hexdigit>
     (<satisfy-char> ascii-hexdigit? "not a hexadecimal digit"))
 
-  #|doc
+  #|parser:<lower-hexdigit>
   Parse a lower hex digit and return the corresponding character.
   |#
   (define <lower-hexdigit>
     (<satisfy-char> (lambda (x) (or (ascii-digit? x)
                                     (char<=? #\a x #\f)))))
 
-  #|doc
+  #|parser:<upper-hexdigit>
   Parse an upper hex digit and return the corresponding character.
   |#
   (define <upper-hexdigit>
     (<satisfy-char> (lambda (x) (or (ascii-digit? x)
                                     (char<=? #\A x #\F)))))
 
-  #|doc
+  #|parser:<octdigit>
   Parse a octal digit and return the corresponding character.
   |#
   (define <octdigit>
     (<satisfy-char> ascii-octdigit? "not an octal digit"))
+
+  ;; Compare directly against the live set string without allocating a search pattern.
+  (define character-in-string?
+    (lambda (character characters)
+      (let loop ([index 0])
+        (and (fx< index (string-length characters))
+             (or (char=? character (string-ref characters index))
+                 (loop (fx1+ index)))))))
 
   #|proc:<one-of>
   The `<one-of>` procedure takes string `characters` and returns a parser. The parser
@@ -1163,9 +1373,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   |#
   (define (<one-of> characters)
     (pcheck ([string? characters])
-            (<satisfy-char> (lambda (character)
-                              (string-contains? characters character))
-                            (format "not one of \"~a\"" characters))))
+            (character-parser (lambda (character)
+                                (character-in-string? character characters))
+                              (lambda () (format "not one of \"~a\"" characters)))))
 
   #|proc:<none-of>
   The `<none-of>` procedure takes string `characters` and returns a parser. The parser
@@ -1173,9 +1383,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   |#
   (define (<none-of> characters)
     (pcheck ([string? characters])
-            (<satisfy-char> (lambda (character)
-                              (not (string-contains? characters character)))
-                            (format "should not be one of \"~a\"" characters))))
+            (character-parser (lambda (character)
+                                (not (character-in-string? character characters)))
+                              (lambda () (format "should not be one of \"~a\"" characters)))))
 
 
 
@@ -1245,64 +1455,272 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   ;; TODO maybe merge the two gen macros
   ;; TODO rename these since they also change the inp state
-  ;; try match and return an arbirary value
+  ;; try match and return an arbitrary value
+  #|parser:<u8>
+  The `<u8>` parser reads a 8-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u8>  peek-u8 'u8 1)
+  #|parser:<u16>
+  The `<u16>` parser reads a 16-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u16> peek-u16le 'u16 2)
+  #|parser:<u32>
+  The `<u32>` parser reads a 32-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u32> peek-u32le 'u32 4)
+  #|parser:<u64>
+  The `<u64>` parser reads a 64-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u64> peek-u64le 'u64 8)
+  #|parser:<s8>
+  The `<s8>` parser reads a 8-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s8>  peek-s8 's8 1)
+  #|parser:<s16>
+  The `<s16>` parser reads a 16-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s16> peek-s16le 's16 2)
+  #|parser:<s32>
+  The `<s32>` parser reads a 32-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s32> peek-s32le 's32 4)
+  #|parser:<s64>
+  The `<s64>` parser reads a 64-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s64> peek-s64le 's64 8)
+  #|parser:<f32>
+  The `<f32>` parser reads a 32-bit IEEE-754 floating-point number in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <f32> peek-f32le 'f32 4)
+  #|parser:<f64>
+  The `<f64>` parser reads a 64-bit IEEE-754 floating-point number in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <f64> peek-f64le 'f64 8)
 
+  #|parser:<u16le>
+  The `<u16le>` parser reads a 16-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u16le> peek-u16le 'u16le 2)
+  #|parser:<u32le>
+  The `<u32le>` parser reads a 32-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u32le> peek-u32le 'u32le 4)
+  #|parser:<u64le>
+  The `<u64le>` parser reads a 64-bit unsigned integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u64le> peek-u64le 'u64le 8)
+  #|parser:<s16le>
+  The `<s16le>` parser reads a 16-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s16le> peek-s16le 's16le 2)
+  #|parser:<s32le>
+  The `<s32le>` parser reads a 32-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s32le> peek-s32le 's32le 4)
+  #|parser:<s64le>
+  The `<s64le>` parser reads a 64-bit signed integer in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s64le> peek-s64le 's64le 8)
+  #|parser:<f32le>
+  The `<f32le>` parser reads a 32-bit IEEE-754 floating-point number in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <f32le> peek-f32le 'f32le 4)
+  #|parser:<f64le>
+  The `<f64le>` parser reads a 64-bit IEEE-754 floating-point number in little-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <f64le> peek-f64le 'f64le 8)
 
+  #|parser:<u16be>
+  The `<u16be>` parser reads a 16-bit unsigned integer in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u16be> peek-u16be 'u16be 2)
+  #|parser:<u32be>
+  The `<u32be>` parser reads a 32-bit unsigned integer in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u32be> peek-u32be 'u32be 4)
+  #|parser:<u64be>
+  The `<u64be>` parser reads a 64-bit unsigned integer in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <u64be> peek-u64be 'u64be 8)
+  #|parser:<s16be>
+  The `<s16be>` parser reads a 16-bit signed integer in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s16be> peek-s16be 's16be 2)
+  #|parser:<s32be>
+  The `<s32be>` parser reads a 32-bit signed integer in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s32be> peek-s32be 's32be 4)
+  #|parser:<s64be>
+  The `<s64be>` parser reads a 64-bit signed integer in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <s64be> peek-s64be 's64be 8)
+  #|parser:<f32be>
+  The `<f32be>` parser reads a 32-bit IEEE-754 floating-point number in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <f32be> peek-f32be 'f32be 4)
+  #|parser:<f64be>
+  The `<f64be>` parser reads a 64-bit IEEE-754 floating-point number in big-endian byte order
+  and returns its value. It fails with `&parser-error` through a runner on insufficient input.
+  |#
   (gen-bin-prim <f64be> peek-f64be 'f64be 8)
 
   ;; try match a given immediate value
+  #|proc:<uimm8>
+  The `<uimm8>` procedure takes 8-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm8>  peek-u8!    u8? 1)
+  #|proc:<uimm16>
+  The `<uimm16>` procedure takes 16-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm16> peek-u16le! u16? 2)
+  #|proc:<uimm32>
+  The `<uimm32>` procedure takes 32-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm32> peek-u32le! u32? 4)
+  #|proc:<uimm64>
+  The `<uimm64>` procedure takes 64-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm64> peek-u64le! u64? 8)
+  #|proc:<simm8>
+  The `<simm8>` procedure takes 8-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm8>  peek-s8!    s8? 1)
+  #|proc:<simm16>
+  The `<simm16>` procedure takes 16-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm16> peek-s16le! s16? 2)
+  #|proc:<simm32>
+  The `<simm32>` procedure takes 32-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm32> peek-s32le! s32? 4)
+  #|proc:<simm64>
+  The `<simm64>` procedure takes 64-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm64> peek-s64le! s64? 8)
+  #|proc:<fimm32>
+  The `<fimm32>` procedure takes 32-bit flonum other than NaN `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <fimm32> peek-f32le! f32? 4)
+  #|proc:<fimm64>
+  The `<fimm64>` procedure takes 64-bit flonum other than NaN `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <fimm64> peek-f64le! f64? 8)
 
+  #|proc:<uimm16le>
+  The `<uimm16le>` procedure takes 16-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm16le> peek-u16le! u16? 2)
+  #|proc:<uimm32le>
+  The `<uimm32le>` procedure takes 32-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm32le> peek-u32le! u32? 4)
+  #|proc:<uimm64le>
+  The `<uimm64le>` procedure takes 64-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm64le> peek-u64le! u64? 8)
+  #|proc:<simm16le>
+  The `<simm16le>` procedure takes 16-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm16le> peek-s16le! s16? 2)
+  #|proc:<simm32le>
+  The `<simm32le>` procedure takes 32-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm32le> peek-s32le! s32? 4)
+  #|proc:<simm64le>
+  The `<simm64le>` procedure takes 64-bit signed integer `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm64le> peek-s64le! s64? 8)
+  #|proc:<fimm32le>
+  The `<fimm32le>` procedure takes 32-bit flonum other than NaN `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <fimm32le> peek-f32le! f32? 4)
+  #|proc:<fimm64le>
+  The `<fimm64le>` procedure takes 64-bit flonum other than NaN `value`. It returns a binary parser
+  that matches `value` in little-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <fimm64le> peek-f64le! f64? 8)
 
+  #|proc:<uimm16be>
+  The `<uimm16be>` procedure takes 16-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm16be> peek-u16be! u16? 2)
+  #|proc:<uimm32be>
+  The `<uimm32be>` procedure takes 32-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm32be> peek-u32be! u32? 4)
+  #|proc:<uimm64be>
+  The `<uimm64be>` procedure takes 64-bit unsigned integer `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <uimm64be> peek-u64be! u64? 8)
+  #|proc:<simm16be>
+  The `<simm16be>` procedure takes 16-bit signed integer `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm16be> peek-s16be! s16? 2)
+  #|proc:<simm32be>
+  The `<simm32be>` procedure takes 32-bit signed integer `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm32be> peek-s32be! s32? 4)
+  #|proc:<simm64be>
+  The `<simm64be>` procedure takes 64-bit signed integer `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <simm64be> peek-s64be! s64? 8)
+  #|proc:<fimm32be>
+  The `<fimm32be>` procedure takes 32-bit flonum other than NaN `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <fimm32be> peek-f32be! f32? 4)
+  #|proc:<fimm64be>
+  The `<fimm64be>` procedure takes 64-bit flonum other than NaN `value`. It returns a binary parser
+  that matches `value` in big-endian byte order and returns it, or fails on a mismatch or EOF.
+  |#
   (gen-bin-imm-prim <fimm64be> peek-f64be! f64? 8)
 
 
@@ -1338,39 +1756,12 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   (define-who <bytes> ($<u8*> who))
 
 
-  #|proc:<ascii>
-  The `<ascii>` procedure takes ASCII string `text`. It returns a binary parser that
-  matches the character byte values and returns a fresh copy of `text`.
-  |#
-  (define-who (<ascii> text)
-    (pcheck ([string? text])
-            (string-for-each (lambda (character)
-                               (unless (char<=? #\nul character #\delete)
-                                 (errorf who
-                                         "not a valid ascii character: ~a" character)))
-                             text)
-            (let ()
-              (define-parser ascii-parser
-                (let loop ([i 0])
-                  (if (fx= i (string-length text))
-                      (values #t (string-copy text) inp)
-		                      (let ([b (char->integer (string-ref text i))])
-		                        (if (peek-u8! inp b)
-		                            (loop (fx1+ i))
-                            (let ([failure (parser-failure-expected-at
-                                            inp
-                                            (list b)
-                                            (current-found inp))])
-                              (values #f #f failure)))))))
-              ascii-parser)))
-
-
   #|proc:<u8vec>
-  The `<u8vec>` procedure takes natural `count` and returns a binary parser. The parser
-  consumes the next `count` bytes and returns them in a fresh bytevector.
+  The `<u8vec>` procedure takes exact nonnegative integer `count` and returns a binary parser.
+  The parser consumes the next `count` bytes and returns them in a fresh bytevector.
   |#
   (define-who (<u8vec> count)
-    (pcheck ([natural? count])
+    (pcheck ([exact-natural? count])
             (define-parser u8vec-parser
               (let ([len (input-len inp)] [pos (input-pos inp)])
                 ;; TODO how to report error?
@@ -1387,42 +1778,81 @@ For simplicity, "PC" in the following documentation means "parser combinator".
             u8vec-parser))
 
 
-  #|doc
+  ;; Decode little-endian base-128 digits in balanced halves. Use this only for long
+  ;; encodings; the streaming accumulators below keep short integers inexpensive.
+  (define leb128-bytes->integer
+    (lambda (bytes start count)
+      (if (fx<= count 8)
+          (let loop ([index (fx1- (fx+ start count))] [number 0])
+            (if (fx< index start)
+                number
+                (loop (fx1- index)
+                      (+ (ash number 7)
+                         (fxlogand (bytevector-u8-ref bytes index) #x7f)))))
+          (let* ([low-count (fxdiv count 2)]
+                 [low (leb128-bytes->integer bytes start low-count)]
+                 [high (leb128-bytes->integer bytes (fx+ start low-count)
+                                             (fx- count low-count))])
+            (if (zero? high) low (+ low (ash high (* low-count 7))))))))
+
+  #|parser:<uleb128>
   Parse an unsigned LEB128-encoded number.
   See https://en.wikipedia.org/wiki/LEB128.
   |#
   (define-parser <uleb128>
-    (let loop ([shift 0] [n 0])
-      (let ([b (peek-u8 inp)])
-        (if b
-            (let* ([bits (fxlogand b #x7f)] [cont (fxsrl (fxlogand b #x80) 7)]
-                   [n (+ n (ash bits shift))])
-              (if (fx= cont 0)
-                  (values #t n inp)
-                  (loop (fx+ shift 7) n)))
-            (values #f #f (parser-failure-eof inp '(uleb128) #f))))))
+    (let ([start (input-pos inp)])
+      (let loop ([shift 0] [number 0])
+        (let ([byte (peek-u8 inp)])
+          (if byte
+              (let ([number (if (fx< shift 56)
+                                (+ number (ash (fxlogand byte #x7f) shift))
+                                number)])
+                (if (fx>= byte #x80)
+                    (loop (fx+ shift 7) number)
+                    (values #t
+                            (if (fx< shift 56) number
+                                (leb128-bytes->integer
+                                 (binary-input-data inp) start (fx- (input-pos inp) start)))
+                            inp)))
+              (values #f #f (parser-failure-eof inp '(uleb128) #f)))))))
 
 
   #|proc:<sleb128>
-  The `<sleb128>` procedure takes positive fixnum `bit-length`.
-  It returns a binary parser that reads a signed LEB128-encoded integer.
-  The parser interprets the sign bit using `bit-length` bits.
+  The `<sleb128>` procedure takes positive fixnum `bit-length` and returns a binary parser
+  for signed LEB128 integers in that width. At most `ceiling(bit-length / 7)` bytes are
+  accepted, and unused high bits in the final byte must match the sign bit. Sign padding
+  within this byte limit is permitted. The parser returns the decoded signed integer.
   |#
   (define-who (<sleb128> bit-length)
     (pcheck ([sleb128-len? bit-length])
             (define-parser sleb128-parser
-              (let loop ([shift 0] [n 0])
-                (let ([b (peek-u8 inp)])
-                  (if b
-                      (let* ([bits (fxlogand b #x7f)] [cont (fxsrl (fxlogand b #x80) 7)]
-                             [n (+ n (ash bits shift))])
-                        (if (fx= cont 0)
-                            (let ([res (if (and (fx< shift bit-length) (logbit? 6 b))
-                                           (logor n (ash -1 (fx+ 7 shift)))
-                                           n)])
-                              (values #t res inp))
-                            (loop (fx+ shift 7) n)))
-                      (values #f #f (parser-failure-eof inp '(sleb128) #f))))))
+              (let ([start (input-pos inp)])
+                (let loop ([shift 0] [n 0])
+                  (let ([b (peek-u8 inp)])
+                    (if b
+                        (let* ([bits (fxlogand b #x7f)]
+                               [continued? (logbit? 7 b)]
+                               [used-bits (min 7 (- bit-length shift))]
+                               [unused-mask (fxlogxor #x7f (fx1- (fxsll 1 used-bits)))]
+                               [negative? (logbit? (fx1- used-bits) bits)]
+                               [n (if (< shift 56) (+ n (ash bits shift)) n)])
+                          (cond
+                            [(and continued? (<= (- bit-length shift) 7))
+                             (values #f #f
+                                     (parser-failure-custom inp "signed LEB128 is too long"))]
+                            [(not (= (fxlogand bits unused-mask)
+                                     (if negative? unused-mask 0)))
+                             (values #f #f
+                                     (parser-failure-custom
+                                      inp "signed LEB128 has inconsistent unused bits"))]
+                            [continued? (loop (+ shift 7) n)]
+                            [else
+                             (let ([n (if (< shift 56) n
+                                          (leb128-bytes->integer
+                                           (binary-input-data inp) start
+                                           (fx- (input-pos inp) start)))])
+                               (values #t (if (logbit? 6 b) (- n (ash 1 (+ shift 7))) n) inp))]))
+                        (values #f #f (parser-failure-eof inp '(sleb128) #f)))))))
             sleb128-parser))
 
 
@@ -1444,6 +1874,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   The `<many>` procedure takes `parser` and returns a parser that runs it repeatedly.
   It returns the successful values and raises an error if a success consumes no input.
   If `parser` fails immediately, the returned parser succeeds with `'()`.
+  A final failed attempt restores its starting cursor and ends repetition successfully.
   |#
   (define-who (<many> parser)
     (pcheck ([parser? parser])
@@ -1491,13 +1922,15 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                                     (loop item-input))
                                   (values #f #f
                                           (ensure-parser-failure
-                                           item-input current-input))))))))))
+                                           item-input inp1))))))))))
               many-until-parser)))
 
 
   #|proc:<some>
   The `<some>` procedure takes `parser` and returns a parser that runs it one or more
   times. It returns the successful values and raises an error if a success consumes no input.
+  After the first success, a failed attempt restores its starting cursor and ends repetition.
+  The initial failure is propagated.
   |#
   (define-who (<some> parser)
     (pcheck ([parser? parser])
@@ -1527,6 +1960,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   #|proc:<optional>
   The `<optional>` procedure takes `parser` and returns a parser that runs it once.
   The returned parser returns the parsed value on success and `'()` on failure.
+  Failure restores the starting input cursor; caller-owned state mutations are not undone.
   |#
   (define-who (<optional> parser)
     (pcheck ([parser? parser])
@@ -1542,42 +1976,70 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:<rep>
-  The `<rep>` procedure takes `parser` and natural `count`. The returned parser runs
-  `parser` exactly `count` times and returns the values, or fails when any run fails.
+  The `<rep>` procedure takes `parser` and exact nonnegative integer `count`. The returned parser
+  runs `parser` exactly `count` times and returns the values, or fails when any run fails.
   |#
   (define-who (<rep> parser count)
-    (pcheck ([parser? parser] [natural? count])
+    (pcheck ([parser? parser] [exact-natural? count])
             (let ([parser-body (parser-body parser)])
               (define-parser rep-parser
                 (let ([lb (make-list-builder)])
                   (let loop ([i 0] [inp1 inp])
-                    (if (fx= i count)
+                    (if (= i count)
                         (values #t (lb) inp1)
                         (let-values ([(stt val inp2)
                                       (parser-body inp1 state (fx1+ lvl))])
                           (if stt
                               (begin (lb val)
-                                     (loop (fx1+ i) inp2))
+                                     (loop (+ i 1) inp2))
                               (values #f #f (ensure-parser-failure inp2 inp1))))))))
               rep-parser)))
 
 
+  #|proc:parser-counted-vector
+  The `parser-counted-vector` procedure takes `element-parser` and exact nonnegative `count`.
+  It returns a binary parser that runs `element-parser` exactly `count` times and returns a new
+  vector of the results, or fails when an element fails. The element parser has behavior
+  `(BinaryInput -> Any)` and may consume zero bytes. Counts larger than the remaining input use
+  counted list repetition to avoid preallocating a vector for a potentially malformed count.
+  This helper is shared internally by format grammars and is excluded from the parser umbrella.
+  |#
+  (define (parser-counted-vector element-parser count)
+    (pcheck ([parser? element-parser] [exact-natural? count])
+            (let ([checked-element (<map> values element-parser)]
+                  [fallback (<map> list->vector (<rep> element-parser count))])
+              (define-parser vector-parser
+                (if (> count (- (input-len inp) (input-pos inp)))
+                    (parser-call fallback inp state lvl)
+                    (let ([result (make-vector count)])
+                      (let loop ([index 0] [current inp])
+                        (if (fx= index count)
+                            (values #t result current)
+                            (let-values ([(status value next)
+                                          (parser-call checked-element current state lvl)])
+                              (if status
+                                  (begin (vector-set! result index value)
+                                         (loop (fx1+ index) next))
+                                  (values #f #f next))))))))
+              vector-parser)))
+
+
   #|proc:<skip>
-  The `<skip>` procedure takes `parser` and natural `count`. The returned parser runs
-  `parser` exactly `count` times, ignores the values, and returns `'()`.
+  The `<skip>` procedure takes `parser` and exact nonnegative integer `count`. The returned parser
+  runs `parser` exactly `count` times, ignores the values, and returns `'()`.
   It fails when any run of `parser` fails.
   |#
   (define-who (<skip> parser count)
-    (pcheck ([parser? parser] [natural? count])
+    (pcheck ([parser? parser] [exact-natural? count])
             (let ([parser-body (parser-body parser)])
               (define-parser skip-parser
                 (let loop ([i 0] [inp1 inp])
-                  (if (fx= i count)
+                  (if (= i count)
                       (values #t '() inp1)
                       (let-values ([(stt val inp2)
                                     (parser-body inp1 state (fx1+ lvl))])
                         (if stt
-                            (loop (fx1+ i) inp2)
+                            (loop (+ i 1) inp2)
                             (values #f #f (ensure-parser-failure inp2 inp1)))))))
               skip-parser)))
 
@@ -1585,7 +2047,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   #|proc:</>
   The `</>` procedure takes zero or more parsers and returns a left-biased choice parser.
   The returned parser tries each parser from left to right. If no parser is supplied, the
-  returned parser always fails.
+  returned parser always fails. Failures at the farthest position combine expected tokens and
+  custom messages in first-occurrence order, including across nested choices.
   |#
   (define (</> . parser*)
     (pcheck ([all-parsers? parser*])
@@ -1606,14 +2069,14 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                                               (= max-offset (parser-failure-offset failure)))
                                             failure*)])
                             (values #f #f (parser-failure-merge-choice (reverse farthest))))
-                          (let-values ([(stt val inp1)
-                                        ((car body*) (save-input old-inp)
-                                                     state (fx1+ lvl))])
-                            (if stt
-                                (values #t val inp1)
-                                (loop (cdr body*)
-                                      (cons (ensure-parser-failure inp1 old-inp)
-                                            failure*)))))))))
+                          (let ([branch-input (save-input old-inp)])
+                            (let-values ([(stt val inp1)
+                                          ((car body*) branch-input state (fx1+ lvl))])
+                              (if stt
+                                  (values #t val inp1)
+                                  (loop (cdr body*)
+                                        (cons (ensure-parser-failure inp1 branch-input)
+                                              failure*))))))))))
               choice-parser)))
 
 
@@ -1641,12 +2104,14 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:<~n>
-  The `<~n>` procedure takes natural `index` and zero or more parsers `parser*`.
+  The `<~n>` procedure takes exact nonnegative integer `index` and zero or more parsers `parser*`.
   It returns a sequence parser like `<~>`, except success returns only the value from
   `index`. It is an error when `index` is outside the supplied parser range.
+  The index is zero-based. Its upper bound is checked when the returned parser runs, before any
+  supplied parser runs.
   |#
   (define-who (<~n> index . parser*)
-    (pcheck ([natural? index] [all-parsers? parser*])
+    (pcheck ([exact-natural? index] [all-parsers? parser*])
             (let ([body* (map parser-body parser*)])
               (define-parser indexed-sequence-parser
                 (let* ([body* body*] [len (length body*)] [v #f])
@@ -1683,8 +2148,9 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
   #|proc:<map-st>
   The `<map-st>` procedure takes `mapper` and `parser`. The `mapper` procedure must have
-  signature `(Any Any -> Any)` for a parse value and parser state. When `parser`
-  succeeds, the returned parser applies `mapper`.
+  signature `(Any Any -> Any)` for a parse value and parser state. When `parser` succeeds, the
+  returned parser applies `mapper` and returns its value. State mutations are not rolled back
+  when an enclosing parser backtracks or performs lookahead.
   |#
   (define-who (<map-st> mapper parser)
     (pcheck ([procedure? mapper] [parser? parser])
@@ -1710,8 +2176,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                   (if stt
                       (let ([next-parser (binder val)])
                         (pcheck ([parser? next-parser])
-                                ((parser-body next-parser)
-                                 inp1 state (fx1+ lvl))))
+                                (let-values ([(status value next-input)
+                                              ((parser-body next-parser) inp1 state (fx1+ lvl))])
+                                  (if status (values #t value next-input)
+                                      (values #f #f
+                                              (ensure-parser-failure next-input inp1))))))
                       (values #f #f (ensure-parser-failure inp1 inp)))))
               bind-parser)))
 
@@ -1719,7 +2188,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   #|proc:<bind-st>
   The `<bind-st>` procedure takes `parser` and `binder`. The `binder` procedure must have
   signature `(Any Any -> Parser)` for a parse value and parser state. When `parser`
-  succeeds, the returned parser applies `binder` and runs the resulting parser.
+  succeeds, the returned parser applies `binder` and returns the value from the resulting parser.
+  State mutations are not rolled back by backtracking or lookahead.
   |#
   (define-who (<bind-st> parser binder)
     (pcheck ([parser? parser] [procedure? binder])
@@ -1729,8 +2199,11 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                   (if stt
                       (let ([next-parser (binder val state)])
                         (pcheck ([parser? next-parser])
-                                ((parser-body next-parser)
-                                 inp1 state (fx1+ lvl))))
+                                (let-values ([(status value next-input)
+                                              ((parser-body next-parser) inp1 state (fx1+ lvl))])
+                                  (if status (values #t value next-input)
+                                      (values #f #f
+                                              (ensure-parser-failure next-input inp1))))))
                       (values #f #f (ensure-parser-failure inp1 inp)))))
               bind-state-parser)))
 
@@ -1754,7 +2227,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                           (if stt2
                               (values #t val1 old-input)
                               (values #f #f (ensure-parser-failure inp2 inp1)))))
-                      (values #f #f inp1))))
+                      (values #f #f (ensure-parser-failure inp1 inp)))))
               followed-by-parser)))
 
 
@@ -1779,7 +2252,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                                       (parser-failure-custom old-input
                                                              "input was not expected"))
                               (values #t val1 old-input))))
-                      (values #f #f inp1))))
+                      (values #f #f (ensure-parser-failure inp1 inp)))))
               not-followed-by-parser)))
 
 
@@ -1802,7 +2275,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
 
 
   #|proc:<~0>
-  The `<~0>` procedure takes parsers `parser*` and returns their index-zero sequence.
+  The `<~0>` procedure takes parsers `parser*`, runs them in order, and returns the value at
+  zero-based index 0. It is `<~n>` with that index; too few parsers raise an error at parse time.
   |#
   (define <~0>
     (lambda parser*
@@ -1810,7 +2284,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
               (apply <~n> 0 parser*))))
 
   #|proc:<~1>
-  The `<~1>` procedure takes parsers `parser*` and returns their index-one sequence.
+  The `<~1>` procedure takes parsers `parser*`, runs them in order, and returns the value at
+  zero-based index 1. It is `<~n>` with that index; too few parsers raise an error at parse time.
   |#
   (define <~1>
     (lambda parser*
@@ -1818,7 +2293,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
               (apply <~n> 1 parser*))))
 
   #|proc:<~2>
-  The `<~2>` procedure takes parsers `parser*` and returns their index-two sequence.
+  The `<~2>` procedure takes parsers `parser*`, runs them in order, and returns the value at
+  zero-based index 2. It is `<~n>` with that index; too few parsers raise an error at parse time.
   |#
   (define <~2>
     (lambda parser*
@@ -1826,7 +2302,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
               (apply <~n> 2 parser*))))
 
   #|proc:<~3>
-  The `<~3>` procedure takes parsers `parser*` and returns their index-three sequence.
+  The `<~3>` procedure takes parsers `parser*`, runs them in order, and returns the value at
+  zero-based index 3. It is `<~n>` with that index; too few parsers raise an error at parse time.
   |#
   (define <~3>
     (lambda parser*
@@ -1834,7 +2311,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
               (apply <~n> 3 parser*))))
 
   #|proc:<~4>
-  The `<~4>` procedure takes parsers `parser*` and returns their index-four sequence.
+  The `<~4>` procedure takes parsers `parser*`, runs them in order, and returns the value at
+  zero-based index 4. It is `<~n>` with that index; too few parsers raise an error at parse time.
   |#
   (define <~4>
     (lambda parser*
@@ -1842,7 +2320,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
               (apply <~n> 4 parser*))))
 
   #|proc:<~5>
-  The `<~5>` procedure takes parsers `parser*` and returns their index-five sequence.
+  The `<~5>` procedure takes parsers `parser*`, runs them in order, and returns the value at
+  zero-based index 5. It is `<~n>` with that index; too few parsers raise an error at parse time.
   |#
   (define <~5>
     (lambda parser*
@@ -1865,7 +2344,7 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   |#
   (define (<as-string> parser)
     (pcheck ([parser? parser])
-            (<map> (lambda (value) (apply string value)) parser)))
+            (<map> list->string parser)))
 
 
   #|proc:<as-symbol>
@@ -1874,39 +2353,38 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   |#
   (define (<as-symbol> parser)
     (pcheck ([parser? parser])
-            (<map> (lambda (value) (string->symbol (apply string value))) parser)))
+            (<map> (lambda (value) (string->symbol (list->string value))) parser)))
 
   #|proc:<as-integer>
   The `<as-integer>` procedure takes parser `parser` and returns a parser that converts
-  its parsed character list to an integer.
+  its parsed decimal character list to an integer, allowing an optional leading sign.
+  An empty list returns `#f`. A sign without digits fails with a parser error through a runner.
   |#
   (define (<as-integer> parser)
     (pcheck ([parser? parser])
-            (<map> (lambda (value)
-                     (if (null? value)
-                         #f
-                         (let-values ([(sign digit*)
-                                       (cond [(eq? #\+ (car value))
-                                              (values + (cdr value))]
-                                             [(eq? #\- (car value))
-                                              (values - (cdr value))]
-                                             [else (values + value)])])
-                           (sign (fold-left
-                                  (lambda (sum digit)
-                                    (+ (* sum 10) (char->num digit)))
-                                  0 digit*)))))
-                   parser)))
-
-  ;; TODO neg
-  ;; TODO avoid building the list
-  (define <nat>
-    (<map> (lambda (val)
-             (fold-left (lambda (s n) (+ (* 10 s) (char->num n))) 0 val))
-           (<some> <digit>)))
+            (<bind> parser
+                    (lambda (value)
+                      (if (null? value)
+                          (<result> #f)
+                          (let-values ([(sign digit*)
+                                        (cond [(eq? #\+ (car value))
+                                               (values + (cdr value))]
+                                              [(eq? #\- (car value))
+                                               (values - (cdr value))]
+                                              [else (values + value)])])
+                            (if (null? digit*)
+                                (<fail-with> "integer sign must be followed by digits")
+                                (let ([digits (make-list-builder)])
+                                  ;; Validate left to right; map callback order is unspecified.
+                                  (for-each (lambda (character) (digits (char->num character))) digit*)
+                                  (<result> (sign (digits->num (digits))))))))))))
 
   #|proc:<sep-by>
   The `<sep-by>` procedure takes `parser` and `separator`. It returns a parser for zero
   or more `parser` values separated by `separator` values, which are ignored.
+  A failed separator/item attempt restores the cursor before that separator; a trailing
+  separator is left unread. If the first item fails, the cursor is restored and the result is an
+  empty list.
   |#
   (define (<sep-by> parser separator)
     (pcheck ([parser? parser separator])
@@ -1916,6 +2394,8 @@ For simplicity, "PC" in the following documentation means "parser combinator".
   #|proc:<sep-by1>
   The `<sep-by1>` procedure takes `parser` and `separator`. It returns a parser for one
   or more `parser` values separated by `separator` values, which are ignored.
+  A failed separator/item attempt restores the cursor before that separator; a trailing
+  separator is left unread. The first item must succeed.
   |#
   (define (<sep-by1> parser separator)
     (pcheck ([parser? parser separator])
@@ -1923,22 +2403,43 @@ For simplicity, "PC" in the following documentation means "parser combinator".
                    (<~> parser (<many> (~> separator parser))))))
 
 
+  #|proc:parser-discard-many
+  The `parser-discard-many` procedure takes `parser` and returns a parser that repeats it,
+  ignores its values, and returns the empty list. The argument `parser` has behavior
+  `(Input -> Any)` and must consume input on success. The final failed attempt restores its
+  starting cursor. A success without input progress raises an error. Callback state is not
+  rolled back.
+  This helper is shared internally by format grammars and is excluded from the parser umbrella.
+  |#
+  (define (parser-discard-many parser)
+    (pcheck ([parser? parser])
+            (define-parser discard-parser
+              (let loop ([current inp])
+                (let ([snapshot (save-input current)])
+                  (let-values ([(status value next-input)
+                                (parser-call parser current state (fx1+ lvl))])
+                    (if status
+                        (begin (ensure-progress '<many> snapshot next-input)
+                               (loop next-input))
+                        (values #t '() snapshot))))))
+            discard-parser))
+
   #|proc:<token>
   The `<token>` procedure takes `parser` and returns a parser that runs it, consumes any
   following whitespace, and returns its value.
   |#
   (define (<token> parser)
     (pcheck ([parser? parser])
-            (<~ parser (<many> <whitespace>))))
+            (<~ parser (parser-discard-many <whitespace>))))
 
 
   #|proc:<fully>
-  The `<fully>` procedure takes `parser`. The returned parser consumes leading and
-  trailing whitespace, runs `parser`, requires EOF, and returns its value.
+  The `<fully>` procedure takes textual `parser`. The returned parser consumes leading whitespace,
+  runs `parser`, consumes trailing whitespace, requires EOF, and returns the value of `parser`.
   |#
   (define (<fully> parser)
     (pcheck ([parser? parser])
-            (<~n> 1 (<many> <whitespace>) parser (<many> <whitespace>) <eof>)))
+            (<~n> 1 (parser-discard-many <whitespace>) parser (parser-discard-many <whitespace>) <eof>)))
 
 
   ;; TODO These can be placed in the front at o=3, but not at o=2.
@@ -1953,37 +2454,37 @@ For simplicity, "PC" in the following documentation means "parser combinator".
             [(char<=? #\A c #\F) (fx- (char->integer c) 55)]
             [else (c->n c)])))
 
-  #|doc
+  #|parser:<digit2>
   Parse a binary digit and convert it to the corresponding number.
   E.g., #\0 -> 0, #\1 -> 1.
   |#
   (define <digit2> (<map> c->n <bindigit>))
 
-  #|doc
+  #|parser:<digit8>
   Parse a octal digit and convert it to the corresponding number.
   E.g., #\0 -> 0, #\1 -> 1, ..., #\7 -> 7.
   |#
   (define <digit8> (<map> c->n <octdigit>))
 
-  #|doc
+  #|parser:<digit10>
   Parse a decimal digit and convert it to the corresponding number.
   E.g., #\0 -> 0, #\1 -> 1, ..., #\9 -> 9.
   |#
   (define <digit10> (<map> c->n <digit>))
 
-  #|doc
+  #|parser:<digit16>
   Parse a hex digit and convert it to the corresponding number.
   E.g., #\0 -> 0, #\1 -> 1, ..., #\a -> 10, ..., #\f -> 15, #\A -> 10, ..., #\F -> 15.
   |#
   (define <digit16> (<map> hexc->n <hexdigit>))
 
-  #|doc
+  #|parser:<upper-digit16>
   Parse an upper hex digit and convert it to the corresponding number.
   E.g., #\0 -> 0, #\1 -> 1, ..., #\A -> 10, ..., #\F -> 15.
   |#
   (define <upper-digit16> (<map> hexc->n <upper-hexdigit>))
 
-  #|doc
+  #|parser:<lower-digit16>
   Parse a lower hex digit and convert it to the corresponding number.
   E.g., #\0 -> 0, #\1 -> 1, ..., #\a -> 10, ..., #\f -> 15.
   |#

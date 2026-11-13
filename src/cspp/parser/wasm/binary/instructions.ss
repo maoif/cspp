@@ -10,13 +10,9 @@
 
   (define empty-vector '#())
 
-  (define make-immutable-vector
-    (lambda value*
-      (list->immutable-vector value*)))
-
   (define one-immediate
     (lambda (parser)
-      (<map> make-immutable-vector parser)))
+      (<map> immutable-vector parser)))
 
   (define pair-immediates
     (lambda (first-parser second-parser)
@@ -25,7 +21,7 @@
   (define reversed-pair-immediates
     (lambda (first-parser second-parser)
       (<map> (lambda (values)
-               (make-immutable-vector (cadr values) (car values)))
+               (immutable-vector (cadr values) (car values)))
              (<~> first-parser second-parser))))
 
   (define instruction-record
@@ -99,17 +95,17 @@
 
   (define value-type-vector-immediates
     (<map> (lambda (types)
-             (make-immutable-vector (vector->immutable-vector types)))
+             (immutable-vector (vector->immutable-vector types)))
            (<wasm-vector> <wasm-value-type>)))
 
   (define non-null-heap-type-immediates
     (<map> (lambda (heap-type)
-             (make-immutable-vector (make-wasm-reference-type #f heap-type)))
+             (immutable-vector (make-wasm-reference-type #f heap-type)))
            <wasm-heap-type>))
 
   (define nullable-heap-type-immediates
     (<map> (lambda (heap-type)
-             (make-immutable-vector (make-wasm-reference-type #t heap-type)))
+             (immutable-vector (make-wasm-reference-type #t heap-type)))
            <wasm-heap-type>))
 
   (define vector-bytes-immediates
@@ -125,7 +121,7 @@
 
   (define shuffle-bytes-immediates
     (<map> (lambda (lane*)
-             (make-immutable-vector (u8-list->bytevector lane*)))
+             (immutable-vector (u8-list->bytevector lane*)))
            (<rep> shuffle-lane-parser 16)))
 
   ;; Core 3.0 binary grammar, `Bcastop` and `Binstr/cast`, uses flags before all fields.
@@ -143,7 +139,7 @@
      (lambda (flags)
        (<map>
         (lambda (values)
-          (make-immutable-vector
+          (immutable-vector
            (car values)
            (make-wasm-reference-type (not (fxzero? (fxand flags 1)))
                                      (cadr values))
@@ -151,31 +147,9 @@
                                      (caddr values))))
         (<~> <wasm-u32> <wasm-heap-type> <wasm-heap-type>)))))
 
-  (define instruction-lane-count
-    (lambda (mnemonic)
-      (cond [(memq mnemonic
-                   '(i8x16.extract-lane-s i8x16.extract-lane-u i8x16.replace-lane
-                     v128.load8-lane v128.store8-lane))
-             16]
-            [(memq mnemonic
-                   '(i16x8.extract-lane-s i16x8.extract-lane-u i16x8.replace-lane
-                     v128.load16-lane v128.store16-lane))
-             8]
-            [(memq mnemonic
-                   '(i32x4.extract-lane i32x4.replace-lane
-                     f32x4.extract-lane f32x4.replace-lane
-                     v128.load32-lane v128.store32-lane))
-             4]
-            [(memq mnemonic
-                   '(i64x2.extract-lane i64x2.replace-lane
-                     f64x2.extract-lane f64x2.replace-lane
-                     v128.load64-lane v128.store64-lane))
-             2]
-            [else #f])))
-
   (define lane-index-parser
     (lambda (descriptor)
-      (let ([lane-count (instruction-lane-count (wasm-opcode-mnemonic descriptor))])
+      (let ([lane-count (wasm-instruction-lane-count (wasm-opcode-mnemonic descriptor))])
         (if lane-count
             (<bind>
              <u8>
@@ -195,7 +169,7 @@
          (one-immediate <wasm-u32>)]
         [(label-vector)
          (<map> (lambda (values)
-                  (make-immutable-vector
+                  (immutable-vector
                    (vector->immutable-vector (car values)) (cadr values)))
                 (<~> (<wasm-vector> <wasm-u32>) <wasm-u32>))]
         [(heap-type) (one-immediate <wasm-heap-type>)]
@@ -234,8 +208,17 @@
 
   (define sequence-before
     (lambda (terminator-parser)
+      ;; Non-terminator bytes need no mismatch diagnostic: many-until discards it.
+      ;; Leave terminator candidates and EOF on the original diagnostic path.
+      (define-parser guarded-terminator
+        (let ([position (input-pos inp)])
+          (if (and (fx< position (input-len inp))
+                   (not (memv (bytevector-u8-ref (binary-input-data inp) position)
+                              '(#x05 #x0b))))
+              (values #f #f inp)
+              (parser-call terminator-parser inp state lvl))))
       (<map> list->immutable-vector
-             (<many-until> <wasm-instruction> terminator-parser))))
+             (<many-until> <wasm-instruction> guarded-terminator))))
 
   (define sequence-ending-with-end
     (<~ (sequence-before (<uimm8> #x0b)) (<uimm8> #x0b)))
@@ -246,7 +229,7 @@
        (lambda (values)
          (make-wasm-instruction
           (wasm-opcode-mnemonic descriptor)
-          (make-immutable-vector (car values))
+          (immutable-vector (car values))
           (cadr values)
           empty-vector))
        (<~> <wasm-block-type> sequence-ending-with-end))))
@@ -263,13 +246,13 @@
              (<map> (lambda (alternate)
                       (make-wasm-instruction
                        (wasm-opcode-mnemonic descriptor)
-                       (make-immutable-vector block-type)
+                       (immutable-vector block-type)
                        body
                        alternate))
                     (<~1> (<uimm8> #x05) sequence-ending-with-end))
              (<as> (make-wasm-instruction
                     (wasm-opcode-mnemonic descriptor)
-                    (make-immutable-vector block-type)
+                    (immutable-vector block-type)
                     body
                     empty-vector)
                    (<uimm8> #x0b)))))))))
@@ -285,7 +268,7 @@
             (<map> (lambda (body)
                      (make-wasm-instruction
                       (wasm-opcode-mnemonic descriptor)
-                      (make-immutable-vector block-type)
+                      (immutable-vector block-type)
                       body
                       (vector->immutable-vector catches)))
                    sequence-ending-with-end)))))))
@@ -315,8 +298,25 @@
   |#
   (define <wasm-expression> sequence-ending-with-end)
 
+  ;; Prepare fixed compositions before sharing parsers. Each invocation still creates its
+  ;; own instruction records and nonempty immediate vectors, including in structured bodies.
+  (define instruction-parsers
+    (let ([table (make-eq-hashtable)])
+      (vector-for-each
+       (lambda (descriptor)
+         (hashtable-set! table descriptor (ordinary-instruction-parser descriptor)))
+       wasm-core-3-opcodes)
+      ;; Untyped select and nullable ref.test/ref.cast have encoding-specific shapes.
+      (for-each
+       (lambda (encoding)
+         (let ([descriptor (wasm-opcode-by-binary (car encoding) (cdr encoding))])
+           (hashtable-set! table descriptor (ordinary-instruction-parser descriptor))))
+       '((#f . #x1b) (#xfb . 21) (#xfb . 23)))
+      (hashtable-copy table #f)))
+
   (install-lazy-parser!
    <wasm-instruction>
-   (<bind> opcode-descriptor-parser ordinary-instruction-parser))
+   (<bind> opcode-descriptor-parser
+           (lambda (descriptor) (hashtable-ref instruction-parsers descriptor #f))))
 
   )
