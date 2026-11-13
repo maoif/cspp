@@ -11,7 +11,7 @@
           path-basename path-dirname path-extname path-stem
           path-absolute path-relative-to path-same-root?
           path-expand-user path-starts-with-user-home?)
-  (import (chezscheme)
+  (import (except (chezscheme) sleep)
           (cspp utils))
 
   #|proc:path?

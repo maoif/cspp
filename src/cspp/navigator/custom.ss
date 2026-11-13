@@ -1,6 +1,6 @@
 (library (cspp navigator custom)
   (export nav/getter nav/getter-setter nav/getter-setter!)
-  (import (chezscheme)
+  (import (except (chezscheme) sleep)
           (cspp utils)
           (cspp navigator core))
 

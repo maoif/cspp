@@ -4,7 +4,7 @@
           lws-client-close!
           lws-client-release-operation!
           lws-client-pool-metrics)
-  (import (chezscheme)
+  (import (except (chezscheme) sleep)
           (cspp utils)
           (cspp net operation)
           (cspp net http private)

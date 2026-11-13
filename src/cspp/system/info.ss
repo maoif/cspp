@@ -21,4 +21,5 @@
           cpu-arch
           cpu-count
           system-machine)
-  (import (cspp system time) (cspp system platform)))
+  (import (only (cspp utils) sleep milisleep nanosleep
+                sleep-seconds sleep-milliseconds sleep-nanoseconds) (cspp system platform)))

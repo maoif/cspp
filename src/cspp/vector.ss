@@ -518,7 +518,7 @@
           bvector-u56-for-each/i bvector-U56-for-each/i bvector-s56-for-each/i bvector-S56-for-each/i
           bvector-u64-for-each/i bvector-U64-for-each/i bvector-s64-for-each/i bvector-S64-for-each/i
           bvector-fp32-for-each/i bvector-FP32-for-each/i bvector-fp64-for-each/i bvector-FP64-for-each/i)
-  (import (chezscheme)
+  (import (except (chezscheme) sleep)
           (cspp utils)
           (cspp internal))
 

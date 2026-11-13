@@ -46,7 +46,7 @@
           $validate-process-options $wait-status->exit-status)
   (import (cspp chez)
           (cspp system common)
-          (only (cspp system time) milisleep)
+          (only (cspp utils) milisleep)
           (cspp system process status)
           (cspp system process private)
           (cspp system native)

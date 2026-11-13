@@ -5,7 +5,7 @@
           nav-setval nav-setval! nav-clearval nav-clearval!
           nav-selected->list nav-selected->vector nav-selected-transduce
           select-path transform-path transform-path! clear-path clear-path!)
-  (import (chezscheme)
+  (import (except (chezscheme) sleep)
           (cspp iter)
           (cspp list)
           (cspp transducer)

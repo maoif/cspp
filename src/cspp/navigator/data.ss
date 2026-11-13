@@ -12,7 +12,7 @@
           set-delete set-delete!
           nav-register-indexed! nav-register-keyed! nav-register-set!
           alist? alist-ref/missing)
-  (import (chezscheme)
+  (import (except (chezscheme) sleep)
           (cspp utils)
           (cspp navigator core))
 

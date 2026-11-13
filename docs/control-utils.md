@@ -148,3 +148,11 @@ Flag names must also be distinct; duplicate declarations are rejected during exp
 Flag operations validate exact integers even in release code. `flag-set` and `flag-reset`
 return new integer values without mutating inputs; `flag-all-set?` accepts a zero mask as true.
 The generated decoder ignores unknown bits.
+
+## Timing helpers
+
+`(cspp utils)` exports `sleep`, `milisleep`, and `nanosleep`, plus their aliases
+`sleep-seconds`, `sleep-milliseconds`, and `sleep-nanoseconds`. Durations are exact
+nonnegative integers in the named units and must fit the native `time_t` range.
+A signal can interrupt a sleep; interrupted sleeps are not retried. These helpers
+return unspecified values. `(cspp system time)` has been removed.

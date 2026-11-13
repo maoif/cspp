@@ -8,7 +8,7 @@
           for* for*/reduce for*/list for*/vector
           for*/fold
           for*/max for*/min for*/sum for*/product)
-  (import (chezscheme)
+  (import (except (chezscheme) sleep)
           (cspp private comprehension)
           (cspp iter)
           (cspp internal)

@@ -16,7 +16,7 @@
           iter-fxsum iter-fxproduct iter-fxavg
           iter-flsum iter-flproduct iter-flavg
           iter-max iter-min)
-  (import (chezscheme)
+  (import (except (chezscheme) sleep)
           (cspp list)
           (cspp vector)
           (cspp utils)

@@ -18,7 +18,7 @@
           list- listp- listq- listv-
           list& listp& listq& listv&
           list^ listp^ listq^ listv^)
-  (import (chezscheme)
+  (import (except (chezscheme) sleep)
           (cspp utils)
           (cspp internal))
 

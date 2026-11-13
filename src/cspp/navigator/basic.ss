@@ -3,7 +3,7 @@
           nav/nth nav/nth/default nav/first nav/second nav/last nav/slice
           nav/key nav/key/default nav/key-values nav/submap nav/car nav/cdr
           nav-register-indexed! nav-register-keyed! nav-register-set!)
-  (import (chezscheme)
+  (import (except (chezscheme) sleep)
           (cspp utils)
           (cspp list)
           (cspp navigator core)

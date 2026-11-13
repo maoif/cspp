@@ -1,6 +1,6 @@
 (library (cspp private file)
   (export $file-type $file-mount-id $file-view-key $file-view-seen?)
-  (import (chezscheme) (cspp utils))
+  (import (except (chezscheme) sleep) (cspp utils))
 
   #|proc:$file-type
   Inspect validated filesystem pathname `path`, following its final link when `follow-link?`

@@ -27,6 +27,7 @@ system conditions with the operation and error code.
 When affinity information is unavailable, it uses the online CPU count, falling back to one.
 CPU-time quotas are not converted into CPU counts.
 
+The timing helpers now live in `(cspp utils)`.
 `sleep`, `milisleep`, and `nanosleep` accept exact nonnegative durations in their respective
 units. The whole-second component must fit the native `time_t` range; larger durations raise
 an argument error. The `sleep-seconds`, `sleep-milliseconds`, and `sleep-nanoseconds` aliases

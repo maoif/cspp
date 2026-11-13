@@ -5,7 +5,7 @@
           string-slice string-startswith? string-endswith?
           string-search string-search-all string-contains? string-empty?
           string-split string-trim string-trim-left string-trim-right)
-  (import (except (chezscheme) string-for-each)
+  (import (except (chezscheme) string-for-each sleep)
           (cspp internal)
           (cspp utils)
           (cspp list))
