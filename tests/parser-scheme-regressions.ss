@@ -12,19 +12,19 @@
      (string=? (string #\page) (parse-scheme-datum "\"\\f\""))
 
      ;; Error case: a dotted list must have at least one element before the dot.
-     (parser-error? (parser-error-from (lambda () (parse-scheme-datum "(. a)"))))
+     (raises-parser-error? (lambda () (parse-scheme-datum "(. a)")))
 
      ;; Error case: a boolean cannot run into a following identifier.
-     (parser-error? (parser-error-from (lambda () (parse-scheme "#tfoo"))))
+     (raises-parser-error? (lambda () (parse-scheme "#tfoo")))
 
      ;; Error case: a character name cannot run into a following identifier.
-     (parser-error? (parser-error-from (lambda () (parse-scheme "#\\spacefoo"))))
+     (raises-parser-error? (lambda () (parse-scheme "#\\spacefoo")))
 
      ;; Error case: an integer cannot run into a following identifier.
-     (parser-error? (parser-error-from (lambda () (parse-scheme "123abc"))))
+     (raises-parser-error? (lambda () (parse-scheme "123abc")))
 
      ;; Error case: a radix integer must end before another radix prefix.
-     (parser-error? (parser-error-from (lambda () (parse-scheme "#x1#x2"))))
+     (raises-parser-error? (lambda () (parse-scheme "#x1#x2")))
 
      (equal? '(#t (x) #\space (quote a) -12 + #f)
              (parse-scheme "#t(x)#\\space'a -12 + #f"))
@@ -51,7 +51,7 @@
 
      ;; Error cases: ordinary characters must not hide invalid escapes or a missing quote.
      (for-all (lambda (source)
-                (and (parser-error-from (lambda () (parse-scheme-datum source))) #t))
+                (raises-parser-error? (lambda () (parse-scheme-datum source))))
               '("\"abc\\q\"" "\"abc")))
 
 (mat parser-scheme-vector-prefix-cost

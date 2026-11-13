@@ -270,7 +270,7 @@
      (equal? #\a (runT <item> "a"))
      (equal? #\a (runT <item> "ab"))
      ;; Error case: an item is required at EOF.
-     (parser-error? (parser-error-from (lambda () (runT <item> ""))))
+     (raises-parser-error? (lambda () (runT <item> "")))
 
      ;; TODO <fail> <pos> <msg> ...
 
@@ -281,21 +281,21 @@
 
      (equal? #\a (runT (<char> #\a) "a"))
      ;; Error case: the next character must match a.
-     (parser-error? (parser-error-from (lambda () (runT (<char> #\a) "b"))))
+     (raises-parser-error? (lambda () (runT (<char> #\a) "b")))
 
      ;; Error case: a letter is required at EOF.
-     (parser-error? (parser-error-from (lambda () (runT <letter> ""))))
+     (raises-parser-error? (lambda () (runT <letter> "")))
 
      (equal? #\a (runT <letter> "a"))
 
      ;; Error case: a lowercase character is not uppercase.
-     (parser-error? (parser-error-from (lambda () (runT <upper> "a"))))
+     (raises-parser-error? (lambda () (runT <upper> "a")))
 
      (equal? #\A (runT <upper> "A"))
 
      (equal? #\0 (runT <digit> "0"))
      ;; Error case: a letter is not an ASCII decimal digit.
-     (parser-error? (parser-error-from (lambda () (runT <digit> "a"))))
+     (raises-parser-error? (lambda () (runT <digit> "a")))
 
      (begin (define 0-9  (iota 10))
             (define 0-7  (iota 8))
@@ -346,44 +346,44 @@
              0-15 (append 0-9-str A-F-str))
 
      ;; Error case: 3 is not a binary digit.
-     (parser-error? (parser-error-from (lambda () (runT <bindigit> "3"))))
+     (raises-parser-error? (lambda () (runT <bindigit> "3")))
 
      ;; Error case: 8 is not an octal digit.
-     (parser-error? (parser-error-from (lambda () (runT <octdigit> "8"))))
+     (raises-parser-error? (lambda () (runT <octdigit> "8")))
 
      ;; Error case: g is not a hexadecimal digit.
-     (parser-error? (parser-error-from (lambda () (runT <hexdigit> "g"))))
+     (raises-parser-error? (lambda () (runT <hexdigit> "g")))
 
      ;; Error case: a is not an uppercase hexadecimal digit.
-     (parser-error? (parser-error-from (lambda () (runT <upper-hexdigit> "a"))))
+     (raises-parser-error? (lambda () (runT <upper-hexdigit> "a")))
 
      ;; Error case: A is not a lowercase hexadecimal digit.
-     (parser-error? (parser-error-from (lambda () (runT <lower-hexdigit> "A"))))
+     (raises-parser-error? (lambda () (runT <lower-hexdigit> "A")))
 
      ;; Error case: 3 is not a base-two digit.
-     (parser-error? (parser-error-from (lambda () (runT <digit2> "3"))))
+     (raises-parser-error? (lambda () (runT <digit2> "3")))
 
      ;; Error case: 8 is not a base-eight digit.
-     (parser-error? (parser-error-from (lambda () (runT <digit8> "8"))))
+     (raises-parser-error? (lambda () (runT <digit8> "8")))
 
      ;; Error case: a is not a decimal digit.
-     (parser-error? (parser-error-from (lambda () (runT <digit10> "a"))))
+     (raises-parser-error? (lambda () (runT <digit10> "a")))
 
      ;; Error case: a is not an uppercase base-sixteen digit.
-     (parser-error? (parser-error-from (lambda () (runT <upper-digit16> "a"))))
+     (raises-parser-error? (lambda () (runT <upper-digit16> "a")))
 
      ;; Error case: A is not a lowercase base-sixteen digit.
-     (parser-error? (parser-error-from (lambda () (runT <lower-digit16> "A"))))
+     (raises-parser-error? (lambda () (runT <lower-digit16> "A")))
 
 
      (equal? #\a (runT (<one-of> "abc") "a"))
      (equal? #\b (runT (<one-of> "abc") "b"))
      ;; error
-     (parser-error? (parser-error-from (lambda () (runT (<one-of> "abc") "d"))))
+     (raises-parser-error? (lambda () (runT (<one-of> "abc") "d")))
 
      (equal? #\d (runT (<none-of> "abc") "d"))
      ;; error
-     (parser-error? (parser-error-from (lambda () (runT (<none-of> "abc") "b"))))
+     (raises-parser-error? (lambda () (runT (<none-of> "abc") "b")))
 
 
      )
@@ -398,10 +398,9 @@
      (= 2 (runB (</> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3)) (u8vec 2)))
      (= 3 (runB (</> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3)) (u8vec 3)))
      ;; Error case: none of the immediate-byte alternatives matches 4.
-     (parser-error?
-      (parser-error-from
-       (lambda ()
-         (runB (</> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3)) (u8vec 4)))))
+     (raises-parser-error?
+      (lambda ()
+        (runB (</> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3)) (u8vec 4))))
 
      (equal? '(1 64)
              (runB (</> (<~> (<uimm8> 1) <u8>)
@@ -409,30 +408,27 @@
                         (<~> (<uimm8> 3) <u8>))
                    (u8vec 1 64)))
      ;; error
-     (parser-error?
-      (parser-error-from
-       (lambda ()
-         (runB (</> (<~> (<uimm8> 1) <u8>)
-                 (<~> (<uimm8> 2) <u8>)
-                 (<~> (<uimm8> 3) <u8>))
-            (u8vec 4 64)))))
+     (raises-parser-error?
+      (lambda ()
+        (runB (</> (<~> (<uimm8> 1) <u8>)
+                (<~> (<uimm8> 2) <u8>)
+                (<~> (<uimm8> 3) <u8>))
+           (u8vec 4 64))))
 
      (equal? '(1 2 3)
              (runB (<~> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3))
                    (u8vec 1 2 3)))
      ;; error
-     (parser-error?
-      (parser-error-from
-       (lambda ()
-         (runB (<~> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3))
-            (u8vec 1 3)))))
+     (raises-parser-error?
+      (lambda ()
+        (runB (<~> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3))
+           (u8vec 1 3))))
 
      ;; Error case: the first byte violates the immediate sequence.
-     (parser-error?
-      (parser-error-from
-       (lambda ()
-         (runB (<~> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3))
-            (u8vec 2 2 3)))))
+     (raises-parser-error?
+      (lambda ()
+        (runB (<~> (<uimm8> 1) (<uimm8> 2) (<uimm8> 3))
+           (u8vec 2 2 3))))
 
      (equal? '((3 33) (1 11) (2 22))
              (runB (<rep> (</> (<~> (<uimm8> 1) <u8>)
@@ -447,14 +443,13 @@
                           2)
                    (u8vec 3 33 1 11 2 22)))
      ;; error
-     (parser-error?
-      (parser-error-from
-       (lambda ()
-         (runB (<rep> (</> (<~> (<uimm8> 1) <u8>)
-                    (<~> (<uimm8> 2) <u8>)
-                    (<~> (<uimm8> 3) <u8>))
-               4)
-        (u8vec 3 33 1 11 2 22)))))
+     (raises-parser-error?
+      (lambda ()
+        (runB (<rep> (</> (<~> (<uimm8> 1) <u8>)
+                   (<~> (<uimm8> 2) <u8>)
+                   (<~> (<uimm8> 3) <u8>))
+              4)
+       (u8vec 3 33 1 11 2 22))))
 
      (equal? '(6 6 6 6)
              (runB (<bind> (<uimm8> 4)
@@ -713,7 +708,7 @@
      (equal? '(1 2 3)
              (runB (<u8*> 1 2 3) (u8vec 1 2 3)))
      ;; Error case: the byte sequence differs at its second byte.
-     (parser-error? (parser-error-from (lambda () (runB (<u8*> 1 2 3) (u8vec 1 3 3)))))
+     (raises-parser-error? (lambda () (runB (<u8*> 1 2 3) (u8vec 1 3 3))))
 
      ;; Large 64-bit immediate values are valid even when they are not fixnums.
      (= #xffffffffffffffff
@@ -747,10 +742,10 @@
                    (u8vec 9 1 2 8)))
 
      ;; error: the bounded parser must consume every declared byte.
-     (parser-error? (parser-error-from (lambda () (runB (<bounded> 2 <u8>) (u8vec 1 2)))))
+     (raises-parser-error? (lambda () (runB (<bounded> 2 <u8>) (u8vec 1 2))))
 
      ;; error: the declared range cannot extend beyond the binary input.
-     (parser-error? (parser-error-from (lambda () (runB (<bounded> 3 (<rep> <u8> 3)) (u8vec 1 2)))))
+     (raises-parser-error? (lambda () (runB (<bounded> 3 (<rep> <u8> 3)) (u8vec 1 2))))
 
      ;; error: failures inside a bounded parser retain the absolute byte offset.
      (let ([err (parser-error-from
@@ -846,7 +841,7 @@
      (error? (<many-until> (<char> #\a) 'not-a-parser))
 
      ;; error
-     (parser-error? (parser-error-from (lambda () (runT (<some> (<char> #\a)) ""))))
+     (raises-parser-error? (lambda () (runT (<some> (<char> #\a)) "")))
 
      (equal? '(#\a)
              (runT (<some> (<char> #\a)) "a"))
@@ -856,7 +851,7 @@
              (runT (<some> (<char> #\a)) "aaabbc"))
 
      ;; Error case: one or more items are required at EOF.
-     (parser-error? (parser-error-from (lambda () (runT (<some> <item>) ""))))
+     (raises-parser-error? (lambda () (runT (<some> <item>) "")))
 
      (equal? '(#\a #\b #\c)
              (runT (<some> <item>) "abc"))
@@ -866,7 +861,7 @@
      (equal? #\0 (runT (</> <letter> <digit> <whitespace>) "0"))
      (equal? #\space (runT (</> <letter> <digit> <whitespace>) " "))
      ;; error
-     (parser-error? (parser-error-from (lambda () (runT (</> <letter> <digit> <whitespace>) "!"))))
+     (raises-parser-error? (lambda () (runT (</> <letter> <digit> <whitespace>) "!")))
 
      (equal? '(#\d #\e #\f #\1 #\2 #\3 #\a #\b #\c)
              (runT (<many> (</> <digit> <letter>)) "def123abc"))
@@ -878,10 +873,9 @@
      (equal? '(#\A #\9 #\space)
              (runT (<~> <letter> <digit> <whitespace>) "A9 "))
      ;; error
-     (parser-error?
-      (parser-error-from
-       (lambda ()
-         (runT (<~> <letter> <digit> <whitespace>) " A9 "))))
+     (raises-parser-error?
+      (lambda ()
+        (runT (<~> <letter> <digit> <whitespace>) " A9 ")))
 
      (equal? '(#\space #\A #\9 #\space)
              (runT (<~> <whitespace> <letter> (</> <digit> <upper>) <whitespace>)
@@ -890,11 +884,10 @@
              (runT (<~> <whitespace> <letter> (</> <digit> <upper>) <whitespace>)
                    " AU "))
      ;; error
-     (parser-error?
-      (parser-error-from
-       (lambda ()
-         (runT (<~> <whitespace> <letter> (</> <digit> <upper>) <whitespace>)
-               " Aa "))))
+     (raises-parser-error?
+      (lambda ()
+        (runT (<~> <whitespace> <letter> (</> <digit> <upper>) <whitespace>)
+              " Aa ")))
 
      (equal? '((#\a #\b #\c) (#\space #\space))
              (runT (<~> (<some> <letter>) (<many> <whitespace>)) "abc  "))
@@ -903,16 +896,16 @@
      (equal? '(#\) #\) #\)) (runT (<rep> (<char> #\)) 3) ")))"))
      (equal? '(#\a #\a #\a) (runT (<rep> (<char> #\a) 3) "aaaa"))
      ;; error
-     (parser-error? (parser-error-from (lambda () (runT (<rep> (<char> #\a) 3) "aa"))))
+     (raises-parser-error? (lambda () (runT (<rep> (<char> #\a) 3) "aa")))
 
      (equal? #\a (runT (<~n> 0 <letter> <digit> <letter>) "a1c"))
      (equal? #\1 (runT (<~n> 1 <letter> <digit> <letter>) "a1c"))
      (equal? #\c (runT (<~n> 2 <letter> <digit> <letter>) "a1c"))
      ;; error
-     (parser-error? (parser-error-from (lambda () (runT (<~n> 0 <letter> <digit> <letter>) "a12"))))
+     (raises-parser-error? (lambda () (runT (<~n> 0 <letter> <digit> <letter>) "a12")))
 
      ;; Error case: the indexed letter parser cannot accept a digit.
-     (parser-error? (parser-error-from (lambda () (runT (<~n> 2 <letter> <digit> <letter>) "a12"))))
+     (raises-parser-error? (lambda () (runT (<~n> 2 <letter> <digit> <letter>) "a12")))
 
      (error? (runT (<~n> -1 <letter> <digit> <letter>) "a1c"))
      (error? (runT (<~n> 3 <letter> <digit> <letter>) "a1c"))
@@ -973,10 +966,10 @@
      (equal? '((#\a) (#\b) (#\c))
              (runT <anbncn> "abcc"))
      ;; error
-     (parser-error? (parser-error-from (lambda () (runT <anbncn> "aabc"))))
+     (raises-parser-error? (lambda () (runT <anbncn> "aabc")))
 
      ;; Error case: the grammar requires equal runs of a, b, and c.
-     (parser-error? (parser-error-from (lambda () (runT <anbncn> "abbc"))))
+     (raises-parser-error? (lambda () (runT <anbncn> "abbc")))
 
      (begin (define (<onion> c)
               (<bind> (<some> (<char> #\())
@@ -993,10 +986,10 @@
      ;; still ok
      (equal? #\a (runT (<onion> #\a) "((a)))"))
      ;; error
-     (parser-error? (parser-error-from (lambda () (runT (<~> (<onion> #\a) <eof>) "((a)))"))))
+     (raises-parser-error? (lambda () (runT (<~> (<onion> #\a) <eof>) "((a)))")))
 
      ;; Error case: the nested form is missing a closing parenthesis.
-     (parser-error? (parser-error-from (lambda () (runT (<onion> #\a) "(((a))"))))
+     (raises-parser-error? (lambda () (runT (<onion> #\a) "(((a))")))
 
 
      (begin (define <lines>
@@ -1012,13 +1005,13 @@
      (equal? '("aa" "bb" "cc" "dd" "ff")
              (runT <lines> "aa\nbb\ncc\ndd\nff"))
      ;; error: no content
-     (parser-error? (parser-error-from (lambda () (runT <lines> ""))))
+     (raises-parser-error? (lambda () (runT <lines> "")))
 
      ;; Error case: a blank line cannot supply the required word.
-     (parser-error? (parser-error-from (lambda () (runT <lines> "\n"))))
+     (raises-parser-error? (lambda () (runT <lines> "\n")))
 
      ;; Error case: multiple blank lines cannot supply the required word.
-     (parser-error? (parser-error-from (lambda () (runT <lines> "\n\n\n"))))
+     (raises-parser-error? (lambda () (runT <lines> "\n\n\n")))
 
      ;; TODO states <map-st> <bind-st>
 
@@ -1029,15 +1022,15 @@
      (equal? '("" #\a) (runT (<~> (<string> "") <item>) "a"))
 
      ;; Empty choice should fail rather than act as a zero-width successful parser.
-     (parser-error? (parser-error-from (lambda () (runT (</>) "abc"))))
+     (raises-parser-error? (lambda () (runT (</>) "abc")))
 
      (begin (define arabic-indic-one (string (integer->char #x0661))) #t)
 
      ;; error: digit parser rejects non-ASCII numeric characters.
-     (parser-error? (parser-error-from (lambda () (runT <digit> arabic-indic-one))))
+     (raises-parser-error? (lambda () (runT <digit> arabic-indic-one)))
 
      ;; error: numeric digit parser rejects non-ASCII numeric characters.
-     (parser-error? (parser-error-from (lambda () (runT <digit10> arabic-indic-one))))
+     (raises-parser-error? (lambda () (runT <digit10> arabic-indic-one)))
 
      ;; Repetition over zero-width success is an invalid parser shape.
      (error? (runT (<many> (<result> 1)) ""))
@@ -1051,11 +1044,16 @@
 
      (not (parser-error-from (lambda () (parse-scheme-datum "1"))))
 
+     (not (raises-parser-error? (lambda () (parse-scheme-datum "1"))))
+
      ;; Error case: malformed syntax returns its structured condition.
      (parser-error? (parser-error-from (lambda () (parse-scheme-datum "("))))
 
      ;; Error control: unrelated implementation conditions must propagate by identity.
-     (let ([sentinel (make-assertion-violation)])
-       (guard (condition [else (eq? condition sentinel)])
-         (parser-error-from (lambda () (raise sentinel)))
-         #f)))
+     (for-all
+      (lambda (capture)
+        (let ([sentinel (make-assertion-violation)])
+          (guard (condition [else (eq? condition sentinel)])
+            (capture (lambda () (raise sentinel)))
+            #f)))
+      (list parser-error-from raises-parser-error?)))

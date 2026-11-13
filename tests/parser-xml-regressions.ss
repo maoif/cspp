@@ -39,10 +39,10 @@
             (< allocated 68000000)))
 
      ;; Error case: a double hyphen inside comment text is still forbidden.
-     (and (parser-error-from (lambda () (parse-xml "<r><!--a--b--></r>"))) #t)
+     (raises-parser-error? (lambda () (parse-xml "<r><!--a--b--></r>")))
 
      ;; Error case: a trailing hyphen is not part of a valid comment terminator.
-     (and (parser-error-from (lambda () (parse-xml "<r><!--a---></r>"))) #t))
+     (raises-parser-error? (lambda () (parse-xml "<r><!--a---></r>"))))
 
 (mat parser-xml-newline-copy
 
@@ -91,10 +91,10 @@
       '("<r>" "<r><![CDATA[" "<?p ") '("</r>" "]]></r>" "?><r/>"))
 
      ;; Error case: ]]> remains forbidden in ordinary character data.
-     (and (parser-error-from (lambda () (parse-xml "<r>a]]>b</r>"))) #t)
+     (raises-parser-error? (lambda () (parse-xml "<r>a]]>b</r>")))
 
      ;; Error case: forbidden XML scalars cannot pass the ordinary-character shortcut.
-     (and (parser-error-from (lambda () (parse-xml "<r><![CDATA[a\x0;b]]></r>"))) #t)
+     (raises-parser-error? (lambda () (parse-xml "<r><![CDATA[a\x0;b]]></r>")))
 
      (let* ([root (xml-document-root (parse-xml "<r>a]b<![CDATA[c]d]]><?p e?f?></r>"))]
             [children (xml-element-children root)])
@@ -118,7 +118,7 @@
 
      ;; Error cases: direct success cannot bypass forbidden characters or reference checking.
      (for-all (lambda (source)
-                (and (parser-error-from (lambda () (parse-xml source))) #t))
+                (raises-parser-error? (lambda () (parse-xml source))))
               '("<r a='a<b'/>" "<r a='a&no;'/>" "<r a='x&#0;'/>" "<r a='x\x0;'/>")))
 
 (mat parser-xml-cr-normalization-cost

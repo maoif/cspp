@@ -54,13 +54,12 @@
                (toml-value "s = \"A\\e\\xE9\"" "s"))
 
      ;; error: unrecognized escape sequences are reserved.
-     (parser-error? (parser-error-from (lambda () (parse-toml "s = \"\\q\""))))
+     (raises-parser-error? (lambda () (parse-toml "s = \"\\q\"")))
 
      ;; error: a basic string cannot contain an unescaped control character.
-     (parser-error?
-      (parser-error-from
-       (lambda ()
-         (parse-toml (string #\s #\space #\= #\space #\" #\x7F #\")))))
+     (raises-parser-error?
+      (lambda ()
+        (parse-toml (string #\s #\space #\= #\space #\" #\x7F #\"))))
 
      (and (= 0 (toml-value "x=0" "x"))
           (= 0 (toml-value "x=-0" "x"))
@@ -74,28 +73,27 @@
           (nan? (toml-value "x=nan" "x")))
 
      ;; error: decimal integers cannot contain leading zeros.
-     (parser-error? (parser-error-from (lambda () (parse-toml "x=0123"))))
+     (raises-parser-error? (lambda () (parse-toml "x=0123")))
 
      ;; error: underscores must be surrounded by digits.
-     (parser-error? (parser-error-from (lambda () (parse-toml "x=1__0"))))
+     (raises-parser-error? (lambda () (parse-toml "x=1__0")))
 
      ;; error: TOML special floats are lowercase.
-     (parser-error? (parser-error-from (lambda () (parse-toml "x=Infinity"))))
+     (raises-parser-error? (lambda () (parse-toml "x=Infinity")))
 
      ;; error: ordinary key/value pairs cannot share a line.
-     (parser-error? (parser-error-from (lambda () (parse-toml "a=1 b=2"))))
+     (raises-parser-error? (lambda () (parse-toml "a=1 b=2")))
 
      ;; error: a bare carriage return is not a TOML newline.
-     (parser-error? (parser-error-from (lambda () (parse-toml "a=1\rb=2"))))
+     (raises-parser-error? (lambda () (parse-toml "a=1\rb=2")))
 
      (and (= 1 (toml-table-ref (toml-root "a=1\r\n") "a"))
           (= 2 (toml-table-ref (toml-root "a=1\r\nb=2") "b")))
 
      ;; error: comments cannot contain forbidden control characters.
-     (parser-error?
-      (parser-error-from
-       (lambda ()
-         (parse-toml (string-append "a=1 #" (string #\x7f))))))
+     (raises-parser-error?
+      (lambda ()
+        (parse-toml (string-append "a=1 #" (string #\x7f)))))
 
      )
 
@@ -142,22 +140,22 @@
             (= 12300000 (toml-local-time-nanosecond time))))
 
      ;; error: February 29 requires a leap year.
-     (parser-error? (parser-error-from (lambda () (parse-toml "d=1900-02-29"))))
+     (raises-parser-error? (lambda () (parse-toml "d=1900-02-29")))
 
      ;; error: a month must be between 1 and 12.
-     (parser-error? (parser-error-from (lambda () (parse-toml "d=2000-13-01"))))
+     (raises-parser-error? (lambda () (parse-toml "d=2000-13-01")))
 
      ;; error: an hour must be between 0 and 23.
-     (parser-error? (parser-error-from (lambda () (parse-toml "t=24:00"))))
+     (raises-parser-error? (lambda () (parse-toml "t=24:00")))
 
      ;; error: a minute must be between 0 and 59.
-     (parser-error? (parser-error-from (lambda () (parse-toml "t=12:60"))))
+     (raises-parser-error? (lambda () (parse-toml "t=12:60")))
 
      ;; error: a second cannot exceed the leap-second value 60.
-     (parser-error? (parser-error-from (lambda () (parse-toml "t=12:00:61"))))
+     (raises-parser-error? (lambda () (parse-toml "t=12:00:61")))
 
      ;; error: an offset hour must be between 0 and 23.
-     (parser-error? (parser-error-from (lambda () (parse-toml "t=1979-05-27T07:32+24:00"))))
+     (raises-parser-error? (lambda () (parse-toml "t=1979-05-27T07:32+24:00")))
 
      (let ([array (toml-value
                    "a = [1, 'two', [3], # comment\n true,]"
@@ -211,28 +209,28 @@
                        "name"))))
 
      ;; error: a key cannot be defined twice.
-     (parser-error? (parser-error-from (lambda () (parse-toml "a=1\na=2"))))
+     (raises-parser-error? (lambda () (parse-toml "a=1\na=2")))
 
      ;; error: bare and quoted spellings define the same key.
-     (parser-error? (parser-error-from (lambda () (parse-toml "a=1\n'a'=2"))))
+     (raises-parser-error? (lambda () (parse-toml "a=1\n'a'=2")))
 
      ;; error: a scalar cannot be extended as a table.
-     (parser-error? (parser-error-from (lambda () (parse-toml "a=1\n[a.b]"))))
+     (raises-parser-error? (lambda () (parse-toml "a=1\n[a.b]")))
 
      ;; error: an explicitly defined table cannot be redefined.
-     (parser-error? (parser-error-from (lambda () (parse-toml "[a]\n[a]"))))
+     (raises-parser-error? (lambda () (parse-toml "[a]\n[a]")))
 
      ;; error: a dotted-key table cannot later be explicitly defined.
-     (parser-error? (parser-error-from (lambda () (parse-toml "a.b=1\n[a]"))))
+     (raises-parser-error? (lambda () (parse-toml "a.b=1\n[a]")))
 
      ;; error: inline tables cannot be extended later.
-     (parser-error? (parser-error-from (lambda () (parse-toml "a={b=1}\na.c=2"))))
+     (raises-parser-error? (lambda () (parse-toml "a={b=1}\na.c=2")))
 
      ;; error: a static array cannot become an array of tables.
-     (parser-error? (parser-error-from (lambda () (parse-toml "a=[]\n[[a]]"))))
+     (raises-parser-error? (lambda () (parse-toml "a=[]\n[[a]]")))
 
      ;; error: a table cannot become an array of tables.
-     (parser-error? (parser-error-from (lambda () (parse-toml "[a]\n[[a]]"))))
+     (raises-parser-error? (lambda () (parse-toml "[a]\n[[a]]")))
 
      ;; An ordinary table parent is created implicitly for a nested array of tables.
      (let* ([root (toml-document-root (parse-toml "[[a.b]]\nx=1"))]

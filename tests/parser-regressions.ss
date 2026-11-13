@@ -9,7 +9,7 @@
 
      ;; Error case: JSON5 decimal integer parts cannot have leading zeros.
      (for-all (lambda (text)
-                (parser-error? (parser-error-from (lambda () (parse-json5 text)))))
+                (raises-parser-error? (lambda () (parse-json5 text))))
               '("00" "012" "-01" "+01.2" "01e2"))
 
      (equal? '(0 0.5 0.5 0.01 100.0)
@@ -181,8 +181,8 @@
      ;; Error case: random access cannot escape a bounded byte range, including nested bounds.
      (for-all
       (lambda (parser)
-        (parser-error?
-         (parser-error-from (lambda () (run-binary-parser parser #vu8(42 7))))))
+        (raises-parser-error?
+         (lambda () (run-binary-parser parser #vu8(42 7)))))
       (list (<~1> <u8> (<bounded> 1 (<~ (<pos-at> 0 <u8>) <u8>)))
             (<~1> <u8> (<bounded> 1 (<bounded> 1 (<pos-at> 0 <u8>))))))
 
@@ -216,7 +216,7 @@
 
      ;; Error case: dotted keys cannot extend explicit tables or arrays of tables.
      (for-all
-      (lambda (text) (parser-error? (parser-error-from (lambda () (parse-toml text)))))
+      (lambda (text) (raises-parser-error? (lambda () (parse-toml text))))
       '("[a.b]\nx=1\n[a]\nb.y=2" "[[a.b]]\n[a]\nb.y=2"))
 
      (let ([value (toml-table-ref (toml-document-root
@@ -246,15 +246,14 @@
      (equal? '(a . "x") (parse-scheme-datum "(a .\"x\")"))
 
      ;; Error case: dot must still have a lexical delimiter.
-     (parser-error? (parser-error-from (lambda () (parse-scheme-datum "(a .b)"))))
+     (raises-parser-error? (lambda () (parse-scheme-datum "(a .b)")))
 
      ;; Error case: XML EncName is ASCII even when the document is already decoded.
      (for-all
       (lambda (encoding)
-        (parser-error?
-         (parser-error-from
-          (lambda () (parse-xml
-                      (format "<?xml version='1.0' encoding='~a'?><a/>" encoding))))))
+        (raises-parser-error?
+         (lambda () (parse-xml
+                     (format "<?xml version='1.0' encoding='~a'?><a/>" encoding)))))
       '("é" "UTF-é"))
 
      (let* ([text (string-append
@@ -287,7 +286,7 @@
         (with-parser-file (parser-test-bytes #vu8(239 187 191 239 187 191)
                                              (string->utf8 (cdr case)))
           (lambda (path)
-            (parser-error? (parser-error-from (lambda () ((car case) path)))))))
+            (raises-parser-error? (lambda () ((car case) path))))))
       (list (cons parse-xml-file "<a/>") (cons parse-toml-file "a=1")))
 
      (with-parser-file (parser-test-bytes #vu8(239 187 191) (string->utf8 "a=1"))
@@ -315,22 +314,21 @@
      ;; Error cases: padding cannot extend a signed LEB128 beyond its byte width.
      (for-all
       (lambda (bytes)
-        (parser-error?
-         (parser-error-from (lambda () (run-binary-parser (<sleb128> 8) bytes)))))
+        (raises-parser-error?
+         (lambda () (run-binary-parser (<sleb128> 8) bytes))))
       '(#vu8(255 255 127) #vu8(128 128 0) #vu8(128 128)))
 
      ;; Error cases: unused terminal bits must all match the signed value's sign bit.
      (for-all
       (lambda (case)
-        (parser-error?
-         (parser-error-from
-          (lambda () (run-binary-parser (<sleb128> (car case)) (cadr case))))))
+        (raises-parser-error?
+         (lambda () (run-binary-parser (<sleb128> (car case)) (cadr case)))))
       '((1 #vu8(1)) (1 #vu8(126)) (7 #vu8(128 0))
         (8 #vu8(128 1)) (8 #vu8(255 126))))
 
      ;; Error case: a continuation byte cannot end the input before a terminal byte.
-     (parser-error?
-      (parser-error-from (lambda () (run-binary-parser (<sleb128> 8) #vu8(128))))))
+     (raises-parser-error?
+      (lambda () (run-binary-parser (<sleb128> 8) #vu8(128)))))
 
 (mat parser-failure-message-output
 
@@ -505,7 +503,7 @@
      ;; Error cases: large exact byte ranges fail before allocating or installing a cursor.
      (for-all
       (lambda (parser)
-        (parser-error? (parser-error-from (lambda () (run-binary-parser parser #vu8(1))))))
+        (raises-parser-error? (lambda () (run-binary-parser parser #vu8(1)))))
       (let ([large (+ 1 (most-positive-fixnum))])
         (list (<u8vec> large) (<bounded> large <u8>) (<pos-at> large <u8>)))))
 
@@ -630,7 +628,7 @@
           (eqv? 0.1 (json5-document-value (parse-json5 "1e-1"))))
 
      ;; Error cases: sign-only and malformed numeric suffixes remain parser failures.
-     (for-all (lambda (source) (and (parser-error-from (lambda () (parse-json5 source))) #t))
+     (for-all (lambda (source) (raises-parser-error? (lambda () (parse-json5 source))))
               '("+" "-" "12x" "1e+"))
 
      ;; Error cases: multiple invalid characters must report the first in source order.
@@ -789,8 +787,8 @@
      (let ([bytes (make-bytevector 9 128)])
        (bytevector-u8-set! bytes 8 1)
        (and (= (ash 1 56) (run-binary-parser (<sleb128> 58) bytes))
-            (parser-error? (parser-error-from
-                            (lambda () (run-binary-parser (<sleb128> 57) bytes)))))))
+            (raises-parser-error?
+             (lambda () (run-binary-parser (<sleb128> 57) bytes))))))
 
 (mat parser-discarded-token-whitespace
 
@@ -839,12 +837,12 @@
 
      ;; Error cases: nested or partial WAT comment delimiters must retain the original grammar.
      (for-all (lambda (source)
-                (and (parser-error-from (lambda () (parse-wasm-text-module source))) #t))
+                (raises-parser-error? (lambda () (parse-wasm-text-module source))))
               '("(;a(;b;)" "(;abc;" "(;abc("))
 
      ;; Error cases: JSON5 comments cannot end at an isolated '*' or missing terminator.
      (for-all (lambda (source)
-                (and (parser-error-from (lambda () (parse-json5 source))) #t))
+                (raises-parser-error? (lambda () (parse-json5 source))))
               '("/*abc" "/*abc*" "/*abc/0")))
 
 (mat parser-shared-decimal-prefixes
@@ -862,11 +860,11 @@
      (eqv? 1.25e-20 (toml-table-ref (toml-document-root (parse-toml "v=1.25e-20")) "v"))
 
      ;; Error cases: sharing must not accept incomplete suffixes or leading-zero integers.
-     (for-all (lambda (text) (and (parser-error-from (lambda () (parse-json5 text))) #t))
+     (for-all (lambda (text) (raises-parser-error? (lambda () (parse-json5 text))))
               '("00" "1e+" "1..0" "-."))
 
      ;; Error cases: TOML requires fractional digits and complete decimal exponents.
-     (for-all (lambda (text) (and (parser-error-from (lambda () (parse-toml text))) #t))
+     (for-all (lambda (text) (raises-parser-error? (lambda () (parse-toml text))))
               '("v=1." "v=1.e2" "v=1e+" "v=01")))
 
 (mat parser-format-discarded-trivia
@@ -957,11 +955,11 @@
      (eqv? 12.5 (toml-table-ref (toml-document-root (parse-toml "v=1_2.5_0e+0")) "v"))
 
      ;; Error cases: the converter cannot make malformed float spellings valid.
-     (for-all (lambda (source) (and (parser-error-from (lambda () (parse-json5 source))) #t))
+     (for-all (lambda (source) (raises-parser-error? (lambda () (parse-json5 source))))
               '("1e" "1e+-2" "1.0e!" ".e0"))
 
      ;; Error cases: TOML's normalized source still comes from its strict number grammar.
-     (for-all (lambda (source) (and (parser-error-from (lambda () (parse-toml source))) #t))
+     (for-all (lambda (source) (raises-parser-error? (lambda () (parse-toml source))))
               '("v=1_.0" "v=1.0e_2" "v=1e+" "v=.5")))
 
 (mat parser-counted-vectors

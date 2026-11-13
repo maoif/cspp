@@ -22,7 +22,7 @@
 
      ;; Error cases: ordinary runs must not hide missing quotes or characters after a quote.
      (for-all (lambda (source)
-                (and (parser-error-from (lambda () (parse-csv source))) #t))
+                (raises-parser-error? (lambda () (parse-csv source))))
               '("\"abc" "\"a\"x" "a\"b")))
 
 (mat parser-csv-unquoted-field-dispatch
@@ -52,7 +52,7 @@
             (= 1 (csv-warning-field-index warning))))
 
      ;; Error cases: dispatch must retain illegal quotes and inconsistent record widths.
-     (for-all (lambda (text) (and (parser-error-from (lambda () (parse-csv text))) #t))
+     (for-all (lambda (text) (raises-parser-error? (lambda () (parse-csv text))))
               '("a\"b,c" "a,\"b\"x" "a,b\nc")))
 
 (mat parser-csv-warning-order

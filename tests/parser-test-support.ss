@@ -5,6 +5,11 @@
       (thunk)
       #f)))
 
+;; Return a boolean for the zero-argument thunk, propagating unrelated conditions.
+(define raises-parser-error?
+  (lambda (thunk)
+    (and (parser-error-from thunk) #t)))
+
 (define raises-decoding-error?
   (lambda (thunk)
     (guard (condition [(i/o-decoding-error? condition) #t])

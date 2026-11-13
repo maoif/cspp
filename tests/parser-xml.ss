@@ -61,13 +61,13 @@
                        (vector-ref (xml-element-children root) 0)))))
 
      ;; error: a name cannot start with an ASCII digit.
-     (parser-error? (parser-error-from (lambda () (parse-xml "<1root/>"))))
+     (raises-parser-error? (lambda () (parse-xml "<1root/>")))
 
      ;; error: a numeric reference must denote an XML Char.
-     (parser-error? (parser-error-from (lambda () (parse-xml "<root>&#0;</root>"))))
+     (raises-parser-error? (lambda () (parse-xml "<root>&#0;</root>")))
 
      ;; error: undeclared general entities are unavailable when DTDs are unsupported.
-     (parser-error? (parser-error-from (lambda () (parse-xml "<root>&custom;</root>"))))
+     (raises-parser-error? (lambda () (parse-xml "<root>&custom;</root>")))
 
      (let ([document
             (parse-xml "<?build release?><root><!--ok--><![CDATA[a<b&c]]></root>")])
@@ -79,16 +79,15 @@
              (vector-ref (xml-element-children (xml-document-root document)) 1))))
 
      ;; error: XML comments cannot contain a double hyphen.
-     (parser-error?
-      (parser-error-from
-       (lambda ()
-         (parse-xml "<root><!-- bad -- comment --></root>"))))
+     (raises-parser-error?
+      (lambda ()
+        (parse-xml "<root><!-- bad -- comment --></root>")))
 
      ;; error: CDATA closing delimiters cannot occur in character data.
-     (parser-error? (parser-error-from (lambda () (parse-xml "<root><![CDATA[a]]>b]]></root>"))))
+     (raises-parser-error? (lambda () (parse-xml "<root><![CDATA[a]]>b]]></root>")))
 
      ;; error: processing-instruction targets cannot case-insensitively equal xml.
-     (parser-error? (parser-error-from (lambda () (parse-xml "<?XML data?><root/>"))))
+     (raises-parser-error? (lambda () (parse-xml "<?XML data?><root/>")))
 
      )
 
@@ -104,16 +103,16 @@
             (eq? 'yes (xml-declaration-standalone declaration))))
 
      ;; error: an end tag must match the open element name.
-     (parser-error? (parser-error-from (lambda () (parse-xml "<a></b>"))))
+     (raises-parser-error? (lambda () (parse-xml "<a></b>")))
 
      ;; error: an element cannot repeat an attribute name.
-     (parser-error? (parser-error-from (lambda () (parse-xml "<a x='1' x='2'/>"))))
+     (raises-parser-error? (lambda () (parse-xml "<a x='1' x='2'/>")))
 
      ;; error: an XML document must contain exactly one root element.
-     (parser-error? (parser-error-from (lambda () (parse-xml "<a/><b/>"))))
+     (raises-parser-error? (lambda () (parse-xml "<a/><b/>")))
 
      ;; error: document type declarations are not supported.
-     (parser-error? (parser-error-from (lambda () (parse-xml "<!DOCTYPE root><root/>"))))
+     (raises-parser-error? (lambda () (parse-xml "<!DOCTYPE root><root/>")))
 
      (string=? "a\nb\nc"
                (xml-text-value

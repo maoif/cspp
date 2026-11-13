@@ -17,11 +17,11 @@
                     (vector->list (toml-array-elements array)))))
 
      ;; Error case: an implicit ordinary parent cannot later become an array of tables.
-     (parser-error?
-      (parser-error-from (lambda () (parse-toml "[[a.b]]\nx=1\n[[a]]"))))
+     (raises-parser-error?
+      (lambda () (parse-toml "[[a.b]]\nx=1\n[[a]]")))
 
      ;; Error case: bare TOML keys are restricted to ASCII.
-     (parser-error? (parser-error-from (lambda () (parse-toml "é = 1"))))
+     (raises-parser-error? (lambda () (parse-toml "é = 1")))
 
      (= 1 (toml-table-ref (toml-document-root (parse-toml "'é' = 1")) "é"))
 
@@ -34,9 +34,8 @@
 (mat parser-toml-implicit-dotted-review
 
      ;; Error case: traversing an implicit parent with a dotted key defines that parent.
-     (parser-error?
-      (parser-error-from
-       (lambda () (parse-toml "[a.b.c]\nx=1\n[a]\nb.d=2\n[a.b]\ny=3"))))
+     (raises-parser-error?
+      (lambda () (parse-toml "[a.b.c]\nx=1\n[a]\nb.d=2\n[a.b]\ny=3")))
 
      (let* ([root (toml-document-root (parse-toml "[a.b.c]\nx=1\n[a]\nb.d=2"))]
             [a (toml-table-ref root "a")]
@@ -69,5 +68,5 @@
 
      ;; Error cases: guards retain invalid escapes, forbidden controls and missing terminators.
      (for-all (lambda (source)
-                (and (parser-error-from (lambda () (parse-toml source))) #t))
+                (raises-parser-error? (lambda () (parse-toml source))))
               '("v=\"abc\\q\"" "v=\"\"\"abc\\q\"\"\"" "v='''abc\x7f;'''" "v=\"\"\"abc")))

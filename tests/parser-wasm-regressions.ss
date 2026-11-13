@@ -1,8 +1,4 @@
 ;; WebAssembly format and normalization regressions; included by parser-wasm.ss.
-(define wasm-review-error?
-  (lambda (thunk)
-    (and (parser-error-from thunk) #t)))
-
 (mat wasm-review-binary-types
 
      (equal? '(exn none noextern nofunc noexn)
@@ -12,12 +8,12 @@
 
      ;; Error case: obsolete heap-type bytes are unassigned in final Core 3.0.
      (for-all (lambda (byte)
-                (wasm-review-error?
+                (raises-parser-error?
                  (lambda () (parse-binary <wasm-heap-type> (bytevector byte)))))
               '(#x65 #x66 #x67 #x68))
 
      ;; Error case: abstract heap types have one-byte encodings, unlike concrete indices.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-binary <wasm-heap-type> #vu8(#xf0 #x7f))))
 
      (= 0 (parse-binary <wasm-heap-type> #vu8(#x80 #x00)))
@@ -41,7 +37,7 @@
        (= 0 (wasm-catch-label-index catch)))
 
      ;; Error case: a catch target cannot name the try_table's own body label.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-wasm-text-module
                   "(module (func try_table $self (catch_all $self) nop end))")))
 
@@ -55,11 +51,11 @@
        (equal? #vu8(1 2 3) second))
 
      ;; Error case: a byte-vector length cannot exceed its enclosing binary range.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-binary (<bounded> 3 <wasm-byte-vector>) #vu8(3 1 2 3))))
 
      ;; Error case: a huge length with no payload must fail before any large allocation.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-binary <wasm-byte-vector>
                                #vu8(255 255 255 255 15))))
 
@@ -68,7 +64,7 @@
 (mat wasm-review-local-count
 
      ;; Error case: compressed declaration counts must sum to less than 2^32 before allocation.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda ()
         (parse-wasm-binary-module
          #vu8(0 97 115 109 1 0 0 0 1 4 1 96 0 0 3 2 1 0
@@ -97,7 +93,7 @@
      (= #x7f7fffff (wasm-review-float-bits <wat-f32> "0x1.fffffep127"))
 
      ;; Error case: rounding at the upper finite limit overflows to infinity.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (wasm-review-float-bits <wat-f32> "0x1.ffffffp127")))
 
      (= 0 (wasm-review-float-bits <wat-f32> "0x1p-150"))
@@ -116,7 +112,7 @@
        (and (equal? '(0 2147483648 0) values) (< allocated 1000000)))
 
      ;; Error case: enormous positive exponents report overflow without allocating huge powers.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (wasm-review-float-bits <wat-f64> "1e1000000")))
 
      ;; A long mantissa may compensate for a large negative exponent and stay finite.
@@ -163,7 +159,7 @@
             (= 0 (vector-length (wasm-recursive-type-subtypes (vector-ref groups 0))))))
 
      ;; Error case: an imported table cannot have an initializer expression.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-wasm-text-module
                   "(module (table (import \"m\" \"t\") 1 funcref (ref.null func)))")))
 
@@ -178,16 +174,16 @@
      (wasm-module? (parse-wasm-text-module "(module (@a (@(@(@(@))))))"))
 
      ;; Error case: ignoring an annotation must not accept raw forbidden control characters.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-wasm-text-module
                   (string-append "(module (@a " (string #\nul) "))"))))
 
      ;; Error case: ordinary parentheses inside annotations must also balance.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-wasm-text-module "(module (@a (x))")))
 
      ;; Error case: a malformed nested comment must not be accepted as an ordinary group.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-wasm-text-module "(module (@a (; unterminated)))")))
 
      )
@@ -217,11 +213,11 @@
        (and (wasm-limits-shared? limits) (eq? 'i64 (wasm-limits-address-type limits))))
 
      ;; Error case: binary shared-memory flags require a maximum bound.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-binary <wasm-memory-type> #vu8(2 1))))
 
      ;; Error case: shared limits are not valid table types.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-binary <wasm-table-type> #vu8(112 3 1 2))))
 
      ;; Error case: constructor validation rejects shared limits without a maximum.
@@ -237,12 +233,12 @@
 
      ;; Error case: a top-level annotation requires a nonempty identifier.
      (for-all
-      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      (lambda (text) (raises-parser-error? (lambda () (parse-wasm-text-module text))))
       '("(module (@))" "(module (@ ))" "(module (@\"\"))"))
 
      ;; Error case: unquoted annotation tokens are ASCII, even in otherwise ignored contents.
      (for-all
-      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      (lambda (text) (raises-parser-error? (lambda () (parse-wasm-text-module text))))
       '("(module (@a Heiße))" "(module (@a 😀))"))
 
      (wasm-module? (parse-wasm-text-module "(module (@a \"Heiße 😀\" (@)))"))
@@ -271,18 +267,18 @@
 
      ;; Error cases: operands of a folded instruction must themselves be folded.
      (for-all
-      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      (lambda (text) (raises-parser-error? (lambda () (parse-wasm-text-module text))))
       '("(module (func (drop i32.const 0)))"
         "(module (func (if i32.const 0 (then))))"))
 
      ;; Error cases: end/else delimit control syntax and cannot be folded instructions.
      (for-all
-      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      (lambda (text) (raises-parser-error? (lambda () (parse-wasm-text-module text))))
       '("(module (func (end)))" "(module (func (else)))"))
 
      ;; Error cases: canonical hyphens are not WAT's underscore mnemonic spellings.
      (for-all
-      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      (lambda (text) (raises-parser-error? (lambda () (parse-wasm-text-module text))))
       '("(module (func block i32.const 0 br-if 0 end))"
         "(module (memory 1) (func (i32.load8-s (i32.const 0))))")))
 
@@ -301,7 +297,7 @@
      (= 0 (vector-length (wasm-module-functions (parse-wasm-text-module ";; empty"))))
 
      ;; Error case: omitting the wrapper does not admit WebAssembly script commands.
-     (wasm-review-error? (lambda () (parse-wasm-text-module "(func) (invoke \"f\")"))))
+     (raises-parser-error? (lambda () (parse-wasm-text-module "(func) (invoke \"f\")"))))
 
 (mat wasm-review-bare-module-file
 
@@ -314,7 +310,7 @@
 
      ;; Error cases: block and indirect-call signatures do not bind local parameter names.
      (for-all
-      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      (lambda (text) (raises-parser-error? (lambda () (parse-wasm-text-module text))))
       '("(module (func block (param $x i32) drop end))"
         "(module (func loop (param $x i32) drop end))"
         "(module (func if (param $x i32) drop end))"
@@ -329,7 +325,7 @@
 
      ;; Error cases: explicit and inline imports must precede entity definitions.
      (for-all
-      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      (lambda (text) (raises-parser-error? (lambda () (parse-wasm-text-module text))))
       '("(module (func) (import \"m\" \"f\" (func)))"
         "(module (func) (func (import \"m\" \"f\")))"
         "(module (table 0 funcref) (import \"m\" \"f\" (func)))"
@@ -341,7 +337,7 @@
 
      ;; Error cases: an inline signature needs an existing function target after expansion.
      (for-all
-      (lambda (text) (wasm-review-error? (lambda () (parse-wasm-text-module text))))
+      (lambda (text) (raises-parser-error? (lambda () (parse-wasm-text-module text))))
       '("(module (func (type 0) (param i32)))"
         "(module (type (struct)) (func (type 0) (param i32)))"
         "(module (func (type 1) (param i32)) (func (param f32)))"
@@ -405,7 +401,7 @@
      ;; Error cases: data-index instructions need data-count, including nested bodies/alternates.
      (for-all
       (lambda (instructions)
-        (wasm-review-error?
+        (raises-parser-error?
          (lambda () (parse-wasm-binary-module (wasm-review-data-module instructions #f)))))
       wasm-review-data-instructions)
 
@@ -493,14 +489,14 @@
 (mat wasm-review-element-keyword
 
      ;; Error case: a passive indexed list requires func, even when empty.
-     (wasm-review-error? (lambda () (parse-wasm-text-module "(module (elem))")))
+     (raises-parser-error? (lambda () (parse-wasm-text-module "(module (elem))")))
 
      ;; Error case: a declarative indexed list requires func.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-wasm-text-module "(module (elem declare 0))")))
 
      ;; Error case: an explicit table use disables the legacy omission of func.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-wasm-text-module
                   "(module (elem (table 0) (i32.const 0) 0))")))
 
@@ -518,14 +514,14 @@
      ;; Error cases: wide positive decimal/hex literals cannot masquerade as negative lanes.
      (for-all
       (lambda (lane)
-        (wasm-review-error?
+        (raises-parser-error?
          (lambda () (parse-wasm-text-module (wasm-review-lanes "i8x16" lane 16)))))
       '("4294967295" "+4294967295" "0xffffff80" "256" "-129"))
 
      ;; Error cases: the same source-sign loss affects sixteen-bit lane validation.
      (for-all
       (lambda (lane)
-        (wasm-review-error?
+        (raises-parser-error?
          (lambda () (parse-wasm-text-module (wasm-review-lanes "i16x8" lane 8)))))
       '("4294967295" "0xffff8000" "65536" "-32769"))
 
@@ -558,7 +554,7 @@
         "(module (@custom\"x\" \"y\"))"))
 
      ;; Error case: an annotation head has no space between its opening parenthesis and @.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-wasm-text-module "(module ( @custom \"x\"))"))))
 
 (mat wasm-review-custom-anchors
@@ -580,7 +576,7 @@
             (@custom \"x\" (before datacount)))" element)))
 
      ;; Error case: function is an internal section name, not the WAT anchor spelling func.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-wasm-text-module
                   "(module (func) (@custom \"x\" (after function)))"))))
 
@@ -617,10 +613,10 @@
              (parse-wat-lexeme <wat-string> "\"aλ😀\\ff\\00\\\"\\\\\\nz\\u{feff}\""))
 
      ;; Error case: byte strings can contain invalid UTF-8, but names cannot.
-     (wasm-review-error? (lambda () (parse-wat-lexeme <wat-name> "\"abc\\ffdef\"")))
+     (raises-parser-error? (lambda () (parse-wat-lexeme <wat-name> "\"abc\\ffdef\"")))
 
      ;; Error case: batching must still reject literal control characters.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-wat-lexeme <wat-string> "\"abc\tdef\"")))
 
      (let* ([count 16384] [source (string-append "\"" (make-string count #\a) "\"")]
@@ -649,8 +645,8 @@
      ;; Error cases: signed and unsigned limits still reject overflow at their own boundaries.
      (for-all
       (lambda (case)
-        (parser-error?
-         (parser-error-from (lambda () (run-textual-parser (car case) (cdr case))))))
+        (raises-parser-error?
+         (lambda () (run-textual-parser (car case) (cdr case)))))
       (list (cons <wat-u32> "4294967296") (cons <wat-u64> "0x10000000000000000")
             (cons <wat-i32> "-2147483649") (cons <wat-i64> "-9223372036854775809"))))
 
@@ -716,7 +712,7 @@
      ;; Error case: both address types still reject values beyond u64.
      (for-all
       (lambda (address)
-        (wasm-review-error?
+        (raises-parser-error?
          (lambda () (parse-wasm-text-module
                      (format "(module (memory ~a 18446744073709551616))" address)))))
       '("i32" "i64")))
@@ -758,7 +754,7 @@
        (and (= #x8000000000000000 bits) (< allocated 20000000)))
 
      ;; Error case: a nonzero significand with a huge positive exponent still overflows.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (wasm-review-float-bits
                   <wat-f64> (string-append "1e" (make-string 1000 #\9)))))
 
@@ -798,11 +794,11 @@
          "(module (func (block (br 0)) (block (br 0))))")))
 
      ;; Error case: a label must disappear after its block ends.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-wasm-text-module "(module (func block $gone end br $gone))")))
 
      ;; Error case: a prior function's labels must not leak into another function.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (parse-wasm-text-module
                   "(module (func block $gone end) (func br $gone))"))))
 
@@ -899,7 +895,7 @@
              (run-binary-parser (<~> (<wasm-vector> (<result> 7)) <pos>) #vu8(3 0 0 0)))
 
      ;; Error case: a huge count on truncated input must fail before preallocating its result.
-     (wasm-review-error?
+     (raises-parser-error?
       (lambda () (run-binary-parser (<wasm-vector> <u8>) #vu8(255 255 255 255 15))))
 
      ;; Error case: a truncated multibyte element keeps the actual failure offset.
@@ -1016,9 +1012,9 @@
               (< allocated 1700000))))
 
      ;; Error case: a cached parser must still reject a maximum smaller than its minimum.
-     (parser-error? (parser-error-from
-                    (lambda () (parse-wasm-binary-module
-                                #vu8(0 97 115 109 1 0 0 0 5 4 1 1 2 1)))))
+     (raises-parser-error?
+      (lambda () (parse-wasm-binary-module
+                  #vu8(0 97 115 109 1 0 0 0 5 4 1 1 2 1))))
 
      (let* ([module (parse-wasm-binary-module
                      #vu8(0 97 115 109 1 0 0 0 5 7 2 3 1 2 7 3 4))]
@@ -1079,7 +1075,7 @@
 
      ;; Error cases: ordinary content cannot hide missing parentheses, strings or comments.
      (for-all
-      (lambda (text) (and (parser-error-from (lambda () (parse-wasm-text-module text))) #t))
+      (lambda (text) (raises-parser-error? (lambda () (parse-wasm-text-module text))))
       '("(@foo abc" "(@foo abc (def)" "(@foo abc \"def)" "(@foo abc (;def)")))
 
 (mat parser-wasm-immediate-vector-cost
@@ -1259,7 +1255,7 @@
      ;; Error cases: imports alone do not emit function/code/table/memory/tag definition sections.
      (for-all
       (lambda (test)
-        (wasm-review-error?
+        (raises-parser-error?
          (lambda ()
            (parse-wasm-text-module
             (format "(module ~a (@custom \"x\" (after ~a)))" (car test) (cadr test))))))

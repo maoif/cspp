@@ -31,5 +31,5 @@
 
      ;; Error cases: ordinary runs must retain invalid escapes, surrogate and identifier checks.
      (for-all (lambda (source)
-                (and (parser-error-from (lambda () (parse-json5 source))) #t))
+                (raises-parser-error? (lambda () (parse-json5 source))))
               '("\"abc\\xQ0\"" "\"abc\\uD800\"" "{\\u0030x:1}" "\"abc")))
