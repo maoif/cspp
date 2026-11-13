@@ -1,4 +1,4 @@
-(library (cspp system user credentials)
+(library (cspp system private user-credentials)
   (export getuid getgid geteuid getegid current-uid current-gid current-euid current-egid)
   (import (cspp chez))
 

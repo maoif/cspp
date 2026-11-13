@@ -9,7 +9,7 @@ sections capture their callbacks and fixed values; each call has its own travers
 Shared mutable callback state still requires caller synchronization.
 
 The public list builder lives in `(cspp list)`. Its low-level implementation is shared with
-utility generators and procedure inspection through `(cspp internal)`, avoiding both duplicate
+utility generators and procedure inspection through `(cspp private common)`, avoiding both duplicate
 implementations and a circular import between the list and utility libraries.
 
 ## Composition and sections

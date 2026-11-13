@@ -1,4 +1,4 @@
-(library (cspp optional-library-check)
+(library (cspp private optional-library)
   (export require-optional-library)
   (import (cspp chez) (cspp utils))
 

@@ -22,4 +22,4 @@
           mounted-filesystem-target
           mounted-filesystem-type
           mounted-filesystem-options)
-  (import (cspp system filesystem info) (cspp system filesystem mounts)))
+  (import (cspp system private filesystem-info) (cspp system private filesystem-mounts)))

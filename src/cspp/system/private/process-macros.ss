@@ -1,9 +1,9 @@
-(library (cspp system process macros)
+(library (cspp system private process-macros)
   ;; Command forms must run outside fibers; periodic Scheme event checks do not make
   ;; process operations compatible with scheduler suspension or worker migration.
   (export process-run process-run/check process-capture process-capture/check
           process-run-shell process-capture-shell)
-  (import (cspp chez) (cspp system process backend))
+  (import (cspp chez) (cspp system private process-backend))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; process macros

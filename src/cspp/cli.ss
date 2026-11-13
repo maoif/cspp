@@ -98,7 +98,7 @@
           parser-enum)
   (import (cspp chez)
           (cspp utils)
-          (cspp internal)
+          (cspp private common)
           (cspp adt)
           (cspp string)
           (cspp list)

@@ -1,4 +1,4 @@
-(library (cspp system process status)
+(library (cspp system private process-status)
   (export process-exit-status? process-exit-status-kind process-exit-status-code
           process-exit-success? make-process-exit-status $wait-status->exit-status)
   (import (cspp chez) (cspp utils))

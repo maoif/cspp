@@ -27,7 +27,7 @@
           sleep milisleep nanosleep sleep-seconds sleep-milliseconds sleep-nanoseconds)
   (import (except (chezscheme) sleep)
           (rename (only (chezscheme) sleep) (sleep $utils-chez-sleep))
-          (cspp internal))
+          (cspp private common))
 
   #|macro:define-who
   The `define-who` macro defines `id` from an expression with `who` bound to the name symbol.

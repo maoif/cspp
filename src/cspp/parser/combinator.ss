@@ -60,7 +60,7 @@
           <as> <as-string> <as-symbol> <as-integer>
           <token> <fully>)
   (import (cspp chez)
-          (cspp internal)
+          (cspp private common)
           (cspp string)
           (cspp list)
           (cspp vector)

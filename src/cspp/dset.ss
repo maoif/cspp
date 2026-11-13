@@ -3,7 +3,7 @@
           dset-same? dset-union! dset-size)
   (import (cspp chez)
           (cspp utils)
-          (cspp internal)
+          (cspp private common)
           (cspp list)
           (cspp vector)
           (only (cspp iter) iter-register-source! make-iter iter-end))

@@ -7,7 +7,7 @@
           queue-copy queue->list)
   (import (cspp chez)
           (cspp utils)
-          (cspp internal)
+          (cspp private common)
           (cspp dlist)
           (only (cspp iter) iter-register-source! make-iter iter-end))
 

@@ -341,8 +341,8 @@
                capture-process capture-process/check capture-shell-command capture-pipeline
                %run-process %capture-process %run-shell-command %capture-shell-command))))
        '((cspp) (cspp system) (cspp system process)
-         (cspp system process expert) (cspp system process macros)
-         (cspp system process backend))))
+         (cspp system process expert) (cspp system private process-macros)
+         (cspp system private process-backend))))
 
 (mat process-argument-domains
 

@@ -520,7 +520,7 @@
           bvector-fp32-for-each/i bvector-FP32-for-each/i bvector-fp64-for-each/i bvector-FP64-for-each/i)
   (import (except (chezscheme) sleep)
           (cspp utils)
-          (cspp internal))
+          (cspp private common))
 
   (define-syntax gen-random-vector
     (syntax-rules ()

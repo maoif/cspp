@@ -1,4 +1,4 @@
-(library (cspp internal)
+(library (cspp private common)
   (export todo $construct-name flag->mask $record-type-key $datatype-variant-key
           $make-list-builder)
   (import (chezscheme))

@@ -1,11 +1,11 @@
-(library (cspp system filesystem mounts)
+(library (cspp system private filesystem-mounts)
   (export mounted-filesystem?
           mounted-filesystems
           mounted-filesystem-source
           mounted-filesystem-target
           mounted-filesystem-type
           mounted-filesystem-options)
-  (import (cspp chez) (cspp string) (cspp system common) (cspp utils))
+  (import (cspp chez) (cspp string) (cspp system private common) (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; mounted filesystems

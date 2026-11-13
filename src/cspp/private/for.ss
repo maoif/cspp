@@ -26,7 +26,7 @@
           fragment-filter fragment-visit)
   (import (cspp chez)
           (cspp utils)
-          (cspp internal)
+          (cspp private common)
           (cspp io)
           (cspp list)
           (cspp iter))

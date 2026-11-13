@@ -22,7 +22,7 @@
           dlist->list list->dlist
           dlist->vector vector->dlist dlist->iter)
   (import (cspp chez)
-          (cspp internal)
+          (cspp private common)
           (cspp utils)
           (cspp list)
           (cspp vector)

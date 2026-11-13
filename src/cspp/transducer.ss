@@ -27,7 +27,7 @@
           eduction eduction? transducible? source->iter
           current-transducer-source-mode)
   (import (cspp chez)
-          (cspp internal)
+          (cspp private common)
           (cspp iter)
           (cspp private iter-state)
           (cspp list)

@@ -1,13 +1,5 @@
 (library (cspp system info)
   (export
-          ;; time
-          sleep
-          milisleep
-          nanosleep
-          sleep-seconds
-          sleep-milliseconds
-          sleep-nanoseconds
-
           ;; platform predicates
           unix?
           windows?
@@ -21,5 +13,4 @@
           cpu-arch
           cpu-count
           system-machine)
-  (import (only (cspp utils) sleep milisleep nanosleep
-                sleep-seconds sleep-milliseconds sleep-nanoseconds) (cspp system platform)))
+  (import (cspp system platform)))

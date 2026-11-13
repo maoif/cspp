@@ -1,4 +1,4 @@
-(library (cspp system process backend)
+(library (cspp system private process-backend)
   ;; Process operations must run outside fibers. Native scope disposal treats scheduler
   ;; suspension as an exit, and blocking calls occupy the fiber's worker.
   (export
@@ -9,8 +9,8 @@
 
           ;; implementation entry points for command macros
           %process-run %process-capture %process-run-shell %process-capture-shell)
-  (import (cspp chez) (cspp system common) (cspp system private) (cspp system native)
-          (cspp system process status) (cspp system process private) (cspp utils))
+  (import (cspp chez) (cspp system private common) (cspp system private contracts) (cspp system private native)
+          (cspp system private process-status) (cspp system private process-options) (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; process result records

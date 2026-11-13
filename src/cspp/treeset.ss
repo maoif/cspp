@@ -38,7 +38,7 @@
           list->fxtreeset vector->fxtreeset)
   (import (cspp chez)
           (cspp list)
-          (cspp internal)
+          (cspp private common)
           (cspp utils)
           (cspp private rbtree)
           (only (cspp iter) iter-register-source! make-iter iter-end)

@@ -52,7 +52,7 @@
           (cspp private os)
           (cspp private file)
           (cspp path)
-          (cspp internal)
+          (cspp private common)
           (cspp utils)
           (only (cspp string) string-search)
           (cspp list)

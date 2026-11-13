@@ -355,7 +355,7 @@ launch. There is no global reactor, extra thread, or native callback into Scheme
 After I/O finishes, completed commands use one transient pidfd at a time to wait for remaining
 children, including earlier pipeline stages. If pidfds are unavailable, short polls are used.
 
-The private `(cspp system native)` wrapper owns each operation in a `dynamic-wind` scope.
+The private `(cspp system private native)` wrapper owns each operation in a `dynamic-wind` scope.
 Steps poll for at most 20 ms and return for a Scheme event check; blocking OS setup calls and
 cleanup can take additional time. Signal waits use the same wrapper with `sigtimedwait` steps.
 Scalar-only step and disposal calls use `__collect_safe`, letting Chez deactivate/reactivate the

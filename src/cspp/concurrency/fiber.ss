@@ -25,7 +25,7 @@
           (cspp concurrency)
           (cspp system)
           (cspp io)
-          (cspp internal)
+          (cspp private common)
           (cspp net operation)
           (cspp net operation private))
 

@@ -20,7 +20,7 @@
           list^ listp^ listq^ listv^)
   (import (except (chezscheme) sleep)
           (cspp utils)
-          (cspp internal))
+          (cspp private common))
 
 
   (define check-length

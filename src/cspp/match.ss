@@ -14,8 +14,8 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
   (import (chezscheme)
           (cspp list)
           (cspp vector)
-          (cspp irregex)
-          (cspp internal)
+          (cspp private irregex)
+          (cspp private common)
           (cspp private match)
           (cspp io))
 

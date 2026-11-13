@@ -6,11 +6,11 @@
           define-match-expander)
   (import (cspp chez)
           (cspp utils)
-          (cspp internal)
+          (cspp private common)
           (cspp io)
           (cspp list)
           (cspp vector)
-          (cspp irregex))
+          (cspp private irregex))
 
 
   ;; see ChezScheme syntax.ss: define-record-type

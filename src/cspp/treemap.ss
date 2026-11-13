@@ -38,7 +38,7 @@
 
           $rbtree-verify)
   (import (cspp chez)
-          (cspp internal)
+          (cspp private common)
           (cspp utils)
           (cspp list)
           (cspp private rbtree)

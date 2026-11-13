@@ -1,4 +1,4 @@
-(library (cspp system private)
+(library (cspp system private contracts)
   (export $unsigned-32? $positive-pid? $os-string? $os-string-list?
           $environment-name? $process-specs?)
   (import (cspp chez) (cspp utils) (cspp string))

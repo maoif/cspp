@@ -1,4 +1,4 @@
-(library (cspp system ffi)
+(library (cspp system private ffi)
   (export ffi-result-ref)
   (import (cspp chez) (cspp utils) (cspp system errors))
 

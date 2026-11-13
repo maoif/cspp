@@ -20,7 +20,7 @@
           (cspp list)
           (cspp vector)
           (cspp utils)
-          (cspp internal)
+          (cspp private common)
           (cspp private iter-state)
           (cspp control))
 

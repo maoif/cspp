@@ -1,4 +1,4 @@
-(library (cspp system user records)
+(library (cspp system private user-records)
   (export
           ;; account records
           make-unix-user unix-user? unix-user-name unix-user-passwd unix-user-uid unix-user-gid
@@ -6,7 +6,7 @@
 
           ;; group records
           make-unix-group unix-group? unix-group-name unix-group-passwd unix-group-gid unix-group-mems)
-  (import (cspp chez) (cspp utils) (cspp system private))
+  (import (cspp chez) (cspp utils) (cspp system private contracts))
 
   #|proc:unix-user?
   The `unix-user?` procedure returns `#t` when its argument is a Unix user record, otherwise `#f`.

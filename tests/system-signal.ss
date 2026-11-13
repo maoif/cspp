@@ -1,4 +1,4 @@
-(import (cspp chez) (cspp system signal) (cspp system process) (cspp system common))
+(import (cspp chez) (cspp system signal) (cspp system process) (cspp system private common))
 
 (mat signal-parse
 

@@ -2,7 +2,7 @@
   (export parse-scheme-datum parse-scheme parse-scheme-file)
   (import (cspp chez)
           (cspp parser combinator)
-          (cspp internal)
+          (cspp private common)
           (cspp list)
           (cspp io)
           (cspp vector)

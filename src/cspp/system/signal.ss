@@ -30,4 +30,4 @@
           signal-block!
           signal-unblock!
           wait-signal)
-  (import (cspp system signal values) (cspp system signal operations)))
+  (import (cspp system private signal-values) (cspp system private signal-operations)))

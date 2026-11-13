@@ -13,7 +13,7 @@
           list->eq-hashset vector->eq-hashset
           list->eqv-hashset vector->eqv-hashset)
   (import (cspp chez)
-          (cspp internal)
+          (cspp private common)
           (cspp utils)
           (cspp list)
           (only (cspp iter) iter-register-source! make-iter iter-end)

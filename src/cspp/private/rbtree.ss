@@ -27,7 +27,7 @@
 
           *dummy-v*)
   (import (cspp chez)
-          (cspp internal)
+          (cspp private common)
           (cspp utils))
 
 

@@ -3,7 +3,7 @@
   (import (cspp chez)
           (cspp string)
           (cspp list)
-          (cspp internal))
+          (cspp private common))
 
 
   #|macro:datatype

@@ -17,7 +17,7 @@
           blake2s-256-file blake3-file)
   (import (cspp chez)
           (cspp utils)
-          (cspp optional-library-check)
+          (cspp private optional-library)
           (only (cspp crypto private)
                 with-crypto-mutex with-crypto-operation call-with-crypto-resource)
           (only (cspp file) file-size)

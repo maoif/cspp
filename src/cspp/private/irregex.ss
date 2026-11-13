@@ -25,7 +25,7 @@
 ;;; (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 ;;; THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-(library (cspp irregex)
+(library (cspp private irregex)
   (export
    irregex
    string->irregex
@@ -234,6 +234,6 @@
           (error "unknown sre pattern" x))))
       (get-output-string out)))
 
-  (include "irregex.impl.ss")
+  (include "irregex-impl.ss")
 
   )

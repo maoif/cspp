@@ -48,9 +48,9 @@
           hasher-update-flvector!
 
           call-with-hasher)
-  (import (cspp optional-library-check) (cspp chez)
+  (import (cspp private optional-library) (cspp chez)
           (cspp utils)
-          (cspp internal)
+          (cspp private common)
           (cspp io)
           (cspp file))
 

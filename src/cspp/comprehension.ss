@@ -11,7 +11,7 @@
   (import (except (chezscheme) sleep)
           (cspp private comprehension)
           (cspp iter)
-          (cspp internal)
+          (cspp private common)
           (cspp list)
           (cspp utils))
 

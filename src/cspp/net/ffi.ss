@@ -218,8 +218,8 @@
           ffi-net-tls-ocsp-result
           ffi-net-tls-peer-certificate-der
           ffi-net-tls-peer-certificate-chain-der)
-  (import (cspp utils) (cspp optional-library-check) (cspp chez)
-          (cspp internal))
+  (import (cspp utils) (cspp private optional-library) (cspp chez)
+          (cspp private common))
 
   (define ffi-optional-library-info
     (foreign-procedure "cspp_optional_library_info" (string) scheme-object))

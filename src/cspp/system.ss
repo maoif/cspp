@@ -13,7 +13,7 @@
           ;; compatibility condition predicate
           os-error?)
   (import (cspp chez)
-          (cspp system common)
+          (cspp system private common)
           (except (cspp system darwin) darwin?)
           (cspp system filesystem)
           (cspp system info)
@@ -26,7 +26,7 @@
 
   (export
           ;; focused system libraries re-exported by the facade
-          (import (cspp system common)
+          (import (cspp system errors)
                   (except (cspp system darwin) darwin?)
                   (cspp system filesystem)
                   (cspp system info)

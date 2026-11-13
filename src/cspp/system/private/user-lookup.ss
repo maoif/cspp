@@ -1,10 +1,10 @@
-(library (cspp system user lookup)
+(library (cspp system private user-lookup)
   (export getuser getgroup user-ref group-ref user-ref/default group-ref/default
           user-exists? group-exists? uid->user user->uid gid->group group->gid
           uid->user-name user-name->uid gid->group-name group-name->gid
           get-user-dir get-user-shell get-user-group current-user current-group)
-  (import (cspp chez) (cspp utils) (cspp system common) (cspp system private)
-          (cspp system user records) (cspp system user credentials))
+  (import (cspp chez) (cspp utils) (cspp system private common) (cspp system private contracts)
+          (cspp system private user-records) (cspp system private user-credentials))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; credentials

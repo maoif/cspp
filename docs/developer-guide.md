@@ -288,3 +288,11 @@ reentered, including through the continuation attached to a Chez error condition
 on continuation escape. All managed crypto state scopes reject reentry after exit.
 
 For API usage, encodings, and concurrency rules, see [Cryptography](crypto.md).
+
+## Private library paths
+
+Shared implementation libraries use `(cspp private name)`. Subsystem implementation
+libraries use `(cspp subsystem private name)`, with exactly one name after `private`.
+Use a descriptive name such as `process-backend` rather than nested private directories.
+Private libraries have no compatibility guarantee and are never convenience facades.
+Supported advanced interfaces, such as `(cspp system process expert)`, remain public.

@@ -6,7 +6,7 @@
   (import (cspp chez)
           (cspp parser private)
           (cspp parser combinator)
-          (cspp internal)
+          (cspp private common)
           (cspp string)
           (cspp list)
           (cspp vector)

@@ -1,4 +1,4 @@
-(import (cspp) (cspp private match) (only (cspp irregex) irregex))
+(import (cspp) (cspp private match) (only (cspp private irregex) irregex))
 
 (define-match-expander tagged-expander
   (lambda (pp rho expr-id pat body fk)

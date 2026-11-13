@@ -8,7 +8,7 @@
           darwin-memory-info
           darwin-filesystem-info)
   (import (cspp chez)
-          (cspp system common)
+          (cspp system private common)
           (only (cspp system info) system-platform)
           (cspp utils))
 

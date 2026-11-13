@@ -564,7 +564,7 @@
           array->vector fxarray->fxvector bytearray->bytevector
           vector->array fxvector->fxarray bytevector->bytearray)
   (import (cspp chez)
-          (cspp internal)
+          (cspp private common)
           (cspp list)
           (cspp vector)
           (cspp utils)

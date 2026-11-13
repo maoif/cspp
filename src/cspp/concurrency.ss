@@ -17,7 +17,7 @@
           (cspp hashset)
           (cspp system)
           (cspp utils)
-          (cspp internal))
+          (cspp private common))
 
 
   #|doc
