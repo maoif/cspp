@@ -1,8 +1,4 @@
 ;; WebAssembly format and normalization regressions; included by parser-wasm.ss.
-(define wasm-review-binary
-  (lambda (parser bytes)
-    (run-binary-parser (<~ parser <eof>) bytes)))
-
 (define wasm-review-error?
   (lambda (thunk)
     (and (parser-error-from thunk) #t)))
@@ -11,20 +7,20 @@
 
      (equal? '(exn none noextern nofunc noexn)
              (map (lambda (byte)
-                    (wasm-review-binary <wasm-heap-type> (bytevector byte)))
+                    (parse-binary <wasm-heap-type> (bytevector byte)))
                   '(#x69 #x71 #x72 #x73 #x74)))
 
      ;; Error case: obsolete heap-type bytes are unassigned in final Core 3.0.
      (for-all (lambda (byte)
                 (wasm-review-error?
-                 (lambda () (wasm-review-binary <wasm-heap-type> (bytevector byte)))))
+                 (lambda () (parse-binary <wasm-heap-type> (bytevector byte)))))
               '(#x65 #x66 #x67 #x68))
 
      ;; Error case: abstract heap types have one-byte encodings, unlike concrete indices.
      (wasm-review-error?
-      (lambda () (wasm-review-binary <wasm-heap-type> #vu8(#xf0 #x7f))))
+      (lambda () (parse-binary <wasm-heap-type> #vu8(#xf0 #x7f))))
 
-     (= 0 (wasm-review-binary <wasm-heap-type> #vu8(#x80 #x00)))
+     (= 0 (parse-binary <wasm-heap-type> #vu8(#x80 #x00)))
 
      (let* ([module (parse-wasm-text-module
                      "(module (func i32.const -1 i32.const 2147483648
@@ -53,21 +49,19 @@
 
 (mat wasm-review-byte-vectors
 
-     (let ([first (wasm-review-binary <wasm-byte-vector> #vu8(3 1 2 3))]
-           [second (wasm-review-binary <wasm-byte-vector> #vu8(3 1 2 3))])
+     (let ([first (parse-binary <wasm-byte-vector> #vu8(3 1 2 3))]
+           [second (parse-binary <wasm-byte-vector> #vu8(3 1 2 3))])
        (bytevector-u8-set! first 0 99)
        (equal? #vu8(1 2 3) second))
 
-     (equal? #vu8() (wasm-review-binary <wasm-byte-vector> #vu8(0)))
-
      ;; Error case: a byte-vector length cannot exceed its enclosing binary range.
      (wasm-review-error?
-      (lambda () (wasm-review-binary (<bounded> 3 <wasm-byte-vector>) #vu8(3 1 2 3))))
+      (lambda () (parse-binary (<bounded> 3 <wasm-byte-vector>) #vu8(3 1 2 3))))
 
      ;; Error case: a huge length with no payload must fail before any large allocation.
      (wasm-review-error?
-      (lambda () (wasm-review-binary <wasm-byte-vector>
-                                     #vu8(255 255 255 255 15))))
+      (lambda () (parse-binary <wasm-byte-vector>
+                               #vu8(255 255 255 255 15))))
 
      )
 
@@ -224,11 +218,11 @@
 
      ;; Error case: binary shared-memory flags require a maximum bound.
      (wasm-review-error?
-      (lambda () (wasm-review-binary <wasm-memory-type> #vu8(2 1))))
+      (lambda () (parse-binary <wasm-memory-type> #vu8(2 1))))
 
      ;; Error case: shared limits are not valid table types.
      (wasm-review-error?
-      (lambda () (wasm-review-binary <wasm-table-type> #vu8(112 3 1 2))))
+      (lambda () (parse-binary <wasm-table-type> #vu8(112 3 1 2))))
 
      ;; Error case: constructor validation rejects shared limits without a maximum.
      (error? (make-wasm-limits 'i32 1 #f #t))

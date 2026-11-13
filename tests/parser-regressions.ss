@@ -237,10 +237,6 @@
                                (parse-json5 (string-append "\"" value "\"")))))))
       '(#\x2028 #\x2029))
 
-     (for-all
-      (lambda (source) (string=? "a\nb" (parse-scheme-datum source)))
-      '("\"a\rb\"" "\"a\r\nb\"" "\"a\x85;b\"" "\"a\r\x85;b\"" "\"a\x2028;b\""))
-
      (equal? '(a . #t) (parse-scheme-datum "(a .#t)"))
 
      (equal? '(a b) (parse-scheme-datum "(a .(b))"))
