@@ -1,5 +1,5 @@
 (import (cspp)
-        (cspp parser toml))
+        (cspp format toml))
 
 (include "parser-external-tools.ss")
 (include "parser-test-support.ss")

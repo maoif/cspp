@@ -1,4 +1,4 @@
-(import (cspp) (cspp parser elf))
+(import (cspp) (cspp format elf))
 (load "examples/common.ss")
 
 (example-run!

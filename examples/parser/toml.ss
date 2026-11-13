@@ -1,4 +1,4 @@
-(import (cspp) (cspp parser toml))
+(import (cspp) (cspp format toml))
 (load "examples/common.ss")
 
 (example-run!

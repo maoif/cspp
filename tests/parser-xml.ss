@@ -1,5 +1,5 @@
 (import (cspp)
-        (cspp parser xml))
+        (cspp format xml))
 
 (include "parser-external-tools.ss")
 (include "parser-test-support.ss")

@@ -1,4 +1,4 @@
-(import (cspp) (cspp parser json5))
+(import (cspp) (cspp format json5))
 (load "examples/common.ss")
 
 (example-run!

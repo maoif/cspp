@@ -1,5 +1,5 @@
 (import (cspp)
-        (cspp parser json5))
+        (cspp format json5))
 
 (include "parser-external-tools.ss")
 (include "parser-test-support.ss")

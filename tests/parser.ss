@@ -5,8 +5,8 @@
         (cspp system process)
         (cspp utils)
         (cspp parser combinator)
-        (cspp parser wasm)
-        (cspp parser scheme))
+        (cspp format wasm)
+        (cspp format scheme))
 
 (include "parser-external-tools.ss")
 (include "parser-test-support.ss")

@@ -788,7 +788,7 @@
         (format port "  (export~%")
         (for-each (lambda (name) (format port "    ~a~%" name)) exports)
         (display
-         "  )\n  (import (cspp chez) (cspp utils) (cspp protobuf)\n          (cspp net grpc) (cspp net grpc reflection))\n\n"
+         "  )\n  (import (cspp chez) (cspp utils) (cspp format protobuf)\n          (cspp net grpc) (cspp net grpc reflection))\n\n"
          port)
         (format port "  (define protobuf-file-descriptor-bytes ~a)~%~%"
                 (bytevector-literal (protobuf-file-descriptor-raw file)))

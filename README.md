@@ -23,8 +23,10 @@ See [Linux packages](docs/releases.md) for compatibility and release details.
   `for` loops, iterators, transducers, data navigator, control helpers, and list, string, and vector utilities.
 - **Collections:** arrays, bit vectors, bit trees, doubly linked lists, sets, heaps, queues,
   stacks, and ordered maps and sets.
-- **Parsing and formats:** parser combinators, CSV, JSON5, TOML, XML, Scheme, ELF, WebAssembly,
-  and Protocol Buffers.
+- **Parsing:** parser combinators through `(cspp parser)` or `(cspp parser combinator)`.
+- **Formats:** CSV, JSON5, TOML, XML, Scheme, ELF, WebAssembly, and Protocol Buffers through
+  `(cspp format)` or focused libraries such as `(cspp format toml)` and `(cspp format protobuf)`.
+  The former `(cspp parser csv)`-style paths and `(cspp protobuf)` have been removed.
 - **Files and system APIs:** file and port helpers, paths, globbing, processes,
   signals, filesystem and user information, UUIDs, hashes, and optional-library probes.
 - **Networking:** sockets, IP and DNS helpers, URIs, TLS, HTTP/HTTPS, FTP/FTPS, SSH, SFTP, SCP,

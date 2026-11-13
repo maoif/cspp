@@ -3,7 +3,7 @@
           grpc-reflection-register-file! grpc-register-reflection!)
   (import (cspp chez)
           (cspp utils)
-          (cspp protobuf)
+          (cspp format protobuf)
           (cspp net grpc))
 
   (define grpc-reflection-method
