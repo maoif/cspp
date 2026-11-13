@@ -5,9 +5,9 @@
   (import (cspp chez)
           (cspp utils)
           (cspp test assertion)
-          (cspp test capture)
-          (cspp test common)
-          (cspp test descriptor)
+          (cspp test private capture)
+          (cspp test private common)
+          (cspp test private descriptor)
           (cspp test reporter))
 
   (define $metadata-merge

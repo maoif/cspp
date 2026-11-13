@@ -2,8 +2,8 @@
         (cspp net socket)
         (cspp net address)
         (cspp net poll)
-        (cspp net lws ffi)
-        (cspp net lws reactor))
+        (cspp net private lws-ffi)
+        (cspp net private lws-reactor))
 
 (define wait-until
   (lambda (predicate)

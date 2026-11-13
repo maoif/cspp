@@ -22,8 +22,8 @@
           call-with-aead-decrypt-state)
   (import (cspp chez)
           (cspp utils)
-          (cspp crypto ffi)
-          (cspp crypto private))
+          (cspp crypto private ffi)
+          (cspp crypto private common))
 
   (define aead-algorithms '(aes-128-gcm aes-256-gcm chacha20-poly1305))
 

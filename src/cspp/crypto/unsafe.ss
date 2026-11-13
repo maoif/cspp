@@ -5,8 +5,8 @@
           unsafe-hash-string)
   (import (cspp chez)
           (cspp utils)
-          (cspp crypto ffi)
-          (cspp crypto private))
+          (cspp crypto private ffi)
+          (cspp crypto private common))
 
   (define unsafe-hash-algorithms '(md5 sha1))
 

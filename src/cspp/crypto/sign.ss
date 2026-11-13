@@ -17,8 +17,8 @@
           call-with-verify-state)
   (import (cspp chez)
           (cspp utils)
-          (cspp crypto ffi)
-          (cspp crypto private)
+          (cspp crypto private ffi)
+          (cspp crypto private common)
           (cspp crypto pkey))
 
   (define signing-algorithms '(ed25519 rsa-pss ecdsa))

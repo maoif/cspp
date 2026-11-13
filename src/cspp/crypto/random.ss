@@ -6,8 +6,8 @@
           random-status)
   (import (cspp chez)
           (cspp utils)
-          (cspp crypto ffi)
-          (cspp crypto private))
+          (cspp crypto private ffi)
+          (cspp crypto private common))
 
   #|proc:random-status
 The `random-status` procedure returns `#t` when the OpenSSL random source is ready.

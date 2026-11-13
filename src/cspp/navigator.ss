@@ -27,10 +27,10 @@
 
           nav->datum nav-write nav-display nav-debug-name nav-explain)
   (import (chezscheme)
-          (cspp navigator core)
+          (cspp navigator private core)
           (cspp navigator debug)
           (cspp navigator basic)
           (cspp navigator conditional)
           (cspp navigator custom)
           (cspp navigator recursive)
-          (cspp navigator engine)))
+          (cspp navigator private engine)))

@@ -1,4 +1,4 @@
-(import (chezscheme) (cspp crypto) (cspp crypto ffi) (cspp optional-library))
+(import (chezscheme) (cspp crypto) (cspp crypto private ffi) (cspp optional-library))
 
 (define rejects-input?
   (lambda (proc)

@@ -1,8 +1,8 @@
 (library (cspp private optional-library)
-  (export require-optional-library)
+  (export require-optional-library ffi-optional-library-info)
   (import (cspp chez) (cspp utils))
 
-  (define native-library-info
+  (define ffi-optional-library-info
     (foreign-procedure "cspp_optional_library_info" (string) scheme-object))
 
   #|proc:require-optional-library
@@ -13,7 +13,7 @@
   (define require-optional-library
     (lambda (who library)
       (pcheck ([symbol? who library])
-              (let ([info (native-library-info (symbol->string library))])
+              (let ([info (ffi-optional-library-info (symbol->string library))])
                 (unless (and (vector? info) (vector-ref info 1))
                   (error who (if (vector? info) (vector-ref info 4)
                                  "unknown optional library")))))))

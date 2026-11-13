@@ -1,5 +1,5 @@
 (import (cspp)
-        (cspp net private))
+        (cspp net private common))
 
 (define internal-ffi-error?
   (lambda (thunk)

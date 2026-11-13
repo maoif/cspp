@@ -22,7 +22,7 @@
   (import (cspp chez)
           (cspp utils)
           (cspp net poll)
-          (cspp net operation private))
+          (cspp net private operation))
 
   #|proc:net-operation?
 The `net-operation?` procedure reports whether `value` is a network operation.

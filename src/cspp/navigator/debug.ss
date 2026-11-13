@@ -2,7 +2,7 @@
   (export nav->datum nav-write nav-display nav-debug-name nav-explain)
   (import (except (chezscheme) sleep)
           (cspp utils)
-          (cspp navigator core))
+          (cspp navigator private core))
 
   #|proc:nav->datum
   The `nav->datum` procedure returns a stable diagnostic datum for navigator,

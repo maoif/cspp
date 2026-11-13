@@ -12,7 +12,7 @@
           xml-processing-instruction-data
           parse-xml parse-xml-file)
   (import (cspp chez)
-          (cspp parser private)
+          (cspp format private record-writer)
           (cspp parser combinator)
           (cspp file)
           (cspp list)

@@ -1,6 +1,6 @@
 (import (cspp)
         (cspp format elf)
-        (cspp format elf types))
+        (cspp format private elf-types))
 
 (include "parser-external-tools.ss")
 (include "parser-test-support.ss")

@@ -1,4 +1,4 @@
-(import (cspp) (cspp net ffi))
+(import (cspp) (cspp net private ffi))
 
 (define disabled-api-error?
   (lambda (library operation)

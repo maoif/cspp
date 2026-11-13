@@ -27,7 +27,7 @@
           (cspp io)
           (cspp private common)
           (cspp net operation)
-          (cspp net operation private))
+          (cspp net private operation))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Implementation origin and design references

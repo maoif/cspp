@@ -6,8 +6,8 @@
   (import (except (chezscheme) sleep)
           (cspp utils)
           (cspp list)
-          (cspp navigator core)
-          (cspp navigator data))
+          (cspp navigator private core)
+          (cspp navigator private data))
 
   ;; Scheme map does not prescribe callback order. Navigation callbacks always
   ;; follow selection order, including indexed updates and stateful suffixes.

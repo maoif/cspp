@@ -44,8 +44,8 @@
   (import (cspp chez)
           (cspp utils)
           (cspp net errors)
-          (cspp net ffi)
-          (cspp net private)
+          (cspp net private ffi)
+          (cspp net private common)
           (cspp net poll)
           (cspp net operation))
 

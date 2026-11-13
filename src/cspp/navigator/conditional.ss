@@ -3,9 +3,9 @@
           nav/multi-path nav/choice)
   (import (except (chezscheme) sleep)
           (cspp utils)
-          (cspp navigator core)
+          (cspp navigator private core)
           (cspp navigator basic)
-          (cspp navigator engine))
+          (cspp navigator private engine))
 
   (define make-conditional-nav
     (lambda (name metadata select-proc transform-proc transform!-proc clear-proc clear!-proc)

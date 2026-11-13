@@ -38,9 +38,9 @@
   (import (cspp chez)
           (cspp file)
           (cspp parser combinator)
-          (cspp format elf types)
-          (cspp format elf binary)
-          (cspp format elf validate)
+          (cspp format private elf-types)
+          (cspp format private elf-binary)
+          (cspp format private elf-validate)
           (cspp utils))
 
   (define exact-integer?

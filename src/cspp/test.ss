@@ -65,10 +65,10 @@ in one controlling OS thread, outside fibers; concurrent use and continuation re
           ;; Definition macros
           test-suite test-case test-expand test-compile test)
   (import (cspp chez)
-          (cspp test common)
+          (cspp test private common)
           (cspp test assertion)
-          (cspp test capture)
-          (cspp test descriptor)
+          (cspp test private capture)
+          (cspp test private descriptor)
           (cspp test macros)
           (cspp test reporter)
           (cspp test runner)))

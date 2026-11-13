@@ -5,8 +5,8 @@
   (import (cspp chez)
           (cspp utils)
           (cspp test assertion)
-          (cspp test descriptor)
-          (cspp test common))
+          (cspp test private descriptor)
+          (cspp test private common))
 
   (define $count-status
     (lambda (status results)

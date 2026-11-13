@@ -50,8 +50,8 @@
           (cspp net socket)
           (cspp net poll)
           (cspp net operation)
-          (cspp net ffi)
-          (cspp net private))
+          (cspp net private ffi)
+          (cspp net private common))
 
   (define grpc-status-ok 0)
   (define grpc-status-internal 13)

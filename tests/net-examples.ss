@@ -1,4 +1,4 @@
-(import (cspp) (cspp net lws ffi))
+(import (cspp) (cspp net private lws-ffi))
 
 (define example-entry-point*
   '("examples/net/echo-client-grpc.ss"

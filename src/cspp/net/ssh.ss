@@ -64,8 +64,8 @@
           (cspp utils)
           (cspp string)
           (cspp net errors)
-          (cspp net ffi)
-          (cspp net private)
+          (cspp net private ffi)
+          (cspp net private common)
           (cspp net operation)
           (cspp net poll))
 

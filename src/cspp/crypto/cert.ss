@@ -20,8 +20,8 @@
           verify-certificate-chain)
   (import (cspp chez)
           (cspp utils)
-          (cspp crypto ffi)
-          (cspp crypto private)
+          (cspp crypto private ffi)
+          (cspp crypto private common)
           (cspp crypto pkey))
 
   (define cert-formats '(pem der))

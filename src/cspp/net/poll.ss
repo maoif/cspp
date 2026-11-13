@@ -11,9 +11,9 @@
   (import (cspp chez)
           (cspp utils)
           (cspp net errors)
-          (cspp net ffi)
-          (cspp net private)
-          (cspp net operation private))
+          (cspp net private ffi)
+          (cspp net private common)
+          (cspp net private operation))
 
   #|record:poll-target
 The `poll-target` record is an immutable snapshot of one requested or completed poll target.

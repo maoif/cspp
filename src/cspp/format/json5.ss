@@ -6,7 +6,7 @@
           json5-null?
           parse-json5 parse-json5-file)
   (import (cspp chez)
-          (cspp parser private)
+          (cspp format private record-writer)
           (cspp parser combinator)
           (cspp file)
           (cspp list)

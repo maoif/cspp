@@ -67,8 +67,8 @@
           (cspp net poll)
           (cspp net operation)
           (cspp net transfer)
-          (cspp net ffi)
-          (cspp net private)
+          (cspp net private ffi)
+          (cspp net private common)
           (only (cspp file) file-size))
 
   #|record:ftp-session

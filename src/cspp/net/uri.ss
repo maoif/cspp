@@ -37,7 +37,7 @@
   (import (cspp chez)
           (cspp utils)
           (cspp string)
-          (cspp net ffi)
+          (cspp net private ffi)
           (cspp net errors))
 
   #|record:uri
