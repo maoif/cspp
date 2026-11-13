@@ -2,9 +2,10 @@
 
 (mat parser-csv-ordinary-quoted-fields
 
-     (let* ([body (make-string 100000 #\a)] [source (string-append "\"" body "\"")]
-            [before (statistics)] [document (parse-csv source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(body) (make-string 100000 #\a)]
+                   [(source) (string-append "\"" body "\"")]
+                   [(document allocated)
+                    (parser-test-allocation (lambda () (parse-csv source)))])
        (and (string=? body (vector-ref
                            (csv-record-fields (vector-ref (csv-document-records document) 0)) 0))
             (< allocated 25000000)))
@@ -27,9 +28,10 @@
 
 (mat parser-csv-unquoted-field-dispatch
 
-     (let* ([count 10000] [text (apply string-append (make-list count "a,b,c\n"))]
-            [before (statistics)] [document (parse-csv text)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(count) 10000]
+                   [(text) (apply string-append (make-list count "a,b,c\n"))]
+                   [(document allocated)
+                    (parser-test-allocation (lambda () (parse-csv text)))])
        (and (= count (vector-length (csv-document-records document)))
             (equal? '#("a" "b" "c")
                     (csv-record-fields (vector-ref (csv-document-records document) 0)))

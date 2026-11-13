@@ -49,9 +49,9 @@
      (let ([body (make-string 100000 #\a)])
        (for-all
         (lambda (delimiter budget)
-          (let* ([source (string-append "v=" delimiter body delimiter)]
-                 [before (statistics)] [document (parse-toml source)]
-                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (let*-values ([(source) (string-append "v=" delimiter body delimiter)]
+                        [(document allocated)
+                         (parser-test-allocation (lambda () (parse-toml source)))])
             (and (string=? body (toml-table-ref (toml-document-root document) "v"))
                  (< allocated budget))))
         '("\"" "\"\"\"" "'''") '(25000000 30000000 30000000)))

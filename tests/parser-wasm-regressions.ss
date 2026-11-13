@@ -105,10 +105,11 @@
      (= 1 (wasm-review-float-bits <wat-f64> "0x1.0000000000001p-1075"))
 
      ;; Huge exponents describe bounded values without constructing enormous exact powers.
-     (let* ([before (statistics)]
-            [values (map (lambda (text) (wasm-review-float-bits <wat-f32> text))
-                         '("0e1000000" "-0e-1000000" "1e-1000000"))]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(values allocated)
+                    (parser-test-allocation
+                     (lambda ()
+                       (map (lambda (text) (wasm-review-float-bits <wat-f32> text))
+                            '("0e1000000" "-0e-1000000" "1e-1000000"))))])
        (and (equal? '(0 2147483648 0) values) (< allocated 1000000)))
 
      ;; Error case: enormous positive exponents report overflow without allocating huge powers.
@@ -598,9 +599,8 @@
             [parser (<rep> <wasm-s32> count)])
        (do ([i 4 (fx+ i 5)]) ((fx>= i (bytevector-length bytes)))
          (bytevector-u8-set! bytes i 127))
-       (let* ([before (statistics)]
-              [values (run-binary-parser parser bytes)]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (let*-values ([(values allocated)
+                      (parser-test-allocation (lambda () (run-binary-parser parser bytes)))])
          (and (= count (length values))
               (for-all (lambda (value) (= value -1)) values)
               (< allocated 2000000)))))
@@ -619,19 +619,20 @@
      (raises-parser-error?
       (lambda () (parse-wat-lexeme <wat-string> "\"abc\tdef\"")))
 
-     (let* ([count 16384] [source (string-append "\"" (make-string count #\a) "\"")]
-            [before (statistics)]
-            [bytes (parse-wat-lexeme <wat-string> source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(count) 16384]
+                   [(source) (string-append "\"" (make-string count #\a) "\"")]
+                   [(bytes allocated)
+                    (parser-test-allocation (lambda () (parse-wat-lexeme <wat-string> source)))])
        (and (bytevector=? bytes (make-bytevector count 97)) (< allocated 6000000))))
 
 (mat wasm-review-bounded-integer-cost
 
      ;; Error case: an overflowing decimal token is scanned without growing an unbounded bignum.
-     (let* ([source (make-string 16000 #\9)]
-            [before (statistics)]
-            [err (parser-error-from (lambda () (run-textual-parser <wat-u32> source)))]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(source) (make-string 16000 #\9)]
+                   [(err allocated)
+                    (parser-test-allocation
+                     (lambda ()
+                       (parser-error-from (lambda () (run-textual-parser <wat-u32> source)))))])
        (and (parser-error? err) (= 16000 (parser-error-offset err)) (< allocated 12000000)))
 
      (= 1 (run-textual-parser <wat-u32> (string-append (make-string 16000 #\0) "1")))
@@ -669,8 +670,8 @@
             [parser (<rep> <wasm-u32> count)])
        (do ([i 4 (fx+ i 5)]) ((fx>= i (bytevector-length bytes)))
          (bytevector-u8-set! bytes i 1))
-       (let* ([before (statistics)] [values (run-binary-parser parser bytes)]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (let*-values ([(values allocated)
+                      (parser-test-allocation (lambda () (run-binary-parser parser bytes)))])
          (and (= count (length values))
               (for-all (lambda (value) (= value #x10000000)) values)
               (< allocated 2000000)))))
@@ -722,10 +723,12 @@
      ;; Error cases: Unicode scalars and NaN payloads stop growing after their fixed limits.
      (for-all
       (lambda (entry)
-        (let* ([source (cdr entry)] [before (statistics)]
-               [err (parser-error-from
-                     (lambda () (run-textual-parser (car entry) source)))]
-               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+        (let*-values ([(source) (cdr entry)]
+                      [(err allocated)
+                       (parser-test-allocation
+                        (lambda ()
+                          (parser-error-from
+                           (lambda () (run-textual-parser (car entry) source)))))])
           (and (parser-error? err) (< allocated 12000000))))
       (let ([digits (make-string 16000 #\f)])
         (list (cons <wat-string> (string-append "\"\\u{" digits "}\""))
@@ -747,10 +750,9 @@
 (mat wasm-review-long-exponent-digits
 
      ;; The full exponent must be scanned, but a zero significand needs no giant bignum.
-     (let* ([text (string-append "-0e-" (make-string 16000 #\9))]
-            [before (statistics)]
-            [bits (wasm-review-float-bits <wat-f64> text)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(text) (string-append "-0e-" (make-string 16000 #\9))]
+                   [(bits allocated)
+                    (parser-test-allocation (lambda () (wasm-review-float-bits <wat-f64> text)))])
        (and (= #x8000000000000000 bits) (< allocated 20000000)))
 
      ;; Error case: a nonzero significand with a huge positive exponent still overflows.
@@ -807,8 +809,8 @@
      ;; The finite value uses exact cancellation; repeated significand conversion wastes memory.
      (for-all
       (lambda (text expected)
-        (let* ([before (statistics)] [bits (wasm-review-float-bits <wat-f64> text)]
-               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+        (let*-values ([(bits allocated)
+                       (parser-test-allocation (lambda () (wasm-review-float-bits <wat-f64> text)))])
           (and (= expected bits) (< allocated 160000000))))
       (list (string-append (make-string 16000 #\1) "e-16000")
             (string-append "0x" (make-string 16000 #\1) "p-64000"))
@@ -818,10 +820,11 @@
 
      (for-all
       (lambda (parser width)
-        (let* ([count 100000] [bytes (make-bytevector (* count width) 0)]
-               [repeated (<rep> parser count)] [before (statistics)]
-               [result (run-binary-parser repeated bytes)]
-               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+        (let*-values ([(count) 100000]
+                      [(bytes) (make-bytevector (* count width) 0)]
+                      [(repeated) (<rep> parser count)]
+                      [(result allocated)
+                       (parser-test-allocation (lambda () (run-binary-parser repeated bytes)))])
           (and (= count (length result))
                (for-all (lambda (value) (= 0 (wasm-float-bits value))) result)
                (< allocated 9000000))))
@@ -831,8 +834,10 @@
 
      (let* ([count 100000] [bytes (make-bytevector (fx1+ count) 1)])
        (bytevector-u8-set! bytes count 11)
-       (let* ([before (statistics)] [body (run-binary-parser <wasm-expression> bytes)]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (let*-values ([(body allocated)
+                      (parser-test-allocation
+                       (lambda ()
+                         (run-binary-parser <wasm-expression> bytes)))])
          (and (= count (vector-length body))
               (eq? 'nop (wasm-instruction-mnemonic (vector-ref body (fx1- count))))
               (not (eq? (vector-ref body 0) (vector-ref body 1)))
@@ -883,8 +888,8 @@
        (bytevector-u8-set! bytes 0 #xa0)
        (bytevector-u8-set! bytes 1 #x8d)
        (bytevector-u8-set! bytes 2 #x06)
-       (let* ([before (statistics)] [result (run-binary-parser parser bytes)]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (let*-values ([(result allocated)
+                      (parser-test-allocation (lambda () (run-binary-parser parser bytes)))])
          (and (= count (vector-length result)) (vfor-all zero? result)
               (< allocated 1800000))))
 
@@ -948,10 +953,10 @@
 
      (for-all
       (lambda (byte)
-        (let* ([bytes (make-bytevector 100000 byte)]
-               [parser (<rep> <wasm-value-type> 100000)]
-               [before (statistics)] [types (run-binary-parser parser bytes)]
-               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+        (let*-values ([(bytes) (make-bytevector 100000 byte)]
+                      [(parser) (<rep> <wasm-value-type> 100000)]
+                      [(types allocated)
+                       (parser-test-allocation (lambda () (run-binary-parser parser bytes)))])
           (and (= 100000 (length types)) (< allocated 6000000))))
       '(#x7f #x7c #x7b #x70))
 
@@ -971,10 +976,11 @@
 
      (for-all
       (lambda (prefix radix)
-        (let* ([source (string-append prefix (make-string 16000 #\1)
+        (let*-values ([(source)
+                       (string-append prefix (make-string 16000 #\1)
                                      (if (= radix 10) "e-16000" "p-64000"))]
-               [before (statistics)] [number (parse-wat-lexeme <wat-f64> source)]
-               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+                      [(number allocated)
+                       (parser-test-allocation (lambda () (parse-wat-lexeme <wat-f64> source)))])
           (and (= (if (= radix 10) 4592670820000712476 4589468260265693457)
                   (wasm-float-bits number))
                (< allocated 14000000))))
@@ -982,9 +988,9 @@
 
 (mat wasm-review-identifier-punctuation-cost
 
-     (let* ([source (string-append "$" (make-string 100000 #\!))]
-            [before (statistics)] [identifier (parse-wat-lexeme <wat-identifier> source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(source) (string-append "$" (make-string 100000 #\!))]
+                   [(identifier allocated)
+                    (parser-test-allocation (lambda () (parse-wat-lexeme <wat-identifier> source)))])
        (and (string=? source identifier) (< allocated 11000000))))
 
 ;;;; Allocation and value ownership regressions
@@ -993,8 +999,10 @@
 
      (let ([bytes (make-bytevector 100001 1)])
        (bytevector-u8-set! bytes 100000 11)
-       (let* ([before (statistics)] [body (run-binary-parser <wasm-expression> bytes)]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (let*-values ([(body allocated)
+                      (parser-test-allocation
+                       (lambda ()
+                         (run-binary-parser <wasm-expression> bytes)))])
          (and (= 100000 (vector-length body))
               (eq? 'nop (wasm-instruction-mnemonic (vector-ref body 99999)))
               (< allocated 28000000)))))
@@ -1004,9 +1012,9 @@
      ;; Repeated declarations must reuse parser compositions while keeping each value fresh.
      (let* ([count 10000] [bytes (make-bytevector (+ 14 (* count 2)) 0)])
        (bytevector-copy! #vu8(0 97 115 109 1 0 0 0 5 162 156 1 144 78) 0 bytes 0 14)
-       (let* ([before (statistics)] [module (parse-wasm-binary-module bytes)]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))]
-              [memories (wasm-module-memories module)])
+       (let*-values ([(module allocated)
+                      (parser-test-allocation (lambda () (parse-wasm-binary-module bytes)))]
+                     [(memories) (wasm-module-memories module)])
          (and (= count (vector-length memories))
               (not (eq? (vector-ref memories 0) (vector-ref memories 1)))
               (< allocated 1700000))))
@@ -1031,8 +1039,8 @@
        (do ([index 14 (+ index 4)]) ((= index (bytevector-length bytes)))
          (bytevector-u8-set! bytes index 112)
          (bytevector-u8-set! bytes (+ index 1) 1))
-       (let* ([before (statistics)] [module (parse-wasm-binary-module bytes)]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (let*-values ([(module allocated)
+                      (parser-test-allocation (lambda () (parse-wasm-binary-module bytes)))])
          (and (= count (vector-length (wasm-module-tables module)))
               (< allocated 11000000))))
 
@@ -1061,10 +1069,10 @@
 
 (mat parser-wat-ordinary-annotation-content
 
-     (let* ([body (make-string 100000 #\a)]
-            [source (string-append "(@foo " body ")(module)")]
-            [before (statistics)] [module (parse-wasm-text-module source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(body) (make-string 100000 #\a)]
+                   [(source) (string-append "(@foo " body ")(module)")]
+                   [(module allocated)
+                    (parser-test-allocation (lambda () (parse-wasm-text-module source)))])
        (and (= 0 (vector-length (wasm-module-functions module)))
             (< allocated 25000000)))
 
@@ -1084,9 +1092,10 @@
             [parser (<rep> <wasm-instruction> count)])
        (do ([index 0 (+ index 2)]) ((= index (bytevector-length bytes)))
          (bytevector-u8-set! bytes index #x41))
-       (let* ([before (statistics)] [instructions (run-binary-parser parser bytes)]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))]
-              [first (car instructions)] [last (list-ref instructions (- count 1))])
+       (let*-values ([(instructions allocated)
+                      (parser-test-allocation (lambda () (run-binary-parser parser bytes)))]
+                     [(first) (car instructions)]
+                     [(last) (list-ref instructions (- count 1))])
          (and (= count (length instructions))
               (eq? 'i32.const (wasm-instruction-mnemonic first))
               (equal? '#(0) (wasm-instruction-immediates first))
@@ -1097,9 +1106,9 @@
 
 (mat wasm-review-zero-integral-fraction-cost
 
-     (let* ([source (string-append "0." (make-string 64000 #\0))]
-            [before (statistics)] [value (parse-wat-lexeme <wat-f64> source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(source) (string-append "0." (make-string 64000 #\0))]
+                   [(value allocated)
+                    (parser-test-allocation (lambda () (parse-wat-lexeme <wat-f64> source)))])
        (and (= 0 (wasm-float-bits value)) (< allocated 16000000)))
 
      (equal? '(0 0 #x8000000000000000 #x8000000000000000 #x3fe0000000000000)
@@ -1131,9 +1140,10 @@
      (let* ([bytes (make-bytevector (+ 19 1048576) 0)]
             [prefix #vu8(0 97 115 109 1 0 0 0 1 1 0 1 1 0 0 129 128 64 0)])
        (bytevector-copy! prefix 0 bytes 0 (bytevector-length prefix))
-       (let* ([before (statistics)]
-              [failure (parser-error-from (lambda () (parse-wasm-binary-module bytes)))]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (let*-values ([(failure allocated)
+                      (parser-test-allocation
+                       (lambda ()
+                         (parser-error-from (lambda () (parse-wasm-binary-module bytes)))))])
          (and failure (= 11 (parser-error-offset failure)) (< allocated 100000))))
 
      ;; Custom sections may repeat and do not reset the previous standard-section rank.

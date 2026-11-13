@@ -15,11 +15,11 @@
             (xml-comment? (vector-ref children 3))
             (string=? "end" (xml-text-value (vector-ref children 4)))))
 
-     (let* ([count 16000]
-            [text (string-append "<a>" (apply string-append (make-list count "&amp;")) "</a>")]
-            [before (statistics)]
-            [root (xml-document-root (parse-xml text))]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(count) 16000]
+                   [(text)
+                    (string-append "<a>" (apply string-append (make-list count "&amp;")) "</a>")]
+                   [(root allocated)
+                    (parser-test-allocation (lambda () (xml-document-root (parse-xml text))))])
        (and (string=? (make-string count #\&)
                       (xml-text-value (vector-ref (xml-element-children root) 0)))
             ;; A generous allocation bound catches repeated copies of accumulated text.
@@ -29,10 +29,10 @@
 
 (mat parser-xml-comment-copy
 
-     (let* ([body (string-append (make-string 250000 #\a) "-b")]
-            [text (string-append "<r><!--" body "--></r>")]
-            [before (statistics)] [document (parse-xml text)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(body) (string-append (make-string 250000 #\a) "-b")]
+                   [(text) (string-append "<r><!--" body "--></r>")]
+                   [(document allocated)
+                    (parser-test-allocation (lambda () (parse-xml text)))])
        (and (string=? body (xml-comment-value
                            (vector-ref (xml-element-children
                                         (xml-document-root document)) 0)))
@@ -65,10 +65,11 @@
      ;; Error cases: rejecting oversized references must not construct oversized integers.
      (for-all
       (lambda (prefix digit)
-        (let* ([text (string-append "<r>" prefix (make-string 16000 digit) ";</r>")]
-               [before (statistics)]
-               [failure (parser-error-from (lambda () (parse-xml text)))]
-               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+        (let*-values ([(text) (string-append "<r>" prefix (make-string 16000 digit) ";</r>")]
+                      [(failure allocated)
+                       (parser-test-allocation
+                        (lambda ()
+                          (parser-error-from (lambda () (parse-xml text)))))])
           (and failure (< allocated 10000000))))
       '("&#" "&#x") '(#\9 #\f))
 
@@ -84,9 +85,9 @@
 
      (for-all
       (lambda (prefix suffix)
-        (let* ([text (string-append prefix (make-string 100000 #\a) suffix)]
-               [before (statistics)] [document (parse-xml text)]
-               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+        (let*-values ([(text) (string-append prefix (make-string 100000 #\a) suffix)]
+                      [(document allocated)
+                       (parser-test-allocation (lambda () (parse-xml text)))])
           (and (xml-document? document) (< allocated 22000000))))
       '("<r>" "<r><![CDATA[" "<?p ") '("</r>" "]]></r>" "?><r/>"))
 
@@ -104,9 +105,10 @@
 
 (mat parser-xml-ordinary-attribute-characters
 
-     (let* ([body (make-string 100000 #\a)] [source (string-append "<r a='" body "'/>")]
-            [before (statistics)] [document (parse-xml source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(body) (make-string 100000 #\a)]
+                   [(source) (string-append "<r a='" body "'/>")]
+                   [(document allocated)
+                    (parser-test-allocation (lambda () (parse-xml source)))])
        (and (string=? body (xml-attribute-value
                            (vector-ref (xml-element-attributes (xml-document-root document)) 0)))
             (< allocated 25000000)))
@@ -123,11 +125,13 @@
 
 (mat parser-xml-cr-normalization-cost
 
-     (let* ([count 1000000] [source (string-append "<r>" (make-string count #\return) "</r>")]
-            [before (statistics)] [document (parse-xml source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))]
-            [text (xml-text-value (vector-ref
-                                   (xml-element-children (xml-document-root document)) 0))])
+     (let*-values ([(count) 1000000]
+                   [(source) (string-append "<r>" (make-string count #\return) "</r>")]
+                   [(document allocated)
+                    (parser-test-allocation (lambda () (parse-xml source)))]
+                   [(text)
+                    (xml-text-value (vector-ref
+                                     (xml-element-children (xml-document-root document)) 0))])
        (and (string=? text (make-string count #\newline))
             (char=? #\return (string-ref source 3))
             (< allocated 154000000))))

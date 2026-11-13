@@ -16,6 +16,15 @@
       (thunk)
       #f)))
 
+;; Call the zero-argument thunk once and return its single result and allocated byte count.
+;; Build fixtures before the call and check the returned result afterward.
+(define parser-test-allocation
+  (lambda (thunk)
+    (let* ([before (statistics)]
+           [result (thunk)]
+           [allocated (sstats-bytes (sstats-difference (statistics) before))])
+      (values result allocated))))
+
 (define parser-test-bytes
   (lambda bytevectors
     (let-values ([(port bytes) (open-bytevector-output-port)])

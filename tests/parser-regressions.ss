@@ -369,21 +369,22 @@
        (string=? "<fail-with>: first; <fail-with>: second" (parser-error-message err)))
 
      ;; Error case: a wide choice should not copy every prior expectation/message prefix.
-     (let* ([count 1000]
-            [parser (apply </> (map (lambda (i) (<string> (format "keyword~a" i)))
+     (let*-values ([(count) 1000]
+                   [(parser)
+                    (apply </> (map (lambda (i) (<string> (format "keyword~a" i)))
                                    (iota count)))]
-            [before (statistics)]
-            [err (parser-error-from (lambda () (run-textual-parser parser "x")))]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+                   [(err allocated)
+                    (parser-test-allocation
+                     (lambda ()
+                       (parser-error-from (lambda () (run-textual-parser parser "x")))))])
        (and (= count (length (parser-error-expected err))) (< allocated 10000000))))
 
 (mat parser-character-list-conversion
 
-     (let* ([characters (make-list 262144 #\a)]
-            [parser (<as-string> (<result> characters))]
-            [before (statistics)]
-            [text (run-textual-parser parser "")]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(characters) (make-list 262144 #\a)]
+                   [(parser) (<as-string> (<result> characters))]
+                   [(text allocated)
+                    (parser-test-allocation (lambda () (run-textual-parser parser "")))])
        (and (string=? text (make-string 262144 #\a)) (< allocated 2000000)))
 
      (eq? 'abc (run-textual-parser (<as-symbol> (<result> '(#\a #\b #\c))) ""))
@@ -416,14 +417,16 @@
 (mat parser-nested-choice-diagnostics
 
      ;; Error case: nested choices retain ordered expectations without copying every suffix.
-     (let* ([count 500]
-            [alternatives (map (lambda (i) (<string> (format "keyword~a" i))) (iota count))]
-            [reversed (reverse alternatives)]
-            [parser (fold-right (lambda (parser rest) (</> parser rest))
+     (let*-values ([(count) 500]
+                   [(alternatives) (map (lambda (i) (<string> (format "keyword~a" i))) (iota count))]
+                   [(reversed) (reverse alternatives)]
+                   [(parser)
+                    (fold-right (lambda (parser rest) (</> parser rest))
                                 (car reversed) (reverse (cdr reversed)))]
-            [before (statistics)]
-            [err (parser-error-from (lambda () (run-textual-parser parser "x")))]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+                   [(err allocated)
+                    (parser-test-allocation
+                     (lambda ()
+                       (parser-error-from (lambda () (run-textual-parser parser "x")))))])
        (and (= count (length (parser-error-expected err)))
             (equal? '("keyword0" "keyword1") (list-head (parser-error-expected err) 2))
             (string=? "keyword499" (list-last (parser-error-expected err)))
@@ -456,10 +459,11 @@
 
 (mat parser-character-predicate-cost
 
-     (let* ([count 100000] [text (make-string count #\7)]
-            [parser (~> (<skip> <digit> count) <pos>)]
-            [before (statistics)] [position (run-textual-parser parser text)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(count) 100000]
+                   [(text) (make-string count #\7)]
+                   [(parser) (~> (<skip> <digit> count) <pos>)]
+                   [(position allocated)
+                    (parser-test-allocation (lambda () (run-textual-parser parser text)))])
        (and (= count position) (< allocated 2000000)))
 
      ;; Error case: a predicate failure uses the position before the rejected line break.
@@ -517,9 +521,9 @@
       '(2 8 10 16) (list bindigits->num octdigits->num digits->num hexdigits->num))
 
      ;; Long significant integers must not allocate a growing bignum for every digit.
-     (let* ([source (string-append "0x" (make-string 16000 #\f))]
-            [before (statistics)] [document (parse-json5 source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(source) (string-append "0x" (make-string 16000 #\f))]
+                   [(document allocated)
+                    (parser-test-allocation (lambda () (parse-json5 source)))])
        (and (= (- (expt 16 16000) 1) (json5-document-value document))
             (< allocated 10000000)))
 
@@ -604,8 +608,8 @@
             [parser (<as-integer> (<some> <digit>))])
        (for-all
         (lambda (parse budget)
-          (let* ([before (statistics)] [actual (parse digits)]
-                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (let*-values ([(actual allocated)
+                         (parser-test-allocation (lambda () (parse digits)))])
             (and (= expected actual) (< allocated budget))))
         (list (lambda (text) (run-textual-parser parser text))
               parse-scheme-datum
@@ -714,9 +718,9 @@
 
      (for-all
       (lambda (parser character)
-        (let* ([source (make-string 100000 character)] [before (statistics)]
-               [result (run-textual-parser parser source)]
-               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+        (let*-values ([(source) (make-string 100000 character)]
+                      [(result allocated)
+                       (parser-test-allocation (lambda () (run-textual-parser parser source)))])
           (and (= 100000 (length result)) (< allocated 11000000))))
       (list (<some> (<one-of> " \t")) (<some> (<none-of> "\"\\")))
       '(#\space #\a)))
@@ -759,8 +763,8 @@
        (bytevector-u8-set! bytes (- count 1) 127)
        (for-all
         (lambda (parser expected)
-          (let* ([before (statistics)] [value (run-binary-parser parser bytes)]
-                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (let*-values ([(value allocated)
+                         (parser-test-allocation (lambda () (run-binary-parser parser bytes)))])
             (and (= expected value) (< allocated 2000000))))
         (list <uleb128> signed-parser) (list unsigned-expected -1)))
 
@@ -792,9 +796,10 @@
 
 (mat parser-discarded-token-whitespace
 
-     (let* ([source (make-string 100000 #\space)] [parser (<fully> (<result> #t))]
-            [before (statistics)] [result (run-textual-parser parser source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(source) (make-string 100000 #\space)]
+                   [(parser) (<fully> (<result> #t))]
+                   [(result allocated)
+                    (parser-test-allocation (lambda () (run-textual-parser parser source)))])
        (and result (< allocated 7500000)))
 
      ;; Ignored whitespace must preserve callback count, caller state and result identity.
@@ -820,9 +825,9 @@
      (let ([body (make-string 100000 #\a)])
        (for-all
         (lambda (parse prefix suffix)
-          (let* ([source (string-append prefix body suffix)]
-                 [before (statistics)] [value (parse source)]
-                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (let*-values ([(source) (string-append prefix body suffix)]
+                        [(value allocated)
+                         (parser-test-allocation (lambda () (parse source)))])
             (and (if (wasm-module? value)
                      (= 0 (vector-length (wasm-module-functions value)))
                      (= 0 (json5-document-value value)))
@@ -847,10 +852,11 @@
 
 (mat parser-shared-decimal-prefixes
 
-     (let* ([count 32000] [source (make-string count #\1)]
-            [expected (div (- (expt 10 count) 1) 9)]
-            [before (statistics)] [value (json5-document-value (parse-json5 source))]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(count) 32000]
+                   [(source) (make-string count #\1)]
+                   [(expected) (div (- (expt 10 count) 1) 9)]
+                   [(value allocated)
+                    (parser-test-allocation (lambda () (json5-document-value (parse-json5 source))))])
        (and (= expected value) (< allocated 12500000)))
 
      (equal? '(100.0 0.5 0.5 -0.0)
@@ -872,8 +878,8 @@
      (let ([spaces (make-string 100000 #\space)])
        (for-all
         (lambda (parse text)
-          (let* ([before (statistics)] [value (parse text)]
-                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (let*-values ([(value allocated)
+                         (parser-test-allocation (lambda () (parse text)))])
             (and (= 0 value) (< allocated 14500000))))
         (list (lambda (text) (vector-length
                              (toml-table-entries (toml-document-root (parse-toml text)))))
@@ -884,9 +890,9 @@
      (let ([body (make-string 100000 #\a)])
        (for-all
         (lambda (parse prefix suffix)
-          (let* ([text (string-append prefix body suffix)]
-                 [before (statistics)] [value (parse text)]
-                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (let*-values ([(text) (string-append prefix body suffix)]
+                        [(value allocated)
+                         (parser-test-allocation (lambda () (parse text)))])
             (and (= 0 value) (< allocated 7500000))))
         (list (lambda (text) (json5-document-value (parse-json5 text)))
               (lambda (text) (toml-table-ref (toml-document-root (parse-toml text)) "v"))
@@ -908,8 +914,8 @@
      (let ([source (string-append (make-string 4000 #\1) "e-4000")])
        (for-all
         (lambda (parse text)
-          (let* ([before (statistics)] [value (parse text)]
-                 [allocated (sstats-bytes (sstats-difference (statistics) before))])
+          (let*-values ([(value allocated)
+                         (parser-test-allocation (lambda () (parse text)))])
             (and (eqv? 0.1111111111111111 value) (< allocated 4000000))))
         (list (lambda (text) (json5-document-value (parse-json5 text)))
               (lambda (text) (toml-table-ref (toml-document-root (parse-toml text)) "v")))
@@ -944,9 +950,11 @@
      ;; Zero and exponent overflow retain their signs without an unbounded exponent integer.
      (for-all
       (lambda (prefix expected)
-        (let* ([source (string-append prefix (make-string 4000 #\9))]
-               [before (statistics)] [value (json5-document-value (parse-json5 source))]
-               [allocated (sstats-bytes (sstats-difference (statistics) before))])
+        (let*-values ([(source) (string-append prefix (make-string 4000 #\9))]
+                      [(value allocated)
+                       (parser-test-allocation
+                        (lambda ()
+                          (json5-document-value (parse-json5 source))))])
           (and (eqv? expected value) (< allocated 4000000))))
       '("0e" "-0e" "1e" "-1e-" "1e-") (list 0.0 -0.0 +inf.0 -0.0 0.0))
 

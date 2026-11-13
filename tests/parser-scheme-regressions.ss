@@ -36,9 +36,10 @@
 
 (mat parser-scheme-ordinary-string-cost
 
-     (let* ([body (make-string 100000 #\a)] [source (string-append "\"" body "\"")]
-            [before (statistics)] [value (parse-scheme-datum source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(body) (make-string 100000 #\a)]
+                   [(source) (string-append "\"" body "\"")]
+                   [(value allocated)
+                    (parser-test-allocation (lambda () (parse-scheme-datum source)))])
        (and (string=? body value) (< allocated 30000000)))
 
      (for-all
@@ -56,9 +57,9 @@
 
 (mat parser-scheme-vector-prefix-cost
 
-     (let* ([source (string-append "#(" (make-string 64000 #\space) "a)")]
-            [before (statistics)] [value (parse-scheme-datum source)]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(source) (string-append "#(" (make-string 64000 #\space) "a)")]
+                   [(value allocated)
+                    (parser-test-allocation (lambda () (parse-scheme-datum source)))])
        (and (equal? '#(a) value) (< allocated 6000000)))
 
      (equal? '(#() #(a) #(#(b) c))
@@ -67,8 +68,9 @@
 (mat parser-scheme-malformed-vector-cost
 
      ;; Error case: nested vectors without closing delimiters must not retry each subtree.
-     (let* ([source (string-append (apply string-append (make-list 10 "#(")) "a")]
-            [before (statistics)]
-            [failure (parser-error-from (lambda () (parse-scheme-datum source)))]
-            [allocated (sstats-bytes (sstats-difference (statistics) before))])
+     (let*-values ([(source) (string-append (apply string-append (make-list 10 "#(")) "a")]
+                   [(failure allocated)
+                    (parser-test-allocation
+                     (lambda ()
+                       (parser-error-from (lambda () (parse-scheme-datum source)))))])
        (and failure (< allocated 1000000))))

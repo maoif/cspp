@@ -524,10 +524,11 @@
        (bytevector-u64-set! bytes (+ 64 64 32) (* count 8) (endianness little))
        (bytevector-u64-set! bytes offset #x1000 (endianness little))
        (bytevector-u64-set! bytes (+ offset (* 99999 8)) 3 (endianness little))
-       (let* ([before (statistics)] [file (parse-elf bytes)]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))]
-              [entries (elf-relr-table-entries
-                        (elf-section-content (vector-ref (elf-file-sections file) 1)))])
+       (let*-values ([(file allocated)
+                      (parser-test-allocation (lambda () (parse-elf bytes)))]
+                     [(entries)
+                      (elf-relr-table-entries
+                       (elf-section-content (vector-ref (elf-file-sections file) 1)))])
          (and (= count (vector-length entries))
               (= #x1000 (vector-ref entries 0)) (= 3 (vector-ref entries 99999))
               (< allocated 3000000)))))
@@ -549,9 +550,10 @@
        (bytevector-u32-set! bytes 196 1 little)
        (bytevector-u64-set! bytes 216 256 little)
        (bytevector-u64-set! bytes 224 payload-size little)
-       (let* ([before (statistics)]
-              [failure (parser-error-from (lambda () (parse-elf bytes)))]
-              [allocated (sstats-bytes (sstats-difference (statistics) before))])
+       (let*-values ([(failure allocated)
+                      (parser-test-allocation
+                       (lambda ()
+                         (parser-error-from (lambda () (parse-elf bytes)))))])
          (and failure
               (= 64 (parser-error-offset failure))
               (string-contains? (parser-error-message failure)
