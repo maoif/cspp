@@ -11,7 +11,10 @@ built `cspp.lib`; using a focused import does not require a separate build.
 For example:
 
 ```scheme
-(import (cspp) (cspp io) (cspp file) (cspp format toml))
+(import (cspp)
+        (cspp io)
+        (cspp file)
+        (cspp format toml))
 
 (displayln (parse-toml (read-string "settings.toml")))
 ```
@@ -32,21 +35,18 @@ For example:
 | `(cspp parser)` | Parser construction, with implementation helpers hidden |
 | `(cspp parser combinator)` | The complete combinator API |
 
-The former `(cspp parser csv)`-style format paths and `(cspp protobuf)` paths
-have been removed. Use the corresponding `format` paths. Protobuf's focused
-`wire` and `descriptor` libraries are now `(cspp format protobuf wire)` and
-`(cspp format protobuf descriptor)`. Regenerate previously generated Protobuf
-libraries so their imports use `(cspp format protobuf)`.
+Protobuf's focused wire and descriptor APIs are available from
+`(cspp format protobuf wire)` and `(cspp format protobuf descriptor)`.
 
 ## Timing
 
-The former `(cspp system time)` library has been removed. `(cspp utils)` now
-provides `sleep`, `milisleep`, `nanosleep`, `sleep-seconds`, `sleep-milliseconds`,
-and `sleep-nanoseconds`; these are also available from `(cspp)`.
+`(cspp utils)` provides `sleep`, `milisleep`, `nanosleep`, `sleep-seconds`,
+`sleep-milliseconds`, and `sleep-nanoseconds`; these are also available from `(cspp)`.
 When combining raw `(chezscheme)` with `(cspp utils)`, exclude Chez's `sleep`:
 
 ```scheme
-(import (except (chezscheme) sleep) (cspp utils))
+(import (except (chezscheme) sleep)
+        (cspp utils))
 ```
 
 ## Private implementation libraries
@@ -54,6 +54,5 @@ When combining raw `(chezscheme)` with `(cspp utils)`, exclude Chez's `sleep`:
 Private libraries use `(cspp private name)` for shared infrastructure, or
 `(cspp subsystem private name)` within a subsystem. There is one component
 after `private`, such as `(cspp system private process-backend)`.
-Old implementation paths have been removed without compatibility aliases.
 Applications should import public libraries such as `(cspp system process)`,
 `(cspp net http)`, and `(cspp navigator)`.

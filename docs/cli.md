@@ -97,8 +97,8 @@ Changing an option from `parser-bool` to a non-bool parser automatically changes
 
 accepts `--output=file` without also setting `value-number`.
 
-`option-name-set!` updates inferred short and long spellings only when they
-still match the old inferred values. Explicit spellings are preserved.
+`option-name-set!` updates short and long spellings when they match the spellings
+inferred from the option's name before the call. Explicit spellings are preserved.
 
 Short names are one-character strings and cannot be `-` or `=`. Long names are
 strings that are nonempty, do not start with `-`, and do not contain `=`.

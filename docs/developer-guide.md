@@ -144,7 +144,8 @@ worker's identity or thread-local scheduler state must not be mistaken for a fib
 For example:
 
 ```scheme
-(import (cspp) (cspp concurrency fiber))
+(import (cspp)
+        (cspp concurrency fiber))
 
 (run-fibers
  (lambda ()
@@ -176,7 +177,8 @@ This includes correct publication and visibility of shared internal state.
 For example, separate invocations must not share traversal or collection bookkeeping:
 
 ```scheme
-(import (cspp) (cspp concurrency))
+(import (cspp)
+        (cspp concurrency))
 
 (define (collect base)
   (for/list ([i :fxiota 3])

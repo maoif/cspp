@@ -155,4 +155,4 @@ The generated decoder ignores unknown bits.
 `sleep-seconds`, `sleep-milliseconds`, and `sleep-nanoseconds`. Durations are exact
 nonnegative integers in the named units and must fit the native `time_t` range.
 A signal can interrupt a sleep; interrupted sleeps are not retried. These helpers
-return unspecified values. `(cspp system time)` has been removed.
+return unspecified values.

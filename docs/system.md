@@ -27,7 +27,7 @@ system conditions with the operation and error code.
 When affinity information is unavailable, it uses the online CPU count, falling back to one.
 CPU-time quotas are not converted into CPU counts.
 
-The timing helpers now live in `(cspp utils)`.
+Timing helpers are available from `(cspp utils)`.
 `sleep`, `milisleep`, and `nanosleep` accept exact nonnegative durations in their respective
 units. The whole-second component must fit the native `time_t` range; larger durations raise
 an argument error. The `sleep-seconds`, `sleep-milliseconds`, and `sleep-nanoseconds` aliases
@@ -69,15 +69,15 @@ Process creation uses `process-<operation>[-<target>]` names:
 | Wait for exit status | `process-run` | `process-run-shell` | `process-run-pipeline` |
 | Wait and capture output | `process-capture` | `process-capture-shell` | `process-capture-pipeline` |
 
-Direct execution also provides `process-run/check` and `process-capture/check`. These are the
-current API names; the previous names are not exported as aliases.
+Direct execution also provides `process-run/check` and `process-capture/check`.
 
 Command forms take a program followed by arguments and then optional `:keyword value` clauses.
 These are macros, not procedures with keyword parameters. A bare identifier in a command position
 becomes literal text. Wrap a variable in `(begin variable)` to evaluate it.
 
 ```scheme
-(import (cspp) (cspp system process))
+(import (cspp)
+        (cspp system process))
 
 (define text "hello")
 (define result (process-capture printf "%s" (begin text)))
@@ -344,8 +344,8 @@ flowchart TD
 
 Status records contain values only. The private option module validates shared contracts and
 converts directory defaults. Live process objects own status caches and mutexes; the capture
-backend owns completed result records. Account lookups use the same tagged FFI error decoder,
-without a second legacy error protocol.
+backend owns completed result records. Account lookups use the shared tagged FFI error decoder
+and report failures through the system condition API.
 
 Each spawn, capture, or pipeline invocation owns one resumable native operation. Preparation
 copies Scheme inputs; steps use only native buffers, strings, descriptors, and child IDs.

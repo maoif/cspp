@@ -82,6 +82,7 @@ For public APIs that are higher-order functions, their doc must describe
 the signature of their function arguments.
 
 Group exports in libraries when they are many.
+Write library imports one library per line.
 
 Do not by default add design docs, specs, plans, handoffs to git.
 

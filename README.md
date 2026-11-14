@@ -3,7 +3,7 @@
 CSPP provides libraries for Chez Scheme and a Make-based build with a `cspp` launcher.
 Import `(cspp)` for the default language environment; import other libraries explicitly.
 The default exports are `chez`, `utils`, `control`, `match`, `adt`, `list`, `string`,
-`vector`, `for`, and `iter`. See [library imports and migration](docs/libraries.md).
+`vector`, `for`, and `iter`. See [library imports](docs/libraries.md).
 
 ## Download and run
 
@@ -28,7 +28,6 @@ See [Linux packages](docs/releases.md) for compatibility and release details.
 - **Parsing:** parser combinators through `(cspp parser)` or `(cspp parser combinator)`.
 - **Formats:** CSV, JSON5, TOML, XML, Scheme, ELF, WebAssembly, and Protocol Buffers through
   `(cspp format)` or focused libraries such as `(cspp format toml)` and `(cspp format protobuf)`.
-  The former `(cspp parser csv)`-style paths and `(cspp protobuf)` have been removed.
 - **Files and system APIs:** file and port helpers, paths, globbing, processes,
   signals, filesystem and user information, UUIDs, hashes, and optional-library probes.
 - **Networking:** sockets, IP and DNS helpers, URIs, TLS, HTTP/HTTPS, FTP/FTPS, SSH, SFTP, SCP,
@@ -81,7 +80,9 @@ make run
 Exit the REPL with `(exit)` or Ctrl + d. Import CSPP in a Scheme program:
 
 ```scheme
-(import (cspp) (cspp io) (cspp transducer))
+(import (cspp)
+        (cspp io)
+        (cspp transducer))
 
 (displayln
   (into 'list
@@ -121,7 +122,8 @@ APIs, assertions in worker threads and fibers, failure propagation, and measurem
 
 - [Build, installation, and testing](docs/build.md)
 - [Examples and benchmarks](examples/README.md)
-- [Cryptography and API migration](docs/crypto.md)
+- [Data structures and traversal](docs/data-structures.md)
+- [Cryptography](docs/crypto.md)
 - [Command-line parsing](docs/cli.md)
 - [Processes, signals, and system APIs](docs/system.md)
 - [Control and utility APIs](docs/control-utils.md)

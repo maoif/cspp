@@ -40,12 +40,9 @@ Errors reach caller exception handlers after internal state/resource locks have 
 Public crypto procedures validate argument types before optimized primitive or native access.
 Slice indices must be nonnegative fixnums; inexact integers and bignums are rejected.
 
-## Migrating older imports
+## Noncryptographic hashes
 
-The old `(cspp digest)` and `(cspp crypto hash)` imports have been removed. Replace them with
-`(cspp crypto digest)` and replace the former crypto `hash-*` names with `digest-*` or
-`digester-*` as appropriate. Algorithm-specific helpers retain their names. Noncryptographic
-xxHash operations remain in `(cspp hash)`.
+xxHash operations are available from `(cspp hash)`.
 
 See the [developer guide](developer-guide.md#cryptographic-resource-implementation) for
 native resource ownership, interrupt handling, and continuation restrictions.
