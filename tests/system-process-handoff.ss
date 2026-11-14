@@ -1,4 +1,5 @@
-(import (cspp) (cspp system))
+(import (cspp)
+        (cspp system))
 
 ;; Run the real expert definitions and native operations, injecting only the exact escape point.
 ;; Real children and ports verify cleanup without depending on timer scheduling or stack layout.
@@ -11,7 +12,7 @@
   (copy-environment
     (environment '(cspp chez) '(cspp utils) '(cspp system private common) '(cspp system private contracts)
                  '(cspp system private process-status) '(cspp system private process-options)
-                 '(cspp system private native) '(only (cspp utils) milisleep))
+                 '(cspp system private native))
     #t))
 
 (define definitions (cddddr (call-with-input-file source read)))
