@@ -1,7 +1,7 @@
 (library (cspp system private linux-os-release)
   (export $read-os-release)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck-who)
           (cspp string)
           (cspp list)
           (cspp system private contracts))

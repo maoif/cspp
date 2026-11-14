@@ -35,7 +35,7 @@
           idna-domain->ascii
           idna-domain->unicode)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck)
           (cspp string)
           (cspp net private ffi)
           (cspp net errors))

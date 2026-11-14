@@ -6,7 +6,7 @@
           lws-http2-release-operation!
           lws-http2-client-pool-metrics)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who natural? pcheck positive-natural?)
           (cspp net errors)
           (cspp net operation)
           (cspp net private http)

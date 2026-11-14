@@ -3,7 +3,7 @@
   (export test-expand-parameters test-list test-select
           test-run test-run-registry test-run-files test-main)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (cspp test assertion)
           (cspp test private capture)
           (cspp test private common)

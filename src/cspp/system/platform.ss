@@ -3,8 +3,7 @@
           cpu-arch cpu-count system-machine)
   (import (cspp chez)
           (cspp private os)
-          (cspp system private common)
-          (cspp utils))
+          (cspp system private common))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; platform info

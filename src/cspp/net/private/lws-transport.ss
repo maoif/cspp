@@ -3,7 +3,7 @@
           lws-transport-redirect-response?
           lws-transport-start! lws-transport-submit-body! lws-transport-consume-body!)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who natural? pcheck)
           (cspp net errors)
           (cspp net private http)
           (cspp net private lws-reactor))

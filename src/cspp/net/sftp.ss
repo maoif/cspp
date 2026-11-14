@@ -56,7 +56,7 @@
           (cspp file)
           (cspp string)
           (cspp system)
-          (cspp utils)
+          (only (cspp utils) define-who natural? pcheck)
           (cspp net errors)
           (cspp net private ffi)
           (cspp net private common)

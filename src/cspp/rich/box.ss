@@ -3,7 +3,7 @@
   (export rich-box-style?
           rich-box-chars)
   (import (cspp chez)
-          (cspp utils))
+          (only (cspp utils) pcheck))
 
   (define $rich-box-styles
     `((ascii . #("+" "+" "+" "+" "-" "|" "+" "+" "+" "+" "+"))

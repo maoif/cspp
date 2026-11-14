@@ -5,7 +5,7 @@
           random-bytes!
           random-status)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck)
           (cspp crypto private ffi)
           (cspp crypto private common))
 

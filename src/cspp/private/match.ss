@@ -5,7 +5,7 @@
           extension-subpatterns
           define-match-expander)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (cspp private common)
           (cspp io)
           (cspp list)

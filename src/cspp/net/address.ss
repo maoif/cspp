@@ -13,7 +13,7 @@
           name->address
           address->name)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck)
           (cspp net errors)
           (cspp net private ffi)
           (cspp net private common)

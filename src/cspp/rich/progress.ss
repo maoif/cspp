@@ -21,7 +21,7 @@
           rich-progress-task-total-set!
           rich-progress-task-visible?-set!)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (only (cspp list) make-list-builder)
           (cspp rich private common)
           (cspp rich private lines)

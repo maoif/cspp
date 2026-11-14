@@ -8,7 +8,7 @@
   (import (cspp chez)
           (cspp string)
           (cspp system private common)
-          (cspp utils))
+          (only (cspp utils) define-who pcheck-who))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; mounted filesystems

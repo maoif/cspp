@@ -44,7 +44,7 @@
           grpc-status-details
           grpc-metadata-ref)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck)
           (cspp net errors)
           (cspp net address)
           (cspp net socket)

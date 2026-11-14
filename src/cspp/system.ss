@@ -22,7 +22,7 @@
           (cspp system signal)
           (cspp system user)
           (except (cspp system windows) windows?)
-          (cspp utils))
+          (only (cspp utils) define-who))
 
   (export
           ;; focused system libraries re-exported by the facade

@@ -7,7 +7,7 @@
           ;; group records
           make-unix-group unix-group? unix-group-name unix-group-passwd unix-group-gid unix-group-mems)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck-who)
           (cspp system private contracts))
 
   #|proc:unix-user?

@@ -97,7 +97,7 @@
           parser-string
           parser-enum)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who p/or pcheck)
           (cspp private common)
           (cspp adt)
           (cspp string)

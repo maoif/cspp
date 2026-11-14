@@ -39,7 +39,7 @@
   (import (cspp chez)
           (cspp list)
           (cspp private common)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck)
           (cspp private rbtree)
           (only (cspp iter) iter-register-source! make-iter iter-end)
           (only (cspp navigator) nav-register-set!))

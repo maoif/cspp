@@ -1,7 +1,7 @@
 (library (cspp private os)
   (export unix? windows? darwin?)
   (import (cspp chez)
-          (cspp utils))
+          (only (cspp utils) bool))
 
 
   ;; From ChezScheme cmacros.ss; subject to change.

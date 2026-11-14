@@ -1,7 +1,7 @@
 (library (cspp system private native)
   (export $call-native-operation $call-process-operation)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck-who)
           (cspp system private common))
 
   #|proc:$call-native-operation

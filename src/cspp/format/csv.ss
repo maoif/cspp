@@ -12,7 +12,7 @@
           (cspp vector)
           (cspp file)
           (cspp io)
-          (cspp utils))
+          (only (cspp utils) define-who pcheck))
 
   ;; Record fields are immutable. Accessors return stored strings/vectors without copying;
   ;; these objects may be mutable, so a record wrapper does not imply deep immutability.

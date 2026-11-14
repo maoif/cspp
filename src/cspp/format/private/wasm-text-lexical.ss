@@ -10,7 +10,7 @@
           (cspp format private wasm-types)
           (cspp format private wasm-common)
           (cspp string)
-          (cspp utils))
+          (only (cspp utils) define-who pcheck))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Character classes, trivia, and tokens

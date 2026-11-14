@@ -28,7 +28,7 @@
           *dummy-v*)
   (import (cspp chez)
           (cspp private common)
-          (cspp utils))
+          (only (cspp utils) bool define-who id))
 
 
   ;; The red-black tree implementation is based on the text in

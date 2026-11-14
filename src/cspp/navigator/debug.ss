@@ -1,7 +1,7 @@
 (library (cspp navigator debug)
   (export nav->datum nav-write nav-display nav-debug-name nav-explain)
-  (import (except (chezscheme) sleep)
-          (cspp utils)
+  (import (chezscheme)
+          (only (cspp utils) pcheck)
           (cspp navigator private core))
 
   #|proc:nav->datum

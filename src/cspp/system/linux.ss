@@ -27,7 +27,7 @@
           (cspp system filesystem)
           (only (cspp system info) system-platform)
           (cspp system signal)
-          (cspp utils))
+          (only (cspp utils) define-who p/not pcheck-who))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; helpers

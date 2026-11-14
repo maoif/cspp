@@ -19,7 +19,7 @@
           rich-panel-height-set!
           rich-panel-render)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (cspp rich private common)
           (cspp rich private lines)
           (cspp rich box)

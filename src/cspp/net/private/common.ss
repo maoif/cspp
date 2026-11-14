@@ -40,7 +40,6 @@
           ffi-would-block-events
           ffi-error-message)
   (import (cspp chez)
-          (cspp utils)
           (cspp net private ffi)
           (cspp net errors))
 

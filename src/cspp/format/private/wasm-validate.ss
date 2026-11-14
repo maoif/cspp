@@ -3,7 +3,7 @@
           wasm-section-rank wasm-standard-section? wasm-section-order-valid?
           wasm-function-code-count-valid? wasm-data-count-valid?)
   (import (cspp chez)
-          (cspp utils))
+          (only (cspp utils) natural? pcheck))
 
   (define exact-natural?
     (lambda (value) (and (natural? value) (exact? value))))

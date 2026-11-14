@@ -39,7 +39,7 @@
           $rbtree-verify)
   (import (cspp chez)
           (cspp private common)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck)
           (cspp list)
           (cspp private rbtree)
           (only (cspp iter) iter-register-source! make-iter iter-end)

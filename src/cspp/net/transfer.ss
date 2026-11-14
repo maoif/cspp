@@ -8,7 +8,7 @@
           default-transfer-policy
           transfer-report-progress!)
   (import (cspp chez)
-          (cspp utils))
+          (only (cspp utils) define-who natural? pcheck))
 
   (define valid-resume-mode?
     (lambda (value)

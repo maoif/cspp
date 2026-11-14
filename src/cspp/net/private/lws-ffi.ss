@@ -34,7 +34,7 @@
           lws-body-consumed
           lws-context-inject-event!
           lws-context-inject-poll!)
-  (import (cspp utils)
+  (import (only (cspp utils) define-who natural? pcheck)
           (cspp private optional-library)
           (cspp chez)
           (cspp net errors)

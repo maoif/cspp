@@ -18,8 +18,8 @@
           list- listp- listq- listv-
           list& listp& listq& listv&
           list^ listp^ listq^ listv^)
-  (import (except (chezscheme) sleep)
-          (cspp utils)
+  (import (chezscheme)
+          (only (cspp utils) define-who natural? pcheck pcheck-list)
           (cspp private common))
 
 

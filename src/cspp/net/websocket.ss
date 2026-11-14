@@ -31,7 +31,7 @@
           call-with-websocket)
   (import (cspp chez)
           (cspp system)
-          (cspp utils)
+          (only (cspp utils) define-who natural? pcheck)
           (only (cspp queue) make-queue queue-empty? queue-push! queue-pop! queue-clear!)
           (cspp net uri)
           (cspp net errors)

@@ -51,7 +51,7 @@
   (import (cspp chez)
           (only (cspp vector) vfor-all)
           (cspp format private record-writer)
-          (cspp utils))
+          (only (cspp utils) natural? pcheck))
 
   (define vector-of?
     (lambda (predicate)

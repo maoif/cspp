@@ -14,7 +14,7 @@
           lws-http-request-wait-response!
           lws-http-request-close!)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) natural? pcheck)
           (cspp net private lws-reactor)
           (cspp net private lws-transport))
 

@@ -16,10 +16,11 @@
           iter-fxsum iter-fxproduct iter-fxavg
           iter-flsum iter-flproduct iter-flavg
           iter-max iter-min)
-  (import (except (chezscheme) sleep)
+  (import (chezscheme)
           (cspp list)
           (cspp vector)
-          (cspp utils)
+          (only (cspp utils) bool cdr! define-who pcheck pcheck-file pcheck-hashtable pcheck-list
+                             pcheck-open-binary-port pcheck-open-textual-port)
           (cspp private common)
           (cspp private iter-state)
           (cspp control))

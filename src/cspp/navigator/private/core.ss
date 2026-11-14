@@ -18,8 +18,8 @@
           nav-unsupported-error nav-required-error
           nav-path-steps nav-normalize-step nav-debug-name-core nav->datum-core
           install-nav-key-proc! install-nav-nth-proc!)
-  (import (except (chezscheme) sleep)
-          (cspp utils))
+  (import (chezscheme)
+          (only (cspp utils) pcheck))
 
   (define-record-type ($navigator make-$navigator $navigator?)
     (fields (immutable name)

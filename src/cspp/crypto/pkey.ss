@@ -20,7 +20,7 @@
           destroy-private-key!
           destroy-public-key!)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who natural? pcheck unreachable!)
           (cspp crypto private ffi)
           (cspp crypto private common))
 

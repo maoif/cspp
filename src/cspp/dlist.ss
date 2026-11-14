@@ -23,7 +23,7 @@
           dlist->vector vector->dlist dlist->iter)
   (import (cspp chez)
           (cspp private common)
-          (cspp utils)
+          (only (cspp utils) define-who natural? pcheck pcheck-list pcheck-vector)
           (cspp list)
           (cspp vector)
           (only (cspp iter) iter-register-source! make-iter iter-end)

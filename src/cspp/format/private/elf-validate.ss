@@ -2,7 +2,7 @@
   (export make-elf-issue elf-issue? elf-issue-offset elf-issue-message
           elf-power-of-two? elf-range-valid?)
   (import (cspp chez)
-          (cspp utils))
+          (only (cspp utils) natural? pcheck))
 
   (define exact-natural?
     (lambda (value) (and (natural? value) (exact? value))))

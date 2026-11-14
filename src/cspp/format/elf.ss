@@ -41,7 +41,7 @@
           (cspp format private elf-types)
           (cspp format private elf-binary)
           (cspp format private elf-validate)
-          (cspp utils))
+          (only (cspp utils) natural? pcheck))
 
   (define exact-integer?
     (lambda (value) (and (integer? value) (exact? value))))

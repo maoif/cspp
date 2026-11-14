@@ -16,7 +16,7 @@
           sha3-224-file sha3-256-file sha3-384-file sha3-512-file blake2b-512-file
           blake2s-256-file blake3-file)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck)
           (cspp private optional-library)
           (only (cspp crypto private common)
                 with-crypto-mutex with-crypto-operation call-with-crypto-resource)

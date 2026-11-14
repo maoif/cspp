@@ -53,7 +53,7 @@
           rich-layout-items-set!
           rich-layout-render)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (cspp rich private common)
           (cspp rich private lines)
           (cspp rich box)

@@ -12,7 +12,7 @@
           hmac-destroy!
           call-with-hmac-state)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcase pcheck)
           (cspp crypto private ffi)
           (cspp crypto private common)
           (cspp crypto constant-time))

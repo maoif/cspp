@@ -50,7 +50,7 @@
           call-with-hasher)
   (import (cspp private optional-library)
           (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who id natural? pcheck)
           (cspp private common)
           (cspp io)
           (cspp file))

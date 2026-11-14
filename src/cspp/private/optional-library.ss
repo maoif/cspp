@@ -1,7 +1,7 @@
 (library (cspp private optional-library)
   (export require-optional-library ffi-optional-library-info)
   (import (cspp chez)
-          (cspp utils))
+          (only (cspp utils) pcheck))
 
   (define ffi-optional-library-info
     (foreign-procedure "cspp_optional_library_info" (string) scheme-object))

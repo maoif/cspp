@@ -11,7 +11,7 @@
           (cspp format private wasm-text-lexical)
           (cspp format private wasm-text-types)
           (cspp format private wasm-common)
-          (cspp utils))
+          (only (cspp utils) natural? pcheck))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Instruction tokens and immediate parsers

@@ -12,7 +12,7 @@
           http-server? http-listen http-server-close http-accept http-accept/nonblocking http-serve http-serve-loop http-register-handler! http-handler-ref http-unregister-handler!
           http-connection? http-connection-close http-read-request http-read-request/nonblocking http-write-response http-write-response/nonblocking)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who natural? pcheck)
           (cspp file)
           (cspp string)
           (cspp net uri)

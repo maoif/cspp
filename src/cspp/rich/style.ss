@@ -26,7 +26,7 @@
           rich-style-overlay
           rich-style->ansi/context)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (cspp rich private common))
 
   (define rich-ansi-reset "\033[0m")

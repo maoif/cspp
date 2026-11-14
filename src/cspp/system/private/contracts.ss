@@ -2,7 +2,7 @@
   (export $unsigned-32? $positive-pid? $os-string? $os-string-list?
           $environment-name? $process-specs?)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) natural?)
           (cspp string))
 
   ;; Shared contracts for values passed to native system helpers.

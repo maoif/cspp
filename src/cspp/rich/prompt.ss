@@ -4,7 +4,7 @@
           rich-confirm
           rich-password)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (cspp rich private common)
           (cspp rich console))
 

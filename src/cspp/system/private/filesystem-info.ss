@@ -15,7 +15,7 @@
   (import (cspp chez)
           (cspp system private contracts)
           (cspp system private common)
-          (cspp utils))
+          (only (cspp utils) define-who pcheck-who))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; filesystem information

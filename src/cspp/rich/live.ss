@@ -31,7 +31,7 @@
           rich-status-stop!
           rich-status-render)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (cspp rich private common)
           (cspp rich private lines)
           (cspp rich private cells)

@@ -39,7 +39,7 @@
           make-elf-note elf-note? elf-note-name elf-note-type elf-note-descriptor)
   (import (cspp chez)
           (cspp format private record-writer)
-          (cspp utils))
+          (only (cspp utils) natural? pcheck))
 
   (define elf-value? (lambda (value) #t))
   (define elf-optional-integer? (lambda (value) (or (not value) (integer? value))))

@@ -9,7 +9,7 @@
 
           bittree->list)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who natural? pcheck)
           (cspp private common)
           (cspp private rbtree)
           (only (cspp iter) iter-register-source! make-iter iter-end)

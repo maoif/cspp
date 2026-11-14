@@ -3,8 +3,8 @@
           compose compose1 >>> >>>1
           sect sect+
           let/cc let/1cc)
-  (import (except (chezscheme) sleep)
-          (cspp utils))
+  (import (chezscheme)
+          (only (cspp utils) define-who pcheck-who))
 
   ;; User examples and multiple-value contracts: docs/control-utils.md.
   (define $procedures? (lambda (procedures) (andmap procedure? procedures)))

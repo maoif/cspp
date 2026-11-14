@@ -6,7 +6,7 @@
           (cspp list)
           (cspp io)
           (cspp vector)
-          (cspp utils))
+          (only (cspp utils) define-who pcheck))
 
   ;; This deliberately supports a Scheme datum subset; see the public entry-point docs.
   (define-values (parser-scheme-datum parser-scheme)

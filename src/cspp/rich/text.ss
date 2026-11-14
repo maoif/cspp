@@ -7,7 +7,7 @@
           rich-text-plain
           rich-text-render)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (cspp rich style)
           (cspp rich segment)
           (cspp rich renderable))

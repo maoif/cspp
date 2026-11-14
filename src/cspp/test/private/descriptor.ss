@@ -22,7 +22,7 @@
           test-summary-failed test-summary-errored test-summary-skipped
           test-summary-xfail test-summary-xpass test-summary-results)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) natural? pcheck)
           (cspp test private common))
 
   (define-record-type ($test-descriptor $make-test-descriptor $test-descriptor?)

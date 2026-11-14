@@ -10,7 +10,7 @@
 
           bitvec->list)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who natural? pcheck)
           (cspp private common)
           (cspp vector)
           (only (cspp iter) iter-register-source! make-iter iter-end)

@@ -7,7 +7,7 @@
           (cspp iter)
           (cspp list)
           (cspp vector)
-          (cspp utils)
+          (only (cspp utils) id)
           (cspp io))
 
 

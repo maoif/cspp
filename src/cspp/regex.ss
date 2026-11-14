@@ -21,7 +21,7 @@
           regex-quote regex-opt regex-sre->string regex-sre->cset)
   (import (cspp chez)
           (cspp private irregex)
-          (cspp utils))
+          (only (cspp utils) pcheck))
 
   ;; Raw engine objects remain private except through the explicit escape hatch.
   (define-record-type ($regex %make-regex %regex?)

@@ -18,7 +18,7 @@
           scp-copy-directory/nonblocking
           call-with-scp-session)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck)
           (cspp file)
           (cspp list)
           (cspp string)

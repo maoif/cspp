@@ -14,7 +14,7 @@
           list->eqv-hashset vector->eqv-hashset)
   (import (cspp chez)
           (cspp private common)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck)
           (cspp list)
           (only (cspp iter) iter-register-source! make-iter iter-end)
           (only (cspp navigator) nav-register-set!))

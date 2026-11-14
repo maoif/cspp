@@ -3,9 +3,9 @@
           $iter-children $iter-ops $iter-finalized? $iter-finalized?-set!
           $iter-resource-capable? iter-resource? finalize-iter-chain!
           finalize-iter-chains! reset-iter-chain!)
-  (import (except (chezscheme) sleep)
+  (import (chezscheme)
           (cspp list)
-          (cspp utils))
+          (only (cspp utils) bool pcheck))
 
   ;; A chain is an iterator and the upstream iterators reachable through children.
   ;; Ownership means responsibility for an actual resource's finalizer. Ordinary

@@ -3,7 +3,7 @@
           hup int quit kill usr1 usr2 alrm term chld pipe
           $signal-input? $signal-ref)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck-who)
           (cspp system private common)
           (cspp system private contracts)
           (only (cspp string) string-startswith?))

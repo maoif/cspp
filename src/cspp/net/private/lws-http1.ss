@@ -5,7 +5,7 @@
           lws-http1-release-operation!
           lws-http1-client-pool-metrics)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who natural? pcheck positive-natural?)
           (only (cspp concurrency) abox abox-add1&get!)
           (cspp net errors)
           (cspp net operation)

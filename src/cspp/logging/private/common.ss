@@ -10,7 +10,6 @@
           log-current-timestamp
           log-current-thread-id)
   (import (cspp chez)
-          (cspp utils)
           (cspp logging level))
 
   (define log-symbol-or-string?

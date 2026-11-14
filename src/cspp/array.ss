@@ -567,7 +567,8 @@
           (cspp private common)
           (cspp list)
           (cspp vector)
-          (cspp utils)
+          (only (cspp utils) define-who natural? pcheck pcheck-flvector pcheck-fxvector
+                             pcheck-vector)
           (only (cspp iter) iter-register-source! make-indexed-iter)
           (only (cspp navigator) nav-register-indexed!))
 

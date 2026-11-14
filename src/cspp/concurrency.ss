@@ -16,7 +16,7 @@
           (cspp list)
           (cspp hashset)
           (cspp system)
-          (cspp utils)
+          (only (cspp utils) define-who natural? pcheck positive-natural?)
           (cspp private common))
 
 

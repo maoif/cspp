@@ -20,7 +20,7 @@
           with-timer-off with-fiber-mutex
           milisleep-event sleep-event fiber-milisleep fiber-sleep)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who milisleep natural? pcheck)
           (cspp dlist)
           (cspp concurrency)
           (cspp system)

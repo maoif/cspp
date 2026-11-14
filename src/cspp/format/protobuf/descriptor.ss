@@ -28,7 +28,7 @@
           bytevector->protobuf-code-generator-request
           protobuf-code-generator-response)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (cspp format protobuf wire))
 
   #|record:protobuf-code-generator-request

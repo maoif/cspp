@@ -217,7 +217,7 @@
           ffi-net-tls-ocsp-result
           ffi-net-tls-peer-certificate-der
           ffi-net-tls-peer-certificate-chain-der)
-  (import (cspp utils)
+  (import (only (cspp utils) natural? pcheck)
           (cspp private optional-library)
           (cspp chez)
           (cspp private common))

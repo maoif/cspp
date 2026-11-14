@@ -28,7 +28,7 @@
     register-protobuf-file-reflection!
   )
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (cspp format protobuf)
           (cspp net grpc)
           (cspp net grpc reflection))

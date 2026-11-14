@@ -3,7 +3,7 @@
           fprint fprintln)
   (import (cspp chez)
           (cspp private common)
-          (cspp utils))
+          (only (cspp utils) pcheck))
 
 
 

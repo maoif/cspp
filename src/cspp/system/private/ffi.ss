@@ -1,7 +1,7 @@
 (library (cspp system private ffi)
   (export ffi-result-ref)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck-who)
           (cspp system errors))
 
   (define $context-or-empty

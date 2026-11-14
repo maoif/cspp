@@ -20,7 +20,7 @@
           make-log-procedure-sink
           make-log-tee-sink)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) natural? pcheck positive-natural?)
           (cspp rich)
           (cspp logging level)
           (cspp logging formatter)

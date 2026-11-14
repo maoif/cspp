@@ -6,7 +6,7 @@
           queue-clear!
           queue-copy queue->list)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) bool define-who pcheck)
           (cspp private common)
           (cspp dlist)
           (only (cspp iter) iter-register-source! make-iter iter-end))

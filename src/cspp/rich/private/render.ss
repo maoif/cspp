@@ -2,7 +2,7 @@
 (library (cspp rich private render)
   (export rich-check-rendered-value rich-string->lines rich-value->lines)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (cspp rich segment)
           (cspp rich renderable)
           (cspp rich pretty)

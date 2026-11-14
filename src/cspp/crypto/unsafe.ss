@@ -4,7 +4,7 @@
           unsafe-hash-bytevector
           unsafe-hash-string)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck)
           (cspp crypto private ffi)
           (cspp crypto private common))
 

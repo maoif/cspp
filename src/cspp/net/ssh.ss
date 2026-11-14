@@ -61,7 +61,7 @@
           open-ssh-channel-output-port
           open-ssh-channel-error-port)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck)
           (cspp string)
           (cspp net errors)
           (cspp net private ffi)

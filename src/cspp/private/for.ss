@@ -25,7 +25,7 @@
           fragment-getter fragment-source-index fragment-exposed fragment-raw-termination
           fragment-filter fragment-visit)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) natural? pcheck positive-natural?)
           (cspp private common)
           (cspp io)
           (cspp list)

@@ -2,7 +2,7 @@
   (export process-exit-status? process-exit-status-kind process-exit-status-code
           process-exit-success? make-process-exit-status $wait-status->exit-status)
   (import (cspp chez)
-          (cspp utils))
+          (only (cspp utils) define-who natural? pcheck-who))
 
   ;; Shared value representation: no dependency on command execution or live process ownership.
 ;;;;===----------------------------------------------------------------------===

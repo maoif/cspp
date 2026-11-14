@@ -2,7 +2,7 @@
   (export grpc-reflection-registry? make-grpc-reflection-registry
           grpc-reflection-register-file! grpc-register-reflection!)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (cspp format protobuf)
           (cspp net grpc))
 

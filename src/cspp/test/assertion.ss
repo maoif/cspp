@@ -7,7 +7,7 @@
           test-true test-false test-eq test-eqv test-equal test-=
           test-pred test-raises test-not-raises test-fail)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) pcheck)
           (cspp test private common))
 
   #|doc

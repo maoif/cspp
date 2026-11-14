@@ -58,7 +58,7 @@
           open-ftp-input-port
           open-ftp-output-port)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who natural? pcheck)
           (cspp string)
           (cspp net uri)
           (cspp net errors)

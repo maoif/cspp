@@ -6,7 +6,7 @@
           pbkdf2
           scrypt)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcase pcheck)
           (cspp crypto private ffi)
           (cspp crypto private common))
 

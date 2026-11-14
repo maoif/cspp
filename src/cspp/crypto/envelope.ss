@@ -11,7 +11,7 @@
           envelope-ciphertext
           envelope-tag)
   (import (cspp chez)
-          (cspp utils)
+          (only (cspp utils) define-who pcheck)
           (cspp crypto private common)
           (only (cspp crypto private ffi) ffi-pkey-store-public-pem)
           (cspp crypto random)
