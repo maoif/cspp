@@ -14,7 +14,7 @@
           rich-segment-crop
           rich-segment-pad-right)
   (import (cspp chez)
-          (only (cspp utils) pcheck)
+          (cspp utils)
           (cspp rich private common)
           (cspp rich private cells)
           (cspp rich style))

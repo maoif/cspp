@@ -2,7 +2,7 @@
   (export bytevector->hex
           hex->bytevector)
   (import (cspp chez)
-          (only (cspp utils) pcheck))
+          (cspp utils))
 
   #|proc:bytevector->hex
 The `bytevector->hex` procedure returns the lowercase hexadecimal encoding of `bv`.

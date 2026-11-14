@@ -77,7 +77,7 @@
           ffi-cert-store-add
           ffi-cert-store-load-defaults
           ffi-cert-verify-chain)
-  (import (only (cspp utils) natural? pcheck)
+  (import (cspp utils)
           (cspp private optional-library)
           (cspp chez))
 

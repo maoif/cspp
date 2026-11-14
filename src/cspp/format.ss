@@ -1,6 +1,6 @@
 (library (cspp format)
   (export)
-  (import (chezscheme))
+  (import (cspp chez))
 
   (export (import (cspp format csv)
                   (cspp format json5)

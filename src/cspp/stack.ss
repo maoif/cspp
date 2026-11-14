@@ -6,7 +6,7 @@
           stack-clear!
           stack-copy stack->list)
   (import (cspp chez)
-          (only (cspp utils) bool define-who pcheck)
+          (cspp utils)
           (only (cspp iter) iter-register-source! make-iter iter-end))
 
 

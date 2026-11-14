@@ -24,7 +24,7 @@
           with-logger
           logger-dispatch!)
   (import (cspp chez)
-          (only (cspp utils) pcheck)
+          (cspp utils)
           (cspp logging level)
           (cspp logging sink)
           (cspp logging private common))

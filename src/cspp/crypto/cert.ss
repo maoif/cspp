@@ -19,7 +19,7 @@
           cert-store-load-system-defaults!
           verify-certificate-chain)
   (import (cspp chez)
-          (only (cspp utils) define-who pcheck unreachable!)
+          (cspp utils)
           (cspp crypto private ffi)
           (cspp crypto private common)
           (cspp crypto pkey))

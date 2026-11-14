@@ -4,7 +4,7 @@
           uid->user-name user-name->uid gid->group-name group-name->gid
           get-user-dir get-user-shell get-user-group current-user current-group)
   (import (cspp chez)
-          (only (cspp utils) define-who pcheck-who)
+          (cspp utils)
           (cspp system private common)
           (cspp system private contracts)
           (cspp system private user-records)

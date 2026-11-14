@@ -83,6 +83,9 @@ the signature of their function arguments.
 
 Group exports in libraries when they are many.
 Write library imports one library per line.
+CSPP libraries import Chez through `(cspp chez)`. The utility implementation may import only
+Chez's original `sleep` under a private name; it must not export that binding.
+Import utilities as `(cspp utils)` without selecting individual names.
 
 Do not by default add design docs, specs, plans, handoffs to git.
 

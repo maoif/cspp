@@ -42,7 +42,7 @@
           call-with-socket-ports
           socket-accept/nonblocking)
   (import (cspp chez)
-          (only (cspp utils) define-who pcheck)
+          (cspp utils)
           (cspp net errors)
           (cspp net private ffi)
           (cspp net private common)

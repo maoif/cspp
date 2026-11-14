@@ -298,3 +298,22 @@ libraries use `(cspp subsystem private name)`, with exactly one name after `priv
 Use a descriptive name such as `process-backend` rather than nested private directories.
 Private libraries have no compatibility guarantee and are never convenience facades.
 Supported advanced interfaces, such as `(cspp system process expert)`, remain public.
+
+## Library dependencies
+
+CSPP libraries import Chez Scheme through `(cspp chez)`. The utility implementation imports
+only Chez's original `sleep` under a private name. All utility dependencies use `(cspp utils)`,
+with one library per import line. Standalone build tools may import `(chezscheme)` before CSPP
+is available.
+
+The Chez gateway has no dependency on utilities or the native runtime. It supplies the raw
+`$getenv` alias for native-library discovery. Only `(cspp utils)` imports
+`(cspp private libcspp)`, whose initialization body loads the native runtime. Utilities
+reference its readiness value so Chez invokes that body before resolving native procedures.
+Low-level wrappers that otherwise use utilities only as macros explicitly invoke `utils`
+before binding native procedures.
+
+`(cspp utils)` defines argument checks, synchronized environment access, and numeric sleep
+helpers. Chez's original sleeper is an implementation detail and is not exported by either
+`(cspp chez)` or `(cspp)`. Shared implementation libraries depend on the Chez gateway without
+an import cycle.

@@ -10,7 +10,7 @@
           chez-version
           chez-version<? chez-version<=? chez-version=? chez-version>=? chez-version>?)
   (import (cspp chez)
-          (only (cspp utils) natural? pcheck))
+          (cspp utils))
 
   (define-record-type ($test-reporter $make-test-reporter test-reporter?)
     (fields kind write textual-output?))

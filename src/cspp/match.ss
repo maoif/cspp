@@ -11,7 +11,7 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
 (library (cspp match)
   (export match
           mlambda mlambda+ mlet mlet*)
-  (import (chezscheme)
+  (import (cspp chez)
           (cspp private irregex)
           (cspp private common)
           (cspp private match))

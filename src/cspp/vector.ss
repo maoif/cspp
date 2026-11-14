@@ -518,9 +518,8 @@
           bvector-u56-for-each/i bvector-U56-for-each/i bvector-s56-for-each/i bvector-S56-for-each/i
           bvector-u64-for-each/i bvector-U64-for-each/i bvector-s64-for-each/i bvector-S64-for-each/i
           bvector-fp32-for-each/i bvector-FP32-for-each/i bvector-fp64-for-each/i bvector-FP64-for-each/i)
-  (import (chezscheme)
-          (only (cspp utils) id natural? pcheck pcheck-flvector pcheck-fxvector pcheck-natural
-                             pcheck-vector)
+  (import (cspp chez)
+          (cspp utils)
           (cspp private common))
 
   (define-syntax gen-random-vector

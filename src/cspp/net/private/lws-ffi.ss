@@ -34,11 +34,10 @@
           lws-body-consumed
           lws-context-inject-event!
           lws-context-inject-poll!)
-  (import (only (cspp utils) define-who natural? pcheck)
+  (import (cspp utils)
           (cspp private optional-library)
           (cspp chez)
-          (cspp net errors)
-          )
+          (cspp net errors))
 
   (define lws-cap-http1 (fxsll 1 0))
   (define lws-cap-http2 (fxsll 1 1))

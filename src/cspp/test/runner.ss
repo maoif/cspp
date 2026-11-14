@@ -3,7 +3,7 @@
   (export test-expand-parameters test-list test-select
           test-run test-run-registry test-run-files test-main)
   (import (cspp chez)
-          (only (cspp utils) pcheck)
+          (cspp utils)
           (cspp test assertion)
           (cspp test private capture)
           (cspp test private common)
@@ -192,7 +192,7 @@ association-list filters as `test-select`.
           (let* ([cache ($current-predicate-cache)]
                  [cached (and cache (hashtable-ref cache predicate #f))])
             (or cached
-                (let ([callback (eval predicate (environment '(chezscheme)))])
+                (let ([callback (eval predicate (environment '(cspp chez)))])
                   (unless (test-callback-accepts? callback 1)
                     (errorf 'test-run "condition predicate must accept one argument: ~s" predicate))
                   (when cache (hashtable-set! cache predicate callback))

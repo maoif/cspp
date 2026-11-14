@@ -2,7 +2,7 @@
   (export dset make-dset dset?
           dset-same? dset-union! dset-size)
   (import (cspp chez)
-          (only (cspp utils) define-who natural? pcheck)
+          (cspp utils)
           (cspp vector)
           (only (cspp iter) iter-register-source! make-iter iter-end))
 

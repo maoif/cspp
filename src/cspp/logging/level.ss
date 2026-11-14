@@ -9,7 +9,7 @@
           log-level->string
           string->log-level)
   (import (cspp chez)
-          (only (cspp utils) pcheck))
+          (cspp utils))
 
   (define $levels '#(trace debug info warn error critical off))
 

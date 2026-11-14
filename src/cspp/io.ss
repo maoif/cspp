@@ -2,7 +2,7 @@
   (export print println displayln
           fprint fprintln)
   (import (cspp chez)
-          (only (cspp utils) pcheck))
+          (cspp utils))
 
 
 

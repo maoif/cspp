@@ -1,7 +1,7 @@
 (library (cspp navigator custom)
   (export nav/getter nav/getter-setter nav/getter-setter!)
-  (import (chezscheme)
-          (only (cspp utils) pcheck)
+  (import (cspp chez)
+          (cspp utils)
           (cspp navigator private core))
 
   #|proc:nav/getter

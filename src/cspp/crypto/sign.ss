@@ -16,7 +16,7 @@
           call-with-sign-state
           call-with-verify-state)
   (import (cspp chez)
-          (only (cspp utils) define-who pcheck)
+          (cspp utils)
           (cspp crypto private ffi)
           (cspp crypto private common)
           (cspp crypto pkey))

@@ -2,7 +2,7 @@
   (export send-signal send-process-signal send-process-group-signal signal-mask
           signal-mask-set! signal-block! signal-unblock! wait-signal)
   (import (cspp chez)
-          (only (cspp utils) define-who pcheck-who)
+          (cspp utils)
           (cspp system private common)
           (cspp system private contracts)
           (cspp system private native)

@@ -50,7 +50,7 @@
           (cspp system private process-options)
           (cspp system private native)
           (cspp system private contracts)
-          (only (cspp utils) define-who milisleep natural? pcheck-who))
+          (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; process records

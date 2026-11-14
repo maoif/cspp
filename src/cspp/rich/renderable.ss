@@ -7,7 +7,7 @@
           rich-register-container-renderer!
           rich-layout-render-cache)
   (import (cspp chez)
-          (only (cspp utils) pcheck)
+          (cspp utils)
           (cspp rich private common))
 
   (define $renderers '())

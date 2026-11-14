@@ -20,7 +20,7 @@
           net-would-block-resource
           net-would-block-events)
   (import (cspp chez)
-          (only (cspp utils) define-who natural? pcheck)
+          (cspp utils)
           (cspp net poll)
           (cspp net private operation))
 

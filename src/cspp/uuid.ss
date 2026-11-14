@@ -8,7 +8,7 @@
           uuid=? uuid<? uuid<=? uuid>? uuid>=?)
   (import (cspp private optional-library)
           (cspp chez)
-          (only (cspp utils) pcheck))
+          (cspp utils))
 
 
   #|record:uuid

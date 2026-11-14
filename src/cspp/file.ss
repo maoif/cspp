@@ -53,9 +53,7 @@
           (cspp private file)
           (cspp path)
           (cspp private common)
-          (only (cspp utils) bool define-flags define-who flag-any-set? pcheck pcheck-bytevector
-                             pcheck-input-binary-port pcheck-list pcheck-open-port
-                             pcheck-output-binary-port pcheck-string)
+          (cspp utils)
           (only (cspp string) string-search)
           (cspp list)
           (cspp iter))

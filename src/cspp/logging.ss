@@ -1,7 +1,7 @@
 #!chezscheme
 (library (cspp logging)
   (export)
-  (import (chezscheme))
+  (import (cspp chez))
 
   (export (import (cspp logging level)
                   (cspp logging formatter)

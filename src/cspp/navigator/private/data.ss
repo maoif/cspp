@@ -12,8 +12,8 @@
           set-delete set-delete!
           nav-register-indexed! nav-register-keyed! nav-register-set!
           alist? alist-ref/missing)
-  (import (chezscheme)
-          (only (cspp utils) pcheck)
+  (import (cspp chez)
+          (cspp utils)
           (cspp navigator private core))
 
 ;;;;===----------------------------------------------------------------------===

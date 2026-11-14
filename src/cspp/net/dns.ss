@@ -21,7 +21,7 @@
           dns-result-status
           dns-result-partial-errors)
   (import (cspp chez)
-          (only (cspp utils) define-who natural? pcheck)
+          (cspp utils)
           (cspp optional-library)
           (cspp net errors)
           (cspp net private ffi)

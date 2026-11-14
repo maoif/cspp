@@ -21,7 +21,7 @@
           call-with-aead-encrypt-state
           call-with-aead-decrypt-state)
   (import (cspp chez)
-          (only (cspp utils) define-who pcheck unreachable!)
+          (cspp utils)
           (cspp crypto private ffi)
           (cspp crypto private common))
 

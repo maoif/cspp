@@ -11,8 +11,8 @@
           path-basename path-dirname path-extname path-stem
           path-absolute path-relative-to path-same-root?
           path-expand-user path-starts-with-user-home?)
-  (import (chezscheme)
-          (only (cspp utils) pcheck))
+  (import (cspp chez)
+          (cspp utils))
 
   #|proc:path?
   The `path?` procedure returns `#t` when `x` is a path object.

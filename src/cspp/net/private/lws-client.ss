@@ -4,8 +4,8 @@
           lws-client-close!
           lws-client-release-operation!
           lws-client-pool-metrics)
-  (import (chezscheme)
-          (only (cspp utils) natural? pcheck positive-natural?)
+  (import (cspp chez)
+          (cspp utils)
           (cspp net operation)
           (cspp net private http)
           (cspp net private lws-http1)

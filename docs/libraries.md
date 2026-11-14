@@ -42,12 +42,13 @@ Protobuf's focused wire and descriptor APIs are available from
 
 `(cspp utils)` provides `sleep`, `milisleep`, `nanosleep`, `sleep-seconds`,
 `sleep-milliseconds`, and `sleep-nanoseconds`; these are also available from `(cspp)`.
-When combining raw `(chezscheme)` with `(cspp utils)`, exclude Chez's `sleep`:
+These procedures take exact nonnegative integers directly in the named units.
+Chez's original sleeper is internal and is not exported by `(cspp chez)` or `(cspp)`.
 
-```scheme
-(import (except (chezscheme) sleep)
-        (cspp utils))
-```
+## Environment access
+
+`(cspp utils)` provides synchronized `getenv` and `putenv`; both are also available from
+`(cspp)`. `(cspp chez)` supplies the Chez primitives and does not load the native runtime.
 
 ## Private implementation libraries
 

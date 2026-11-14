@@ -19,7 +19,7 @@
           (cspp parser combinator)
           (cspp file)
           (cspp list)
-          (only (cspp utils) pcheck))
+          (cspp utils))
 
   ;; Record fields are immutable. Accessors return stored strings/vectors without copying;
   ;; these objects may be mutable, so a record wrapper does not imply deep immutability.

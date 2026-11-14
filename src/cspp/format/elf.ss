@@ -39,7 +39,7 @@
           (cspp parser combinator)
           (cspp format private elf-types)
           (cspp format private elf-binary)
-          (only (cspp utils) natural? pcheck))
+          (cspp utils))
 
   (define exact-integer?
     (lambda (value) (and (integer? value) (exact? value))))

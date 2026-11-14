@@ -26,7 +26,7 @@
           lws-reactor-poll-snapshot
           lws-reactor-pool-metrics)
   (import (cspp chez)
-          (only (cspp utils) define-who natural? pcheck positive-natural?)
+          (cspp utils)
           (cspp net errors)
           (cspp net operation)
           (cspp net poll)

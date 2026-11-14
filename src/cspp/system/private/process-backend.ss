@@ -15,7 +15,7 @@
           (cspp system private native)
           (cspp system private process-status)
           (cspp system private process-options)
-          (only (cspp utils) define-who pcheck-who))
+          (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; process result records

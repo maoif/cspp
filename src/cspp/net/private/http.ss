@@ -19,7 +19,7 @@
           transport-response-headers transport-response-body
           transport-response-trailers transport-response-version
           transport-response-connection-id)
-  (import (chezscheme))
+  (import (cspp chez))
 
   #|record:http-request-policy
 An immutable snapshot of client policy used for one HTTP operation.

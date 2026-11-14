@@ -12,7 +12,7 @@
           rich-list-any?
           rich-reverse-append)
   (import (cspp chez)
-          (only (cspp utils) pcheck))
+          (cspp utils))
 
   #|proc:rich-render-width
   The private `rich-render-width` parameter holds the positive available content width.

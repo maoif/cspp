@@ -5,7 +5,7 @@
           (cspp parser combinator)
           (cspp format private record-writer)
           (cspp format private wasm-types)
-          (only (cspp utils) define-who pcheck))
+          (cspp utils))
 
   (define wasm-unsigned-parser
     (lambda (width)

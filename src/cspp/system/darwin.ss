@@ -10,7 +10,7 @@
   (import (cspp chez)
           (cspp system private common)
           (only (cspp system info) system-platform)
-          (only (cspp utils) define-who pcheck-who))
+          (cspp utils))
 
   #|proc:darwin?
   The `darwin?` procedure returns `#t` when the current platform is Darwin, otherwise `#f`.

@@ -7,7 +7,7 @@
           optional-library-capabilities
           optional-library-error)
   (import (cspp chez)
-          (only (cspp utils) define-who pcheck)
+          (cspp utils)
           (only (cspp private optional-library) ffi-optional-library-info))
 
   #|record:optional-library-info-record

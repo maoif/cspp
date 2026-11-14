@@ -76,7 +76,7 @@
           open-tls-text-output-port
           call-with-tls-ports)
   (import (cspp chez)
-          (only (cspp utils) define-who pcheck unreachable!)
+          (cspp utils)
           (cspp crypto cert)
           (cspp crypto pkey)
           (cspp crypto private common)

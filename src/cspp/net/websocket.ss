@@ -30,7 +30,7 @@
           websocket-message-data
           call-with-websocket)
   (import (cspp chez)
-          (only (cspp utils) define-who natural? pcheck)
+          (cspp utils)
           (only (cspp queue) make-queue queue-empty? queue-push! queue-pop! queue-clear!)
           (cspp net uri)
           (cspp net errors)

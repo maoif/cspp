@@ -3,7 +3,7 @@
   (export test-reporter? make-test-reporter test-text-reporter
           test-datum-reporter test-progress-reporter test-report test-summarize)
   (import (cspp chez)
-          (only (cspp utils) pcheck)
+          (cspp utils)
           (cspp test assertion)
           (cspp test private descriptor)
           (cspp test private common))

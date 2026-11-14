@@ -10,7 +10,7 @@
           log-default-formatter
           log-formatter-format)
   (import (cspp chez)
-          (only (cspp utils) pcheck)
+          (cspp utils)
           (cspp rich)
           (cspp logging level)
           (cspp logging private common))

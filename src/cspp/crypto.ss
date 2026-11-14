@@ -1,6 +1,6 @@
 (library (cspp crypto)
   (export)
-  (import (chezscheme))
+  (import (cspp chez))
 
   (export (import (cspp crypto random)
                   (cspp crypto constant-time)

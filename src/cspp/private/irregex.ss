@@ -74,7 +74,7 @@
    (rnrs r5rs)
    (rnrs mutable-pairs)
    (rnrs mutable-strings)
-   (only (chezscheme) for-all include get-output-string open-output-string))
+   (only (cspp chez) for-all include get-output-string open-output-string))
 
   ;; definition from irregex
   (define (error msg . args)

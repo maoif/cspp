@@ -50,7 +50,7 @@
           call-with-hasher)
   (import (cspp private optional-library)
           (cspp chez)
-          (only (cspp utils) define-who id natural? pcheck)
+          (cspp utils)
           (cspp file))
 
   ;; TOOD move to vector.ss

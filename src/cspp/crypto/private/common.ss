@@ -57,7 +57,7 @@
           crypto-envelope-ciphertext
           crypto-envelope-tag)
   (import (cspp chez)
-          (only (cspp utils) pcase pcheck)
+          (cspp utils)
           (cspp crypto private ffi))
 
   (define-record-type (crypto-lock %make-crypto-lock crypto-lock?)

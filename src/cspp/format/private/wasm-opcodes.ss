@@ -4,7 +4,7 @@
           wasm-core-3-opcodes wasm-opcode-by-binary wasm-opcode-by-mnemonic
           wasm-instruction-lane-count)
   (import (cspp chez)
-          (only (cspp utils) natural? pcheck))
+          (cspp utils))
 
   (define-record-type ($wasm-opcode-descriptor make-wasm-opcode-descriptor
                                              $wasm-opcode-descriptor?)

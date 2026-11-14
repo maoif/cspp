@@ -1,6 +1,6 @@
 (library (cspp parser)
   (export)
-  (import (chezscheme))
+  (import (cspp chez))
 
   (export (import (except (cspp parser combinator)
                           parser-call input-pos input-pos-set! input-len

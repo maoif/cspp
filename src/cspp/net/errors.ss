@@ -15,7 +15,7 @@
           call-with-net-error
           raise-net-error)
   (import (cspp chez)
-          (only (cspp utils) define-who pcheck))
+          (cspp utils))
 
   (define-condition-type &net-error &error
     %make-net-error

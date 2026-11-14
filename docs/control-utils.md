@@ -149,6 +149,14 @@ Flag operations validate exact integers even in release code. `flag-set` and `fl
 return new integer values without mutating inputs; `flag-all-set?` accepts a zero mask as true.
 The generated decoder ignores unknown bits.
 
+## Environment access
+
+`(cspp utils)` exports `getenv` and `putenv`; both are included in `(cspp)`.
+`getenv` takes a string name and returns a fresh string value, or `#f` when absent.
+`putenv` takes a nonempty string name and a string value; its return value is unspecified.
+Names and values cannot contain NUL, and names passed to `putenv` cannot contain `=`.
+CSPP reads, writes, and inherited process snapshots share a native lock.
+
 ## Timing helpers
 
 `(cspp utils)` exports `sleep`, `milisleep`, and `nanosleep`, plus their aliases

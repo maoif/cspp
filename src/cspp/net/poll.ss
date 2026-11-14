@@ -9,7 +9,7 @@
           poll-until
           poll/nonblocking)
   (import (cspp chez)
-          (only (cspp utils) define-who natural? pcheck)
+          (cspp utils)
           (cspp net errors)
           (cspp net private ffi)
           (cspp net private common)

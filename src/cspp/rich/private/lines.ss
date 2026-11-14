@@ -2,7 +2,7 @@
 (library (cspp rich private lines)
   (export rich-single-line-text rich-lines-normalize rich-lines-wrap rich-lines-width rich-lines-min-width)
   (import (cspp chez)
-          (only (cspp utils) pcheck)
+          (cspp utils)
           (cspp rich private common)
           (cspp rich segment)
           (cspp rich private cells)

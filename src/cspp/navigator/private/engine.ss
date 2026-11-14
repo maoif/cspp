@@ -5,11 +5,11 @@
           nav-setval nav-setval! nav-clearval nav-clearval!
           nav-selected->list nav-selected->vector nav-selected-transduce
           select-path transform-path transform-path! clear-path clear-path!)
-  (import (chezscheme)
+  (import (cspp chez)
           (cspp iter)
           (cspp list)
           (cspp transducer)
-          (only (cspp utils) pcheck)
+          (cspp utils)
           (cspp navigator private core))
 
   ;; An environment is a stack of recursive-name binding frames. Each resolved

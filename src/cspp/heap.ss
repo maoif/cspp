@@ -5,7 +5,7 @@
           heap-clear! heap-empty? heap-bounded?
           heap-copy heap->list)
   (import (cspp chez)
-          (only (cspp utils) bool define-who natural? pcheck)
+          (cspp utils)
           (cspp list)
           (cspp vector)
           (only (cspp iter) iter-register-source! make-iter iter-end))

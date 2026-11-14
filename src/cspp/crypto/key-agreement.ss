@@ -1,7 +1,7 @@
 (library (cspp crypto key-agreement)
   (export derive-shared-secret)
   (import (cspp chez)
-          (only (cspp utils) define-who pcheck)
+          (cspp utils)
           (cspp crypto private ffi)
           (cspp crypto private common)
           (cspp crypto pkey))

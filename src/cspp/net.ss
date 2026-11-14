@@ -1,6 +1,6 @@
 (library (cspp net)
   (export)
-  (import (chezscheme))
+  (import (cspp chez))
 
   (export (import (cspp net errors)
                   (cspp net operation)

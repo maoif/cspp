@@ -2,7 +2,7 @@
   (export parse-scheme-datum parse-scheme parse-scheme-file)
   (import (cspp chez)
           (cspp parser combinator)
-          (only (cspp utils) define-who pcheck))
+          (cspp utils))
 
   ;; This deliberately supports a Scheme datum subset; see the public entry-point docs.
   (define-values (parser-scheme-datum parser-scheme)

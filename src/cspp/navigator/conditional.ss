@@ -1,8 +1,8 @@
 (library (cspp navigator conditional)
   (export nav/pred nav/not-pred nav/must nav/maybe nav/if nav/when nav/unless
           nav/multi-path nav/choice)
-  (import (chezscheme)
-          (only (cspp utils) pcheck)
+  (import (cspp chez)
+          (cspp utils)
           (cspp navigator private core)
           (cspp navigator basic)
           (cspp navigator private engine))

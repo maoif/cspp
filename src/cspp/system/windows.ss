@@ -10,7 +10,7 @@
   (import (cspp chez)
           (cspp system private common)
           (only (cspp system info) system-platform)
-          (only (cspp utils) define-who pcheck-who))
+          (cspp utils))
 
   #|proc:windows?
   The `windows?` procedure returns `#t` when the current platform is Windows, otherwise `#f`.

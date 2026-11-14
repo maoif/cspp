@@ -9,7 +9,7 @@
           (cspp format private wasm-text-types)
           (cspp format private wasm-text-instructions)
           (cspp format private wasm-common)
-          (only (cspp utils) natural? pcheck))
+          (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Normalization state and namespace construction

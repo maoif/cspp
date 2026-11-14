@@ -5,7 +5,7 @@
           password-hash?
           password-verify?)
   (import (cspp chez)
-          (only (cspp utils) define-who pcase pcheck)
+          (cspp utils)
           (cspp crypto random)
           (cspp crypto kdf)
           (cspp crypto constant-time)

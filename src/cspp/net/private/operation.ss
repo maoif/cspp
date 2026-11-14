@@ -28,7 +28,7 @@
           net-operation-completed
           net-operation-failed)
   (import (cspp chez)
-          (only (cspp utils) natural? pcheck))
+          (cspp utils))
 
   ;;;;===----------------------------------------------------------------------===
   ;;;; Dependency-neutral operation storage

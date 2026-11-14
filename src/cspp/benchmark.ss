@@ -55,7 +55,7 @@
           define-fixture-benchmark define-benchmark-template
           instantiate-benchmark-template benchmark-options)
   (import (cspp chez)
-          (only (cspp utils) pcheck)
+          (cspp utils)
           (cspp rich))
 
   #|doc

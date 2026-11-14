@@ -64,7 +64,7 @@
           (cspp format private wasm-types)
           (cspp format private wasm-binary)
           (cspp format private wasm-text)
-          (only (cspp utils) define-who pcheck))
+          (cspp utils))
 
   (define bytevector-or-path?
     (lambda (value) (or (bytevector? value) (string? value))))

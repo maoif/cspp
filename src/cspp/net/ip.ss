@@ -31,7 +31,7 @@
           cidr-network-address
           cidr-prefix-length)
   (import (cspp chez)
-          (only (cspp utils) define-who pcheck)
+          (cspp utils)
           (cspp string))
 
   #|record:ip-address

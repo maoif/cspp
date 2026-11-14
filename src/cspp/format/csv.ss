@@ -6,7 +6,7 @@
   (import (cspp chez)
           (cspp format private record-writer)
           (cspp parser combinator)
-          (only (cspp utils) define-who pcheck))
+          (cspp utils))
 
   ;; Record fields are immutable. Accessors return stored strings/vectors without copying;
   ;; these objects may be mutable, so a record wrapper does not imply deep immutability.

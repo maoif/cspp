@@ -30,7 +30,7 @@
           (cspp iter)
           (cspp private iter-state)
           (cspp list)
-          (only (cspp utils) bool id natural? pcheck positive-natural?))
+          (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Reduction terminology and driver conventions

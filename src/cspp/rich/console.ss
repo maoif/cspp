@@ -31,7 +31,7 @@
           rich-export-text
           rich-export-ansi)
   (import (cspp chez)
-          (only (cspp utils) pcheck)
+          (cspp utils)
           (only (cspp list) make-list-builder)
           (cspp rich private lines)
           (cspp rich private render)

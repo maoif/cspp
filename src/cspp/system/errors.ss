@@ -24,7 +24,7 @@
           raise-system-error
           raise-system-unsupported)
   (import (cspp chez)
-          (only (cspp utils) define-who pcheck-who))
+          (cspp utils))
 
   #|proc:system-error?
   The `system-error?` procedure returns `#t` when its argument is a system error condition,

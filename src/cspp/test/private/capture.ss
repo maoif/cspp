@@ -2,7 +2,7 @@
 (library (cspp test private capture)
   (export test-capture-ports test-check-output-expectations)
   (import (cspp chez)
-          (only (cspp utils) pcheck)
+          (cspp utils)
           (cspp test private common)
           (cspp test assertion))
 

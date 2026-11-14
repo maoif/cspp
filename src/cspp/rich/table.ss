@@ -19,7 +19,7 @@
           rich-table-add-row!
           rich-table-render)
   (import (cspp chez)
-          (only (cspp utils) pcheck)
+          (cspp utils)
           (only (cspp list) make-list-builder)
           (cspp rich private common)
           (cspp rich private lines)
