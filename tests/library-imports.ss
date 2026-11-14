@@ -39,3 +39,11 @@
      ;; Error case: launcher dependencies must not become implicit application imports.
      (= 0 (system
              "../cspp -q -c='(exit (if (or (top-level-bound? (quote rich-text)) (top-level-bound? (quote make-command)) (top-level-bound? (quote displayln)) (top-level-bound? (quote process-capture))) 1 0))'")))
+
+(mat foundation-library-process
+
+     (= 0 (system "../scheme --script library-foundation-process.ss chez-first"))
+
+     (= 0 (system "../scheme --script library-foundation-process.ss utils-first"))
+
+     (= 0 (system "../scheme --script library-foundation-process.ss native-first")))

@@ -12,7 +12,7 @@
           http-server? http-listen http-server-close http-accept http-accept/nonblocking http-serve http-serve-loop http-register-handler! http-handler-ref http-unregister-handler!
           http-connection? http-connection-close http-read-request http-read-request/nonblocking http-write-response http-write-response/nonblocking)
   (import (cspp chez)
-          (only (cspp utils) define-who natural? pcheck)
+          (cspp utils)
           (cspp file)
           (cspp string)
           (cspp net uri)
@@ -1105,7 +1105,7 @@ The `http-serve-loop` procedure dispatches requests until `server` closes and th
           (unless (http-server-closed? server)
             (let ([connection (http-accept/nonblocking server)])
               (if connection (serve-one server connection)
-                  ($sleep (make-time 'time-duration 1000000 0))))
+                  (milisleep 1)))
             (loop)))
         server)))
   )

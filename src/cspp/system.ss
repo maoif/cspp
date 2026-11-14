@@ -17,7 +17,11 @@
           (cspp system info)
           (cspp system process)
           (cspp system signal)
-          (only (cspp utils) define-who))
+          (cspp utils))
+
+  ;; Macro imports alone do not invoke utils; initialize it before binding native procedures.
+  (define $utils-initialized?
+    (begin (invoke-library '(cspp utils)) #t))
 
   (export
           ;; focused system libraries re-exported by the facade

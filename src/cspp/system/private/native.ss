@@ -1,8 +1,12 @@
 (library (cspp system private native)
   (export $call-native-operation $call-process-operation)
   (import (cspp chez)
-          (only (cspp utils) pcheck-who)
+          (cspp utils)
           (cspp system private common))
+
+  ;; Macro imports alone do not invoke utils; initialize it before binding native procedures.
+  (define $utils-initialized?
+    (begin (invoke-library '(cspp utils)) #t))
 
   #|proc:$call-native-operation
   The internal `$call-native-operation` procedure owns a resumable native operation.

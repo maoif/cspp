@@ -81,7 +81,7 @@
             (loop (string-append text (utf8->string bytes)) remaining)]
            [(eof-object? bytes) (error 'server-test-receive-until "unexpected EOF" text)]
            [else
-            ($sleep (make-time 'time-duration 1000000 0))
+            (milisleep 1)
             (loop text (fx1- remaining))]))]))))
 
 (define server-test-send
@@ -233,7 +233,7 @@
                  (cond
                   [(eof-object? answer) (not (http-accept/nonblocking server))]
                   [(fxzero? remaining) #f]
-                  [else ($sleep (make-time 'time-duration 1000000 0))
+                  [else (milisleep 1)
                         (loop (fx1- remaining))]))))
            (lambda () (close-socket socket) (http-server-close server))))))
 
@@ -321,7 +321,7 @@
                                              (string->utf8 "concurrent"))))
                               (map net-operation-wait operations))]
                     [(fxzero? remaining) #f]
-                    [else ($sleep (make-time 'time-duration 1000000 0))
+                    [else (milisleep 1)
                           (loop connections (fx1- remaining))])))))
            (lambda ()
              (http-close client)
@@ -347,7 +347,7 @@
                 (lambda ()
                  (guard (condition [else (set! worker-failure condition)])
                   (let ([connection (http-accept server)])
-                    ($sleep (make-time 'time-duration 30000000 0))
+                    (milisleep 30)
                     (set! received (http-request-body (http-read-request connection)))
                     (http-write-response connection
                       (make-http-response 200 "OK" '() "received" '() 'h1)))))))
@@ -430,7 +430,7 @@
                              (lambda ()
                                (set! result (guard (condition [(condition? condition) #t])
                                               (http-read-request connection) #f))))])
-               ($sleep (make-time 'time-duration 10000000 0))
+               (milisleep 10)
                (http-server-close server)
                (thread-join worker)
                result))

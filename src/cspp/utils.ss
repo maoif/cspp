@@ -24,9 +24,15 @@
 
           define-flags flag-any-set? flag-all-set? flag-set flag-reset
 
+          getenv putenv
           sleep milisleep nanosleep sleep-seconds sleep-milliseconds sleep-nanoseconds)
   (import (cspp chez)
+          (rename (only (chezscheme) sleep) (sleep $chez-sleep))
+          (cspp private libcspp)
           (cspp private common))
+
+  ;; Referencing the runtime's readiness binding invokes its initialization body.
+  (define $libcspp-loaded? libcspp-loaded?)
 
   #|macro:define-who
   The `define-who` macro defines `id` from an expression with `who` bound to the name symbol.
@@ -93,7 +99,54 @@
         [_ (syntax-error stx "invalid pcase form:")])))
 
 
-  (include "private/pcheck.ss")
+  #|macro:pcheck
+  The `pcheck` macro checks bound argument identifiers using clauses `[predicate id ...]`.
+  Each predicate has signature `object -> object`; a false result raises an argument error.
+  Checks run in clause order before the body, whose values are returned on success.
+  Use this macro at API argument boundaries; each predicate expression is evaluated once per clause.
+  Errors identify `pcheck`; use `pcheck-who` to supply the caller's name explicitly.
+  |#
+  (define-syntax pcheck
+    (syntax-rules ()
+      [(_ checks body body* ...)
+       (let ([who 'pcheck]) (pcheck-who who checks body body* ...))]))
+
+  #|macro:pcheck-who
+  The `pcheck-who` macro checks `[predicate argument ...]` clauses before evaluating its body.
+  The `who` form must be a variable reference whose value is a symbol naming the caller.
+  Its value is read once before checking arguments; a nonsymbol value raises an argument error.
+  Inside `define-who`, pass its `who` binding. A rejection raises an error naming that caller.
+  Each predicate has signature `object -> object` and is evaluated once per clause; checks run
+  in order and stop at the first rejection. Successful checks return all body values.
+  Argument forms must be bound identifiers. An empty clause list performs no argument checks.
+  |#
+  (define-syntax pcheck-who
+    (lambda (stx)
+      (define all-ids?
+        (lambda (ls*)
+          (andmap
+           (lambda (ls)
+             (andmap identifier? ls))
+           ls*)))
+      (syntax-case stx ()
+        [(k who ([pred x x* ...] ...) e e* ...)
+         (and (identifier? #'who) (all-ids? #'((x x* ...) ...)))
+         #`(let ([caller who])
+             (unless (symbol? caller) (errorf 'pcheck-who "caller is not a symbol: ~s" caller))
+             #,(let loop ([preds #'(pred ...)] [id** #'((x x* ...) ...)])
+           (if (null? preds)
+               #`(let () e e* ...)
+               (with-syntax ([pred (car preds)] [ids (car id**)]
+                             [(p) (generate-temporaries '(p))])
+                 #`(let ([p pred])
+                     #,(let f ([id* #'ids])
+                         (if (null? id*)
+                             (loop (cdr preds) (cdr id**))
+                             #`(if (p #,(car id*))
+                                   #,(f (cdr id*))
+                                   (errorf caller "failed predicate ~s for ~s, value: ~s"
+                                     'pred '#,(car id*) #,(car id*))))))))))]
+        [_ (syntax-error stx "invalid pcheck-who form:")])))
 
   (define-syntax gen-pcheck
     (lambda (stx)
@@ -836,6 +889,56 @@
          (pcheck-who who ([$flag-integer? bits value]) (logand (lognot bits) value))))))
 
 ;;;;===----------------------------------------------------------------------===
+;;;; environment
+;;;;===----------------------------------------------------------------------===
+
+  (define $environment-name?
+    (lambda (name)
+      (and (string? name) (> (string-length name) 0)
+           (let loop ([index 0])
+             (or (= index (string-length name))
+                 (and (not (memv (string-ref name index) '(#\nul #\=)))
+                      (loop (+ index 1))))))))
+
+  (define $environment-string?
+    (lambda (value)
+      (and (string? value)
+           (let loop ([index 0])
+             (or (= index (string-length value))
+                 (and (not (char=? (string-ref value index) #\nul))
+                      (loop (+ index 1))))))))
+
+  (define $environment-result
+    (lambda (who result)
+      (if (eq? (vector-ref result 0) 'ok)
+          (vector-ref result 1)
+          (errorf who "~a" (vector-ref result 3)))))
+
+  #|proc:getenv
+  The `getenv` procedure returns the string value of environment variable `name`, or `#f`.
+  `name` is a string without NUL characters. The result is a fresh snapshot.
+  CSPP environment reads, writes, and inherited process snapshots share a lock.
+  Direct libc or Chez environment mutations outside CSPP require caller synchronization.
+  |#
+  (define getenv
+    (lambda (name)
+      (pcheck ([$environment-string? name])
+        ($environment-result 'getenv
+          ((foreign-procedure "cspp_environment_get" (utf-8) ptr) name)))))
+
+  #|proc:putenv
+  The `putenv` procedure sets environment variable `name` to string `value`.
+  `name` is nonempty and contains neither NUL nor `=`; `value` contains no NUL.
+  The return value is unspecified. Writes synchronize with CSPP readers and process snapshots.
+  Direct libc or Chez environment mutations outside CSPP require caller synchronization.
+  |#
+  (define putenv
+    (lambda (name value)
+      (pcheck ([$environment-name? name] [$environment-string? value])
+        ($environment-result 'putenv
+          ((foreign-procedure "cspp_environment_set" (utf-8 utf-8) ptr) name value)))))
+
+;;;;===----------------------------------------------------------------------===
 ;;;; time
 ;;;;===----------------------------------------------------------------------===
 
@@ -857,7 +960,7 @@
   (define-who sleep
     (lambda (seconds)
       (pcheck-who who ([(lambda (value) ($sleep-duration? value 1)) seconds])
-        ($sleep (make-time 'time-duration 0 seconds)))))
+        ($chez-sleep (make-time 'time-duration 0 seconds)))))
 
   #|proc:milisleep
   The `milisleep` procedure pauses the current thread for `milliseconds` milliseconds.
@@ -869,7 +972,7 @@
   (define-who milisleep
     (lambda (milliseconds)
       (pcheck-who who ([(lambda (value) ($sleep-duration? value 1000)) milliseconds])
-        ($sleep (make-time 'time-duration
+        ($chez-sleep (make-time 'time-duration
                   (* 1000000 (modulo milliseconds 1000))
                   (quotient milliseconds 1000))))))
 
@@ -883,7 +986,7 @@
   (define-who nanosleep
     (lambda (nanoseconds)
       (pcheck-who who ([(lambda (value) ($sleep-duration? value 1000000000)) nanoseconds])
-        ($sleep (make-time 'time-duration
+        ($chez-sleep (make-time 'time-duration
                   (modulo nanoseconds 1000000000)
                   (quotient nanoseconds 1000000000))))))
 

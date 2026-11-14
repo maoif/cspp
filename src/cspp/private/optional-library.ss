@@ -1,7 +1,11 @@
 (library (cspp private optional-library)
   (export require-optional-library ffi-optional-library-info)
   (import (cspp chez)
-          (only (cspp utils) pcheck))
+          (cspp utils))
+
+  ;; Macro imports alone do not invoke utils; initialize it before binding native procedures.
+  (define $utils-initialized?
+    (begin (invoke-library '(cspp utils)) #t))
 
   (define ffi-optional-library-info
     (foreign-procedure "cspp_optional_library_info" (string) scheme-object))

@@ -8,7 +8,7 @@
           (cspp iter)
           (cspp regex)
           (only (cspp string) string-search string-map)
-          (only (cspp utils) pcheck)
+          (cspp utils)
           (cspp list)
           (cspp system platform))
 

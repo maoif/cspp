@@ -1,6 +1,11 @@
 (library (cspp system private user-credentials)
   (export getuid getgid geteuid getegid current-uid current-gid current-euid current-egid)
-  (import (cspp chez))
+  (import (cspp chez)
+          (cspp utils))
+
+  ;; Macro imports alone do not invoke utils; initialize it before binding native procedures.
+  (define $utils-initialized?
+    (begin (invoke-library '(cspp utils)) #t))
 
   #|proc:getuid
   The `getuid` procedure returns the real user ID of the calling process.

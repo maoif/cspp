@@ -14,7 +14,7 @@
           lws-http-request-wait-response!
           lws-http-request-close!)
   (import (cspp chez)
-          (only (cspp utils) natural? pcheck)
+          (cspp utils)
           (cspp net private lws-reactor)
           (cspp net private lws-transport))
 
@@ -135,7 +135,7 @@ It raises an error when the server closes before a request arrives.
           (or (lws-http-server-accept/nonblocking server)
               (if (lws-http-server-closed? server)
                   (errorf 'lws-http-server-accept "server is closed")
-                  (begin ($sleep (make-time 'time-duration 1000000 0)) (loop))))))))
+                  (begin (milisleep 1) (loop))))))))
 
   #|proc:lws-http-request-write-response!
 The `lws-http-request-write-response!` procedure queues `payload` with HTTP `status` for `request`.
@@ -193,7 +193,7 @@ to be written. It returns `#t`, or raises an error when the request or server cl
             (errorf 'lws-http-request-wait-response! "request or server is closed"))
           (let ([event (next-request-event request)])
             (cond
-             [(not event) ($sleep (make-time 'time-duration 1000000 0)) (loop)]
+             [(not event) (milisleep 1) (loop)]
              [(memq (vector-ref event 0) '(writable complete)) #t]
              [(memq (vector-ref event 0) '(closed failed reset goaway))
               (errorf 'lws-http-request-wait-response! "response stream terminated")]
@@ -215,7 +215,7 @@ acknowledges each chunk to resume LWS receive flow, and returns their concatenat
           (let ([event (next-request-event request)])
             (cond
              [(not event)
-              ($sleep (make-time 'time-duration 1000000 0))
+              (milisleep 1)
               (loop chunk* length)]
              [(memq (vector-ref event 0) '(closed failed reset goaway))
               (errorf 'lws-http-request-read-body "request stream terminated before body completed")]

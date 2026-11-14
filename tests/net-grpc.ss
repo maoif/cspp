@@ -124,7 +124,7 @@
                       (grpc-serve server))
                     (loop)))))])
         ;; Let the serving thread enter its polling loop before the first TLS call.
-        ($sleep (make-time 'time-duration 1000000 0))
+        (milisleep 1)
         (dynamic-wind
           void
           (lambda () (proc server client))
