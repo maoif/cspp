@@ -1,7 +1,7 @@
 (library (cspp private common)
   (export todo $construct-name flag->mask $record-type-key $datatype-variant-key
           $make-list-builder)
-  (import (chezscheme))
+  (import (cspp chez))
 
 
   #|doc:$record-type-key
@@ -79,20 +79,4 @@
               (logor (flag->mask (car ls) e) (f (cdr ls)))))]
        ;; TODO better error report
        [else (errorf 'flag->mask "invalid mask ~s" m)])))
-
-
-
-
-  (let loop ([paths `(,(or (getenv "LIBCSPP") "")
-                      ,(path-build (current-directory) "libcspp.so")
-                      "/lib/libcspp.so"
-                      "/usr/lib/libcspp.so"
-                      "/usr/local/lib/libcspp.so")])
-    (if (null? paths)
-        (errorf 'cspp-internal "failed to load libcspp.so")
-        (if (file-regular? (car paths))
-            (with-exception-handler
-                (lambda (con) (loop (cdr paths)))
-              (lambda () (load-shared-object (car paths))))
-            (loop (cdr paths)))))
-  )
+)
