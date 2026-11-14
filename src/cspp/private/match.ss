@@ -7,8 +7,6 @@
   (import (cspp chez)
           (only (cspp utils) pcheck)
           (cspp private common)
-          (cspp io)
-          (cspp list)
           (cspp vector)
           (cspp private irregex))
 

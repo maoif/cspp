@@ -21,9 +21,7 @@
           (cspp vector)
           (only (cspp utils) bool cdr! define-who pcheck pcheck-file pcheck-hashtable pcheck-list
                              pcheck-open-binary-port pcheck-open-textual-port)
-          (cspp private common)
-          (cspp private iter-state)
-          (cspp control))
+          (cspp private iter-state))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Iterator kinds, dependencies, and lifecycle

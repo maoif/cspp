@@ -60,10 +60,8 @@
           <as> <as-string> <as-symbol> <as-integer>
           <token> <fully>)
   (import (cspp chez)
-          (cspp private common)
           (cspp string)
           (cspp list)
-          (cspp vector)
           (cspp io)
           (cspp file)
           (cspp format private record-writer)

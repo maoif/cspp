@@ -791,7 +791,7 @@
         (display
          (string-append
            "  )\n  (import (cspp chez)\n"
-           "          (only (cspp utils) pcheck)\n"
+           "          (only (cspp utils) natural? pcheck)\n"
            "          (cspp format protobuf)\n"
            "          (cspp net grpc)\n"
            "          (cspp net grpc reflection))\n\n")

@@ -58,8 +58,7 @@
                              pcheck-output-binary-port pcheck-string)
           (only (cspp string) string-search)
           (cspp list)
-          (cspp iter)
-          (cspp io))
+          (cspp iter))
 
   #|doc
   Filesystem path arguments must be strings without NUL characters. Invalid names raise

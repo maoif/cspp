@@ -27,8 +27,6 @@
           (cspp net poll)
           (cspp net operation)
           (cspp net transfer)
-          (cspp net address)
-          (cspp net socket)
           (cspp net private common)
           (cspp net ssh)
           (cspp net sftp))

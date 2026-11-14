@@ -219,8 +219,7 @@
           ffi-net-tls-peer-certificate-chain-der)
   (import (only (cspp utils) natural? pcheck)
           (cspp private optional-library)
-          (cspp chez)
-          (cspp private common))
+          (cspp chez))
 
   #|proc:ffi-zlib-stream-open
   The `ffi-zlib-stream-open` procedure calls the native zlib operation `cspp_zlib_stream_open`.

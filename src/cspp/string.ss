@@ -6,7 +6,6 @@
           string-search string-search-all string-contains? string-empty?
           string-split string-trim string-trim-left string-trim-right)
   (import (except (chezscheme) string-for-each)
-          (cspp private common)
           (only (cspp utils) define-who pcase pcheck)
           (cspp list))
 

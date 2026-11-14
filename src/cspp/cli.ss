@@ -98,11 +98,8 @@
           parser-enum)
   (import (cspp chez)
           (only (cspp utils) define-who p/or pcheck)
-          (cspp private common)
-          (cspp adt)
           (cspp string)
           (cspp list)
-          (cspp vector)
           (cspp io))
 
 

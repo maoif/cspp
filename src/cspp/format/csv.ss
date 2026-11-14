@@ -6,12 +6,6 @@
   (import (cspp chez)
           (cspp format private record-writer)
           (cspp parser combinator)
-          (cspp private common)
-          (cspp string)
-          (cspp list)
-          (cspp vector)
-          (cspp file)
-          (cspp io)
           (only (cspp utils) define-who pcheck))
 
   ;; Record fields are immutable. Accessors return stored strings/vectors without copying;

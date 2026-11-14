@@ -24,8 +24,6 @@
           (cspp dlist)
           (cspp concurrency)
           (cspp system)
-          (cspp io)
-          (cspp private common)
           (cspp net operation)
           (cspp net private operation))
 

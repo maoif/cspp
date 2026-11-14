@@ -3,12 +3,7 @@
           for*/fold for* for*/list for*/vector)
   (import (cspp chez)
           (cspp private for)
-          (cspp private common)
-          (cspp iter)
-          (cspp list)
-          (cspp vector)
-          (only (cspp utils) id)
-          (cspp io))
+          (only (cspp utils) id))
 
 
 

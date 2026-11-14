@@ -55,7 +55,6 @@
   (import (cspp chez)
           (cspp file)
           (cspp string)
-          (cspp system)
           (only (cspp utils) define-who natural? pcheck)
           (cspp net errors)
           (cspp net private ffi)

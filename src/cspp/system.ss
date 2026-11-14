@@ -14,14 +14,9 @@
           os-error?)
   (import (cspp chez)
           (cspp system private common)
-          (except (cspp system darwin) darwin?)
-          (cspp system filesystem)
           (cspp system info)
-          (except (cspp system linux) linux?)
           (cspp system process)
           (cspp system signal)
-          (cspp system user)
-          (except (cspp system windows) windows?)
           (only (cspp utils) define-who))
 
   (export

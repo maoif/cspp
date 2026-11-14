@@ -8,8 +8,6 @@
   (import (cspp chez)
           (cspp format private record-writer)
           (cspp parser combinator)
-          (cspp file)
-          (cspp list)
           (only (cspp utils) pcheck))
 
   ;; Record fields are immutable. Accessors return stored strings/vectors without copying;

@@ -12,12 +12,9 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
   (export match
           mlambda mlambda+ mlet mlet*)
   (import (chezscheme)
-          (cspp list)
-          (cspp vector)
           (cspp private irregex)
           (cspp private common)
-          (cspp private match)
-          (cspp io))
+          (cspp private match))
 
   #|macro:$match/constant-regex
   The `$match/constant-regex` helper checks `expression` after preceding captures are bound.

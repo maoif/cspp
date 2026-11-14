@@ -46,8 +46,6 @@
   (import (cspp chez)
           (only (cspp utils) define-who pcheck)
           (cspp net errors)
-          (cspp net address)
-          (cspp net socket)
           (cspp net poll)
           (cspp net operation)
           (cspp net private ffi)

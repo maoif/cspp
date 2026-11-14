@@ -40,6 +40,7 @@
           (cspp rich segment)
           (cspp rich renderable)
           (cspp rich pretty)
+          ;; Install the tree renderer used by rich-print.
           (cspp rich tree))
 
   (define-record-type rich-console-record

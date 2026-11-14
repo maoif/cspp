@@ -26,9 +26,6 @@
           fragment-filter fragment-visit)
   (import (cspp chez)
           (only (cspp utils) natural? pcheck positive-natural?)
-          (cspp private common)
-          (cspp io)
-          (cspp list)
           (cspp iter))
 
 

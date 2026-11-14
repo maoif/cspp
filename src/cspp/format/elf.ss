@@ -36,11 +36,9 @@
           elf-section-type-name elf-program-type-name elf-machine-name elf-dynamic-tag-name
           parse-elf parse-elf-file)
   (import (cspp chez)
-          (cspp file)
           (cspp parser combinator)
           (cspp format private elf-types)
           (cspp format private elf-binary)
-          (cspp format private elf-validate)
           (only (cspp utils) natural? pcheck))
 
   (define exact-integer?

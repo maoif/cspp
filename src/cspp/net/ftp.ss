@@ -62,8 +62,6 @@
           (cspp string)
           (cspp net uri)
           (cspp net errors)
-          (cspp net address)
-          (cspp net socket)
           (cspp net poll)
           (cspp net operation)
           (cspp net transfer)

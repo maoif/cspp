@@ -56,7 +56,6 @@
           instantiate-benchmark-template benchmark-options)
   (import (cspp chez)
           (only (cspp utils) pcheck)
-          (cspp private common)
           (cspp rich))
 
   #|doc

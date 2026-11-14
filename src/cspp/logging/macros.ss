@@ -30,7 +30,6 @@
           logger-errorf
           logger-criticalf)
   (import (cspp chez)
-          (cspp logging level)
           (cspp logging sink)
           (cspp logging logger))
 

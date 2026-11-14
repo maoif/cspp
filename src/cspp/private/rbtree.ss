@@ -27,7 +27,6 @@
 
           *dummy-v*)
   (import (cspp chez)
-          (cspp private common)
           (only (cspp utils) bool define-who id))
 
 

@@ -64,7 +64,6 @@
           (cspp format private wasm-types)
           (cspp format private wasm-binary)
           (cspp format private wasm-text)
-          (cspp file)
           (only (cspp utils) define-who pcheck))
 
   (define bytevector-or-path?

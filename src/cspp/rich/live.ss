@@ -35,7 +35,6 @@
           (cspp rich private common)
           (cspp rich private lines)
           (cspp rich private cells)
-          (cspp rich style)
           (cspp rich segment)
           (cspp rich renderable)
           (cspp rich console))

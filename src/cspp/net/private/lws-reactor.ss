@@ -27,7 +27,6 @@
           lws-reactor-pool-metrics)
   (import (cspp chez)
           (only (cspp utils) define-who natural? pcheck positive-natural?)
-          (cspp net private ffi)
           (cspp net errors)
           (cspp net operation)
           (cspp net poll)
