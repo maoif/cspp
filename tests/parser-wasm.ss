@@ -1,4 +1,6 @@
-(import (cspp) (cspp system) (cspp parser)
+(import (cspp)
+        (cspp system)
+        (cspp parser)
         (cspp format wasm)
         (cspp format private wasm-opcodes)
         (cspp format private wasm-binary-values)

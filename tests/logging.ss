@@ -1,5 +1,8 @@
 #!chezscheme
-(import (cspp) (cspp path) (cspp rich) (cspp logging))
+(import (cspp)
+        (cspp path)
+        (cspp rich)
+        (cspp logging))
 
 (define logging-string-contains?
   (lambda (s . needles)

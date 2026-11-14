@@ -1,4 +1,5 @@
-(import (cspp) (cspp system)
+(import (cspp)
+        (cspp system)
         (cspp format json5))
 
 (include "parser-external-tools.ss")

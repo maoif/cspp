@@ -1,4 +1,6 @@
-(import (cspp) (cspp array) (cspp benchmark))
+(import (cspp)
+        (cspp array)
+        (cspp benchmark))
 (load "benchmarks/common.ss")
 
 (define make-cases

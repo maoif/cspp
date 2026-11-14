@@ -217,7 +217,9 @@
           ffi-net-tls-ocsp-result
           ffi-net-tls-peer-certificate-der
           ffi-net-tls-peer-certificate-chain-der)
-  (import (cspp utils) (cspp private optional-library) (cspp chez)
+  (import (cspp utils)
+          (cspp private optional-library)
+          (cspp chez)
           (cspp private common))
 
   #|proc:ffi-zlib-stream-open

@@ -1,4 +1,5 @@
-(import (cspp) (cspp concurrency)
+(import (cspp)
+        (cspp concurrency)
         (cspp concurrency fiber))
 
 ;; An inherited handler can corrupt a foreign scheduler escape. Keep this probe

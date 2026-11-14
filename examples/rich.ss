@@ -1,5 +1,6 @@
 #!chezscheme
-(import (cspp) (cspp rich))
+(import (cspp)
+        (cspp rich))
 
 (define-record-type (example-lines make-example-lines example-lines?)
   (fields (immutable lines example-lines-lines)))

@@ -1,4 +1,6 @@
-(import (chezscheme) (cspp crypto) (cspp optional-library))
+(import (chezscheme)
+        (cspp crypto)
+        (cspp optional-library))
 
 (define run-workers
   (lambda (workers proc)

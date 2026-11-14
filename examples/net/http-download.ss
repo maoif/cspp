@@ -1,4 +1,7 @@
-(import (cspp) (cspp io) (cspp file) (cspp net))
+(import (cspp)
+        (cspp io)
+        (cspp file)
+        (cspp net))
 
 (load "examples/net/legacy-example-common.ss")
 (net-example-help! 'http-download "Download URI bytes to stdout. Positional arguments: URI [auto|http/1.1|h2].")

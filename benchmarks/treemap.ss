@@ -1,4 +1,6 @@
-(import (cspp) (cspp treemap) (cspp benchmark))
+(import (cspp)
+        (cspp treemap)
+        (cspp benchmark))
 (load "benchmarks/common.ss")
 
 (define make-map-case

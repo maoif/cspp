@@ -9,8 +9,13 @@
 
           ;; implementation entry points for command macros
           %process-run %process-capture %process-run-shell %process-capture-shell)
-  (import (cspp chez) (cspp system private common) (cspp system private contracts) (cspp system private native)
-          (cspp system private process-status) (cspp system private process-options) (cspp utils))
+  (import (cspp chez)
+          (cspp system private common)
+          (cspp system private contracts)
+          (cspp system private native)
+          (cspp system private process-status)
+          (cspp system private process-options)
+          (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; process result records

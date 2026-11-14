@@ -1,5 +1,6 @@
 ;; Compatibility helpers keep the established positional command forms.
-(import (cspp cli) (cspp logging))
+(import (cspp cli)
+        (cspp logging))
 (load (if (file-exists? "examples/common.ss") "examples/common.ss" "../examples/common.ss"))
 
 (define net-example-help!

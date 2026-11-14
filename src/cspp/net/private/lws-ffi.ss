@@ -34,7 +34,9 @@
           lws-body-consumed
           lws-context-inject-event!
           lws-context-inject-poll!)
-  (import (cspp utils) (cspp private optional-library) (cspp chez)
+  (import (cspp utils)
+          (cspp private optional-library)
+          (cspp chez)
           (cspp net errors)
           )
 

@@ -1,4 +1,6 @@
-(import (cspp) (cspp path) (cspp net))
+(import (cspp)
+        (cspp path)
+        (cspp net))
 (load "net-lws-fixture.ss")
 (mat net-http2-live-multiplexed-stress
  (mat-requires (websockets)

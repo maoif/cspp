@@ -1,4 +1,5 @@
-(import (cspp chez) (cspp utils))
+(import (cspp chez)
+        (cspp utils))
 
 (mat utility-sleep
 

@@ -1,4 +1,5 @@
-(import (cspp) (cspp cli))
+(import (cspp)
+        (cspp cli))
 
 (define capture-output
   (lambda (thunk)

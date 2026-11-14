@@ -1,7 +1,10 @@
 (library (cspp system platform)
   (export unix? windows? darwin? linux? system-platform hostname system-hostname
           cpu-arch cpu-count system-machine)
-  (import (cspp chez) (cspp private os) (cspp system private common) (cspp utils))
+  (import (cspp chez)
+          (cspp private os)
+          (cspp system private common)
+          (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; platform info

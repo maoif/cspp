@@ -1,6 +1,8 @@
 (library (cspp system private native)
   (export $call-native-operation $call-process-operation)
-  (import (cspp chez) (cspp utils) (cspp system private common))
+  (import (cspp chez)
+          (cspp utils)
+          (cspp system private common))
 
   #|proc:$call-native-operation
   The internal `$call-native-operation` procedure owns a resumable native operation.

@@ -1,4 +1,6 @@
-(import (cspp) (cspp file) (cspp system)
+(import (cspp)
+        (cspp file)
+        (cspp system)
         (cspp system private ffi)
         (cspp system private linux-os-release)
         (only (cspp system process expert) make-process-exit-status)

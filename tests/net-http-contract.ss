@@ -1,4 +1,5 @@
-(import (cspp chez) (cspp net)
+(import (cspp chez)
+        (cspp net)
         (cspp net private http))
 
 (define net-environment

@@ -1,6 +1,9 @@
 (library (cspp system private linux-os-release)
   (export $read-os-release)
-  (import (cspp chez) (cspp utils) (cspp string) (cspp list)
+  (import (cspp chez)
+          (cspp utils)
+          (cspp string)
+          (cspp list)
           (cspp system private contracts))
 
   ;; Discard indentation and unescaped trailing whitespace before decoding.

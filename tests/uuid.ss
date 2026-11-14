@@ -1,4 +1,5 @@
-(import (cspp) (cspp uuid))
+(import (cspp)
+        (cspp uuid))
 
 (mat uuid-bytevector
      (mat-requires (uuid)

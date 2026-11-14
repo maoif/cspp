@@ -1,4 +1,6 @@
-(import (cspp) (cspp treeset) (cspp benchmark))
+(import (cspp)
+        (cspp treeset)
+        (cspp benchmark))
 (load "benchmarks/common.ss")
 
 (define make-set-case

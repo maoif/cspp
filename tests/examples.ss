@@ -1,4 +1,6 @@
-(import (cspp) (cspp path) (cspp system))
+(import (cspp)
+        (cspp path)
+        (cspp system))
 
 (define example-entry-point*
   '("examples/parser/xml.ss"

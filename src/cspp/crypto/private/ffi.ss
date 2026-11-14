@@ -77,7 +77,9 @@
           ffi-cert-store-add
           ffi-cert-store-load-defaults
           ffi-cert-verify-chain)
-  (import (cspp utils) (cspp private optional-library) (cspp chez))
+  (import (cspp utils)
+          (cspp private optional-library)
+          (cspp chez))
 
   (define ffi-openssl-load-error
     (foreign-procedure "crypto_openssl_load_error" () ptr))

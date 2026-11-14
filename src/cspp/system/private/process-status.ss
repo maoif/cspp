@@ -1,7 +1,8 @@
 (library (cspp system private process-status)
   (export process-exit-status? process-exit-status-kind process-exit-status-code
           process-exit-success? make-process-exit-status $wait-status->exit-status)
-  (import (cspp chez) (cspp utils))
+  (import (cspp chez)
+          (cspp utils))
 
   ;; Shared value representation: no dependency on command execution or live process ownership.
 ;;;;===----------------------------------------------------------------------===

@@ -2,8 +2,11 @@
   (export signal? signal signal-name signal-number signal->string string->signal signal-list
           hup int quit kill usr1 usr2 alrm term chld pipe
           $signal-input? $signal-ref)
-  (import (cspp chez) (cspp utils) (cspp system private common)
-          (cspp system private contracts) (only (cspp string) string-startswith?))
+  (import (cspp chez)
+          (cspp utils)
+          (cspp system private common)
+          (cspp system private contracts)
+          (only (cspp string) string-startswith?))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; signal values

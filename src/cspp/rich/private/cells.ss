@@ -1,7 +1,9 @@
 #!chezscheme
 (library (cspp rich private cells)
   (export rich-cell-next rich-cell-prefix rich-cell-string-width rich-ansi-sgr-end)
-  (import (cspp chez) (cspp utils) (cspp rich private cell-data))
+  (import (cspp chez)
+          (cspp utils)
+          (cspp rich private cell-data))
 
   (define $in-ranges?
     (lambda (point ranges)

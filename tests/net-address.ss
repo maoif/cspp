@@ -1,4 +1,5 @@
-(import (cspp) (cspp net))
+(import (cspp)
+        (cspp net))
 
 (mat net-address-service-and-selection
      (let ([address* (resolve-addresses "localhost" "http" #f 'stream)])

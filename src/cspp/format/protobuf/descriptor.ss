@@ -27,7 +27,9 @@
           protobuf-method-descriptor-server-streaming? protobuf-method-descriptor-options
           bytevector->protobuf-code-generator-request
           protobuf-code-generator-response)
-  (import (cspp chez) (cspp utils) (cspp format protobuf wire))
+  (import (cspp chez)
+          (cspp utils)
+          (cspp format protobuf wire))
 
   #|record:protobuf-code-generator-request
 The `protobuf-code-generator-request` record is an immutable decoded protoc plugin request.

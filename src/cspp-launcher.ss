@@ -5,7 +5,10 @@
 
 ;; Keep launcher dependencies local so applications and the REPL start with (cspp).
 (module ()
-  (import (cspp io) (cspp system) (cspp rich) (cspp cli))
+  (import (cspp io)
+          (cspp system)
+          (cspp rich)
+          (cspp cli))
 
   (define load-file*
     (lambda (file*)

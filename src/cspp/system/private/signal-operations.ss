@@ -1,9 +1,13 @@
 (library (cspp system private signal-operations)
   (export send-signal send-process-signal send-process-group-signal signal-mask
           signal-mask-set! signal-block! signal-unblock! wait-signal)
-  (import (cspp chez) (cspp utils) (cspp system private common) (cspp system private contracts)
+  (import (cspp chez)
+          (cspp utils)
+          (cspp system private common)
+          (cspp system private contracts)
           (cspp system private native)
-          (cspp system private signal-values) (cspp system process expert))
+          (cspp system private signal-values)
+          (cspp system process expert))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; signal operations

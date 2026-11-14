@@ -24,7 +24,8 @@ with tempfile.TemporaryDirectory(prefix='cspp-digest-') as name:
     fifo = directory / 'input.fifo'
     os.mkfifo(fifo)
     script = directory / 'fifo.ss'
-    script.write_text('''(import (chezscheme) (cspp crypto digest))
+    script.write_text('''(import (chezscheme)
+        (cspp crypto digest))
 (let* ([arguments (command-line-arguments)]
        [path (car arguments)]
        [mode (cadr arguments)])
@@ -49,7 +50,8 @@ alg_section = properties
 default_properties = fips=yes
 ''')
         script = directory / 'provider.ss'
-        script.write_text('''(import (chezscheme) (cspp crypto digest))
+        script.write_text('''(import (chezscheme)
+        (cspp crypto digest))
 (define expect-provider-error
   (lambda (who thunk)
     ;; Error case: unavailable provider algorithms must raise attributed Scheme errors.
@@ -74,7 +76,8 @@ default_properties = fips=yes
         fixture = directory / 'input.bin'
         fixture.write_bytes(bytes(range(256)) * 32)
         script = directory / 'file-ownership.ss'
-        script.write_text('''(import (chezscheme) (cspp crypto digest))
+        script.write_text('''(import (chezscheme)
+        (cspp crypto digest))
 (define descriptor-count (lambda () (length (directory-list "/proc/self/fd"))))
 (let* ([arguments (command-line-arguments)]
        [path (car arguments)]

@@ -423,7 +423,8 @@
       (lambda ()
         (test-write-file
          path
-         "(import (cspp) (cspp test))\n(test-clear-registry! (current-test-registry))\n(test-case loaded (test-true #t))\n")
+         "(import (cspp)
+        (cspp test))\n(test-clear-registry! (current-test-registry))\n(test-case loaded (test-true #t))\n")
         (let ([results (test-run-files (list path) (test-silent-config))])
           (and (= (length results) 1)
                (eq? (test-result-status (car results)) 'passed))))
@@ -438,7 +439,8 @@
       (lambda ()
         (test-write-file
          path
-         "(import (cspp) (cspp test))\n(test-clear-registry! (current-test-registry))\n(test-case main-loaded (test-true #t))\n")
+         "(import (cspp)
+        (cspp test))\n(test-clear-registry! (current-test-registry))\n(test-case main-loaded (test-true #t))\n")
         (let ([out (open-output-string)])
           (= (parameterize ([current-output-port out])
                (test-main (list "--reporter" "datum" path)))
@@ -736,7 +738,8 @@
         (andmap
           (lambda (strict?)
             (test-write-file path
-              (format "(import (cspp) (cspp test))\n(test-case x :xfail ~s :xfail-strict ~s #t)\n"
+              (format "(import (cspp)
+        (cspp test))\n(test-case x :xfail ~s :xfail-strict ~s #t)\n"
                       "known bug" strict?))
             (let ([status #f])
               (call-with-string-output-port
@@ -1366,7 +1369,8 @@
       (lambda () (void))
       (lambda ()
         (test-write-file path
-          "(import (cspp) (cspp test))\n(test-case cli-failed :parameterize ([size] [7]) :capture '(stdout stderr) (display \"stdout-detail\") (display \"stderr-detail\" (current-error-port)) (test-fail \"cli-assertion-detail\" 'expected 'actual))\n")
+          "(import (cspp)
+        (cspp test))\n(test-case cli-failed :parameterize ([size] [7]) :capture '(stdout stderr) (display \"stdout-detail\") (display \"stderr-detail\" (current-error-port)) (test-fail \"cli-assertion-detail\" 'expected 'actual))\n")
         (for-all
           (lambda (args)
             (let ([status #f])

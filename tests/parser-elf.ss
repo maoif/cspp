@@ -1,4 +1,6 @@
-(import (cspp) (cspp system) (cspp parser)
+(import (cspp)
+        (cspp system)
+        (cspp parser)
         (cspp format elf)
         (cspp format private elf-types))
 

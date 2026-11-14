@@ -1,4 +1,5 @@
-(import (cspp) (cspp hash))
+(import (cspp)
+        (cspp hash))
 
 
 (mat xxhash32

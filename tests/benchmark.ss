@@ -1,4 +1,7 @@
-(import (cspp) (cspp benchmark) (cspp test) (cspp format json5))
+(import (cspp)
+        (cspp benchmark)
+        (cspp test)
+        (cspp format json5))
 
 (define (benchmark-test-config)
   (benchmark-config-with (default-benchmark-config)

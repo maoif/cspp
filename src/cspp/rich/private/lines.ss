@@ -1,7 +1,10 @@
 #!chezscheme
 (library (cspp rich private lines)
   (export rich-single-line-text rich-lines-normalize rich-lines-wrap rich-lines-width rich-lines-min-width)
-  (import (cspp chez) (cspp utils) (cspp rich private common) (cspp rich segment)
+  (import (cspp chez)
+          (cspp utils)
+          (cspp rich private common)
+          (cspp rich segment)
           (cspp rich private cells)
           (only (cspp list) make-list-builder))
 

@@ -1,4 +1,5 @@
-(import (cspp) (cspp format protobuf))
+(import (cspp)
+        (cspp format protobuf))
 
 (define protobuf-error?
   (lambda (thunk)

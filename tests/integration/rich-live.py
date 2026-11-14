@@ -10,7 +10,9 @@ ROOT = Path(__file__).resolve().parents[2]
 TIMEOUT_SCALE = 2 if platform.machine() == "riscv64" else 1
 
 PAUSE = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define phase 0)
 (define calls 0)
 (define paused? #f)
@@ -39,7 +41,9 @@ PAUSE = r'''
 
 
 RECOVERY = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define calls 0)
 (define fail? #t)
 (define value (vector 'worker-recovery))
@@ -75,7 +79,9 @@ FAILURE = RECOVERY[:RECOVERY.index("(set! fail? #f)")] + r'''
 
 
 STOP = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define output (open-output-string))
 (define live (make-rich-live "x" (rich-console :output-port output) 1/10 #f))
 (rich-live-start! live)
@@ -90,7 +96,9 @@ STOP = r'''
 
 
 STATUS = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define first (open-output-string))
 (define second (open-output-string))
 (define status (make-rich-status "Working" (rich-console :output-port first) '("*") 10))
@@ -110,7 +118,9 @@ STATUS = r'''
 
 
 SELF_STOP = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define calls 0)
 (define stopped? #f)
 (define value (vector 'self-stop))
@@ -147,7 +157,9 @@ CHILD_STOP = SELF_STOP.replace(
 
 
 INITIAL_STOP = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (for-each
  (lambda (rate)
    (for-each
@@ -183,7 +195,9 @@ INITIAL_STOP = r'''
 
 
 CLEANUP_CHILD_STOP = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define calls 0)
 (define writes 0)
 (define cleanup-stopped? #f)
@@ -219,7 +233,9 @@ CLEANUP_CHILD_STOP = r'''
 
 
 STALE_CHILD_STOP = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define calls 0)
 (define child #f)
 (define live #f)
@@ -264,7 +280,9 @@ STALE_CHILD_STOP = r'''
 
 
 STATUS_RECOVERY = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define calls 0)
 (define fail? #t)
 (define status #f)
@@ -292,7 +310,9 @@ STATUS_RECOVERY = r'''
 
 
 EXTREME_TIMING = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (call-with-port (open-output-string)
   (lambda (output)
     (let ([console (rich-console :output-port output)])
@@ -313,7 +333,9 @@ EXTREME_TIMING = r'''
 
 
 CONCURRENT_CAPTURE = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define lock (make-mutex))
 (define signal (make-condition))
 (define entered (vector #f #f))
@@ -358,7 +380,9 @@ CONCURRENT_CAPTURE = r'''
 '''
 
 CONCURRENT_WIDTH = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define lock (make-mutex))
 (define change (make-condition))
 (define entered? #f)
@@ -394,7 +418,9 @@ CONCURRENT_WIDTH = r'''
 '''
 
 EXTERNAL_STOP = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define lock (make-mutex))
 (define changed (make-condition))
 (define entered? #f)
@@ -429,7 +455,9 @@ EXTERNAL_STOP = r'''
 '''
 
 MANUAL_REFRESH_STOP = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (let ([live #f] [stop? #f] [value (vector 'manual-stop)])
   (rich-register-renderer! (lambda (candidate) (eq? candidate value))
     (lambda (_)
@@ -453,7 +481,9 @@ MANUAL_REFRESH_STOP = r'''
 '''
 
 STATUS_INITIAL_STOP = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (for-each
  (lambda (child?)
    (let ([status #f] [calls 0])
@@ -477,7 +507,9 @@ STATUS_INITIAL_STOP = r'''
 '''
 
 STATUS_INITIAL_SETTERS = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (let ([status #f] [calls 0] [observed #f])
   (call-with-port (open-output-string)
     (lambda (first)
@@ -507,7 +539,9 @@ STATUS_INITIAL_SETTERS = r'''
 '''
 
 EXTERNAL_MANUAL_STOP = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define lock (make-mutex))
 (define changed (make-condition))
 (define entered? #f)
@@ -565,7 +599,9 @@ EXTERNAL_MANUAL_FAILURE = EXTERNAL_MANUAL_STOP.replace(
     r'"\r\033[2Kframe\r\033[2K"', r'"\r\033[2K"')
 
 NESTED_STOP = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define outer #f)
 (define inner #f)
 (define calls 0)
@@ -611,7 +647,9 @@ NESTED_INITIAL_STOP = NESTED_STOP.replace(
     r'"outer\r\033[2Kouter\r\033[2K"', r'"outer\r\033[2K"')
 
 FAILED_CLEANUP_CONTEXT = r'''
-(import (cspp) (cspp system) (cspp rich))
+(import (cspp)
+        (cspp system)
+        (cspp rich))
 (define lock (make-mutex))
 (define ready (make-condition))
 (define released? #f)

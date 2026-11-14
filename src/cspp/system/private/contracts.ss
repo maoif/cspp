@@ -1,7 +1,9 @@
 (library (cspp system private contracts)
   (export $unsigned-32? $positive-pid? $os-string? $os-string-list?
           $environment-name? $process-specs?)
-  (import (cspp chez) (cspp utils) (cspp string))
+  (import (cspp chez)
+          (cspp utils)
+          (cspp string))
 
   ;; Shared contracts for values passed to native system helpers.
   (define $unsigned-32?

@@ -1,4 +1,5 @@
-(import (cspp) (cspp treeset))
+(import (cspp)
+        (cspp treeset))
 (load "benchmarks/common.ss")
 
 ;; Run this same script against the baseline and optimized libraries.

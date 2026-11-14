@@ -6,7 +6,8 @@
           uuid->bytevector bytevector->uuid
           uuid-time
           uuid=? uuid<? uuid<=? uuid>? uuid>=?)
-  (import (cspp private optional-library) (cspp chez)
+  (import (cspp private optional-library)
+          (cspp chez)
           (cspp utils)
           (cspp private common))
 

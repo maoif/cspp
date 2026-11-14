@@ -373,7 +373,12 @@ else:
                 source.mkdir()
                 (source / 'file').write_bytes(b'payload')
                 script = root / 'batch-timeout.ss'
-                script.write_text(f'''(import (cspp) (cspp transducer) (cspp path) (cspp system) (cspp array) (cspp net))
+                script.write_text(f'''(import (cspp)
+        (cspp transducer)
+        (cspp path)
+        (cspp system)
+        (cspp array)
+        (cspp net))
 (call-with-ssh-session "127.0.0.1" {port} "{user}"
  (lambda (ssh)
   (ssh-auth-publickey! ssh "{user}")
@@ -417,7 +422,12 @@ def verify_scp_callback_cancellation(root, env, args):
                       'close-owned': '(scp-close scp)'}[action]
             session_arg = (f"\"127.0.0.1\" {port} \"{user}\" 'publickey #f"
                            if action == 'close-owned' else 'ssh')
-            script.write_text(f'''(import (cspp) (cspp transducer) (cspp path) (cspp system) (cspp array) (cspp net))
+            script.write_text(f'''(import (cspp)
+        (cspp transducer)
+        (cspp path)
+        (cspp system)
+        (cspp array)
+        (cspp net))
 (call-with-ssh-session "127.0.0.1" {port} "{user}"
  (lambda (ssh)
   (ssh-auth-publickey! ssh "{user}")
@@ -462,7 +472,12 @@ def verify_scp_filter_cancellation(root, env, args):
                           'close-owned': '(scp-close scp)'}[action]
                 session_arg = (f"\"127.0.0.1\" {port} \"{user}\" 'publickey #f"
                                if action == 'close-owned' else 'ssh')
-                script.write_text(f'''(import (cspp) (cspp transducer) (cspp path) (cspp system) (cspp array) (cspp net))
+                script.write_text(f'''(import (cspp)
+        (cspp transducer)
+        (cspp path)
+        (cspp system)
+        (cspp array)
+        (cspp net))
 (call-with-ssh-session "127.0.0.1" {port} "{user}"
  (lambda (ssh)
   (ssh-auth-publickey! ssh "{user}")
@@ -663,7 +678,12 @@ def verify_scp_readonly_namespace(root, env, args):
     script = root / "raw-scp-path.ss"
     port = int(args[1].split("=", 1)[1])
     user = pwd.getpwuid(os.getuid()).pw_name
-    script.write_text(f'''(import (cspp) (cspp transducer) (cspp path) (cspp system) (cspp array) (cspp net))
+    script.write_text(f'''(import (cspp)
+        (cspp transducer)
+        (cspp path)
+        (cspp system)
+        (cspp array)
+        (cspp net))
 (let ([session (ssh-open "127.0.0.1" {port} "{user}")])
   (dynamic-wind
     void
@@ -941,7 +961,12 @@ def verify_forwarding_open_lifecycle(root, env, args):
         held = [socket.create_connection(target.getsockname(), .2) for _ in range(2)]
         try:
             script = root / 'forward-open-lifecycle.ss'
-            script.write_text(f'''(import (cspp) (cspp transducer) (cspp path) (cspp system) (cspp array) (cspp net))
+            script.write_text(f'''(import (cspp)
+        (cspp transducer)
+        (cspp path)
+        (cspp system)
+        (cspp array)
+        (cspp net))
 (call-with-ssh-session "127.0.0.1" {port} "{user}"
  (lambda (ssh)
   (ssh-auth-publickey! ssh "{user}")

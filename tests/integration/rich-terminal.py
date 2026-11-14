@@ -49,7 +49,8 @@ def resize(fd, width):
 def main():
     with tempfile.TemporaryDirectory(prefix="cspp-rich-terminal-") as directory:
         probe = Path(directory) / "probe.ss"
-        probe.write_text('''(import (cspp) (cspp rich))
+        probe.write_text('''(import (cspp)
+        (cspp rich))
 (define console (make-rich-console))
 (define rule (make-rich-rule))
 (define progress (rich-progress :columns '(description bar percentage)))
@@ -112,7 +113,8 @@ def password_echo():
         release = Path(directory) / "release"
         os.mkfifo(release)
         probe = Path(directory) / "password.ss"
-        probe.write_text('''(import (cspp) (cspp rich))
+        probe.write_text('''(import (cspp)
+        (cspp rich))
 (define destination (current-output-port))
 (define first? #t)
 (call-with-port
@@ -168,7 +170,8 @@ def nested_password_echo():
     # The inner restore must keep echo off until the outer password read completes.
     with tempfile.TemporaryDirectory(prefix="cspp-rich-nested-password-") as directory:
         probe = Path(directory) / "nested-password.ss"
-        probe.write_text('''(import (cspp) (cspp rich))
+        probe.write_text('''(import (cspp)
+        (cspp rich))
 (define nested? #f)
 (define destination (current-output-port))
 (call-with-port

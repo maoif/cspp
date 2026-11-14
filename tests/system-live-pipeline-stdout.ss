@@ -1,4 +1,5 @@
-(import (cspp) (cspp system))
+(import (cspp)
+        (cspp system))
 
 (define wait-for-pipeline
   (lambda (specs)

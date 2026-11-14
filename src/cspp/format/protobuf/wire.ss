@@ -23,7 +23,8 @@
           protobuf-wire-field? protobuf-wire-field-number
           protobuf-wire-field-wire-type protobuf-wire-field-value
           protobuf-wire-field-raw)
-  (import (cspp chez) (cspp utils))
+  (import (cspp chez)
+          (cspp utils))
 
   (define protobuf-max-field-number 536870911)
   (define protobuf-max-u64 #xffffffffffffffff)

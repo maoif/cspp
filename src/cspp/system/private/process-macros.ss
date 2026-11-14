@@ -3,7 +3,8 @@
   ;; process operations compatible with scheduler suspension or worker migration.
   (export process-run process-run/check process-capture process-capture/check
           process-run-shell process-capture-shell)
-  (import (cspp chez) (cspp system private process-backend))
+  (import (cspp chez)
+          (cspp system private process-backend))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; process macros

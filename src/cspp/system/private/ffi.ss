@@ -1,6 +1,8 @@
 (library (cspp system private ffi)
   (export ffi-result-ref)
-  (import (cspp chez) (cspp utils) (cspp system errors))
+  (import (cspp chez)
+          (cspp utils)
+          (cspp system errors))
 
   (define $context-or-empty
     (lambda (x)

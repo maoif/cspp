@@ -1,4 +1,6 @@
-(import (cspp) (cspp path) (cspp system))
+(import (cspp)
+        (cspp path)
+        (cspp system))
 
 (define same-path?
   (lambda (p s)

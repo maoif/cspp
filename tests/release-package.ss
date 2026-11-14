@@ -1,4 +1,6 @@
-(import (cspp) (cspp file) (cspp format json5))
+(import (cspp)
+        (cspp file)
+        (cspp format json5))
 
 (load "tools/package-release.ss")
 

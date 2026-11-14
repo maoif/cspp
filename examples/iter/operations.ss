@@ -1,4 +1,5 @@
-(import (cspp) (cspp iter))
+(import (cspp)
+        (cspp iter))
 (load "examples/common.ss")
 
 (example-run!

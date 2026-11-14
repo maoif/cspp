@@ -1,7 +1,11 @@
 ;; Run from the repository root: ./cspp --script=benchmarks/navigator.ss
 ;; Five samples after a warmup; each sample starts after a collection.
 ;; CPU time includes collections. Allocation includes bytes reclaimed by collections.
-(import (cspp) (cspp navigator) (cspp hashset) (cspp treemap) (cspp treeset))
+(import (cspp)
+        (cspp navigator)
+        (cspp hashset)
+        (cspp treemap)
+        (cspp treeset))
 (load "benchmarks/common.ss")
 (define results '())
 (define measure

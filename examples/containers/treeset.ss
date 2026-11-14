@@ -1,4 +1,5 @@
-(import (cspp) (cspp treeset))
+(import (cspp)
+        (cspp treeset))
 (load "examples/common.ss")
 
 (example-run!

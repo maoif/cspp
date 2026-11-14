@@ -1,4 +1,6 @@
-(import (cspp) (cspp system) (cspp concurrency))
+(import (cspp)
+        (cspp system)
+        (cspp concurrency))
 
 (define check
   (lambda (value)

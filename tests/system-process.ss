@@ -1,4 +1,6 @@
-(import (cspp) (cspp system) (only (cspp system process expert) $wait-status->exit-status))
+(import (cspp)
+        (cspp system)
+        (only (cspp system process expert) $wait-status->exit-status))
 
 (mat process-rejected-capture-result
 

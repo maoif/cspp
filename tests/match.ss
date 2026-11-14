@@ -1,4 +1,7 @@
-(import (cspp) (cspp array) (cspp private match) (only (cspp private irregex) irregex))
+(import (cspp)
+        (cspp array)
+        (cspp private match)
+        (only (cspp private irregex) irregex))
 
 (define-match-expander tagged-expander
   (lambda (pp rho expr-id pat body fk)
@@ -1265,7 +1268,8 @@
      (begin
        (eval '(library (match-tests local-record-capture)
                 (export run)
-                (import (cspp) (cspp array))
+                (import (cspp)
+                        (cspp array))
                 (define run
                   (lambda ()
                     (define-record-type P (fields value))
@@ -1344,7 +1348,8 @@
      (begin
        (eval '(library (match-tests native-capture-bindings)
                 (export run)
-                (import (cspp) (cspp array))
+                (import (cspp)
+                        (cspp array))
                 (define run
                   (lambda ()
                     (define-record-type P (fields value))
@@ -1671,7 +1676,8 @@
      (let ([definition-environment (copy-environment (environment '(cspp) '(cspp array)) #t)])
        (eval '(library (match-tests public-adt-types)
                 (export Point Tree Empty Leaf Other OtherLeaf)
-                (import (cspp) (cspp array))
+                (import (cspp)
+                        (cspp array))
                 (record Point (x y))
                 (datatype Tree [Empty] [Leaf value])
                 (datatype Other [OtherLeaf value]))

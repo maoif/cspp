@@ -5,4 +5,5 @@
           system-permission-error? make-system-permission-error system-timeout-error?
           make-system-timeout-error system-exit-error? make-system-exit-error
           raise-system-error raise-system-unsupported ffi-result-ref)
-  (import (cspp system errors) (cspp system private ffi)))
+  (import (cspp system errors)
+          (cspp system private ffi)))

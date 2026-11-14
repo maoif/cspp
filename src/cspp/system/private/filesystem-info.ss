@@ -12,7 +12,10 @@
           filesystem-info-files-free
           filesystem-info-read-only?
           filesystem-total-bytes filesystem-free-bytes filesystem-available-bytes)
-  (import (cspp chez) (cspp system private contracts) (cspp system private common) (cspp utils))
+  (import (cspp chez)
+          (cspp system private contracts)
+          (cspp system private common)
+          (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; filesystem information

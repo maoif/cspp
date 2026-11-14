@@ -1,4 +1,6 @@
-(import (cspp) (cspp system) (cspp system private native))
+(import (cspp)
+        (cspp system)
+        (cspp system private native))
 
 ;; Exercise the shared wrapper with real native process state. Only the timer scheduling and
 ;; disposal counter are injected; the native prepare/step/result/dispose operations are unchanged.

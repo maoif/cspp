@@ -1,4 +1,5 @@
-(import (cspp) (cspp optional-library))
+(import (cspp)
+        (cspp optional-library))
 
 (define mat-requires-test-ran? #f)
 

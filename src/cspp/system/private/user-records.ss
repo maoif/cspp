@@ -6,7 +6,9 @@
 
           ;; group records
           make-unix-group unix-group? unix-group-name unix-group-passwd unix-group-gid unix-group-mems)
-  (import (cspp chez) (cspp utils) (cspp system private contracts))
+  (import (cspp chez)
+          (cspp utils)
+          (cspp system private contracts))
 
   #|proc:unix-user?
   The `unix-user?` procedure returns `#t` when its argument is a Unix user record, otherwise `#f`.

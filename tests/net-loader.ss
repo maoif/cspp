@@ -1,4 +1,6 @@
-(import (cspp) (cspp optional-library) (cspp net)
+(import (cspp)
+        (cspp optional-library)
+        (cspp net)
         (cspp net private lws-ffi))
 
 (define check-unavailable

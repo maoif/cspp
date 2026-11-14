@@ -1,4 +1,9 @@
-(import (cspp) (cspp path) (cspp net) (cspp net http) (cspp logging) (cspp rich))
+(import (cspp)
+        (cspp path)
+        (cspp net)
+        (cspp net http)
+        (cspp logging)
+        (cspp rich))
 (load "examples/common.ss")
 (load "examples/net/transfer-progress.ss")
 

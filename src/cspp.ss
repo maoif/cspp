@@ -2,38 +2,52 @@
   (export)
   ;; Compile and retain explicit libraries without adding their bindings to (cspp).
   (import (cspp chez)
-          (cspp regex)
-          (cspp transducer)
-          (cspp io)
-          (cspp file)
-          (cspp path)
-          (cspp glob)
-          (cspp navigator)
-          (cspp system)
-          (cspp hashset)
-          (cspp dlist)
+
+          ;; Collections.
           (cspp array)
-          (cspp treemap)
-          (cspp treeset)
           (cspp bitvec)
           (cspp bittree)
-          (cspp stack)
-          (cspp queue)
-          (cspp heap)
+          (cspp dlist)
           (cspp dset)
-          (cspp uuid)
+          (cspp hashset)
+          (cspp heap)
+          (cspp queue)
+          (cspp stack)
+          (cspp treemap)
+          (cspp treeset)
+
+          ;; Traversal and text processing.
+          (cspp navigator)
+          (cspp regex)
+          (cspp transducer)
+
+          ;; Files, system services, and native libraries.
+          (cspp file)
+          (cspp glob)
           (cspp hash)
-          (cspp format)
+          (cspp io)
           (cspp optional-library)
+          (cspp path)
+          (cspp system)
+          (cspp uuid)
+
+          ;; Parsing and data formats.
+          (cspp format)
+          (cspp parser)
+
+          ;; Cryptography, networking, and concurrency.
+          (cspp concurrency)
           (cspp crypto)
           (cspp net)
-          (cspp concurrency)
-          (cspp cli)
-          (cspp rich)
-          (cspp logging)
+
+          ;; Application support and development tools.
           (cspp benchmark)
+          (cspp cli)
+          (cspp logging)
+          (cspp rich)
           (cspp test)
-          (cspp parser)
+
+          ;; Experimental fiber APIs.
           (cspp concurrency fiber)
           (cspp concurrency fiber-net))
 
@@ -43,8 +57,10 @@
                   (cspp control)
                   (cspp match)
                   (cspp adt)
+
                   (cspp list)
                   (cspp string)
                   (cspp vector)
+
                   (cspp for)
                   (cspp iter))))
