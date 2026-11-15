@@ -1,4 +1,5 @@
-(import (cspp))
+(import (cspp)
+        (cspp treemap))
 (load "benchmarks/common.ss")
 
 ;; Deterministic permutation, generated outside measured regions.

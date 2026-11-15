@@ -22,9 +22,17 @@
           random-char random-string random-symbol random-datum random-list random-box
           random-bytevector random-u8vec
 
-          define-flags flag-any-set? flag-all-set? flag-set flag-reset)
-  (import (chezscheme)
-          (cspp internal))
+          define-flags flag-any-set? flag-all-set? flag-set flag-reset
+
+          getenv putenv
+          sleep milisleep nanosleep sleep-seconds sleep-milliseconds sleep-nanoseconds)
+  (import (cspp chez)
+          (rename (only (chezscheme) sleep) (sleep $chez-sleep))
+          (cspp private libcspp)
+          (cspp private common))
+
+  ;; Referencing the runtime's readiness binding invokes its initialization body.
+  (define $libcspp-loaded? libcspp-loaded?)
 
   #|macro:define-who
   The `define-who` macro defines `id` from an expression with `who` bound to the name symbol.
@@ -880,4 +888,130 @@
        (let ([who 'flag-reset] [bits mask] [value x])
          (pcheck-who who ([$flag-integer? bits value]) (logand (lognot bits) value))))))
 
-  )
+;;;;===----------------------------------------------------------------------===
+;;;; environment
+;;;;===----------------------------------------------------------------------===
+
+  (define $environment-name?
+    (lambda (name)
+      (and (string? name) (> (string-length name) 0)
+           (let loop ([index 0])
+             (or (= index (string-length name))
+                 (and (not (memv (string-ref name index) '(#\nul #\=)))
+                      (loop (+ index 1))))))))
+
+  (define $environment-string?
+    (lambda (value)
+      (and (string? value)
+           (let loop ([index 0])
+             (or (= index (string-length value))
+                 (and (not (char=? (string-ref value index) #\nul))
+                      (loop (+ index 1))))))))
+
+  (define $environment-result
+    (lambda (who result)
+      (if (eq? (vector-ref result 0) 'ok)
+          (vector-ref result 1)
+          (errorf who "~a" (vector-ref result 3)))))
+
+  #|proc:getenv
+  The `getenv` procedure returns the string value of environment variable `name`, or `#f`.
+  `name` is a string without NUL characters. The result is a fresh snapshot.
+  CSPP environment reads, writes, and inherited process snapshots share a lock.
+  Direct libc or Chez environment mutations outside CSPP require caller synchronization.
+  |#
+  (define getenv
+    (lambda (name)
+      (pcheck ([$environment-string? name])
+        ($environment-result 'getenv
+          ((foreign-procedure "cspp_environment_get" (utf-8) ptr) name)))))
+
+  #|proc:putenv
+  The `putenv` procedure sets environment variable `name` to string `value`.
+  `name` is nonempty and contains neither NUL nor `=`; `value` contains no NUL.
+  The return value is unspecified. Writes synchronize with CSPP readers and process snapshots.
+  Direct libc or Chez environment mutations outside CSPP require caller synchronization.
+  |#
+  (define putenv
+    (lambda (name value)
+      (pcheck ([$environment-name? name] [$environment-string? value])
+        ($environment-result 'putenv
+          ((foreign-procedure "cspp_environment_set" (utf-8 utf-8) ptr) name value)))))
+
+;;;;===----------------------------------------------------------------------===
+;;;; time
+;;;;===----------------------------------------------------------------------===
+
+  (define $maximum-sleep-seconds
+    ((foreign-procedure "cspp_sleep_max_seconds" () unsigned-64)))
+
+  (define $sleep-duration?
+    (lambda (duration units-per-second)
+      (and (natural? duration)
+           (<= (quotient duration units-per-second) $maximum-sleep-seconds))))
+
+  #|proc:sleep
+  The `sleep` procedure pauses the current thread for `seconds` seconds.
+  `seconds` is an exact nonnegative integer within the native `time_t` range.
+  As with Chez Scheme's sleep, a signal may interrupt the pause and cause an early return.
+  Interrupted sleeps are not retried.
+  Larger durations raise an argument error. The return value is unspecified.
+  |#
+  (define-who sleep
+    (lambda (seconds)
+      (pcheck-who who ([(lambda (value) ($sleep-duration? value 1)) seconds])
+        ($chez-sleep (make-time 'time-duration 0 seconds)))))
+
+  #|proc:milisleep
+  The `milisleep` procedure pauses the current thread for `milliseconds` milliseconds.
+  `milliseconds` is an exact nonnegative integer whose whole seconds fit native `time_t`.
+  As with Chez Scheme's sleep, a signal may interrupt the pause and cause an early return.
+  Interrupted sleeps are not retried.
+  Larger durations raise an argument error. The return value is unspecified.
+  |#
+  (define-who milisleep
+    (lambda (milliseconds)
+      (pcheck-who who ([(lambda (value) ($sleep-duration? value 1000)) milliseconds])
+        ($chez-sleep (make-time 'time-duration
+                  (* 1000000 (modulo milliseconds 1000))
+                  (quotient milliseconds 1000))))))
+
+  #|proc:nanosleep
+  The `nanosleep` procedure pauses the current thread for `nanoseconds` nanoseconds.
+  `nanoseconds` is an exact nonnegative integer whose whole seconds fit native `time_t`.
+  As with Chez Scheme's sleep, a signal may interrupt the pause and cause an early return.
+  Interrupted sleeps are not retried.
+  Larger durations raise an argument error. The return value is unspecified.
+  |#
+  (define-who nanosleep
+    (lambda (nanoseconds)
+      (pcheck-who who ([(lambda (value) ($sleep-duration? value 1000000000)) nanoseconds])
+        ($chez-sleep (make-time 'time-duration
+                  (modulo nanoseconds 1000000000)
+                  (quotient nanoseconds 1000000000))))))
+
+  #|proc:sleep-seconds
+  The `sleep-seconds` procedure pauses the current thread for `seconds` seconds.
+  The `seconds` parameter is a natural number of seconds.
+  It is an alias of `sleep`; the return value is unspecified.
+  A signal may interrupt the pause and cause an early return; interrupted sleeps are not retried.
+  |#
+  (define sleep-seconds sleep)
+
+  #|proc:sleep-milliseconds
+  The `sleep-milliseconds` procedure pauses the current thread for `milliseconds` milliseconds.
+  The `milliseconds` parameter is a natural number of milliseconds.
+  It is an alias of `milisleep`; the return value is unspecified.
+  A signal may interrupt the pause and cause an early return; interrupted sleeps are not retried.
+  |#
+  (define sleep-milliseconds milisleep)
+
+  #|proc:sleep-nanoseconds
+  The `sleep-nanoseconds` procedure pauses the current thread for `nanoseconds` nanoseconds.
+  The `nanoseconds` parameter is a natural number of nanoseconds.
+  It is an alias of `nanosleep`; the return value is unspecified.
+  A signal may interrupt the pause and cause an early return; interrupted sleeps are not retried.
+  |#
+  (define sleep-nanoseconds nanosleep)
+
+)

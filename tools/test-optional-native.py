@@ -6,7 +6,7 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-FILES = ['src/cspp/net/ffi.ss', 'src/cspp/net/lws/ffi.ss', 'src/cspp/crypto/ffi.ss',
+FILES = ['src/cspp/net/private/ffi.ss', 'src/cspp/net/private/lws-ffi.ss', 'src/cspp/crypto/ffi.ss',
          'src/cspp/hash.ss', 'src/cspp/uuid.ss']
 PATTERN = re.compile(r'\(foreign-procedure\s+"([^"]+)"\s+\(([^()]*)\)\s+([^()\s]+)\)')
 
@@ -44,7 +44,7 @@ def library(symbol):
 def main():
     sources = list((ROOT / 'src/cspp/c').rglob('*.c')) + list((ROOT / 'src/cspp/c').rglob('*.h'))
     for source in sources:
-        if source.name == 'lws_http2_fixture.c':
+        if source.name.endswith('_fixture.c'):
             continue
         assert not re.search(r'\b(dl(?:open|close)|dlsym)\s*\(', source.read_text()), source
     symbols = declarations()

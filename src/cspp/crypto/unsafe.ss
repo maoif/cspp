@@ -6,7 +6,7 @@
   (import (cspp chez)
           (cspp utils)
           (cspp crypto ffi)
-          (cspp crypto private))
+          (cspp crypto common))
 
   (define unsafe-hash-algorithms '(md5 sha1))
 
@@ -17,7 +17,7 @@
 
   #|proc:unsafe-hash-bytevector
   The `unsafe-hash-bytevector` procedure returns a digest bytevector for `bv` using the
-  legacy algorithm symbol `alg` (`md5` or `sha1`). Optional `start` and `stop` select the
+  algorithm symbol `alg` (`md5` or `sha1`). Optional `start` and `stop` select the
   half-open byte slice, defaulting to zero and the bytevector length. Invalid inputs or
   unavailable native algorithms raise errors. These algorithms are unsuitable for secure hashing.
   |#
@@ -40,7 +40,7 @@
 
   #|proc:unsafe-hash-string
   The `unsafe-hash-string` procedure returns a digest bytevector for string `str` using
-  the legacy algorithm symbol `alg` (`md5` or `sha1`). Each character uses native-endian
+  the algorithm symbol `alg` (`md5` or `sha1`). Each character uses native-endian
   UTF-32 without a byte-order mark. Optional `start` and `stop` select the half-open
   character slice, defaulting to zero and the string length. Invalid inputs or unavailable
   native algorithms raise errors. These algorithms are unsuitable for secure hashing.
@@ -63,7 +63,7 @@
                  ans))]))
 
   #|proc:unsafe-hash
-  The `unsafe-hash` procedure returns the legacy digest bytevector of string or bytevector
+  The `unsafe-hash` procedure returns a digest bytevector of string or bytevector
   `x` using the algorithm symbol `alg` (`md5` or `sha1`). Strings use native-endian UTF-32
   without a byte-order mark. Invalid inputs and native backend failures raise errors.
   These algorithms are unsuitable for security-sensitive hashing.

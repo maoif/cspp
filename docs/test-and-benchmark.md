@@ -40,7 +40,9 @@ the returned vector. For workers consisting of successful assertions, `#t` is th
 value, so any other outcome must be raised in the controlling body:
 
 ```scheme
-(import (cspp))
+(import (cspp)
+        (cspp test)
+        (cspp concurrency))
 
 (test-case parallel-addition
   (let ([outcomes

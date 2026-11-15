@@ -23,7 +23,7 @@
   (import (cspp chez)
           (cspp utils)
           (cspp crypto ffi)
-          (cspp crypto private))
+          (cspp crypto common))
 
   (define aead-algorithms '(aes-128-gcm aes-256-gcm chacha20-poly1305))
 

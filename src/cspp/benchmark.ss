@@ -56,7 +56,6 @@
           instantiate-benchmark-template benchmark-options)
   (import (cspp chez)
           (cspp utils)
-          (cspp internal)
           (cspp rich))
 
   #|doc
@@ -103,7 +102,7 @@
     (fields iterations sstats cost-center counters))
 
   (define-record-type ($benchmark-result $mk-benchmark-result benchmark-result?)
-    ;; Internal samples #f preserves the absence of sample data in historical baselines.
+    ;; Internal samples #f represents a summary-only baseline without sample data.
     (fields name args template-args samples summary counters error))
 
   (define-record-type ($benchmark-config $mk-benchmark-config benchmark-config?)
@@ -1544,7 +1543,7 @@ Generated symbols retain their identity regardless of the ambient gensym printer
 The `benchmark-csv-reporter` procedure returns a reporter that writes benchmark
 results as comma-separated values. Each row contains the result name, argument
 data, template data, summary means, counters, and whether the result captured an
-error. Missing metrics or means in legacy summaries are reported as zero.
+error. Missing summary metrics or means are reported as zero.
 |#
   (define benchmark-csv-reporter
     (lambda ()
@@ -2620,11 +2619,11 @@ Formatted error conditions retain their format marker for reporting after reload
                         (close-output-port out)))))))))
 
   #|proc:benchmark-load-baseline
-The `benchmark-load-baseline` procedure reads benchmark results previously
+The `benchmark-load-baseline` procedure reads benchmark results
 written by `benchmark-save-baseline` from string file `path`, returning a list of
 result records. Malformed records and negative or nonintegral sample measurements
-raise an error identifying the field. Omitted fields retain legacy defaults;
-historical summary-only records are preserved without synthesizing samples.
+raise an error identifying the field. Optional fields use their defaults;
+summary-only records are preserved without synthesizing samples.
 |#
   (define benchmark-load-baseline
     (lambda (path)
@@ -2693,8 +2692,8 @@ Finite inputs use exact arithmetic on their represented values to avoid intermed
   error naming the option, including when the result lists are empty or do not match.
   The returned list excludes results with captured errors or without a finite real
   mean for the selected metric. Runs with no samples are excluded, including after
-  baseline save/load. Historical baselines without sample data remain comparable;
-  their omission of sample data is preserved when saved. A measured zero is comparable.
+  baseline save/load. Summary-only baselines without sample data are comparable;
+  saving them preserves the absence of sample data. A measured zero is comparable.
   Percentage magnitude determines significance; the absolute change determines direction.
   |#
   (define benchmark-compare-results
@@ -2735,7 +2734,7 @@ Finite inputs use exact arithmetic on their represented values to avoid intermed
                           (for-each
                             (lambda (result)
                               (let ([key ($result-key result)])
-                                ;; Keep the first match, as the original ordered search did.
+                                ;; Use the first baseline result for each comparison key.
                                 (unless (hashtable-contains? index key)
                                   (hashtable-set! index key result))))
                             baseline)

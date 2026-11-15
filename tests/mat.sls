@@ -15,7 +15,7 @@
 
 ;(eval-when (compile load eval) (current-expand sc-expand))
 (import (only (cspp optional-library) optional-library-info optional-library-available?)
-        (only (cspp utils) pcheck natural?))
+        (cspp utils))
 
 (eval-when (load eval)
   (define mat-requires-transform
@@ -621,7 +621,7 @@ An optional natural-number `count` sets the counter; parameterize it to isolate 
         (close-port p))
       (when (file-exists? objfn)
         (unless (time>? (file-modification-time srcfn) (file-modification-time objfn))
-          (sleep (make-time 'time-duration 1000000 1))
+          (milisleep 1001)
           (loop))))
     #t))
 

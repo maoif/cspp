@@ -1,5 +1,7 @@
 (import (cspp)
-        (cspp net lws ffi))
+        (cspp optional-library)
+        (cspp net)
+        (cspp net private lws-ffi))
 
 (define check-unavailable
   (lambda (name expected)

@@ -1,5 +1,8 @@
 (import (cspp)
-        (cspp parser csv))
+        (cspp file)
+        (cspp parser)
+        (cspp system)
+        (cspp format csv))
 
 (include "parser-external-tools.ss")
 (include "parser-test-support.ss")

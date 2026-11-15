@@ -33,13 +33,14 @@
   (import (cspp chez)
           (cspp utils)
           (only (cspp list) make-list-builder)
-          (cspp rich private lines)
-          (cspp rich private render)
-          (cspp rich private common)
+          (cspp rich lines)
+          (cspp rich render)
+          (cspp rich common)
           (cspp rich style)
           (cspp rich segment)
           (cspp rich renderable)
           (cspp rich pretty)
+          ;; Install the tree renderer used by rich-print.
           (cspp rich tree))
 
   (define-record-type rich-console-record
@@ -220,7 +221,7 @@
   The `rich-console-color-system-set!` procedure sets `console` to `color-system` and
   returns an unspecified value. The default `'auto` detects terminal output; `'none`
   suppresses ANSI. Explicit `'standard`, `'256`, and `'truecolor` enable ANSI even on
-  nonterminal ports. RGB colors currently use truecolor sequences in each enabled mode.
+  nonterminal ports. RGB colors use truecolor sequences in each enabled mode.
   |#
   (define rich-console-color-system-set!
     (lambda (console color-system)

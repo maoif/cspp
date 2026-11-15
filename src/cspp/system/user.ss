@@ -51,5 +51,6 @@
           current-egid
           current-user
           current-group)
-  (import (cspp system user records) (cspp system user credentials)
-          (cspp system user lookup)))
+  (import (cspp system private user-records)
+          (cspp system private user-credentials)
+          (cspp system private user-lookup)))

@@ -13,7 +13,8 @@ def contracts():
     # Use the real exported wrappers, replacing only native procedures with a safe stub.
     # Every invalid-object case must raise pcheck, before either availability or native entry.
     script = r'''
-(import (cspp chez) (cspp utils))
+(import (cspp chez)
+        (cspp utils))
 (define require-optional-library (lambda (who library) (values)))
 (define replace-native
   (lambda (form)
@@ -75,7 +76,9 @@ def contracts():
     ]
     if '--enabled' in sys.argv:
         script = r'''
-(import (cspp chez) (cspp crypto ffi) (cspp optional-library))
+(import (cspp chez)
+        (cspp crypto ffi)
+        (cspp optional-library))
 (unless (optional-library-available? (optional-library-info 'openssl))
   (error 'test-native-review "OpenSSL must be enabled for real contract verification"))
 (define evaluation-environment (environment '(cspp chez) '(cspp crypto ffi)))

@@ -1,14 +1,15 @@
 (import (cspp chez)
-        (cspp net http private))
+        (cspp net)
+        (cspp net private http))
 
 (define net-environment
   (environment '(cspp net)))
 
 (define net-ffi-environment
-  (environment '(cspp net ffi)))
+  (environment '(cspp net private ffi)))
 
 (define net-private-environment
-  (environment '(cspp net private)))
+  (environment '(cspp net private common)))
 
 (define retained-http-exports
   '(http-request? make-http-request http-request-method http-request-uri http-request-headers

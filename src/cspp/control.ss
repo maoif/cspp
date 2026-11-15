@@ -3,7 +3,7 @@
           compose compose1 >>> >>>1
           sect sect+
           let/cc let/1cc)
-  (import (chezscheme)
+  (import (cspp chez)
           (cspp utils))
 
   ;; User examples and multiple-value contracts: docs/control-utils.md.

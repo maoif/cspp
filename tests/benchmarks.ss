@@ -1,4 +1,6 @@
-(import (cspp))
+(import (cspp)
+        (cspp benchmark))
+(load "../benchmarks/common.ss")
 
 (define benchmark-summary-has?
   (lambda (summary key)
@@ -34,3 +36,11 @@
                  (car (benchmark-result-samples result)))
                 #t
                 #f))))
+
+(mat benchmark-shared-table-rendering
+
+     (let ([text
+             (with-output-to-string
+               (lambda ()
+                 (benchmark-print-table! "Counts" '(("Count" . right)) '(("42")))))])
+       (and (string-contains? text "Count") (string-contains? text "42"))))

@@ -1,12 +1,14 @@
 # Chez Scheme Programming Platform (CSPP)
 
 CSPP provides libraries for Chez Scheme and a Make-based build with a `cspp` launcher.
-Import `(cspp)` for the public libraries, or import individual libraries as needed.
+Import `(cspp)` for the default language environment; import other libraries explicitly.
+The default exports are `chez`, `utils`, `control`, `match`, `adt`, `list`, `string`,
+`vector`, `for`, and `iter`. See [library imports](docs/libraries.md).
 
 ## Download and run
 
 Download a Linux `.tar.gz` archive for your architecture from the
-[`master` prerelease](https://github.com/maoif/cspp/releases/tag/master): x64, arm64,
+[master snapshots](https://github.com/maoif/cspp/releases): x64, arm64,
 riscv64, or loongarch64. Extract it, enter the extracted directory, and start CSPP:
 
 ```sh
@@ -19,12 +21,13 @@ See [Linux packages](docs/releases.md) for compatibility and release details.
 
 ## Features
 
-- **Language tools:** algebraic data types and records, pattern matching, comprehensions,
+- **Language tools:** algebraic data types and records, pattern matching,
   `for` loops, iterators, transducers, data navigator, control helpers, and list, string, and vector utilities.
 - **Collections:** arrays, bit vectors, bit trees, doubly linked lists, sets, heaps, queues,
   stacks, and ordered maps and sets.
-- **Parsing and formats:** parser combinators, CSV, JSON5, TOML, XML, Scheme, ELF, WebAssembly,
-  and Protocol Buffers.
+- **Parsing:** parser combinators through `(cspp parser)` or `(cspp parser combinator)`.
+- **Formats:** CSV, JSON5, TOML, XML, Scheme, ELF, WebAssembly, and Protocol Buffers through
+  `(cspp format)` or focused libraries such as `(cspp format toml)` and `(cspp format protobuf)`.
 - **Files and system APIs:** file and port helpers, paths, globbing, processes,
   signals, filesystem and user information, UUIDs, hashes, and optional-library probes.
 - **Networking:** sockets, IP and DNS helpers, URIs, TLS, HTTP/HTTPS, FTP/FTPS, SSH, SFTP, SCP,
@@ -77,7 +80,9 @@ make run
 Exit the REPL with `(exit)` or Ctrl + d. Import CSPP in a Scheme program:
 
 ```scheme
-(import (cspp))
+(import (cspp)
+        (cspp io)
+        (cspp transducer))
 
 (displayln
   (into 'list
@@ -117,7 +122,8 @@ APIs, assertions in worker threads and fibers, failure propagation, and measurem
 
 - [Build, installation, and testing](docs/build.md)
 - [Examples and benchmarks](examples/README.md)
-- [Cryptography and API migration](docs/crypto.md)
+- [Data structures and traversal](docs/data-structures.md)
+- [Cryptography](docs/crypto.md)
 - [Command-line parsing](docs/cli.md)
 - [Processes, signals, and system APIs](docs/system.md)
 - [Control and utility APIs](docs/control-utils.md)

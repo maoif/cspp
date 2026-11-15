@@ -53,8 +53,8 @@ inner and outer `:break`, whole-loop `:stop`, accumulator replacement, and resul
 | `examples/containers/dlist.ss` | `--values=3,1,2` | mutable doubly-linked list |
 | `examples/containers/array.ss` | `--size=8` | generic, fixnum, and flonum arrays |
 
-Heap and dlist currently provide generic APIs only. Typed variants are shown only for collections
-that currently expose them.
+Heap and dlist provide generic APIs only. The treeset, treemap, and array examples also show
+their typed variants.
 
 ## Networking
 
@@ -121,7 +121,7 @@ successful HTTP response. It sends `User-Agent: cspp-wget` by default; override 
 integer for a different limit. Large files stream to disk without retaining the entire body in
 memory. Interrupted downloads are removed; resume is not supported.
 
-Existing positional examples also accept both help flags through `(cspp cli)`. These include
+Positional examples accept both help flags through `(cspp cli)`. These include
 `http-download.ss URI [auto|http/1.1|h2]`, `echo-{client,server}-grpc.ss [HOST PORT]`,
 `ftp-client.ss HOST PORT USER PASSWORD`, `sftp-client.ss HOST PORT USER AGENT-OR-PRIVATE-KEY`,
 and the commands under `examples/net/file-transfer/`. Their lifecycle logs are opt-in with
@@ -170,6 +170,6 @@ checks use temporary files, host keys, certificates, loopback listeners, and bou
 
 Run `CSPP_EXAMPLE_TEST_VERBOSE=1 python3 tests/integration/examples.py` for individual example
 checks, `python3 tests/ssh-examples-integration.py` for SSH/SCP/forwarding, and
-`CSPP_TRANSFER_MIB=1 examples/net/file-transfer/verify-local-transfers.sh` for the existing ten
+`CSPP_TRANSFER_MIB=1 examples/net/file-transfer/verify-local-transfers.sh` for the ten
 protocol transfer matrix. `python3 tests/ssh-examples-integration.py --password` additionally uses
 the optional Python Paramiko package to verify password auth without modifying a system account.

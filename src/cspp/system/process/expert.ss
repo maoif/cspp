@@ -45,12 +45,11 @@
 
           $validate-process-options $wait-status->exit-status)
   (import (cspp chez)
-          (cspp system common)
-          (only (cspp system time) milisleep)
-          (cspp system process status)
-          (cspp system process private)
-          (cspp system native)
-          (cspp system private)
+          (cspp system private common)
+          (cspp system private process-status)
+          (cspp system private process-options)
+          (cspp system private native)
+          (cspp system private contracts)
           (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===
@@ -474,7 +473,7 @@
   Do not call this process operation inside a fiber; use a separate Scheme thread.
   The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
   Command strings must contain no NUL characters.
-  The `options` parameter is reserved and should currently be the empty list.
+  The `options` parameter is reserved and must be the empty list.
   The procedure returns process objects immediately and does not wait for them.
   Callers should wait for or terminate the returned processes.
   Stdin for the first command, stdout for the final command, and all stderrs are inherited.

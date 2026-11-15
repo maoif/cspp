@@ -1,4 +1,4 @@
-# `(cspp cli)` Stable Core
+# Command-line parsing
 
 `(cspp cli)` is a library-first command-line parser. Programs construct a
 command tree, configure options and subcommands, and call
@@ -6,11 +6,9 @@ command tree, configure options and subcommands, and call
 failures signal Scheme errors. Built-in help prints to `current-output-port`
 and returns without running command actions.
 
-This document describes the stable core implemented in `src/cspp/cli.ss`.
-
 ## Scope
 
-Stable core includes:
+Supported features:
 
 - command and option records with procedural setters
 - reusable option groups
@@ -25,7 +23,7 @@ Stable core includes:
 - built-in help output
 - macro constructors for commands, options, option groups, and enums
 
-Stable core excludes:
+Unsupported features:
 
 - environment variables
 - config files
@@ -38,10 +36,9 @@ Stable core excludes:
 - short option grouping such as `-abc`
 - executable-name dispatch for multi-personality commands
 
-The excluded fields and flags that already exist on command and option records
-are retained as metadata when useful. In stable core, `multi-personality?` is
-validated as top-command-only metadata; it does not yet dispatch on executable
-name.
+Some command and option fields store metadata without affecting parsing or rendering.
+For example, `multi-personality?` is accepted only on the top command and does not
+dispatch on executable name.
 
 ## Data Model
 
@@ -63,7 +60,7 @@ Commands contain:
   and category
 - an optional exec procedure
 - ordered option and subcommand builders
-- stable-core behavior flags such as `maybe-no-subcommand?`
+- behavior flags such as `maybe-no-subcommand?`
 - accepted metadata flags such as `multi-personality?`, `flatten-help?`,
   `trace?`, and `quit?`
 
@@ -97,8 +94,8 @@ Changing an option from `parser-bool` to a non-bool parser automatically changes
 
 accepts `--output=file` without also setting `value-number`.
 
-`option-name-set!` updates inferred short and long spellings only when they
-still match the old inferred values. Explicit spellings are preserved.
+`option-name-set!` updates short and long spellings when they match the spellings
+inferred from the option's name before the call. Explicit spellings are preserved.
 
 Short names are one-character strings and cannot be `-` or `=`. Long names are
 strings that are nonempty, do not start with `-`, and do not contain `=`.
@@ -318,8 +315,7 @@ Enum specs may be symbols or lists beginning with a symbol:
 (parser-enum 'red '[green :value 2] '[blue :value 3 :help "Blue"])
 ```
 
-`:help` is accepted as metadata in enum specs. It does not affect parsing in
-stable core.
+`:help` is accepted as metadata in enum specs. It does not affect parsing.
 
 ## Built-In Help
 
@@ -459,8 +455,7 @@ Supported command keywords:
 - `:options`
 - `:subcommands`
 
-Unknown command keywords are syntax errors. Out-of-stable-core features are not
-given special macro forms.
+Unknown command keywords are syntax errors. Unsupported features have no special macro forms.
 
 ## Testing
 

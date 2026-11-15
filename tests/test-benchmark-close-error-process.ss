@@ -1,4 +1,6 @@
-(import (cspp))
+(import (cspp)
+        (cspp benchmark)
+        (cspp test))
 
 ;; The parent applies a zero file-size limit so buffered output fails during close.
 (define (descriptor-count) (length (directory-list "/proc/self/fd")))

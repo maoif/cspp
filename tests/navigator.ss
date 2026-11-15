@@ -1,4 +1,16 @@
-(import (cspp) (cspp concurrency fiber))
+(import (cspp)
+        (cspp transducer)
+        (cspp path)
+        (cspp navigator)
+        (cspp hashset)
+        (cspp dlist)
+        (cspp array)
+        (cspp treemap)
+        (cspp treeset)
+        (cspp bitvec)
+        (cspp bittree)
+        (cspp concurrency)
+        (cspp concurrency fiber))
 
 ;; A type/range error must name its procedure rather than report a memory fault.
 (define navigator-type-error?

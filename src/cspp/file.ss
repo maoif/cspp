@@ -52,12 +52,11 @@
           (cspp private os)
           (cspp private file)
           (cspp path)
-          (cspp internal)
+          (cspp private common)
           (cspp utils)
           (only (cspp string) string-search)
           (cspp list)
-          (cspp iter)
-          (cspp io))
+          (cspp iter))
 
   #|doc
   Filesystem path arguments must be strings without NUL characters. Invalid names raise

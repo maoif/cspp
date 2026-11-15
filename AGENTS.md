@@ -82,6 +82,10 @@ For public APIs that are higher-order functions, their doc must describe
 the signature of their function arguments.
 
 Group exports in libraries when they are many.
+Write library imports one library per line.
+CSPP libraries import Chez through `(cspp chez)`. The utility implementation may import only
+Chez's original `sleep` under a private name; it must not export that binding.
+Import utilities as `(cspp utils)` without selecting individual names.
 
 Do not by default add design docs, specs, plans, handoffs to git.
 
@@ -183,19 +187,14 @@ Append benchmark numbers in commit message for performance optimization changes.
 ## About some files
 
 `src/cspp.ss`:
-this is the main file through which users can import the entirety of cspp and the ChezScheme compiler can
-recursively compile all cspp libs imported when just compiling this file (when `(compile-imported-libraries #t)`
-is set).
+this file defines the default language environment and is the build entry point.
+It re-exports only chez, utils, control, match, adt, list, string, vector, for, and iter.
+Other public libraries must be imported explicitly by users.
 
-When a new lib is written under `src/cspp/`, say, `new-lib`, its import entry can be added in `src/cspp.ss`
-as `(cspp new-lib)`.
-Only add top-level libs in `src/cspp.ss`.
-
-Specifically, `(cspp concurrency fiber)` and `(cspp parser combinator)` are two *experimental* libs that
-are imported but NOT exported, just so they can be compiled when building cspp. A consequence of this is
-that their wpo (whole program optimization) files have to be seperately fed into `compile-whole-library` in
-`Makefile` and the resulting `fiber.lib` and `combinator.lib` have to be seperately loaded in `src/cspp.ss` for
-them to be used.
+Add new top-level libraries to its ordinary import list so compiling `src/cspp.ss`
+recursively compiles them. Add to its re-exports only when changing the default environment
+intentionally. `compile-whole-library` retains all reachable libraries for explicit imports
+in `cspp.lib`, including the experimental fiber and parser combinator libraries.
 
 `src/cspp-launcher.ss`:
 `cspp` cli template, whose content is filled when building `cspp` executable.

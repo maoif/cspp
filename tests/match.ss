@@ -1,4 +1,7 @@
-(import (cspp) (cspp private match) (only (cspp irregex) irregex))
+(import (cspp)
+        (cspp array)
+        (cspp private match)
+        (only (cspp private irregex) irregex))
 
 (define-match-expander tagged-expander
   (lambda (pp rho expr-id pat body fk)
@@ -377,18 +380,18 @@
 
      ;; Adjacent patterns must not form an extension at expansion time.
      (guard (condition [else #f])
-       (= 42 (eval '(mlet ([unquote 'unquote] [,x 42]) x) (environment '(cspp)))))
+       (= 42 (eval '(mlet ([unquote 'unquote] [,x 42]) x) (environment '(cspp) '(cspp array)))))
 
      ;; Literal patterns must reject unrelated values rather than form a capture.
      (error? (mlet ([unquote 1] [x 2]) 'accepted))
 
      ;; A literal else pattern must not become a generated fallback clause.
      (guard (condition [else #f])
-       (= 42 (eval '(mlet ([else 'else]) 42) (environment '(cspp)))))
+       (= 42 (eval '(mlet ([else 'else]) 42) (environment '(cspp) '(cspp array)))))
 
      ;; A mismatched literal else must fail at runtime, rather than fail to expand.
      (guard (condition [(syntax-violation? condition) #f] [else #t])
-       (eval '(mlet ([else 'wrong]) 'accepted) (environment '(cspp)))
+       (eval '(mlet ([else 'wrong]) 'accepted) (environment '(cspp) '(cspp array)))
        #f)
 
      ;; A literal quasisyntax list must not turn into a whole-value capture.
@@ -433,7 +436,7 @@
        (= 42 (eval '(let ()
                       (record Point (x))
                       (mlet ([,Point 99] [,(record Point :values ,x) (Point 42)]) x))
-                    (environment '(cspp)))))
+                    (environment '(cspp) '(cspp array)))))
 
      ;; Custom-expander lookup also uses the original pattern environment.
      (guard (condition [else #f])
@@ -443,14 +446,14 @@
                           (syntax-case pattern ()
                             [(_ subpattern) (pp rho input #'subpattern body failure)])))
                       (mlet ([,identity-expander 99] [,(identity ,x) 42]) x))
-                    (environment '(cspp) '(cspp private match)))))
+                    (environment '(cspp) '(cspp array) '(cspp private match)))))
 
      ;; Datatype variant metadata must survive a capture with the variant's name.
      (guard (condition [else #f])
        (= 42 (eval '(let ()
                       (datatype Tree [Leaf value])
                       (mlet ([,Leaf 99] [,(datatype Tree Leaf :values ,x) (Leaf 42)]) x))
-                    (environment '(cspp))))))
+                    (environment '(cspp) '(cspp array))))))
 
 (mat mlet*
 
@@ -466,11 +469,11 @@
 (mat mlet*-independent-patterns
      ;; A literal else remains pattern data rather than a generated fallback clause.
      (guard (condition [else #f])
-       (= 42 (eval '(mlet* ([else 'else] [,x 42]) x) (environment '(cspp)))))
+       (= 42 (eval '(mlet* ([else 'else] [,x 42]) x) (environment '(cspp) '(cspp array)))))
 
      ;; A mismatched literal else fails at runtime, rather than during expansion.
      (guard (condition [(syntax-violation? condition) #f] [else #t])
-       (eval '(mlet* ([else 'wrong]) 'accepted) (environment '(cspp)))
+       (eval '(mlet* ([else 'wrong]) 'accepted) (environment '(cspp) '(cspp array)))
        #f)
 
      ;; Later right-hand sides see earlier captures and run exactly once.
@@ -959,7 +962,7 @@
                         (lambda ()
                           (parameterize ([trace-output-port (current-output-port)])
                             (set! value (eval '(mlet* ([,x 1]) x)
-                                              (environment '(cspp))))))))
+                                              (environment '(cspp) '(cspp array))))))))
             (= value 1)))
 
      (equal? '() (match '() [(,x ...) x] [else #f]))
@@ -1265,13 +1268,14 @@
      (begin
        (eval '(library (match-tests local-record-capture)
                 (export run)
-                (import (cspp))
+                (import (cspp)
+                        (cspp array))
                 (define run
                   (lambda ()
                     (define-record-type P (fields value))
                     (list (match (make-P 10) [,(record P :values ,map) map])
                           (match (list (make-P 20)) [(,(record P :values ,x) ...) x])))))
-             (copy-environment (environment '(cspp)) #t))
+             (copy-environment (environment '(cspp) '(cspp array)) #t))
        (equal? '(10 (20))
                ((eval 'run (environment '(match-tests local-record-capture)))))))
 
@@ -1344,7 +1348,8 @@
      (begin
        (eval '(library (match-tests native-capture-bindings)
                 (export run)
-                (import (cspp))
+                (import (cspp)
+                        (cspp array))
                 (define run
                   (lambda ()
                     (define-record-type P (fields value))
@@ -1353,7 +1358,7 @@
                           (match (list (make-P 10))
                             [(,(record P :values ,if) ...) (begin (set! if '(30)) if)])
                           (match (vector (make-P 10)) [#(,(record P :values ,P) ...) P])))))
-             (copy-environment (environment '(cspp)) #t))
+             (copy-environment (environment '(cspp) '(cspp array)) #t))
        (equal? '(10 20 (30) (10))
                ((eval 'run (environment '(match-tests native-capture-bindings))))))
 
@@ -1473,14 +1478,14 @@
                       (define-record-type ExplicitPoint (fields x y))
                       (match (make-ExplicitPoint 10 20)
                         [,(record ExplicitPoint :values ,x ,y) (list x y)]))
-                   (environment '(cspp))))
+                   (environment '(cspp) '(cspp array))))
 
      (equal? '(20 10)
              (eval '(let ()
                       (define-record-type ExplicitPoint (fields x y))
                       (match (make-ExplicitPoint 10 20)
                         [,(record ExplicitPoint :fields (y ,y) (x ,x)) (list y x)]))
-                   (environment '(cspp)))))
+                   (environment '(cspp) '(cspp array)))))
 
 (mat explicit-record-disambiguation
      (let ()
@@ -1644,7 +1649,7 @@
                         [(,(record CaptureTypeName :values ,CaptureTypeName)
                           ,(record CaptureTypeName :values ,x))
                          (list CaptureTypeName x)]))
-                   (environment '(cspp)))))
+                   (environment '(cspp) '(cspp array)))))
 
 (mat explicit-record-binding-hygiene
      ;; Pattern captures shadow outer names, while generated record bindings stay hygienic.
@@ -1668,10 +1673,11 @@
               (= 20 (match table [,(hash ("key" ,x)) x]))))))
 
 (mat imported-adt-pattern-metadata
-     (let ([definition-environment (copy-environment (environment '(cspp)) #t)])
+     (let ([definition-environment (copy-environment (environment '(cspp) '(cspp array)) #t)])
        (eval '(library (match-tests public-adt-types)
                 (export Point Tree Empty Leaf Other OtherLeaf)
-                (import (cspp))
+                (import (cspp)
+                        (cspp array))
                 (record Point (x y))
                 (datatype Tree [Empty] [Leaf value])
                 (datatype Other [OtherLeaf value]))
@@ -1689,7 +1695,7 @@
                           (match (Leaf 42)
                             [,(datatype Tree Leaf :fields (value ,x)) x])
                           (match Empty [,(datatype Tree Empty) 'empty]))
-                        (environment '(cspp) '(match-tests public-adt-types)))))
+                        (environment '(cspp) '(cspp array) '(match-tests public-adt-types)))))
         (guard (condition [#t #f])
           (equal? '((10 20) 42 empty)
                   (eval '(list
@@ -1698,7 +1704,7 @@
                           (match (p:Leaf 42)
                             [,(datatype p:Tree p:Leaf :values ,x) x])
                           (match p:Empty [,(datatype p:Tree p:Empty) 'empty]))
-                        (environment '(cspp)
+                        (environment '(cspp) '(cspp array)
                                      '(prefix (match-tests reexported-adt-types) p:)))))
         (guard (condition [#t #f])
           (equal? '(10 42)
@@ -1707,14 +1713,14 @@
                             [,(record P :fields (x ,P)) P])
                           (match (L 42)
                             [,(datatype T L :values ,T) T]))
-                        (environment '(cspp)
+                        (environment '(cspp) '(cspp array)
                                      '(rename (match-tests public-adt-types)
                                               (Point P) (Tree T) (Leaf L))))))
         ;; A constructor from another datatype is not a variant of Tree.
         (guard (condition [#t #t])
           (eval '(match (OtherLeaf 1)
                    [,(datatype Tree OtherLeaf :values ,x) x])
-                (environment '(cspp) '(match-tests public-adt-types)))
+                (environment '(cspp) '(cspp array) '(match-tests public-adt-types)))
           #f))))
 
 (mat repeated-custom-expander-fresh-captures
@@ -1747,7 +1753,7 @@
              (match '(((ignored . 10) (ignored . 20)) ((ignored . 30)))
                [((,(fresh-tail ,x) ...) ...) x])
              (match '(10 20) [(,(fresh-alias ,x) ...) x])))
-         (environment '(cspp) '(cspp private match))))))
+         (environment '(cspp) '(cspp array) '(cspp private match))))))
 
 (mat custom-expander-compiled-once
      (guard (condition [#t #f])
@@ -1764,21 +1770,21 @@
                   (syntax-case pattern ()
                     [(_ subpattern) (pp rho input #'subpattern body failure)]))))
             (match '(10 20) [(,(once ,x) ...) x]))
-         (environment '(cspp) '(cspp private match))))))
+         (environment '(cspp) '(cspp array) '(cspp private match))))))
 
 (mat invalid-match-compile-time-metadata
      ;; Non-pair compile-time values are not record metadata.
      (guard (condition [(syntax-violation? condition) #t] [else #f])
        (eval '(let-syntax ([P (make-compile-time-value 10)])
                 (match 10 [,(record P :values) #t] [else #f]))
-             (environment '(cspp)))
+             (environment '(cspp) '(cspp array)))
        #f)
 
      ;; Non-pair compile-time values are not custom expander metadata.
      (guard (condition [(syntax-violation? condition) #t] [else #f])
        (eval '(let-syntax ([bad-expander (make-compile-time-value 10)])
                 (match 10 [,(bad ,x) x] [else #f]))
-             (environment '(cspp)))
+             (environment '(cspp) '(cspp array)))
        #f)
 
      ;; A tagged expander must carry a procedure, not merely the right tag.
@@ -1786,13 +1792,13 @@
        (eval '(let-syntax ([bad-expander
                            (make-compile-time-value (cons '*MATCH-EXPANDER* 10))])
                 (match 10 [,(bad ,x) x] [else #f]))
-             (environment '(cspp)))
+             (environment '(cspp) '(cspp array)))
        #f))
 
 (mat strict-regex-group-index
      ;; An inexact integer group selector must fail during expansion, without normalization.
      (guard (condition [(syntax-violation? condition) #t] [else #f])
-       (eval '(match "a" [,(regex "(.)" (1.0 ,x)) x]) (environment '(cspp)))
+       (eval '(match "a" [,(regex "(.)" (1.0 ,x)) x]) (environment '(cspp) '(cspp array)))
        #f)
 
      (equal? "a" (match "a" [,(regex "(.)" (1 ,x)) x])))
@@ -1819,7 +1825,7 @@
                (match '((10) ((ignored . 20))) [((,(branch ,x) ...) ...) x])
                (match '() [(,(branch ,x) ...) x])
                (match '(10 (ignored . 20)) [(,(branch ,x) ...) hidden]))))
-         (environment '(cspp) '(cspp private match))))))
+         (environment '(cspp) '(cspp array) '(cspp private match))))))
 
 (mat independent-regex-suffix-allocation
      ;; A regex expression with no prefix dependency must not copy every candidate prefix.
@@ -1930,12 +1936,12 @@
 (mat strict-regex-capture-tags
      ;; A quoted identifier is not a regex capture declaration.
      (guard (condition [(syntax-violation? condition) #t] [else #f])
-       (eval '(match "abc" [,(regex "(.)" (1 'x)) x]) (environment '(cspp)))
+       (eval '(match "abc" [,(regex "(.)" (1 'x)) x]) (environment '(cspp) '(cspp array)))
        #f)
 
      ;; An arbitrary two-element list is not a regex capture declaration.
      (guard (condition [(syntax-violation? condition) #t] [else #f])
-       (eval '(match "abc" [,(regex "(.)" (1 (foo x))) x]) (environment '(cspp)))
+       (eval '(match "abc" [,(regex "(.)" (1 (foo x))) x]) (environment '(cspp) '(cspp array)))
        #f)
 
      (equal? "a" (match "abc" [,(regex "(.)" (1 ,x)) x])))
@@ -2008,25 +2014,25 @@
 
 (mat match-clause-expression-count
      ;; An ordinary clause requires a result expression.
-     (error? (eval '(match 1 [,x]) (environment '(cspp))))
+     (error? (eval '(match 1 [,x]) (environment '(cspp) '(cspp array))))
 
      ;; More than one condition and one result must be grouped explicitly.
-     (error? (eval '(match 1 [,x #t x x]) (environment '(cspp))))
+     (error? (eval '(match 1 [,x #t x x]) (environment '(cspp) '(cspp array))))
 
      ;; Else requires exactly one result expression.
-     (error? (eval '(match 1 [else 1 2]) (environment '(cspp))))
+     (error? (eval '(match 1 [else 1 2]) (environment '(cspp) '(cspp array))))
 
      ;; Else cannot omit its result expression.
-     (error? (eval '(match 1 [else]) (environment '(cspp))))
+     (error? (eval '(match 1 [else]) (environment '(cspp) '(cspp array))))
 
      ;; Else must be the final clause.
-     (error? (eval '(match 1 [else 1] [,x x]) (environment '(cspp))))
+     (error? (eval '(match 1 [else 1] [,x x]) (environment '(cspp) '(cspp array))))
 
      ;; Matching procedure clauses enforce the same expression count.
-     (error? (eval '(mlambda [,x #t x x]) (environment '(cspp))))
+     (error? (eval '(mlambda [,x #t x x]) (environment '(cspp) '(cspp array))))
 
      ;; Variadic matching procedure fallbacks also have a single result expression.
-     (error? (eval '(mlambda+ [else 1 2]) (environment '(cspp)))))
+     (error? (eval '(mlambda+ [else 1 2]) (environment '(cspp) '(cspp array)))))
 
 (mat vector-shape-before-elements
      (let ([calls 0])
@@ -2064,7 +2070,7 @@
 (mat fixed-vector-expansion-size
      (let* ([pattern (make-vector 100 '_)]
             [expanded (expand `(lambda (input) (match input [,pattern #t] [else #f]))
-                              (environment '(cspp)))])
+                              (environment '(cspp) '(cspp array)))])
        (define (nodes expression)
          (if (pair? expression)
              (+ 1 (nodes (car expression)) (nodes (cdr expression)))

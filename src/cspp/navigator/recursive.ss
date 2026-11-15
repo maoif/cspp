@@ -1,6 +1,6 @@
 (library (cspp navigator recursive)
   (export nav/rec nav/letrec nav/children nav/leaves nav/walker nav/before nav/after)
-  (import (chezscheme)
+  (import (cspp chez)
           (cspp utils)
           (cspp navigator core)
           (cspp navigator data)

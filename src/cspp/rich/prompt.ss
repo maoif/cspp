@@ -5,7 +5,7 @@
           rich-password)
   (import (cspp chez)
           (cspp utils)
-          (cspp rich private common)
+          (cspp rich common)
           (cspp rich console))
 
   (define $default?

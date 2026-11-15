@@ -1,0 +1,343 @@
+(library (cspp crypto common)
+  (export check-slice
+          make-crypto-lock
+          call-with-crypto-locks
+          with-crypto-locks
+          with-crypto-mutex
+          with-crypto-operation
+          call-with-crypto-resource
+          ensure-openssl
+          bytevector-append
+          subbytevector
+          string/bytevector->utf8
+          string/bytevector?
+          exact-natural?
+          u32-set!
+          u32-ref
+          bytevector-prefix?
+          bytevector-empty
+          make-crypto-private-key
+          crypto-private-key?
+          crypto-private-key-lock
+          crypto-private-key-handle
+          crypto-private-key-handle-set!
+          crypto-private-key-algorithm
+          crypto-private-key-bits
+          crypto-private-key-destroyed?
+          crypto-private-key-destroyed?-set!
+          make-crypto-public-key
+          crypto-public-key?
+          crypto-public-key-lock
+          crypto-public-key-handle
+          crypto-public-key-handle-set!
+          crypto-public-key-algorithm
+          crypto-public-key-bits
+          crypto-public-key-destroyed?
+          crypto-public-key-destroyed?-set!
+          make-crypto-certificate
+          crypto-certificate?
+          crypto-certificate-lock
+          crypto-certificate-handle
+          crypto-certificate-handle-set!
+          crypto-certificate-destroyed?
+          crypto-certificate-destroyed?-set!
+          make-crypto-cert-store
+          crypto-cert-store?
+          crypto-cert-store-lock
+          crypto-cert-store-handle
+          crypto-cert-store-handle-set!
+          crypto-cert-store-destroyed?
+          crypto-cert-store-destroyed?-set!
+          make-crypto-envelope
+          crypto-envelope?
+          crypto-envelope-kem
+          crypto-envelope-cipher
+          crypto-envelope-ephemeral-key
+          crypto-envelope-nonce
+          crypto-envelope-ciphertext
+          crypto-envelope-tag)
+  (import (cspp chez)
+          (cspp utils)
+          (cspp crypto ffi))
+
+  (define-record-type (crypto-lock %make-crypto-lock crypto-lock?)
+    (fields rank mutex))
+  (define next-lock-rank 0)
+  (define lock-rank-mutex (make-mutex 'crypto-lock-rank))
+
+  #|macro:with-crypto-operation
+  The `with-crypto-operation` macro evaluates `body ...` as one internal native-resource
+  transaction and returns its values. Timer, keyboard, and collection interrupts are
+  deferred until exit, so suspension cannot invalidate handles or interrupt ownership
+  changes. Reentering an exited transaction raises an error. Errors reach external
+  handlers after interrupts are restored. The body must not invoke user callbacks.
+  |#
+  (define-syntax with-crypto-operation
+    (syntax-rules ()
+      [(_ body ...)
+       (let ([exited? #f])
+         (guard (condition [else (raise condition)])
+           (with-interrupts-disabled
+             (dynamic-wind
+               (lambda ()
+                 (when exited?
+                   (error 'with-crypto-operation "cannot reenter an exited native operation")))
+               (lambda () body ...)
+               (lambda () (set! exited? #t))))))]))
+
+  #|macro:with-crypto-mutex
+  The `with-crypto-mutex` macro acquires recursive `mutex`, evaluates `body ...`, and
+  returns its values. It releases the mutex on every exit. Errors are re-raised after
+  releasing the mutex so caller exception handlers may safely invoke other crypto APIs.
+  Interrupts are deferred during the operation; exited operations cannot be reentered.
+  No user callbacks should run in the body.
+  |#
+  (define-syntax with-crypto-mutex
+    (syntax-rules ()
+      [(_ mutex body ...)
+       (with-crypto-operation
+         (with-mutex mutex body ...))]))
+
+  #|proc:call-with-crypto-resource
+  The internal `call-with-crypto-resource` procedure installs cleanup before calling
+  the zero-argument constructor `create`, then calls `(proc resource)` and returns its
+  values. Constructor and `(destroy! resource)` must be internal procedures without
+  user callbacks. Construction and ownership assignment are indivisible; `proc` runs
+  with the caller's interrupt settings. Every exit releases the resource, and reentry
+  raises an error attributed to symbol `who`. No resource is released if creation fails.
+  |#
+  (define call-with-crypto-resource
+    (lambda (who create destroy! proc)
+      (pcheck ([symbol? who] [procedure? create destroy! proc])
+        (let ([resource #f] [exited? #f])
+          (dynamic-wind
+            (lambda ()
+              (when exited? (error who "cannot reenter an exited resource scope")))
+            (lambda ()
+              ;; The critical cleanup cannot itself be abandoned before destruction.
+              ;; Keep the reentry check in the outer, noncritical winder so errors
+              ;; reach caller handlers with their original interrupt settings.
+              (dynamic-wind #t
+                void
+                (lambda ()
+                  (with-crypto-operation (set! resource (create)))
+                  (proc resource))
+                (lambda ()
+                  (set! exited? #t)
+                  (when resource (destroy! resource)))))
+            void)))))
+
+  #|proc:make-crypto-lock
+  The `make-crypto-lock` procedure returns a new internal resource lock with a unique
+  ordering rank. Acquire multiple locks through `with-crypto-locks` to avoid deadlocks.
+  |#
+  (define make-crypto-lock
+    (lambda ()
+      (pcheck ()
+        (with-crypto-operation
+          (with-mutex lock-rank-mutex
+            (let ([rank next-lock-rank])
+              (set! next-lock-rank (+ rank 1))
+              (%make-crypto-lock rank (make-mutex 'crypto-resource))))))))
+
+  #|proc:call-with-crypto-locks
+  The `call-with-crypto-locks` procedure acquires the internal resource locks in list
+  `locks` in creation order, calls the zero-argument procedure `proc`, and returns its
+  values. It releases locks on every exit. The callback must not invoke user code.
+  Errors are re-raised after releasing all locks, before calling external handlers.
+  Interrupts are deferred during the operation; exited operations cannot be reentered.
+  |#
+  (define call-with-crypto-locks
+    (lambda (locks proc)
+      (pcheck ([list? locks] [procedure? proc])
+        (for-each (lambda (lock)
+                    (unless (crypto-lock? lock)
+                      (error 'call-with-crypto-locks "invalid internal resource lock")))
+                  locks)
+        (with-crypto-operation
+          (let loop ([locks (if (or (null? locks) (null? (cdr locks)))
+                               locks
+                               (list-sort (lambda (left right)
+                                            (< (crypto-lock-rank left) (crypto-lock-rank right)))
+                                          locks))]
+                     [previous #f])
+            (cond
+              [(null? locks) (proc)]
+              [(eq? (car locks) previous) (loop (cdr locks) previous)]
+              [else
+               (with-mutex (crypto-lock-mutex (car locks))
+                 (loop (cdr locks) (car locks)))]))))))
+
+  #|macro:with-crypto-locks
+  The `with-crypto-locks` macro acquires each internal resource lock in `(lock ...)`
+  once, in creation order, evaluates `body ...`, and returns its values. Locks are
+  released on normal and exceptional exits. No user callbacks should run in the body.
+  |#
+  (define-syntax with-crypto-locks
+    (syntax-rules ()
+      [(_ (lock ...) body ...)
+       (call-with-crypto-locks (list lock ...) (lambda () body ...))]))
+
+  #|proc:ensure-openssl
+The `ensure-openssl` procedure raises an error attributed to `who` when OpenSSL is unavailable.
+It returns an unspecified value when the runtime is available.
+|#
+  (define ensure-openssl
+    (lambda (who)
+      (let ([message (ffi-openssl-load-error)])
+        (when message
+          (error who message)))))
+
+  #|proc:bytevector-empty
+The `bytevector-empty` procedure returns an empty bytevector.
+|#
+  (define bytevector-empty
+    (lambda ()
+      (make-bytevector 0 0)))
+
+  #|proc:check-slice
+  The internal `check-slice` procedure validates the half-open slice `[start, stop)`
+  against fixnum length `len`. Both indices must be nonnegative fixnums. It returns
+  an unspecified value on success; invalid types raise a pcheck error, and invalid
+  bounds raise an error attributed to symbol `who`.
+  |#
+  (define check-slice
+    (lambda (who len start stop)
+      (pcheck ([fixnum? start stop])
+        (when (fx< start 0)
+          (errorf who "invalid start index ~a" start))
+        (when (fx< stop 0)
+          (errorf who "invalid stop index ~a" stop))
+        (when (fx> start stop)
+          (errorf who "start index ~a is greater than stop index ~a" start stop))
+        (when (fx> stop len)
+          (errorf who "stop index ~a is greater than total length ~a" stop len)))))
+
+  #|proc:string/bytevector?
+  The internal `string/bytevector?` predicate returns `#t` when `value` is a string or
+  bytevector, and `#f` otherwise. It accepts any Scheme value.
+  |#
+  (define string/bytevector?
+    (lambda (value)
+      (pcheck () (or (string? value) (bytevector? value)))))
+
+  #|proc:exact-natural?
+  The internal `exact-natural?` predicate returns `#t` when `value` is an exact
+  nonnegative integer, and `#f` otherwise. It accepts any Scheme value.
+  |#
+  (define exact-natural?
+    (lambda (value)
+      (pcheck () (and (integer? value) (exact? value) (>= value 0)))))
+
+  #|proc:subbytevector
+The `subbytevector` procedure copies a bytevector slice.
+|#
+  (define subbytevector
+    (lambda (bv start stop)
+      (let ([out (make-bytevector (fx- stop start) 0)])
+        (bytevector-copy! bv start out 0 (fx- stop start))
+        out)))
+
+  #|proc:bytevector-append
+The `bytevector-append` procedure concatenates the given bytevectors.
+|#
+  (define bytevector-append
+    (case-lambda
+      [() (bytevector-empty)]
+      [(bv) bv]
+      [bv*
+       (let ([len (fold-left (lambda (acc bv) (fx+ acc (bytevector-length bv))) 0 bv*)])
+         (let ([out (make-bytevector len 0)])
+           (let loop ([ls bv*] [i 0])
+             (if (null? ls)
+                 out
+                 (let ([bv (car ls)])
+                   (bytevector-copy! bv 0 out i (bytevector-length bv))
+                   (loop (cdr ls) (fx+ i (bytevector-length bv))))))))]))
+
+  #|proc:string/bytevector->utf8
+The `string/bytevector->utf8` procedure converts a string to UTF-8 and leaves bytevectors unchanged.
+|#
+  (define string/bytevector->utf8
+    (lambda (x)
+      (pcase x
+        [bytevector? x]
+        [string? (string->utf8 x)]
+        [else (errorf 'string/bytevector->utf8 "expected string or bytevector, given ~s" x)])))
+
+  #|proc:u32-set!
+The `u32-set!` procedure writes `n` as a big-endian 32-bit integer.
+|#
+  (define u32-set!
+    (lambda (bv i n)
+      (bytevector-u8-set! bv i (fxlogand (fxsrl n 24) #xff))
+      (bytevector-u8-set! bv (fx1+ i) (fxlogand (fxsrl n 16) #xff))
+      (bytevector-u8-set! bv (fx+ i 2) (fxlogand (fxsrl n 8) #xff))
+      (bytevector-u8-set! bv (fx+ i 3) (fxlogand n #xff))))
+
+  #|proc:u32-ref
+The `u32-ref` procedure reads a big-endian 32-bit integer.
+|#
+  (define u32-ref
+    (lambda (bv i)
+      (fxlogor (fxsll (bytevector-u8-ref bv i) 24)
+               (fxsll (bytevector-u8-ref bv (fx1+ i)) 16)
+               (fxsll (bytevector-u8-ref bv (fx+ i 2)) 8)
+               (bytevector-u8-ref bv (fx+ i 3)))))
+
+  #|proc:bytevector-prefix?
+The `bytevector-prefix?` procedure checks whether `prefix` matches the initial bytes of `bv`.
+|#
+  (define bytevector-prefix?
+    (lambda (prefix bv)
+      (and (fx<= (bytevector-length prefix) (bytevector-length bv))
+           (let loop ([i 0])
+             (or (fx= i (bytevector-length prefix))
+                 (and (fx= (bytevector-u8-ref prefix i) (bytevector-u8-ref bv i))
+                      (loop (fx1+ i))))))))
+
+  (define-record-type (crypto-private-key make-crypto-private-key crypto-private-key?)
+    (opaque #t)
+    (protocol (lambda (new)
+                (lambda (handle algorithm bits destroyed?)
+                  (new (make-crypto-lock) handle algorithm bits destroyed?))))
+    (fields lock (mutable handle)
+            algorithm
+            bits
+            (mutable destroyed?)))
+
+  (define-record-type (crypto-public-key make-crypto-public-key crypto-public-key?)
+    (opaque #t)
+    (protocol (lambda (new)
+                (lambda (handle algorithm bits destroyed?)
+                  (new (make-crypto-lock) handle algorithm bits destroyed?))))
+    (fields lock (mutable handle)
+            algorithm
+            bits
+            (mutable destroyed?)))
+
+  (define-record-type (crypto-certificate make-crypto-certificate crypto-certificate?)
+    (opaque #t)
+    (protocol (lambda (new)
+                (lambda (handle destroyed?)
+                  (new (make-crypto-lock) handle destroyed?))))
+    (fields lock (mutable handle)
+            (mutable destroyed?)))
+
+  (define-record-type (crypto-cert-store make-crypto-cert-store crypto-cert-store?)
+    (opaque #t)
+    (protocol (lambda (new)
+                (lambda (handle destroyed?)
+                  (new (make-crypto-lock) handle destroyed?))))
+    (fields lock (mutable handle)
+            (mutable destroyed?)))
+
+  (define-record-type (crypto-envelope make-crypto-envelope crypto-envelope?)
+    (opaque #t)
+    (fields kem
+            cipher
+            ephemeral-key
+            nonce
+            ciphertext
+            tag))
+  )

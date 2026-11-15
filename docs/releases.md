@@ -30,7 +30,7 @@ use native runners; riscv64 and loongarch64 use QEMU. Only after
 all four jobs pass does CI publish a separate prerelease tagged `master-<full-commit-sha>`
 on the [releases page](https://github.com/maoif/cspp/releases).
 New pushes cancel older CI runs so only the newest push continues to build and publish.
-Previously published releases, their tags, and their packages remain available unchanged.
+Published releases, tags, and packages remain available unchanged.
 Uploads remain in a draft release until all four packages are ready for publication.
 The workflow can also be run manually against `master`; rerunning a commit reuses its release.
 

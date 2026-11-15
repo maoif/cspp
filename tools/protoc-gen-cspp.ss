@@ -1,4 +1,5 @@
-(import (cspp))
+(import (cspp)
+        (cspp format protobuf))
 
 (define append-map
   (lambda (proc value*)
@@ -788,7 +789,12 @@
         (format port "  (export~%")
         (for-each (lambda (name) (format port "    ~a~%" name)) exports)
         (display
-         "  )\n  (import (cspp chez) (cspp utils) (cspp protobuf)\n          (cspp net grpc) (cspp net grpc reflection))\n\n"
+         (string-append
+           "  )\n  (import (cspp chez)\n"
+           "          (cspp utils)\n"
+           "          (cspp format protobuf)\n"
+           "          (cspp net grpc)\n"
+           "          (cspp net grpc reflection))\n\n")
          port)
         (format port "  (define protobuf-file-descriptor-bytes ~a)~%~%"
                 (bytevector-literal (protobuf-file-descriptor-raw file)))

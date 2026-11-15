@@ -1,4 +1,8 @@
-(import (cspp))
+(import (cspp)
+        (cspp file)
+        (cspp path)
+        (cspp glob)
+        (cspp system))
 
 ;; Run in an isolated user/mount namespace. The caller owns fixture cleanup.
 (define root (car (command-line-arguments)))

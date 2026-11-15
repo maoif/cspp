@@ -1,6 +1,9 @@
 (import (cspp)
-        (cspp parser elf)
-        (cspp parser elf types))
+        (cspp file)
+        (cspp system)
+        (cspp parser)
+        (cspp format elf)
+        (cspp format elf types))
 
 (include "parser-external-tools.ss")
 (include "parser-test-support.ss")

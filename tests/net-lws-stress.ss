@@ -1,5 +1,5 @@
 (import (cspp)
-        (cspp net lws reactor)
+        (cspp net private lws-reactor)
         (cspp net operation)
         (cspp concurrency fiber))
 

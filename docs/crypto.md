@@ -1,6 +1,7 @@
 # Cryptography
 
-Cryptographic digests are available from `(cspp crypto digest)`, `(cspp crypto)`, or `(cspp)`.
+Cryptographic digests are available from `(cspp crypto digest)` or `(cspp crypto)`.
+Cryptography requires an explicit import.
 Use `digest-bytevector`, `digest-string`, and `digest-file` with an algorithm symbol, or helpers
 such as `sha256-bytevector`. Incremental operations use `make-digester`, `digester-update-*`,
 `digester-get`, `digester-reset!`, `digester-finalize!`, and `digester-destroy!`.
@@ -17,13 +18,13 @@ String encodings in the crypto APIs are explicit:
 
 | API | String encoding |
 | --- | --- |
-| Digests, legacy unsafe hashes, HMAC | Native-endian UTF-32, without a byte-order mark |
+| Digests, unsafe hashes, HMAC | Native-endian UTF-32, without a byte-order mark |
 | Signing, KDFs, passwords, envelopes | UTF-8 |
 
 Pass bytevectors for another encoding. Ed25519 accepts `#f` for its optional external
 digest argument; an explicit digest symbol raises an error.
 OpenSSL supplies MD5, SHA-2, SHA-3, and BLAKE2; BLAKE3 uses its independently optional library.
-MD5 is retained for legacy interoperability and is unsuitable for security-sensitive hashing.
+MD5 is available for interoperability and is unsuitable for security-sensitive hashing.
 
 ## Concurrency and resource lifetimes
 
@@ -39,12 +40,9 @@ Errors reach caller exception handlers after internal state/resource locks have 
 Public crypto procedures validate argument types before optimized primitive or native access.
 Slice indices must be nonnegative fixnums; inexact integers and bignums are rejected.
 
-## Migrating older imports
+## Noncryptographic hashes
 
-The old `(cspp digest)` and `(cspp crypto hash)` imports have been removed. Replace them with
-`(cspp crypto digest)` and replace the former crypto `hash-*` names with `digest-*` or
-`digester-*` as appropriate. Algorithm-specific helpers retain their names. Noncryptographic
-xxHash operations remain in `(cspp hash)`.
+xxHash operations are available from `(cspp hash)`.
 
 See the [developer guide](developer-guide.md#cryptographic-resource-implementation) for
 native resource ownership, interrupt handling, and continuation restrictions.

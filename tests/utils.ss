@@ -1,4 +1,26 @@
-(import (cspp chez) (cspp utils))
+(import (cspp chez)
+        (cspp utils))
+
+(mat utility-sleep
+
+     (begin (sleep 0) (milisleep 0) (nanosleep 0) #t)
+
+     (begin (sleep-seconds 0) (sleep-milliseconds 0) (sleep-nanoseconds 0) #t)
+
+     ;; Error case: invalid durations must be rejected by the timing API itself.
+     (for-all
+       (lambda (entry)
+         (for-all
+           (lambda (duration)
+             (guard (failure [else (and (who-condition? failure)
+                                       (eq? (car entry) (condition-who failure)))])
+               ((cdr entry) duration)
+               #f))
+           (list -1 0.5 (expt 2 100))))
+       (list (cons 'sleep sleep) (cons 'milisleep milisleep) (cons 'nanosleep nanosleep)
+             (cons 'sleep sleep-seconds) (cons 'milisleep sleep-milliseconds)
+             (cons 'nanosleep sleep-nanoseconds))))
+
 
 (mat utility-validation-consistency
 

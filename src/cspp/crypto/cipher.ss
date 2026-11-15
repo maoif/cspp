@@ -13,7 +13,7 @@
   (import (cspp chez)
           (cspp utils)
           (cspp crypto ffi)
-          (cspp crypto private))
+          (cspp crypto common))
 
   (define cipher-algorithms '(aes-128-ctr aes-256-ctr chacha20))
 

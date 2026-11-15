@@ -1,4 +1,6 @@
 (import (cspp)
+        (cspp file)
+        (cspp crypto)
         (cspp net))
 
 (load "net-common.ss")

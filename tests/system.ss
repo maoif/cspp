@@ -1,7 +1,10 @@
 (import (cspp)
-        (cspp system linux os-release)
+        (cspp file)
+        (cspp system)
+        (cspp system private ffi)
+        (cspp system private linux-os-release)
         (only (cspp system process expert) make-process-exit-status)
-        (only (cspp system user records) make-unix-user make-unix-group))
+        (only (cspp system private user-records) make-unix-user make-unix-group))
 
 (mat system-argument-error-origins
 

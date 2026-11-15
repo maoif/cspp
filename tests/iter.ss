@@ -1,4 +1,16 @@
-(import (cspp))
+(import (cspp)
+        (cspp transducer)
+        (cspp hashset)
+        (cspp dlist)
+        (cspp array)
+        (cspp treemap)
+        (cspp treeset)
+        (cspp bitvec)
+        (cspp bittree)
+        (cspp stack)
+        (cspp queue)
+        (cspp heap)
+        (cspp dset))
 
 ;; A managed type error names its procedure; an invalid memory reference does not.
 (define iter-type-error?

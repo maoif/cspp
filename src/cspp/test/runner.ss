@@ -192,7 +192,7 @@ association-list filters as `test-select`.
           (let* ([cache ($current-predicate-cache)]
                  [cached (and cache (hashtable-ref cache predicate #f))])
             (or cached
-                (let ([callback (eval predicate (environment '(chezscheme)))])
+                (let ([callback (eval predicate (environment '(cspp chez)))])
                   (unless (test-callback-accepts? callback 1)
                     (errorf 'test-run "condition predicate must accept one argument: ~s" predicate))
                   (when cache (hashtable-set! cache predicate callback))

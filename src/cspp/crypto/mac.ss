@@ -14,7 +14,7 @@
   (import (cspp chez)
           (cspp utils)
           (cspp crypto ffi)
-          (cspp crypto private)
+          (cspp crypto common)
           (cspp crypto constant-time))
 
   (define mac-algorithms

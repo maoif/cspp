@@ -1,4 +1,6 @@
-(import (cspp))
+(import (cspp)
+        (cspp file)
+        (cspp system))
 
 (define system-test-root (if (file-exists? "system-native-faults.ss") ".." "."))
 (define system-test-launcher (string-append system-test-root "/cspp"))

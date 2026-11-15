@@ -1,4 +1,5 @@
-(import (cspp))
+(import (cspp)
+        (cspp net))
 
 (mat net-ip-special
      (let ([mapped (string->ip-address "::ffff:192.0.2.1")])

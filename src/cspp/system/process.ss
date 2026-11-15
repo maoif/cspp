@@ -57,5 +57,5 @@
           process-capture-shell
           process-capture-pipeline)
   (import (cspp system process expert)
-          (cspp system process backend)
-          (cspp system process macros)))
+          (cspp system private process-backend)
+          (cspp system private process-macros)))

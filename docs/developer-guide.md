@@ -65,10 +65,8 @@ caller-owned shared state, even when the inputs differ.
 
 `nav/children` always focuses immediate children, including when it ends a path. For example,
 both `nav/children` and `(nav/path nav/children nav/stay)` select `(a (b))` from `'(a (b))`.
-Earlier versions selected descendants when this step was terminal; callers relying on that
-behavior must use an explicit recursive path. Use `nav/leaves` for leaf selection,
-`nav/walker` for recursive predicate selection, and `nav/rec` or `nav/letrec` with
-`nav/children` for recursive updates.
+Use `nav/leaves` for leaf selection, `nav/walker` for recursive predicate selection, and
+`nav/rec` or `nav/letrec` with `nav/children` for recursive updates.
 
 ### Iterator resources and terminal operations
 
@@ -144,7 +142,8 @@ worker's identity or thread-local scheduler state must not be mistaken for a fib
 For example:
 
 ```scheme
-(import (cspp) (cspp concurrency fiber))
+(import (cspp)
+        (cspp concurrency fiber))
 
 (run-fibers
  (lambda ()
@@ -176,7 +175,8 @@ This includes correct publication and visibility of shared internal state.
 For example, separate invocations must not share traversal or collection bookkeeping:
 
 ```scheme
-(import (cspp))
+(import (cspp)
+        (cspp concurrency))
 
 (define (collect base)
   (for/list ([i :fxiota 3])
@@ -288,3 +288,35 @@ reentered, including through the continuation attached to a Chez error condition
 on continuation escape. All managed crypto state scopes reject reentry after exit.
 
 For API usage, encodings, and concurrency rules, see [Cryptography](crypto.md).
+
+## Implementation library paths
+
+Shared implementation libraries use `(cspp private name)`. System and networking helpers use
+`(cspp system private name)` and `(cspp net private name)`, with one name after `private`.
+ELF and Wasm implementation helpers use `(cspp format elf name)` and
+`(cspp format wasm name)`, such as `(cspp format elf binary)` and `(cspp format wasm types)`.
+The shared record writer is `(cspp format record-writer)`.
+Logging, crypto, test, navigator, and rich helpers live directly in their component namespaces,
+such as `(cspp logging common)`, `(cspp crypto ffi)`, and `(cspp navigator engine)`.
+Implementation helpers have no compatibility guarantee. Each facade exports only the
+bindings listed in its export declarations.
+Supported advanced interfaces, such as `(cspp system process expert)`, are public APIs.
+
+## Library dependencies
+
+CSPP libraries import Chez Scheme through `(cspp chez)`.
+All utility dependencies use `(cspp utils)`,
+with one library per import line. Standalone build tools may import `(chezscheme)` before CSPP
+is available.
+
+The Chez gateway has no dependency on utilities or the native runtime. It supplies the raw
+`$getenv` alias for native-library discovery. Only `(cspp utils)` imports
+`(cspp private libcspp)`, whose initialization body loads the native runtime. Utilities
+reference its readiness value so Chez invokes that body before resolving native procedures.
+Low-level wrappers that otherwise use utilities only as macros explicitly invoke `utils`
+before binding native procedures.
+
+`(cspp utils)` defines argument checks, synchronized environment access, and numeric sleep
+helpers. Chez's original sleeper is an implementation detail and is not exported by either
+`(cspp chez)` or `(cspp)`. Shared implementation libraries depend on the Chez gateway without
+an import cycle.

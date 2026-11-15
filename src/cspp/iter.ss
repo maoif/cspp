@@ -16,13 +16,11 @@
           iter-fxsum iter-fxproduct iter-fxavg
           iter-flsum iter-flproduct iter-flavg
           iter-max iter-min)
-  (import (chezscheme)
+  (import (cspp chez)
           (cspp list)
           (cspp vector)
           (cspp utils)
-          (cspp internal)
-          (cspp private iter-state)
-          (cspp control))
+          (cspp private iter-state))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Iterator kinds, dependencies, and lifecycle

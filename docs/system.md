@@ -1,7 +1,7 @@
 # System APIs
 
 Import `(cspp system)` for the complete system API, or use the focused libraries below.
-`(cspp)` includes the same public bindings. API details also appear immediately above their
+System libraries require explicit imports. API details also appear immediately above their
 implementations in `src/cspp/system/`.
 
 | Library | Responsibility |
@@ -10,13 +10,13 @@ implementations in `src/cspp/system/`.
 | `(cspp system signal)` | Signal names, sending, native thread masks, and synchronous waiting |
 | `(cspp system user)` | Unix credentials, account lookup, and user/group records |
 | `(cspp system filesystem)` | Filesystem capacity and mounted-filesystem records |
-| `(cspp system info)` | Platform and host information, CPU count, and thread sleeps |
+| `(cspp system info)` | Platform and host information and CPU count |
 | `(cspp system errors)` | System conditions and their constructors/accessors |
 | `(cspp system linux)` | Linux procfs and OS-release information |
 
 Linux is the supported build platform. Native process helpers contain Unix/Darwin paths, but
 these do not establish support for a complete Darwin build. Signal discovery, masks, and waits
-currently support Linux. Darwin/Windows information helpers are documented stubs that raise
+support Linux. Darwin/Windows information helpers are documented stubs that raise
 `system-unsupported-error?`. `mounted-filesystems` reads Linux `/proc/self/mountinfo` and returns
 an empty list when that file is absent.
 
@@ -27,6 +27,7 @@ system conditions with the operation and error code.
 When affinity information is unavailable, it uses the online CPU count, falling back to one.
 CPU-time quotas are not converted into CPU counts.
 
+Timing helpers are available from `(cspp utils)`.
 `sleep`, `milisleep`, and `nanosleep` accept exact nonnegative durations in their respective
 units. The whole-second component must fit the native `time_t` range; larger durations raise
 an argument error. The `sleep-seconds`, `sleep-milliseconds`, and `sleep-nanoseconds` aliases
@@ -37,7 +38,7 @@ monotonic deadline and sleep for the remaining time after an early return.
 
 `linux-system-uptime`, `linux-memory-info`, and `linux-load-average` read their requested procfs
 files directly on each call. They do not enumerate mounts or cache mount-namespace state.
-An absent file raises `system-unsupported-error?`. `linux-procfs-mounted?` remains the explicit
+An absent file raises `system-unsupported-error?`. `linux-procfs-mounted?` is the explicit
 mount-table query for checking whether procfs is mounted at `/proc`.
 
 `linux-memory-info` returns an alist of symbol keys and exact integer values. Keys preserve the
@@ -68,15 +69,15 @@ Process creation uses `process-<operation>[-<target>]` names:
 | Wait for exit status | `process-run` | `process-run-shell` | `process-run-pipeline` |
 | Wait and capture output | `process-capture` | `process-capture-shell` | `process-capture-pipeline` |
 
-Direct execution also provides `process-run/check` and `process-capture/check`. These are the
-current API names; the previous names are not exported as aliases.
+Direct execution also provides `process-run/check` and `process-capture/check`.
 
 Command forms take a program followed by arguments and then optional `:keyword value` clauses.
 These are macros, not procedures with keyword parameters. A bare identifier in a command position
 becomes literal text. Wrap a variable in `(begin variable)` to evaluate it.
 
 ```scheme
-(import (cspp))
+(import (cspp)
+        (cspp system process))
 
 (define text "hello")
 (define result (process-capture printf "%s" (begin text)))
@@ -319,7 +320,7 @@ Native error messages are decoded using the calling thread's locale, including n
 
 CSPP `getenv`/`putenv`, native environment readers, and inherited process snapshots share a lock.
 Direct libc/Chez environment mutation outside these wrappers requires caller synchronization.
-Raw `fork` remains unsafe in a threaded Scheme runtime. `vfork` raises
+Raw `fork` is unsafe in a threaded Scheme runtime. `vfork` raises
 `system-unsupported-error?` without creating a child: returning through the C wrapper and Scheme
 FFI stack would corrupt the parent's shared state. Use `process-spawn` to launch executables.
 
@@ -343,8 +344,8 @@ flowchart TD
 
 Status records contain values only. The private option module validates shared contracts and
 converts directory defaults. Live process objects own status caches and mutexes; the capture
-backend owns completed result records. Account lookups use the same tagged FFI error decoder,
-without a second legacy error protocol.
+backend owns completed result records. Account lookups use the shared tagged FFI error decoder
+and report failures through the system condition API.
 
 Each spawn, capture, or pipeline invocation owns one resumable native operation. Preparation
 copies Scheme inputs; steps use only native buffers, strings, descriptors, and child IDs.
@@ -354,7 +355,7 @@ launch. There is no global reactor, extra thread, or native callback into Scheme
 After I/O finishes, completed commands use one transient pidfd at a time to wait for remaining
 children, including earlier pipeline stages. If pidfds are unavailable, short polls are used.
 
-The private `(cspp system native)` wrapper owns each operation in a `dynamic-wind` scope.
+The private `(cspp system private native)` wrapper owns each operation in a `dynamic-wind` scope.
 Steps poll for at most 20 ms and return for a Scheme event check; blocking OS setup calls and
 cleanup can take additional time. Signal waits use the same wrapper with `sigtimedwait` steps.
 Scalar-only step and disposal calls use `__collect_safe`, letting Chez deactivate/reactivate the

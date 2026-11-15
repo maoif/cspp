@@ -1,6 +1,8 @@
 #!chezscheme
 (import (cspp)
-        (cspp rich private common)
+        (cspp system)
+        (cspp rich)
+        (cspp rich common)
         (only (cspp rich renderable) rich-register-container-renderer! rich-layout-render-cache))
 
 (mat rich-import

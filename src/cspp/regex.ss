@@ -20,7 +20,7 @@
           regex-fold regex-fold/chunked regex-extract regex-split regex-replace regex-replace/all
           regex-quote regex-opt regex-sre->string regex-sre->cset)
   (import (cspp chez)
-          (cspp irregex)
+          (cspp private irregex)
           (cspp utils))
 
   ;; Raw engine objects remain private except through the explicit escape hatch.

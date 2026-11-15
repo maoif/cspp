@@ -9,7 +9,7 @@ sections capture their callbacks and fixed values; each call has its own travers
 Shared mutable callback state still requires caller synchronization.
 
 The public list builder lives in `(cspp list)`. Its low-level implementation is shared with
-utility generators and procedure inspection through `(cspp internal)`, avoiding both duplicate
+utility generators and procedure inspection through `(cspp private common)`, avoiding both duplicate
 implementations and a circular import between the list and utility libraries.
 
 ## Composition and sections
@@ -148,3 +148,19 @@ Flag names must also be distinct; duplicate declarations are rejected during exp
 Flag operations validate exact integers even in release code. `flag-set` and `flag-reset`
 return new integer values without mutating inputs; `flag-all-set?` accepts a zero mask as true.
 The generated decoder ignores unknown bits.
+
+## Environment access
+
+`(cspp utils)` exports `getenv` and `putenv`; both are included in `(cspp)`.
+`getenv` takes a string name and returns a fresh string value, or `#f` when absent.
+`putenv` takes a nonempty string name and a string value; its return value is unspecified.
+Names and values cannot contain NUL, and names passed to `putenv` cannot contain `=`.
+CSPP reads, writes, and inherited process snapshots share a native lock.
+
+## Timing helpers
+
+`(cspp utils)` exports `sleep`, `milisleep`, and `nanosleep`, plus their aliases
+`sleep-seconds`, `sleep-milliseconds`, and `sleep-nanoseconds`. Durations are exact
+nonnegative integers in the named units and must fit the native `time_t` range.
+A signal can interrupt a sleep; interrupted sleeps are not retried. These helpers
+return unspecified values.

@@ -1,4 +1,8 @@
-(import (cspp chez) (cspp control) (cspp utils) (cspp string) (cspp vector))
+(import (cspp chez)
+        (cspp control)
+        (cspp utils)
+        (cspp string)
+        (cspp vector))
 
 (mat control-error-origins
 

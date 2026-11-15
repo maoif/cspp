@@ -2,7 +2,6 @@
   (export print println displayln
           fprint fprintln)
   (import (cspp chez)
-          (cspp internal)
           (cspp utils))
 
 

@@ -1,4 +1,7 @@
-(import (cspp))
+(import (cspp)
+        (cspp file)
+        (cspp path)
+        (cspp system))
 
 (mat filesystem-metadata-access
 

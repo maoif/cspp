@@ -1,4 +1,5 @@
-(import (cspp))
+(import (cspp)
+        (cspp heap))
 (load "examples/common.ss")
 
 (example-run!

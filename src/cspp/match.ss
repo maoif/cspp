@@ -11,13 +11,10 @@ https://github.com/akeep/scheme-to-llvm/blob/main/src/cspp/main/scheme/match.sls
 (library (cspp match)
   (export match
           mlambda mlambda+ mlet mlet*)
-  (import (chezscheme)
-          (cspp list)
-          (cspp vector)
-          (cspp irregex)
-          (cspp internal)
-          (cspp private match)
-          (cspp io))
+  (import (cspp chez)
+          (cspp private irregex)
+          (cspp private common)
+          (cspp private match))
 
   #|macro:$match/constant-regex
   The `$match/constant-regex` helper checks `expression` after preceding captures are bound.

@@ -1,4 +1,5 @@
-(import (cspp) (cspp private for))
+(import (cspp)
+        (cspp private for))
 
 (mat fixnums-error-identity
      ;; Every runtime arity identifies the documented :fixnums source type.

@@ -1,4 +1,6 @@
-(import (cspp))
+(import (cspp)
+        (cspp crypto)
+        (cspp net))
 (load (if (file-exists? "examples/net/legacy-example-common.ss")
           "examples/net/legacy-example-common.ss"
           "../examples/net/legacy-example-common.ss"))

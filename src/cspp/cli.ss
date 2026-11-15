@@ -98,11 +98,8 @@
           parser-enum)
   (import (cspp chez)
           (cspp utils)
-          (cspp internal)
-          (cspp adt)
           (cspp string)
           (cspp list)
-          (cspp vector)
           (cspp io))
 
 
@@ -403,7 +400,7 @@ The `command-about-set!` procedure sets longer about text for `cmd`.
 
   #|proc:command-style-set!
 The `command-style-set!` procedure stores help style metadata for `cmd`.
-Stable core stores the value without interpreting it.
+The value is stored without being interpreted.
 |#
   (define command-style-set!
     (lambda (cmd v)
@@ -428,8 +425,9 @@ The action receives an option lookup procedure.
         ($command-exec-set! cmd v))))
 
   #|proc:command-multi-personality?-set!
-The `command-multi-personality?-set!` procedure controls whether the top command
-can dispatch under multiple command names.
+The `command-multi-personality?-set!` procedure stores boolean metadata `v` for `cmd`.
+Only the top command accepts this flag; it does not enable executable-name dispatch.
+The return value is unspecified.
 |#
   (define command-multi-personality?-set!
     (lambda (cmd v)
@@ -583,7 +581,7 @@ Valid specifiers are `1`, `?`, `+`, and `*`.
 
   #|proc:option-value-number-set!
 The `option-value-number-set!` procedure sets how many values one occurrence of
-`opt` consumes. Stable core named options consume values only with `=`.
+`opt` consumes. Named options consume values only with `=`.
 |#
   (define-who option-value-number-set!
     (lambda (opt v)

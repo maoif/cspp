@@ -1,4 +1,5 @@
-(import (cspp))
+(import (cspp)
+        (cspp path))
 
 (define read-text-file
   (lambda (path)
@@ -10,7 +11,7 @@
      (= 0
         (system
          "../cspp --script=../tools/check-public-api-docs.ss \
-../src/cspp/net ../src/cspp/protobuf ../src/cspp/optional-library.ss >/dev/null 2>&1")))
+../src/cspp/net ../src/cspp/format/protobuf ../src/cspp/format/protobuf.ss ../src/cspp/optional-library.ss >/dev/null 2>&1")))
 
 (mat reviewed-data-structure-documentation
      (= 0

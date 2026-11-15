@@ -1,4 +1,6 @@
-(import (cspp) (only (cspp system process expert) $wait-status->exit-status))
+(import (cspp)
+        (cspp system)
+        (only (cspp system process expert) $wait-status->exit-status))
 
 (mat process-rejected-capture-result
 
@@ -329,7 +331,7 @@
                process-run process-run/check process-run-shell process-run-pipeline
                process-capture process-capture/check process-capture-shell
                process-capture-pipeline))))
-       '((cspp) (cspp system) (cspp system process)))
+       '((cspp system) (cspp system process)))
 
      ;; Error case: discarded names must not survive as aliases in any process library or facade.
      (andmap
@@ -341,8 +343,8 @@
                capture-process capture-process/check capture-shell-command capture-pipeline
                %run-process %capture-process %run-shell-command %capture-shell-command))))
        '((cspp) (cspp system) (cspp system process)
-         (cspp system process expert) (cspp system process macros)
-         (cspp system process backend))))
+         (cspp system process expert) (cspp system private process-macros)
+         (cspp system private process-backend))))
 
 (mat process-argument-domains
 

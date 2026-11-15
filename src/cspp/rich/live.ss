@@ -32,10 +32,9 @@
           rich-status-render)
   (import (cspp chez)
           (cspp utils)
-          (cspp rich private common)
-          (cspp rich private lines)
-          (cspp rich private cells)
-          (cspp rich style)
+          (cspp rich common)
+          (cspp rich lines)
+          (cspp rich cells)
           (cspp rich segment)
           (cspp rich renderable)
           (cspp rich console))
@@ -110,16 +109,20 @@
             rounded
             (inexact->exact rounded)))))
 
+  (define $sleep-milliseconds
+    (lambda (seconds)
+      (max (if (positive? seconds) 1 0)
+           ($round->exact (* (inexact->exact seconds) 1000)))))
+
   (define $sleep-duration
     (lambda (seconds)
-      (let* ([milliseconds (max (if (positive? seconds) 1 0)
-                                ($round->exact (* (inexact->exact seconds) 1000)))]
-             [sec (quotient milliseconds 1000)]
-             [nsec (* 1000000 (remainder milliseconds 1000))])
-        (make-time 'time-duration nsec sec))))
+      (let ([milliseconds ($sleep-milliseconds seconds)])
+        (make-time 'time-duration
+                   (* 1000000 (remainder milliseconds 1000))
+                   (quotient milliseconds 1000)))))
 
   (define $default-sleep
-    (lambda (seconds) ($sleep ($sleep-duration seconds))))
+    (lambda (seconds) (milisleep ($sleep-milliseconds seconds))))
 
   ;; Return true on expiry, false when a setter or shutdown wakes the worker.
   ;; Custom sleep hooks remain responsible for returning promptly themselves.

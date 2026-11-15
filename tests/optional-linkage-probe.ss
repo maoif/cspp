@@ -6,7 +6,9 @@
 (putenv "LIBCSPP" (car probe-arguments))
 (load (cadr probe-arguments))
 
-(import (cspp))
+(import (cspp)
+        (cspp optional-library)
+        (cspp net))
 
 (define probe-check
   (lambda (value message)

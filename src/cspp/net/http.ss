@@ -11,7 +11,18 @@
           http-follow-redirects! http-set-header! http-set-timeout! http-cancel-pending! http-send/nonblocking http-request/nonblocking http-download/nonblocking http-upload/nonblocking
           http-server? http-listen http-server-close http-accept http-accept/nonblocking http-serve http-serve-loop http-register-handler! http-handler-ref http-unregister-handler!
           http-connection? http-connection-close http-read-request http-read-request/nonblocking http-write-response http-write-response/nonblocking)
-  (import (cspp chez) (cspp utils) (cspp file) (cspp string) (cspp net uri) (cspp net errors) (cspp net operation) (cspp net ffi) (cspp net tls) (cspp net http private) (cspp net lws client) (cspp net lws server))
+  (import (cspp chez)
+          (cspp utils)
+          (cspp file)
+          (cspp string)
+          (cspp net uri)
+          (cspp net errors)
+          (cspp net operation)
+          (cspp net private ffi)
+          (cspp net tls)
+          (cspp net private http)
+          (cspp net private lws-client)
+          (cspp net private lws-server))
   #|record:http-request-record
 An immutable HTTP request containing a method, URI, header alist, and optional body.
 |#
@@ -854,9 +865,9 @@ Encodes multipart parts `parts`. Returns a body source and its multipart content
 
   #|proc:http-listen
 The `http-listen` procedure opens an LWS HTTP server on `host` and `port`. `tls-context` is `#f`
-or a server TLS context, and `backlog` is retained for API compatibility. Optional `version` is
-`h1` (default) or `h2`. Cleartext H2 uses prior knowledge; TLS negotiates through ALPN. An H2
-request raises an error if the LWS build lacks HTTP/2 support. It returns the server.
+or a server TLS context. `backlog` must be a positive fixnum and does not configure LWS.
+Optional `version` is `h1` (default) or `h2`. Cleartext H2 uses prior knowledge; TLS uses ALPN.
+An H2 request raises an error if the LWS build lacks HTTP/2 support. It returns the server.
 |#
   (define-who http-listen
     (case-lambda
@@ -1094,7 +1105,7 @@ The `http-serve-loop` procedure dispatches requests until `server` closes and th
           (unless (http-server-closed? server)
             (let ([connection (http-accept/nonblocking server)])
               (if connection (serve-one server connection)
-                  ($sleep (make-time 'time-duration 1000000 0))))
+                  (milisleep 1)))
             (loop)))
         server)))
   )

@@ -21,7 +21,7 @@
   (import (cspp chez)
           (cspp utils)
           (cspp crypto ffi)
-          (cspp crypto private)
+          (cspp crypto common)
           (cspp crypto pkey))
 
   (define cert-formats '(pem der))

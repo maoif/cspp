@@ -26,7 +26,7 @@
           nav-selected->list nav-selected->vector nav-selected-transduce
 
           nav->datum nav-write nav-display nav-debug-name nav-explain)
-  (import (chezscheme)
+  (import (cspp chez)
           (cspp navigator core)
           (cspp navigator debug)
           (cspp navigator basic)

@@ -1,6 +1,11 @@
 (library (cspp private file)
   (export $file-type $file-mount-id $file-view-key $file-view-seen?)
-  (import (chezscheme) (cspp utils))
+  (import (cspp chez)
+          (cspp utils))
+
+  ;; Macro imports alone do not invoke utils; initialize it before binding native procedures.
+  (define $utils-initialized?
+    (begin (invoke-library '(cspp utils)) #t))
 
   #|proc:$file-type
   Inspect validated filesystem pathname `path`, following its final link when `follow-link?`

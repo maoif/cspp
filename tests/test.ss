@@ -423,7 +423,8 @@
       (lambda ()
         (test-write-file
          path
-         "(import (cspp) (cspp test))\n(test-clear-registry! (current-test-registry))\n(test-case loaded (test-true #t))\n")
+         "(import (cspp)
+        (cspp test))\n(test-clear-registry! (current-test-registry))\n(test-case loaded (test-true #t))\n")
         (let ([results (test-run-files (list path) (test-silent-config))])
           (and (= (length results) 1)
                (eq? (test-result-status (car results)) 'passed))))
@@ -438,7 +439,8 @@
       (lambda ()
         (test-write-file
          path
-         "(import (cspp) (cspp test))\n(test-clear-registry! (current-test-registry))\n(test-case main-loaded (test-true #t))\n")
+         "(import (cspp)
+        (cspp test))\n(test-clear-registry! (current-test-registry))\n(test-case main-loaded (test-true #t))\n")
         (let ([out (open-output-string)])
           (= (parameterize ([current-output-port out])
                (test-main (list "--reporter" "datum" path)))
@@ -736,7 +738,8 @@
         (andmap
           (lambda (strict?)
             (test-write-file path
-              (format "(import (cspp) (cspp test))\n(test-case x :xfail ~s :xfail-strict ~s #t)\n"
+              (format "(import (cspp)
+        (cspp test))\n(test-case x :xfail ~s :xfail-strict ~s #t)\n"
                       "known bug" strict?))
             (let ([status #f])
               (call-with-string-output-port
@@ -833,7 +836,7 @@
                             (test-config-with (default-test-config) '((output . #f))))])
              (and (= acquired 2) (= released 2)
                   (equal? (map test-result-status results) '(passed passed))))))
-      (environment '(cspp))))
+      (environment '(cspp) '(cspp test))))
 
   ;; A child fixture list overrides the suite list, with matching lexical names.
   (guard (condition [else #f])
@@ -845,7 +848,7 @@
                       (test-run-registry (current-test-registry)
                         (test-config-with (default-test-config) '((output . #f)))))
                  '(passed)))
-      (environment '(cspp))))
+      (environment '(cspp) '(cspp test))))
 
   ;; Parameterized suite bindings must also remain available to child expressions.
   (guard (condition [else #f])
@@ -857,7 +860,7 @@
                       (test-run-registry (current-test-registry)
                         (test-config-with (default-test-config) '((output . #f)))))
                  '(passed passed)))
-      (environment '(cspp)))))
+      (environment '(cspp) '(cspp test)))))
 
 (mat test-registry-snapshot-order
   (let ([registry (make-test-registry)]
@@ -960,7 +963,7 @@
                       (test-run-registry (current-test-registry)
                         (test-config-with (default-test-config) '((output . #f)))))
                  '(skipped passed)))
-      (environment '(cspp)))))
+      (environment '(cspp) '(cspp test)))))
 
 (mat test-inherited-bindings-with-generated-case-name
   ;; A wrapper's generated case name must not determine its caller expressions' context.
@@ -975,7 +978,7 @@
                       (test-run-registry (current-test-registry)
                         (test-config-with (default-test-config) '((output . #f)))))
                  '(passed)))
-      (environment '(cspp))))
+      (environment '(cspp) '(cspp test))))
 
   (guard (condition [else #f])
     (eval
@@ -990,7 +993,7 @@
                       (test-run-registry (current-test-registry)
                         (test-config-with (default-test-config) '((output . #f)))))
                  '(skipped passed)))
-      (environment '(cspp)))))
+      (environment '(cspp) '(cspp test)))))
 
 (mat test-lexical-binding-boundaries
   ;; Suite inputs bind policy expressions and bodies; skipped cases do not acquire fixtures.
@@ -1025,7 +1028,7 @@
                       (test-run-registry (current-test-registry)
                         (test-config-with (default-test-config) '((output . #f)))))
                  '(passed passed)))
-      (environment '(cspp))))
+      (environment '(cspp) '(cspp test))))
 
   ;; Ordinary inner lexical bindings shadow inherited fixture and parameter names.
   (parameterize ([current-test-registry (make-test-registry)])
@@ -1069,7 +1072,7 @@
   (for-all
     (lambda (form)
       (guard (condition [else (syntax-violation? condition)])
-        (eval form (environment '(cspp)))
+        (eval form (environment '(cspp) '(cspp test)))
         #f))
     '((test-suite shared :fixture ([resource 42])
         (test-case child :skip-when (= resource 42) "unavailable fixture" #t))
@@ -1090,7 +1093,7 @@
                       (test-run-registry (current-test-registry)
                         (test-config-with (default-test-config) '((output . #f)))))
                  '(passed)))
-      (environment '(cspp)))))
+      (environment '(cspp) '(cspp test)))))
 
 (mat test-runtime-body-arities
   (let ([seen '()])
@@ -1366,7 +1369,8 @@
       (lambda () (void))
       (lambda ()
         (test-write-file path
-          "(import (cspp) (cspp test))\n(test-case cli-failed :parameterize ([size] [7]) :capture '(stdout stderr) (display \"stdout-detail\") (display \"stderr-detail\" (current-error-port)) (test-fail \"cli-assertion-detail\" 'expected 'actual))\n")
+          "(import (cspp)
+        (cspp test))\n(test-case cli-failed :parameterize ([size] [7]) :capture '(stdout stderr) (display \"stdout-detail\") (display \"stderr-detail\" (current-error-port)) (test-fail \"cli-assertion-detail\" 'expected 'actual))\n")
         (for-all
           (lambda (args)
             (let ([status #f])
@@ -1602,7 +1606,7 @@
   (for-all
     (lambda (form)
       (guard (condition [else (syntax-violation? condition)])
-        (eval form (environment '(cspp)))
+        (eval form (environment '(cspp) '(cspp test)))
         #f))
     '((test-case overlap :fixture ([x 9]) :parameterize ([x] [1] [2]) #t)
       (test-case duplicate :fixture ([x 1] [x 2]) #t)
@@ -1645,7 +1649,7 @@
   (for-all
     (lambda (form)
       (guard (condition [else (syntax-violation? condition)])
-        (eval form (environment '(cspp)))
+        (eval form (environment '(cspp) '(cspp test)))
         #f))
     '((test-case repeated :fixture ([a 1]) :fixture ([b 2]) (test-true a))
       (test-suite repeated :fixture ([a 1]) :fixture ([b 2]) (test-case child #t))
@@ -1659,7 +1663,7 @@
                       :fixture ([a (error 'fixture "must not acquire")])
                       :fixture ([b 2])
                       #t)
-                   (environment '(cspp)))
+                   (environment '(cspp) '(cspp test)))
              #f)
            (null? (test-registry-descriptors registry))))))
 
@@ -1769,7 +1773,7 @@
   ;; Error: each immediate expression must return a descriptor, not a list or arbitrary value.
   (for-all
     (lambda (form)
-      (guard (raised [else #t]) (eval form (environment '(cspp))) #f))
+      (guard (raised [else #t]) (eval form (environment '(cspp) '(cspp test))) #f))
     '((test-suite invalid #t)
       (test-suite invalid (list (make-test-case 'child (lambda () #t) '()))))))
 
@@ -1778,7 +1782,7 @@
   (for-all
     (lambda (form)
       (guard (raised [else (syntax-violation? raised)])
-        (expand form (environment '(cspp)))
+        (expand form (environment '(cspp) '(cspp test)))
         #f))
     '((test-case (invalid name) #t)
       (test-suite 42)

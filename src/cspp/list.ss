@@ -18,9 +18,9 @@
           list- listp- listq- listv-
           list& listp& listq& listv&
           list^ listp^ listq^ listv^)
-  (import (chezscheme)
+  (import (cspp chez)
           (cspp utils)
-          (cspp internal))
+          (cspp private common))
 
 
   (define check-length

@@ -1,5 +1,7 @@
 #!chezscheme
-(import (cspp))
+(import (cspp)
+        (cspp file)
+        (cspp glob))
 (load "benchmarks/common.ss")
 
 ;; Run from the root: ./cspp --script=benchmarks/glob-globstars.ss

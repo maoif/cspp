@@ -1,4 +1,7 @@
-(import (chezscheme) (cspp crypto) (cspp crypto private) (cspp optional-library))
+(import (chezscheme)
+        (cspp crypto)
+        (cspp crypto common)
+        (cspp optional-library))
 
 (define openssl? (optional-library-available? (optional-library-info 'openssl)))
 (define blake3? (optional-library-available? (optional-library-info 'blake3)))

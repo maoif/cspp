@@ -1,4 +1,5 @@
-(import (cspp))
+(import (cspp)
+        (cspp system))
 
 (define previous (timer-interrupt-handler))
 (define sentinel (list 'process-mutex-interrupt))

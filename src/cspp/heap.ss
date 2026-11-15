@@ -6,7 +6,6 @@
           heap-copy heap->list)
   (import (cspp chez)
           (cspp utils)
-          (cspp internal)
           (cspp list)
           (cspp vector)
           (only (cspp iter) iter-register-source! make-iter iter-end))

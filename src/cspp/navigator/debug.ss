@@ -1,6 +1,6 @@
 (library (cspp navigator debug)
   (export nav->datum nav-write nav-display nav-debug-name nav-explain)
-  (import (chezscheme)
+  (import (cspp chez)
           (cspp utils)
           (cspp navigator core))
 

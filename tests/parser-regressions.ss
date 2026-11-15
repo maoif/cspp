@@ -1,7 +1,10 @@
-(import (cspp) (cspp parser combinator)
-        (prefix (cspp parser elf validate) elf:)
-        (prefix (cspp parser wasm validate) wasm:)
-        (only (cspp parser wasm opcodes) wasm-opcode-by-binary wasm-opcode-mnemonic))
+(import (cspp)
+        (cspp file)
+        (cspp format)
+        (cspp parser combinator)
+        (prefix (cspp format elf validate) elf:)
+        (prefix (cspp format wasm validate) wasm:)
+        (only (cspp format wasm opcodes) wasm-opcode-by-binary wasm-opcode-mnemonic))
 
 (include "parser-test-support.ss")
 

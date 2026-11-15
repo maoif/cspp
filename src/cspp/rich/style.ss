@@ -27,7 +27,7 @@
           rich-style->ansi/context)
   (import (cspp chez)
           (cspp utils)
-          (cspp rich private common))
+          (cspp rich common))
 
   (define rich-ansi-reset "\033[0m")
 

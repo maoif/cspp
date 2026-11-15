@@ -7,7 +7,6 @@
           stack-copy stack->list)
   (import (cspp chez)
           (cspp utils)
-          (cspp internal)
           (only (cspp iter) iter-register-source! make-iter iter-end))
 
 

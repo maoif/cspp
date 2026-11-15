@@ -1,7 +1,9 @@
 (import (cspp)
-        (cspp net lws http2)
-        (cspp net lws ffi)
-        (cspp net http private))
+        (cspp path)
+        (cspp net)
+        (cspp net private lws-http2)
+        (cspp net private lws-ffi)
+        (cspp net private http))
 
 (load "net-common.ss")
 

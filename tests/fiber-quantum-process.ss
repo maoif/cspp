@@ -1,4 +1,5 @@
 (import (cspp)
+        (cspp concurrency)
         (cspp concurrency fiber))
 
 ;; Run in a separate process: a dispatch livelock cannot run a fiber watchdog.

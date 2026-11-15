@@ -1,60 +1,66 @@
 (library (cspp (0 0 0 10 4 1))
   (export)
-  (import (chezscheme)
-          ;; add libs here if you want them auto-compiled when compiling this file,
-          ;; but not auto-imported when importing (cspp)
-          (cspp optional-library-check)
-          (cspp system private)
-          (cspp system linux os-release)
-          (cspp system process status)
-          (cspp system process private)
-          (cspp concurrency fiber)
-          (cspp concurrency fiber-net)
-          (cspp parser combinator))
+  ;; Compile and retain explicit libraries without adding their bindings to (cspp).
+  (import (cspp chez)
 
-  ;; add libs here if you want them auto-compiled when compiling this file,
-  ;; *and* auto-imported when importing (cspp)
+          ;; Collections.
+          (cspp array)
+          (cspp bitvec)
+          (cspp bittree)
+          (cspp dlist)
+          (cspp dset)
+          (cspp hashset)
+          (cspp heap)
+          (cspp queue)
+          (cspp stack)
+          (cspp treemap)
+          (cspp treeset)
+
+          ;; Traversal and text processing.
+          (cspp navigator)
+          (cspp regex)
+          (cspp transducer)
+
+          ;; Files, system services, and native libraries.
+          (cspp file)
+          (cspp glob)
+          (cspp hash)
+          (cspp io)
+          (cspp optional-library)
+          (cspp path)
+          (cspp system)
+          (cspp uuid)
+
+          ;; Parsing and data formats.
+          (cspp format)
+          (cspp parser)
+
+          ;; Cryptography, networking, and concurrency.
+          (cspp concurrency)
+          (cspp crypto)
+          (cspp net)
+
+          ;; Application support and development tools.
+          (cspp benchmark)
+          (cspp cli)
+          (cspp logging)
+          (cspp rich)
+          (cspp test)
+
+          ;; Experimental fiber APIs.
+          (cspp concurrency fiber)
+          (cspp concurrency fiber-net))
+
+  ;; The default language environment. Other libraries require explicit imports.
   (export (import (cspp chez)
-                  (cspp match)
-                  (cspp adt)
-                  (cspp string)
-                  (cspp vector)
-                  (cspp regex)
-                  (cspp list)
                   (cspp utils)
                   (cspp control)
+                  (cspp match)
+                  (cspp adt)
+
+                  (cspp list)
+                  (cspp string)
+                  (cspp vector)
+
                   (cspp for)
-                  (cspp iter)
-                  (cspp transducer)
-                  (cspp io)
-                  (cspp file)
-                  (cspp path)
-                  (cspp glob)
-                  (cspp navigator)
-                  (cspp system)
-
-                  (cspp hashset)
-                  (cspp dlist)
-                  (cspp array)
-                  (cspp treemap)
-                  (cspp treeset)
-                  (cspp bitvec)
-                  (cspp bittree)
-                  (cspp stack)
-                  (cspp queue)
-                  (cspp heap)
-                  (cspp dset)
-
-                  (cspp uuid)
-                  (cspp hash)
-                  (cspp protobuf)
-                  (cspp optional-library)
-                  (cspp crypto)
-                  (cspp net)
-                  (cspp concurrency)
-                  (cspp cli)
-                  (cspp rich)
-                  (cspp logging)
-                  (cspp benchmark)
-                  (cspp test)
-                  (cspp parser))))
+                  (cspp iter))))

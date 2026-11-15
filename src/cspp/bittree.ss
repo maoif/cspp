@@ -10,7 +10,6 @@
           bittree->list)
   (import (cspp chez)
           (cspp utils)
-          (cspp internal)
           (cspp private rbtree)
           (only (cspp iter) iter-register-source! make-iter iter-end)
           (only (cspp navigator) nav-register-set!))

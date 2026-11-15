@@ -8,7 +8,7 @@
           optional-library-error)
   (import (cspp chez)
           (cspp utils)
-          (cspp net ffi))
+          (only (cspp private optional-library) ffi-optional-library-info))
 
   #|record:optional-library-info-record
 The `optional-library-info-record` record is an immutable native dependency probe result.

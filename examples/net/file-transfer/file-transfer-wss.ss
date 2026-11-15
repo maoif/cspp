@@ -1,4 +1,5 @@
-(import (cspp) (cspp net))
+(import (cspp)
+        (cspp net))
 
 (load "examples/net/legacy-example-common.ss")
 (net-example-help! 'file-transfer-wss "Transfer a file over WSS. Positional argument: FILE-OR-DIRECTORY; CSPP_TRANSFER_ROLE=server|client.")
