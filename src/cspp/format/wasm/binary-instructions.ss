@@ -1,12 +1,12 @@
-(library (cspp format private wasm-binary-instructions)
+(library (cspp format wasm binary-instructions)
   (export <wasm-memory-argument> <wasm-instruction> <wasm-expression>)
   (import (cspp chez)
           (cspp parser combinator)
-          (cspp format private wasm-binary-types)
-          (cspp format private wasm-binary-values)
-          (cspp format private wasm-opcodes)
-          (cspp format private wasm-common)
-          (cspp format private wasm-types))
+          (cspp format wasm binary-types)
+          (cspp format wasm binary-values)
+          (cspp format wasm opcodes)
+          (cspp format wasm common)
+          (cspp format wasm types))
 
   (define empty-vector '#())
 

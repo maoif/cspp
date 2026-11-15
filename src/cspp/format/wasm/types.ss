@@ -1,4 +1,4 @@
-(library (cspp format private wasm-types)
+(library (cspp format wasm types)
   (export
     make-wasm-module wasm-module? wasm-module-types wasm-module-imports
     wasm-module-functions wasm-module-tables wasm-module-memories wasm-module-globals
@@ -50,7 +50,7 @@
     make-wasm-float wasm-float? wasm-float-width wasm-float-bits)
   (import (cspp chez)
           (only (cspp vector) vfor-all)
-          (cspp format private record-writer)
+          (cspp format record-writer)
           (cspp utils))
 
   (define vector-of?

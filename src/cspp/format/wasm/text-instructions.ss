@@ -1,4 +1,4 @@
-(library (cspp format private wasm-text-instructions)
+(library (cspp format wasm text-instructions)
   (export make-wat-catch-syntax wat-catch-syntax? wat-catch-syntax-pos
           wat-catch-syntax-kind wat-catch-syntax-tag wat-catch-syntax-label
           <wat-instruction> <wat-folded-instruction> <wat-expression>
@@ -6,11 +6,11 @@
   (import (cspp chez)
           (only (cspp list) make-list-builder)
           (cspp parser combinator)
-          (cspp format private wasm-opcodes)
-          (cspp format private wasm-types)
-          (cspp format private wasm-text-lexical)
-          (cspp format private wasm-text-types)
-          (cspp format private wasm-common)
+          (cspp format wasm opcodes)
+          (cspp format wasm types)
+          (cspp format wasm text-lexical)
+          (cspp format wasm text-types)
+          (cspp format wasm common)
           (cspp utils))
 
 ;;;;===----------------------------------------------------------------------===

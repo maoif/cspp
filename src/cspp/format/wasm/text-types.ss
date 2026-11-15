@@ -1,4 +1,4 @@
-(library (cspp format private wasm-text-types)
+(library (cspp format wasm text-types)
   (export
     make-wat-index-reference wat-index-reference? wat-index-reference-pos
     wat-index-reference-value
@@ -65,9 +65,9 @@
     <wat-table-type> <wat-memory-type> <wat-tag-type>)
   (import (cspp chez)
           (cspp parser combinator)
-          (cspp format private wasm-types)
-          (cspp format private wasm-common)
-          (cspp format private wasm-text-lexical))
+          (cspp format wasm types)
+          (cspp format wasm common)
+          (cspp format wasm text-lexical))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Positioned intermediate syntax

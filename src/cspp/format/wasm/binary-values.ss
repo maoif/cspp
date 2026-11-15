@@ -1,10 +1,10 @@
-(library (cspp format private wasm-binary-values)
+(library (cspp format wasm binary-values)
   (export <wasm-u32> <wasm-u64> <wasm-s32> <wasm-s33> <wasm-s64>
           <wasm-f32> <wasm-f64> <wasm-byte-vector> <wasm-name> <wasm-vector>)
   (import (cspp chez)
           (cspp parser combinator)
-          (cspp format private record-writer)
-          (cspp format private wasm-types)
+          (cspp format record-writer)
+          (cspp format wasm types)
           (cspp utils))
 
   (define wasm-unsigned-parser

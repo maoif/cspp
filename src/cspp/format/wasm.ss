@@ -61,9 +61,9 @@
     make-wasm-float wasm-float? wasm-float-width wasm-float-bits)
   (import (cspp chez)
           (cspp parser combinator)
-          (cspp format private wasm-types)
-          (cspp format private wasm-binary)
-          (cspp format private wasm-text)
+          (cspp format wasm types)
+          (cspp format wasm binary)
+          (cspp format wasm text)
           (cspp utils))
 
   (define bytevector-or-path?

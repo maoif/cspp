@@ -4,7 +4,7 @@
           csv-warning? csv-warning-record-index csv-warning-field-index csv-warning-message
           parse-csv parse-csv-file)
   (import (cspp chez)
-          (cspp format private record-writer)
+          (cspp format record-writer)
           (cspp parser combinator)
           (cspp utils))
 

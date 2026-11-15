@@ -15,7 +15,7 @@
           toml-local-time-nanosecond
           parse-toml parse-toml-file)
   (import (cspp chez)
-          (cspp format private record-writer)
+          (cspp format record-writer)
           (cspp parser combinator)
           (cspp file)
           (cspp list)

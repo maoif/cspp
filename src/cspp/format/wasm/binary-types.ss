@@ -1,4 +1,4 @@
-(library (cspp format private wasm-binary-types)
+(library (cspp format wasm binary-types)
   (export <wasm-number-type> <wasm-vector-type> <wasm-heap-type>
           <wasm-reference-type> <wasm-value-type> <wasm-storage-type>
           <wasm-field-type> <wasm-composite-type> <wasm-subtype>
@@ -8,8 +8,8 @@
           <wasm-tag-type> <wasm-external-type>)
   (import (cspp chez)
           (cspp parser combinator)
-          (cspp format private wasm-binary-values)
-          (cspp format private wasm-types))
+          (cspp format wasm binary-values)
+          (cspp format wasm types))
 
   ;; Abstract heap types are single-byte terminals in the final Core 3.0 grammar.
   (define abstract-heap-type-from-byte

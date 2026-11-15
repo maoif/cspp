@@ -37,8 +37,8 @@
           parse-elf parse-elf-file)
   (import (cspp chez)
           (cspp parser combinator)
-          (cspp format private elf-types)
-          (cspp format private elf-binary)
+          (cspp format elf types)
+          (cspp format elf binary)
           (cspp utils))
 
   (define exact-integer?

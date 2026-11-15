@@ -1,4 +1,4 @@
-(library (cspp format private wasm-text-lexical)
+(library (cspp format wasm text-lexical)
   (export <wat-trivia> <wat-token> <wat-keyword> <wat-identifier> <wat-annotation-head>
           <wat-string> <wat-name> <wat-u32> <wat-u64> <wat-i8> <wat-i16> <wat-i32> <wat-i64>
           <wat-f32> <wat-f64>
@@ -6,9 +6,9 @@
           wat-open wat-close wat-head wat-parenthesized)
   (import (cspp chez)
           (cspp parser combinator)
-          (cspp format private record-writer)
-          (cspp format private wasm-types)
-          (cspp format private wasm-common)
+          (cspp format record-writer)
+          (cspp format wasm types)
+          (cspp format wasm common)
           (cspp string)
           (cspp utils))
 

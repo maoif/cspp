@@ -64,7 +64,7 @@
           (cspp list)
           (cspp io)
           (cspp file)
-          (cspp format private record-writer)
+          (cspp format record-writer)
           (cspp utils))
 
 

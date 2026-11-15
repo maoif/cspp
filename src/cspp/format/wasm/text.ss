@@ -1,14 +1,14 @@
-(library (cspp format private wasm-text)
+(library (cspp format wasm text)
   (export parser-wat-module-syntax parser-wat-module)
   (import (cspp chez)
           (cspp parser combinator)
-          (cspp format private wasm-types)
-          (cspp format private wasm-text-lexical)
-          (cspp format private wasm-text-types)
-          (cspp format private wasm-text-instructions)
-          (cspp format private wasm-normalize)
-          (cspp format private wasm-common)
-          (cspp format private wasm-validate))
+          (cspp format wasm types)
+          (cspp format wasm text-lexical)
+          (cspp format wasm text-types)
+          (cspp format wasm text-instructions)
+          (cspp format wasm normalize)
+          (cspp format wasm common)
+          (cspp format wasm validate))
 
 ;;;;===----------------------------------------------------------------------===
 ;;;; Module grammar helpers

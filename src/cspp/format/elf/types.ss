@@ -1,4 +1,4 @@
-(library (cspp format private elf-types)
+(library (cspp format elf types)
   (export make-elf-file elf-file? elf-file-identification elf-file-header
           elf-file-program-headers elf-file-sections
           make-elf-identification elf-identification? elf-identification-class
@@ -38,7 +38,7 @@
           make-elf-note-table elf-note-table? elf-note-table-notes
           make-elf-note elf-note? elf-note-name elf-note-type elf-note-descriptor)
   (import (cspp chez)
-          (cspp format private record-writer)
+          (cspp format record-writer)
           (cspp utils))
 
   (define elf-value? (lambda (value) #t))

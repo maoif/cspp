@@ -1,8 +1,8 @@
-(library (cspp format private wasm-common)
+(library (cspp format wasm common)
   (export list->immutable-vector concatenate-bytevectors expression-uses-data-index?)
   (import (cspp chez)
           (only (cspp vector) vexists)
-          (only (cspp format private wasm-types)
+          (only (cspp format wasm types)
                 wasm-instruction-mnemonic wasm-instruction-body wasm-instruction-alternate)
           (cspp utils))
 

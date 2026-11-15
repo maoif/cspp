@@ -1,4 +1,4 @@
-(library (cspp format private record-writer)
+(library (cspp format record-writer)
   (export define-parser-record-writer define-checked-record-type
           unicode-scalar-value?
           parser-decode-bytes parser-read-text-file

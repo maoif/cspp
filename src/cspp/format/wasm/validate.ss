@@ -1,4 +1,4 @@
-(library (cspp format private wasm-validate)
+(library (cspp format wasm validate)
   (export make-wasm-issue wasm-issue? wasm-issue-offset wasm-issue-message
           wasm-section-rank wasm-standard-section? wasm-section-order-valid?
           wasm-function-code-count-valid? wasm-data-count-valid?)

@@ -293,7 +293,9 @@ For API usage, encodings, and concurrency rules, see [Cryptography](crypto.md).
 
 Shared implementation libraries use `(cspp private name)`. System and networking helpers use
 `(cspp system private name)` and `(cspp net private name)`, with one name after `private`.
-Format implementation helpers use `(cspp format private name)`.
+ELF and Wasm implementation helpers use `(cspp format elf name)` and
+`(cspp format wasm name)`, such as `(cspp format elf binary)` and `(cspp format wasm types)`.
+The shared record writer is `(cspp format record-writer)`.
 Logging, crypto, test, navigator, and rich helpers live directly in their component namespaces,
 such as `(cspp logging common)`, `(cspp crypto ffi)`, and `(cspp navigator engine)`.
 These helpers are implementation interfaces even without `private` in their names; they have

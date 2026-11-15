@@ -2,7 +2,7 @@
         (cspp system)
         (cspp parser)
         (cspp format elf)
-        (cspp format private elf-types))
+        (cspp format elf types))
 
 (include "parser-external-tools.ss")
 (include "parser-test-support.ss")

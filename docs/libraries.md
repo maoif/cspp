@@ -52,8 +52,10 @@ Chez's original sleeper is internal and is not exported by `(cspp chez)` or `(cs
 
 ## Implementation libraries
 
-Shared infrastructure uses `(cspp private name)`. System, networking, and format helpers use
-`(cspp subsystem private name)`, with one component after `private`.
+Shared infrastructure uses `(cspp private name)`. System and networking helpers use
+`(cspp system private name)` and `(cspp net private name)`, with one component after `private`.
+ELF and Wasm implementation helpers live under `(cspp format elf name)` and
+`(cspp format wasm name)`. Their shared record writer is `(cspp format record-writer)`.
 Logging, crypto, test, navigator, and rich implementation helpers live directly in their
 component namespaces, such as `(cspp rich cells)`. Their location does not make them supported
 application interfaces or add their bindings to facade exports.

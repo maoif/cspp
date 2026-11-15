@@ -1,4 +1,4 @@
-(library (cspp format private elf-validate)
+(library (cspp format elf validate)
   (export make-elf-issue elf-issue? elf-issue-offset elf-issue-message
           elf-power-of-two? elf-range-valid?)
   (import (cspp chez)

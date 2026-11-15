@@ -1,4 +1,4 @@
-(library (cspp format private wasm-opcodes)
+(library (cspp format wasm opcodes)
   (export wasm-opcode-descriptor? wasm-opcode-mnemonic wasm-opcode-prefix
           wasm-opcode-code wasm-opcode-immediate-shape wasm-opcode-structured-kind
           wasm-core-3-opcodes wasm-opcode-by-binary wasm-opcode-by-mnemonic

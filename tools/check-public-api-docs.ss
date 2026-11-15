@@ -55,7 +55,10 @@
         (string-contains path "/private.ss")
         (string-contains path "/private/")
         (exists (lambda (suffix) (string-contains path suffix))
-                '("/cspp/logging/common.ss"
+                '("/cspp/format/elf/"
+                  "/cspp/format/wasm/"
+                  "/cspp/format/record-writer.ss"
+                  "/cspp/logging/common.ss"
                   "/cspp/crypto/common.ss"
                   "/cspp/test/capture.ss"
                   "/cspp/test/common.ss"
