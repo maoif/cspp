@@ -985,7 +985,8 @@ The return value is a byte count or a would-block value when no bytes were writt
                         [else (loop (fx+ i n))])))))]))
 
   #|proc:tls-flush
-The `tls-flush` procedure flushes buffered TLS writes and currently acts as a no-op marker.
+The `tls-flush` procedure checks that TLS `session` is open and returns `#t`.
+It performs no I/O.
 |#
   (define-who tls-flush
     (lambda (session)

@@ -865,9 +865,9 @@ Encodes multipart parts `parts`. Returns a body source and its multipart content
 
   #|proc:http-listen
 The `http-listen` procedure opens an LWS HTTP server on `host` and `port`. `tls-context` is `#f`
-or a server TLS context, and `backlog` is retained for API compatibility. Optional `version` is
-`h1` (default) or `h2`. Cleartext H2 uses prior knowledge; TLS negotiates through ALPN. An H2
-request raises an error if the LWS build lacks HTTP/2 support. It returns the server.
+or a server TLS context. `backlog` must be a positive fixnum and does not configure LWS.
+Optional `version` is `h1` (default) or `h2`. Cleartext H2 uses prior knowledge; TLS uses ALPN.
+An H2 request raises an error if the LWS build lacks HTTP/2 support. It returns the server.
 |#
   (define-who http-listen
     (case-lambda

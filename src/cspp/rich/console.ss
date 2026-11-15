@@ -221,7 +221,7 @@
   The `rich-console-color-system-set!` procedure sets `console` to `color-system` and
   returns an unspecified value. The default `'auto` detects terminal output; `'none`
   suppresses ANSI. Explicit `'standard`, `'256`, and `'truecolor` enable ANSI even on
-  nonterminal ports. RGB colors currently use truecolor sequences in each enabled mode.
+  nonterminal ports. RGB colors use truecolor sequences in each enabled mode.
   |#
   (define rich-console-color-system-set!
     (lambda (console color-system)

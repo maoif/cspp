@@ -20,25 +20,25 @@
       (eq? (system-platform) 'windows)))
 
   #|proc:windows-system-version
-  The `windows-system-version` procedure returns Windows system version information.
-  This procedure is currently a stub and raises a system unsupported error.
+  The `windows-system-version` procedure raises a system unsupported error.
+  Windows system version queries are unsupported; the procedure does not return a value.
   |#
   (define-who windows-system-version
     (lambda ()
       (raise-system-unsupported who "Windows system version is unsupported")))
 
   #|proc:windows-memory-info
-  The `windows-memory-info` procedure returns Windows memory information.
-  This procedure is currently a stub and raises a system unsupported error.
+  The `windows-memory-info` procedure raises a system unsupported error.
+  Windows memory queries are unsupported; the procedure does not return a value.
   |#
   (define-who windows-memory-info
     (lambda ()
       (raise-system-unsupported who "Windows memory information is unsupported")))
 
   #|proc:windows-filesystem-info
-  The `windows-filesystem-info` procedure returns Windows filesystem information for `path`.
+  The `windows-filesystem-info` procedure validates `path` and raises a system unsupported error.
   The `path` parameter is a string naming a path on the filesystem to query.
-  This procedure is currently a stub and raises a system unsupported error.
+  Windows filesystem queries are unsupported; the procedure does not return a value.
   |#
   (define-who windows-filesystem-info
     (lambda (path)

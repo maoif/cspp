@@ -41,7 +41,7 @@
 
   #|proc:os-error?
   The `os-error?` procedure tests `condition` for a CSPP system error condition.
-  It is a compatibility alias of `system-error?` and returns a boolean.
+  It is an alias of `system-error?` and returns a boolean.
   |#
   (define os-error? system-error?)
 

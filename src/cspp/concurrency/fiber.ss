@@ -28,16 +28,16 @@
           (cspp net private operation))
 
 ;;;;===----------------------------------------------------------------------===
-;;;; Implementation origin and design references
+;;;; Design references and attribution
 ;;;;===----------------------------------------------------------------------===
 
   ;; The event vocabulary and poll/register/commit protocol follow Concurrent ML:
   ;; https://cml.cs.uchicago.edu/
-  ;; The original cvar implementation also compared its API with PCML and Guile
-  ;; Fibers. Here a cvar wait explicitly releases and reacquires a caller-owned mutex.
+  ;; A cvar wait explicitly releases and reacquires a caller-owned mutex.
+  ;; Related cvar APIs are available in PCML and Guile Fibers.
   ;; Guile Fibers reference: https://github.com/wingo/fibers
-  ;; Tests adapted from the legacy `fiber.ss.bak` include examples labeled as coming
-  ;; from Loko and Guile Fibers benchmarks; see the attribution in `tests/fiber.ss`.
+  ;; Tests include examples adapted from Loko and Guile Fibers benchmarks;
+  ;; see the attribution in `tests/fiber.ss`.
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

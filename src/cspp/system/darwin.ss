@@ -20,25 +20,25 @@
       (eq? (system-platform) 'darwin)))
 
   #|proc:darwin-system-version
-  The `darwin-system-version` procedure returns Darwin system version information.
-  This procedure is currently a stub and raises a system unsupported error.
+  The `darwin-system-version` procedure raises a system unsupported error.
+  Darwin system version queries are unsupported; the procedure does not return a value.
   |#
   (define-who darwin-system-version
     (lambda ()
       (raise-system-unsupported who "Darwin system version is unsupported")))
 
   #|proc:darwin-memory-info
-  The `darwin-memory-info` procedure returns Darwin memory information.
-  This procedure is currently a stub and raises a system unsupported error.
+  The `darwin-memory-info` procedure raises a system unsupported error.
+  Darwin memory queries are unsupported; the procedure does not return a value.
   |#
   (define-who darwin-memory-info
     (lambda ()
       (raise-system-unsupported who "Darwin memory information is unsupported")))
 
   #|proc:darwin-filesystem-info
-  The `darwin-filesystem-info` procedure returns Darwin filesystem information for `path`.
+  The `darwin-filesystem-info` procedure validates `path` and raises a system unsupported error.
   The `path` parameter is a string naming a path on the filesystem to query.
-  This procedure is currently a stub and raises a system unsupported error.
+  Darwin filesystem queries are unsupported; the procedure does not return a value.
   |#
   (define-who darwin-filesystem-info
     (lambda (path)

@@ -127,8 +127,8 @@
   Bulk hooks preserve shape, element restrictions, callback order and shallow sharing of
   unchanged children. Changing indexed length or structure inside callbacks is unspecified.
   Allocate traversal state per invocation; never cache a shared mutable cursor in a hook.
-  Missing hooks (`#f`) use indexed access/pure setters as before. Bulk pure updates through
-  legacy setters may copy once per element. Existing five-argument registrations remain valid.
+  Missing hooks (`#f`) use indexed access and pure setters, which may copy once per element
+  during bulk pure updates. The five-argument form omits all bulk hooks.
   Registration returns an unspecified value.
   Newer registrations are tried first. Concurrent publications are retained atomically;
   one lookup uses one stable registry snapshot and runs callbacks outside synchronization.

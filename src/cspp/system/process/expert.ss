@@ -473,7 +473,7 @@
   Do not call this process operation inside a fiber; use a separate Scheme thread.
   The `process-specs` parameter is a nonempty proper list of nonempty proper string lists.
   Command strings must contain no NUL characters.
-  The `options` parameter is reserved and should currently be the empty list.
+  The `options` parameter is reserved and must be the empty list.
   The procedure returns process objects immediately and does not wait for them.
   Callers should wait for or terminate the returned processes.
   Stdin for the first command, stdout for the final command, and all stderrs are inherited.

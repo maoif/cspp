@@ -51,7 +51,7 @@
 
   #|proc:make-net-error
 The `make-net-error` procedure constructs a structured network error condition.
-The compatibility arity is `(who kind message data)`. The full arity is
+It accepts `(who kind message)` or `(who kind message data)`, with omitted `data` set to `#f`, or
 `(kind operation message status errno endpoint retryable? cause data)`.
 The return value is a `net-error` condition.
 |#
@@ -68,7 +68,7 @@ The return value is a `net-error` condition.
 
   #|proc:raise-net-error
 The `raise-net-error` procedure raises a structured network error condition.
-It accepts the same compatibility and full arities as `make-net-error`, and returns no value.
+It accepts the same argument forms as `make-net-error`, and returns no value.
 |#
   (define-who raise-net-error
     (case-lambda
