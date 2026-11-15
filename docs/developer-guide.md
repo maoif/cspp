@@ -304,8 +304,8 @@ Supported advanced interfaces, such as `(cspp system process expert)`, are publi
 
 ## Library dependencies
 
-CSPP libraries import Chez Scheme through `(cspp chez)`. The utility implementation imports
-only Chez's original `sleep` under a private name. All utility dependencies use `(cspp utils)`,
+CSPP libraries import Chez Scheme through `(cspp chez)`.
+All utility dependencies use `(cspp utils)`,
 with one library per import line. Standalone build tools may import `(chezscheme)` before CSPP
 is available.
 

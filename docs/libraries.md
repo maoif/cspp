@@ -50,14 +50,3 @@ Chez's original sleeper is internal and is not exported by `(cspp chez)` or `(cs
 `(cspp utils)` provides synchronized `getenv` and `putenv`; both are also available from
 `(cspp)`. `(cspp chez)` supplies the Chez primitives and does not load the native runtime.
 
-## Implementation libraries
-
-Shared infrastructure uses `(cspp private name)`. System and networking helpers use
-`(cspp system private name)` and `(cspp net private name)`, with one component after `private`.
-ELF and Wasm implementation helpers live under `(cspp format elf name)` and
-`(cspp format wasm name)`. Their shared record writer is `(cspp format record-writer)`.
-Logging, crypto, test, navigator, and rich implementation helpers live directly in their
-component namespaces, such as `(cspp rich cells)`. Facade export declarations define the
-supported application interfaces.
-Applications should import public libraries such as `(cspp system process)`,
-`(cspp net http)`, and `(cspp navigator)`.
