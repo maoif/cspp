@@ -1,13 +1,13 @@
 #!chezscheme
-(library (cspp rich private render)
+(library (cspp rich render)
   (export rich-check-rendered-value rich-string->lines rich-value->lines)
   (import (cspp chez)
           (cspp utils)
           (cspp rich segment)
           (cspp rich renderable)
           (cspp rich pretty)
-          (cspp rich private common)
-          (cspp rich private lines))
+          (cspp rich common)
+          (cspp rich lines))
 
   #|proc:rich-check-rendered-value
   The private `rich-check-rendered-value` returns renderer result `value` if it is a

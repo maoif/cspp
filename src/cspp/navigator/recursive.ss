@@ -2,9 +2,9 @@
   (export nav/rec nav/letrec nav/children nav/leaves nav/walker nav/before nav/after)
   (import (cspp chez)
           (cspp utils)
-          (cspp navigator private core)
-          (cspp navigator private data)
-          (cspp navigator private engine))
+          (cspp navigator core)
+          (cspp navigator data)
+          (cspp navigator engine))
 
   ;; Each lexical frame maps names to stable reference objects. Frames are captured
   ;; while constructing nested groups, before recursive bodies are linked to targets.

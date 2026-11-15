@@ -12,8 +12,8 @@
           call-with-cipher-state)
   (import (cspp chez)
           (cspp utils)
-          (cspp crypto private ffi)
-          (cspp crypto private common))
+          (cspp crypto ffi)
+          (cspp crypto common))
 
   (define cipher-algorithms '(aes-128-ctr aes-256-ctr chacha20))
 

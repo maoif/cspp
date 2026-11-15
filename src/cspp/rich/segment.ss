@@ -15,8 +15,8 @@
           rich-segment-pad-right)
   (import (cspp chez)
           (cspp utils)
-          (cspp rich private common)
-          (cspp rich private cells)
+          (cspp rich common)
+          (cspp rich cells)
           (cspp rich style))
 
   (define-record-type (rich-segment-record $make-rich-segment $rich-segment?)

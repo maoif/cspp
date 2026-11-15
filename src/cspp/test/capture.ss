@@ -1,9 +1,9 @@
 #!chezscheme
-(library (cspp test private capture)
+(library (cspp test capture)
   (export test-capture-ports test-check-output-expectations)
   (import (cspp chez)
           (cspp utils)
-          (cspp test private common)
+          (cspp test common)
           (cspp test assertion))
 
   (define $capture-stdout?

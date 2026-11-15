@@ -8,7 +8,7 @@
           test-pred test-raises test-not-raises test-fail)
   (import (cspp chez)
           (cspp utils)
-          (cspp test private common))
+          (cspp test common))
 
   #|doc
   Every exported procedure in this library supports independent concurrent calls from OS threads

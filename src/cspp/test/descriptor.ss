@@ -1,5 +1,5 @@
 #!chezscheme
-(library (cspp test private descriptor)
+(library (cspp test descriptor)
   (export test-descriptor? test-suite-descriptor? test-case-descriptor?
           test-expand-descriptor? test-compile-descriptor? test-concrete-case?
           test-result? test-summary? test-config? test-registry?
@@ -23,7 +23,7 @@
           test-summary-xfail test-summary-xpass test-summary-results)
   (import (cspp chez)
           (cspp utils)
-          (cspp test private common))
+          (cspp test common))
 
   (define-record-type ($test-descriptor $make-test-descriptor $test-descriptor?)
     (fields kind name phase metadata children body prepare))

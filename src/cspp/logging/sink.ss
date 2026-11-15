@@ -24,7 +24,7 @@
           (cspp rich)
           (cspp logging level)
           (cspp logging formatter)
-          (cspp logging private common))
+          (cspp logging common))
 
   (define-record-type $log-sink
     (fields (immutable name $log-sink-name)

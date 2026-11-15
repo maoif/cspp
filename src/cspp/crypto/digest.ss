@@ -18,10 +18,10 @@
   (import (cspp chez)
           (cspp utils)
           (cspp private optional-library)
-          (only (cspp crypto private common)
+          (only (cspp crypto common)
                 with-crypto-mutex with-crypto-operation call-with-crypto-resource)
           (only (cspp file) file-size)
-          (cspp crypto private ffi))
+          (cspp crypto ffi))
 
   #|proc:digest-algorithms
   The `digest-algorithms` value lists the supported digest algorithm symbols. Availability

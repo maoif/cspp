@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def contracts():
-    source = (ROOT / 'src/cspp/crypto/private/ffi.ss').read_text()
+    source = (ROOT / 'src/cspp/crypto/ffi.ss').read_text()
     # Use the real exported wrappers, replacing only native procedures with a safe stub.
     # Every invalid-object case must raise pcheck, before either availability or native entry.
     script = r'''
@@ -25,7 +25,7 @@ def contracts():
      [else form])))
 (define evaluation-environment (copy-environment (environment '(cspp chez) '(cspp utils)) #t))
 (eval '(define require-optional-library (lambda (who library) (values))) evaluation-environment)
-(call-with-input-file "src/cspp/crypto/private/ffi.ss"
+(call-with-input-file "src/cspp/crypto/ffi.ss"
   (lambda (port)
     (let ([library (read port)])
       (for-each (lambda (form) (eval (replace-native form) evaluation-environment)) (cddddr library)))))
@@ -77,11 +77,11 @@ def contracts():
     if '--enabled' in sys.argv:
         script = r'''
 (import (cspp chez)
-        (cspp crypto private ffi)
+        (cspp crypto ffi)
         (cspp optional-library))
 (unless (optional-library-available? (optional-library-info 'openssl))
   (error 'test-native-review "OpenSSL must be enabled for real contract verification"))
-(define evaluation-environment (environment '(cspp chez) '(cspp crypto private ffi)))
+(define evaluation-environment (environment '(cspp chez) '(cspp crypto ffi)))
 (define rejected-by-pcheck?
   (lambda (expression)
     (guard (condition

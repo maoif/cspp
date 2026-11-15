@@ -21,8 +21,8 @@
           destroy-public-key!)
   (import (cspp chez)
           (cspp utils)
-          (cspp crypto private ffi)
-          (cspp crypto private common))
+          (cspp crypto ffi)
+          (cspp crypto common))
 
   (define asymmetric-algorithms '(rsa ecdsa ecdh ed25519 x25519))
   (define check-algorithm

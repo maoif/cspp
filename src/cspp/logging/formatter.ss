@@ -13,7 +13,7 @@
           (cspp utils)
           (cspp rich)
           (cspp logging level)
-          (cspp logging private common))
+          (cspp logging common))
 
   (define-record-type $log-formatter
     (fields (immutable kind $log-formatter-kind)

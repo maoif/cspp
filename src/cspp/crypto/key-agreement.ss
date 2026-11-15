@@ -2,8 +2,8 @@
   (export derive-shared-secret)
   (import (cspp chez)
           (cspp utils)
-          (cspp crypto private ffi)
-          (cspp crypto private common)
+          (cspp crypto ffi)
+          (cspp crypto common)
           (cspp crypto pkey))
 
   (define key-agreement-algorithms '(x25519 ecdh))

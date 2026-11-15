@@ -79,7 +79,7 @@
           (cspp utils)
           (cspp crypto cert)
           (cspp crypto pkey)
-          (cspp crypto private common)
+          (cspp crypto common)
           (cspp net errors)
           (cspp net private ffi)
           (cspp net private common)

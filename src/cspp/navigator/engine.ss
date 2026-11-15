@@ -1,4 +1,4 @@
-(library (cspp navigator private engine)
+(library (cspp navigator engine)
   (export nav-select nav-select-one nav-select-first nav-select-count nav-selected?
           nav-traverse nav-traverse/i nav-traverse->iter
           nav-transform nav-transform/i nav-transform! nav-transform!/i
@@ -10,7 +10,7 @@
           (cspp list)
           (cspp transducer)
           (cspp utils)
-          (cspp navigator private core))
+          (cspp navigator core))
 
   ;; An environment is a stack of recursive-name binding frames. Each resolved
   ;; reference uses its defining (lexical) environment, rather than whichever group

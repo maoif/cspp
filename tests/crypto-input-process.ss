@@ -1,6 +1,6 @@
 (import (chezscheme)
         (cspp crypto)
-        (cspp crypto private ffi)
+        (cspp crypto ffi)
         (cspp optional-library))
 
 (define rejects-input?

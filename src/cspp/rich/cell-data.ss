@@ -40,7 +40,7 @@
 ;; not be used in advertising or otherwise to promote the sale, use or other
 ;; dealings in these Data Files or Software without prior written
 ;; authorization of the copyright holder.
-(library (cspp rich private cell-data)
+(library (cspp rich cell-data)
   (export rich-wide-ranges rich-emoji-ranges)
   (import (cspp chez))
 

@@ -1,6 +1,6 @@
 (import (chezscheme)
         (cspp crypto)
-        (cspp crypto private common)
+        (cspp crypto common)
         (cspp optional-library))
 
 (define openssl? (optional-library-available? (optional-library-info 'openssl)))

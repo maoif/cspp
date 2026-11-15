@@ -1,4 +1,4 @@
-(library (cspp crypto private common)
+(library (cspp crypto common)
   (export check-slice
           make-crypto-lock
           call-with-crypto-locks
@@ -58,7 +58,7 @@
           crypto-envelope-tag)
   (import (cspp chez)
           (cspp utils)
-          (cspp crypto private ffi))
+          (cspp crypto ffi))
 
   (define-record-type (crypto-lock %make-crypto-lock crypto-lock?)
     (fields rank mutex))

@@ -50,10 +50,12 @@ Chez's original sleeper is internal and is not exported by `(cspp chez)` or `(cs
 `(cspp utils)` provides synchronized `getenv` and `putenv`; both are also available from
 `(cspp)`. `(cspp chez)` supplies the Chez primitives and does not load the native runtime.
 
-## Private implementation libraries
+## Implementation libraries
 
-Private libraries use `(cspp private name)` for shared infrastructure, or
-`(cspp subsystem private name)` within a subsystem. There is one component
-after `private`, such as `(cspp system private process-backend)`.
+Shared infrastructure uses `(cspp private name)`. System, networking, and format helpers use
+`(cspp subsystem private name)`, with one component after `private`.
+Logging, crypto, test, navigator, and rich implementation helpers live directly in their
+component namespaces, such as `(cspp rich cells)`. Their location does not make them supported
+application interfaces or add their bindings to facade exports.
 Applications should import public libraries such as `(cspp system process)`,
 `(cspp net http)`, and `(cspp navigator)`.

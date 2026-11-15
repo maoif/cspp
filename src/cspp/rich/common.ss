@@ -1,5 +1,5 @@
 #!chezscheme
-(library (cspp rich private common)
+(library (cspp rich common)
   (export rich-render-width
           rich-render-ascii-only?
           rich-optional-width?

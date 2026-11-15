@@ -8,7 +8,7 @@
           rich-layout-render-cache)
   (import (cspp chez)
           (cspp utils)
-          (cspp rich private common))
+          (cspp rich common))
 
   (define $renderers '())
 

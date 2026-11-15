@@ -3,8 +3,8 @@
           constant-time-subbytevector=?)
   (import (cspp chez)
           (cspp utils)
-          (cspp crypto private ffi)
-          (cspp crypto private common))
+          (cspp crypto ffi)
+          (cspp crypto common))
 
   #|proc:constant-time-subbytevector=?
 The `constant-time-subbytevector=?` procedure compares two bytevector slices in constant time when the lengths match.

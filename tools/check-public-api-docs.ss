@@ -49,11 +49,25 @@
      [(and (file-regular? path) (scheme-file? path)) (list path)]
      [else '()])))
 
-(define private-library-path?
+(define implementation-library-path?
   (lambda (path)
     (or (string-contains path "/ffi.ss")
         (string-contains path "/private.ss")
-        (string-contains path "/private/"))))
+        (string-contains path "/private/")
+        (exists (lambda (suffix) (string-contains path suffix))
+                '("/cspp/logging/common.ss"
+                  "/cspp/crypto/common.ss"
+                  "/cspp/test/capture.ss"
+                  "/cspp/test/common.ss"
+                  "/cspp/test/descriptor.ss"
+                  "/cspp/navigator/core.ss"
+                  "/cspp/navigator/data.ss"
+                  "/cspp/navigator/engine.ss"
+                  "/cspp/rich/cell-data.ss"
+                  "/cspp/rich/cells.ss"
+                  "/cspp/rich/common.ss"
+                  "/cspp/rich/lines.ss"
+                  "/cspp/rich/render.ss")))))
 
 (define exported-name*
   (lambda (export-form)
@@ -157,7 +171,7 @@
 
 (define check-library
   (lambda (path report)
-    (unless (private-library-path? path)
+    (unless (implementation-library-path? path)
       (let ([source (read-file-string path)])
       (check-doc-blocks path source report)
       (call-with-port

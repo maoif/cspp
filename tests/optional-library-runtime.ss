@@ -5,7 +5,7 @@
         (cspp crypto)
         (cspp net private ffi)
         (cspp net private lws-ffi)
-        (cspp crypto private ffi))
+        (cspp crypto ffi))
 
 (define dependencies '(openssl xxhash blake3 curl ssh websockets grpc zlib cares idn2 uuid))
 

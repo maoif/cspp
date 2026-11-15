@@ -7,8 +7,8 @@
           scrypt)
   (import (cspp chez)
           (cspp utils)
-          (cspp crypto private ffi)
-          (cspp crypto private common))
+          (cspp crypto ffi)
+          (cspp crypto common))
 
   (define kdf-algorithms
     '(hkdf pbkdf2 scrypt))

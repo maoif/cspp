@@ -1,5 +1,5 @@
 #!chezscheme
-(library (cspp logging private common)
+(library (cspp logging common)
   (export log-symbol-or-string?
           log-false-or-procedure?
           log-false-or-level?

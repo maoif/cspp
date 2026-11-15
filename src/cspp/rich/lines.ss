@@ -1,11 +1,11 @@
 #!chezscheme
-(library (cspp rich private lines)
+(library (cspp rich lines)
   (export rich-single-line-text rich-lines-normalize rich-lines-wrap rich-lines-width rich-lines-min-width)
   (import (cspp chez)
           (cspp utils)
-          (cspp rich private common)
+          (cspp rich common)
           (cspp rich segment)
-          (cspp rich private cells)
+          (cspp rich cells)
           (only (cspp list) make-list-builder))
 
   ;; Normalize display text before measuring it. Explicit control segments stay opaque.

@@ -3,7 +3,7 @@
   (export rich-pretty
           rich-pretty-render)
   (import (cspp chez)
-          (cspp rich private common)
+          (cspp rich common)
           (cspp rich segment))
 
   #|proc:rich-pretty-render

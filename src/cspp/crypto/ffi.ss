@@ -1,4 +1,4 @@
-(library (cspp crypto private ffi)
+(library (cspp crypto ffi)
   (export ffi-blake3-bytevector
           ffi-blake3-string
           ffi-blake3-create

@@ -1,4 +1,4 @@
-(library (cspp navigator private core)
+(library (cspp navigator core)
   (export $navigator? $path? $recursive-nav-group? $nav-ref?
           make-$navigator make-$path make-$recursive-nav-group make-$nav-ref
           $navigator-name $navigator-kind $navigator-metadata

@@ -9,7 +9,7 @@
           (cspp crypto random)
           (cspp crypto kdf)
           (cspp crypto constant-time)
-          (cspp crypto private common))
+          (cspp crypto common))
 
   (define password-magic (bytevector #x43 #x50 #x57 #x31))
   (define algo-scrypt 1)

@@ -27,7 +27,7 @@
           (cspp utils)
           (cspp logging level)
           (cspp logging sink)
-          (cspp logging private common))
+          (cspp logging common))
 
   (define-record-type $logger
     (fields (immutable name $logger-name)
