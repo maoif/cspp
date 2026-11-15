@@ -298,8 +298,8 @@ ELF and Wasm implementation helpers use `(cspp format elf name)` and
 The shared record writer is `(cspp format record-writer)`.
 Logging, crypto, test, navigator, and rich helpers live directly in their component namespaces,
 such as `(cspp logging common)`, `(cspp crypto ffi)`, and `(cspp navigator engine)`.
-These helpers are implementation interfaces even without `private` in their names; they have
-no compatibility guarantee and are not added to facade exports just by sharing a directory.
+Implementation helpers have no compatibility guarantee. Each facade exports only the
+bindings listed in its export declarations.
 Supported advanced interfaces, such as `(cspp system process expert)`, are public APIs.
 
 ## Library dependencies

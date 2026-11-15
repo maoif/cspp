@@ -2734,7 +2734,7 @@ Finite inputs use exact arithmetic on their represented values to avoid intermed
                           (for-each
                             (lambda (result)
                               (let ([key ($result-key result)])
-                                ;; Keep the first match, as the original ordered search did.
+                                ;; Use the first baseline result for each comparison key.
                                 (unless (hashtable-contains? index key)
                                   (hashtable-set! index key result))))
                             baseline)

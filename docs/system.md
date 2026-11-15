@@ -16,7 +16,7 @@ implementations in `src/cspp/system/`.
 
 Linux is the supported build platform. Native process helpers contain Unix/Darwin paths, but
 these do not establish support for a complete Darwin build. Signal discovery, masks, and waits
-currently support Linux. Darwin/Windows information helpers are documented stubs that raise
+support Linux. Darwin/Windows information helpers are documented stubs that raise
 `system-unsupported-error?`. `mounted-filesystems` reads Linux `/proc/self/mountinfo` and returns
 an empty list when that file is absent.
 
@@ -38,7 +38,7 @@ monotonic deadline and sleep for the remaining time after an early return.
 
 `linux-system-uptime`, `linux-memory-info`, and `linux-load-average` read their requested procfs
 files directly on each call. They do not enumerate mounts or cache mount-namespace state.
-An absent file raises `system-unsupported-error?`. `linux-procfs-mounted?` remains the explicit
+An absent file raises `system-unsupported-error?`. `linux-procfs-mounted?` is the explicit
 mount-table query for checking whether procfs is mounted at `/proc`.
 
 `linux-memory-info` returns an alist of symbol keys and exact integer values. Keys preserve the
@@ -320,7 +320,7 @@ Native error messages are decoded using the calling thread's locale, including n
 
 CSPP `getenv`/`putenv`, native environment readers, and inherited process snapshots share a lock.
 Direct libc/Chez environment mutation outside these wrappers requires caller synchronization.
-Raw `fork` remains unsafe in a threaded Scheme runtime. `vfork` raises
+Raw `fork` is unsafe in a threaded Scheme runtime. `vfork` raises
 `system-unsupported-error?` without creating a child: returning through the C wrapper and Scheme
 FFI stack would corrupt the parent's shared state. Use `process-spawn` to launch executables.
 

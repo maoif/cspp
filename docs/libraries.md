@@ -57,7 +57,7 @@ Shared infrastructure uses `(cspp private name)`. System and networking helpers 
 ELF and Wasm implementation helpers live under `(cspp format elf name)` and
 `(cspp format wasm name)`. Their shared record writer is `(cspp format record-writer)`.
 Logging, crypto, test, navigator, and rich implementation helpers live directly in their
-component namespaces, such as `(cspp rich cells)`. Their location does not make them supported
-application interfaces or add their bindings to facade exports.
+component namespaces, such as `(cspp rich cells)`. Facade export declarations define the
+supported application interfaces.
 Applications should import public libraries such as `(cspp system process)`,
 `(cspp net http)`, and `(cspp navigator)`.

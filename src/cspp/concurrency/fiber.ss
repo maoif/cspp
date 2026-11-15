@@ -960,7 +960,7 @@
   ;;;; Network operation events
   ;;;;===----------------------------------------------------------------------===
 
-  ;; The existing four-worker driver and bounded pools remain a compatibility path.
+  ;; Network operation events use a four-worker driver and bounded job and waiter pools.
   ;; Pool ownership and waiter membership use `net-driver-domain`. Operation advance
   ;; and result inspection use ordinary network mutexes only after releasing it.
   (define net-driver-domain (new-event-domain))

@@ -29,7 +29,7 @@ LWS 4.5.8 can assert while draining buffered unknown-length POST DATA, or fail t
 completion for an empty final DATA frame. CSPP rejects these requests at headers, before
 publishing a request to Scheme. The listener remains usable; the rejected stream is closed.
 
-H2 SETTINGS and GOAWAY remain owned by LWS. Its public API exposes neither peer maximum streams
+LWS owns H2 SETTINGS and GOAWAY. Its public API exposes neither peer maximum streams
 nor GOAWAY last-stream IDs. Live oversubscription of a peer limit of two causes LWS 4.5.8 to
 schedule GOAWAY and close the connection; it does not queue excess client requests. The fixture
 observes LWS's public log callback for that action and verifies prompt child failure. This proves
@@ -39,7 +39,7 @@ capacity is used.
 
 Blocking helpers suspend when called inside fibers. The live stress suite mixes eight HTTP/1
 and H2 operations across eight scheduler lifetimes and checks that waiter usage returns to zero.
-Shutdown remains synchronous; there is no bounded graceful-shutdown API.
+Shutdown is synchronous; there is no bounded graceful-shutdown API.
 
 Run the focused tests from the project root after a clean build:
 

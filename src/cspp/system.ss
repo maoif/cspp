@@ -1,6 +1,6 @@
 (library (cspp system)
   (export
-          ;; raw process APIs retained at the facade
+          ;; raw process APIs
           fork
           vfork
           getpid
@@ -10,7 +10,7 @@
           ;; dynamic loader information
           shared-object-list
 
-          ;; compatibility condition predicate
+          ;; system error predicate alias
           os-error?)
   (import (cspp chez)
           (cspp system private common)

@@ -4,7 +4,7 @@
           make-digester digester? digester-update-bytevector! digester-update-string!
           digester-get digester-finalize! digester-reset! digester-destroy! call-with-digester
 
-          ;; Algorithm-specific helpers; MD5 is retained for legacy interoperability.
+          ;; Algorithm-specific helpers; MD5 is available for interoperability.
           md5-bytevector sha224-bytevector sha256-bytevector sha384-bytevector sha512-bytevector
           sha512-224-bytevector sha512-256-bytevector sha3-224-bytevector sha3-256-bytevector
           sha3-384-bytevector sha3-512-bytevector blake2b-512-bytevector blake2s-256-bytevector
@@ -26,7 +26,7 @@
   #|proc:digest-algorithms
   The `digest-algorithms` value lists the supported digest algorithm symbols. Availability
   depends on the optional OpenSSL and BLAKE3 libraries and the active OpenSSL providers.
-  MD5 is provided only for legacy interoperability and is unsuitable for secure hashing.
+  MD5 is provided for interoperability and is unsuitable for secure hashing.
   |#
   (define digest-algorithms
     '(md5 sha224 sha256 sha384 sha512 sha512-224 sha512-256
@@ -388,8 +388,8 @@
   Optional nonnegative fixnums `start` and `stop` select a half-open
   byte slice, defaulting to zero and the input length.
   Input is a bytevector.
-  Invalid inputs and backend failures raise errors. MD5 is retained only for legacy
-  interoperability; it is unsuitable for security-sensitive hashing.
+  Invalid inputs and backend failures raise errors. MD5 is available for interoperability;
+  it is unsuitable for security-sensitive hashing.
   |#
   (define-specialized-digest md5-bytevector md5 digest-bytevector bytes bytevector?)
 
@@ -502,8 +502,8 @@
   Optional nonnegative fixnums `start` and `stop` select a half-open
   character slice, defaulting to zero and the input length.
   Strings use native-endian UTF-32 without a byte-order mark.
-  Invalid inputs and backend failures raise errors. MD5 is retained only for legacy
-  interoperability; it is unsuitable for security-sensitive hashing.
+  Invalid inputs and backend failures raise errors. MD5 is available for interoperability;
+  it is unsuitable for security-sensitive hashing.
   |#
   (define-specialized-digest md5-string md5 digest-string text string?)
 
@@ -629,8 +629,8 @@
   Optional nonnegative fixnums `start` and `stop` select a half-open
   byte slice, defaulting to zero and the input length.
   Input is a regular file path.
-  Invalid inputs and backend failures raise errors. MD5 is retained only for legacy
-  interoperability; it is unsuitable for security-sensitive hashing.
+  Invalid inputs and backend failures raise errors. MD5 is available for interoperability;
+  it is unsuitable for security-sensitive hashing.
   |#
   (define-specialized-digest md5-file md5 digest-file path string?)
 

@@ -93,7 +93,8 @@
   `digest` defaults to `sha256` for RSA-PSS/ECDSA and `#f` for Ed25519, which uses no
   external digest and rejects any other value. Other algorithms require an OpenSSL
   digest symbol; unknown symbols raise errors. Strings use UTF-8. Mismatched key
-  algorithms raise an error. MD5 and SHA-1 are retained only for legacy interoperability.
+  algorithms raise an error. MD5 and SHA-1 are available for interoperability and are
+  unsuitable for secure signatures.
   |#
   (define-who sign-message
     (case-lambda

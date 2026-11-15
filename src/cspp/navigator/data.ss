@@ -188,7 +188,8 @@
   The key policy is the container's equivalence, hashing, and/or ordering rules. A canonical
   key is the stored object matching a lookup key under that policy. The replacement entry
   list is complete membership, not a list of edits; process it in order so later entries
-  win equivalent-key collisions. Existing seven- and eight-argument registrations remain valid.
+  win equivalent-key collisions. Omitted `empty-proc`, `canonical-proc`, and `replace!-proc`
+  arguments default to `#f`.
   Registration returns an unspecified value.
   Newer registrations are tried first. Concurrent publications are retained atomically;
   one lookup uses one stable registry snapshot and runs callbacks outside synchronization.
@@ -627,8 +628,8 @@
                   (($keyed-protocol-ref-proc protocol) value key nav-missing))]
             [else (nav-focus-error 'nav/key "unsupported keyed value: ~s" value)])))
 
-  ;; Return the stored representative, not merely the query key. For legacy
-  ;; adapters there is no exported equivalence predicate: pure-delete the query
+  ;; Return the stored representative, not merely the query key. Adapters without a
+  ;; canonical callback expose no equivalence predicate: pure-delete the query
   ;; from a copy, then find which original key is absent there. This derives the
   ;; policy from existing callbacks; the optional canonical callback avoids that cost.
   (define keyed-canonical-key
@@ -759,7 +760,7 @@
   ;; preserve key equivalence without depending on the concrete map implementation.
   ;; `entries` is complete replacement membership in collision-resolution order.
   ;; An empty builder plus mutable inserts avoids repeated whole-container copies;
-  ;; legacy adapters fall back to their existing pure delete/set callbacks.
+  ;; adapters without an empty builder use their pure delete/set callbacks.
   (define keyed-rebuild-entries
     (lambda (value entries)
       (cond [(hashtable? value)
@@ -836,7 +837,7 @@
   ;; A nonlocal exit leaves state undefined. Ordinary suspension is not completion:
   ;; never rebuild in a dynamic-wind after-thunk, which runs during fiber suspension
   ;; and can itself invoke a yielding hash/comparison callback while unwinding.
-  ;; Legacy adapters detach first because their delete callback needs the old index.
+  ;; Adapters without a replacement hook detach first: deletion needs the current index.
   ;; Reindexing means inserting retained keys using their current hash/order; eq?
   ;; identity alone cannot prove an old bucket or tree position is still correct.
   ;; Snapshot pairs are copied, but keys/values are shared so nested mutation works.
