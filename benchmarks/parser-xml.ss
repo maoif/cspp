@@ -1,4 +1,5 @@
-(import (cspp))
+(import (cspp)
+        (cspp format xml))
 (load "benchmarks/common.ss")
 
 ;; Run from the repository root: ./cspp --script=benchmarks/parser-xml.ss

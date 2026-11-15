@@ -3,7 +3,10 @@
           unicode-scalar-value?
           parser-decode-bytes parser-read-text-file
           make-parser-digit-converter parser-decimal-source->flonum)
-  (import (cspp chez) (cspp file) (cspp list) (cspp utils))
+  (import (cspp chez)
+          (cspp file)
+          (cspp list)
+          (cspp utils))
 
   #|macro:define-parser-record-writer
   The `define-parser-record-writer` macro registers a labeled writer for `record-type`. `tag` names

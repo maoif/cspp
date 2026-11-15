@@ -1,4 +1,8 @@
-(import (cspp) (cspp parser wasm text) (cspp parser wasm normalize))
+(import (cspp)
+        (cspp parser combinator)
+        (cspp format wasm)
+        (cspp format wasm text)
+        (cspp format wasm normalize))
 (load "benchmarks/common.ss")
 
 ;; Run from the repository root: ./cspp --script=benchmarks/parser-wasm.ss
