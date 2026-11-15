@@ -65,10 +65,8 @@ caller-owned shared state, even when the inputs differ.
 
 `nav/children` always focuses immediate children, including when it ends a path. For example,
 both `nav/children` and `(nav/path nav/children nav/stay)` select `(a (b))` from `'(a (b))`.
-Earlier versions selected descendants when this step was terminal; callers relying on that
-behavior must use an explicit recursive path. Use `nav/leaves` for leaf selection,
-`nav/walker` for recursive predicate selection, and `nav/rec` or `nav/letrec` with
-`nav/children` for recursive updates.
+Use `nav/leaves` for leaf selection, `nav/walker` for recursive predicate selection, and
+`nav/rec` or `nav/letrec` with `nav/children` for recursive updates.
 
 ### Iterator resources and terminal operations
 

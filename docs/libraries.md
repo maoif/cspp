@@ -6,7 +6,7 @@ It re-exports exactly these libraries:
 - `(cspp chez)`, `(cspp utils)`, `(cspp control)`, `(cspp match)`, `(cspp adt)`
 - `(cspp list)`, `(cspp string)`, `(cspp vector)`, `(cspp for)`, `(cspp iter)`
 
-All other CSPP libraries require explicit imports. They remain included in the
+All other CSPP libraries require explicit imports. They are included in the
 built `cspp.lib`; using a focused import does not require a separate build.
 For example:
 

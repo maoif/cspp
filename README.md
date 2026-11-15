@@ -8,7 +8,7 @@ The default exports are `chez`, `utils`, `control`, `match`, `adt`, `list`, `str
 ## Download and run
 
 Download a Linux `.tar.gz` archive for your architecture from the
-[`master` prerelease](https://github.com/maoif/cspp/releases/tag/master): x64, arm64,
+[master snapshots](https://github.com/maoif/cspp/releases): x64, arm64,
 riscv64, or loongarch64. Extract it, enter the extracted directory, and start CSPP:
 
 ```sh
@@ -21,7 +21,7 @@ See [Linux packages](docs/releases.md) for compatibility and release details.
 
 ## Features
 
-- **Language tools:** algebraic data types and records, pattern matching, comprehensions,
+- **Language tools:** algebraic data types and records, pattern matching,
   `for` loops, iterators, transducers, data navigator, control helpers, and list, string, and vector utilities.
 - **Collections:** arrays, bit vectors, bit trees, doubly linked lists, sets, heaps, queues,
   stacks, and ordered maps and sets.
