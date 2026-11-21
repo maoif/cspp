@@ -3017,3 +3017,155 @@
                                                [other 1])
                                       (list x supplied))]))])
                  (collect table x)))))
+
+;;;;===----------------------------------------------------------------------===
+;;;; Numeric reducers
+;;;;===----------------------------------------------------------------------===
+
+(mat numeric-reducer-results
+     (let ([env (environment '(cspp))])
+       (andmap
+        (lambda (prefix)
+          (andmap
+           (lambda (row)
+             (let ([kind (string->symbol (string-append prefix (symbol->string (car row))))]
+                   [source (cadr row)] [expected (caddr row)] [empty (cadddr row)])
+               (and (equal? expected (eval `(,kind ([x :list ',source]) x) env))
+                    (equal? empty (eval `(,kind ([x :list '()]) x) env))
+                    (equal? empty (eval `(,kind ([x :list ',source] [:guard #f]) x) env)))))
+           '((max (1 2 3) 3 #f) (min (1 2 3) 1 #f)
+             (sum (1 2 3) 6 0) (product (1 2 3) 6 1) (average (1 2) 3/2 #f)
+             (fxmax (1 2 3) 3 #f) (fxmin (1 2 3) 1 #f)
+             (fxsum (1 2 3) 6 0) (fxproduct (1 2 3) 6 1) (fxaverage (1 2) 3/2 #f)
+             (flmax (1.0 2.0 3.0) 3.0 #f) (flmin (1.0 2.0 3.0) 1.0 #f)
+             (flsum (1.0 2.0 3.0) 6.0 0.0) (flproduct (1.0 2.0 3.0) 6.0 1.0)
+             (flaverage (1.0 2.0) 1.5 #f))))
+        '("for/" "for*/"))))
+
+(mat numeric-reducer-traversal
+     (= 14 (for/sum ([x :list '(1 2 3)] [y :vector '#(4 5)]) (* x y)))
+
+     (= 14 (for*/sum ([x :list '(1 2 3)] [y :iota x]) x))
+
+     (= 24 (for/product ([x :fxiota 4]) (define value (fx1+ x)) value))
+
+     (let ([visits '()])
+       (and (= 8 (for/sum ([x 6] [:guard (even? x)] [:let value (fx1+ x)])
+                   (set! visits (cons value visits))
+                   (if (= value 3) 2 value)))
+            (equal? '(5 3 1) visits)))
+
+     (= 3 (for/average ([:index i] [x :list '(1 3 5)] [:let i 100])
+            (set! i 200)
+            x))
+
+     (= 3 (for*/fxaverage ([:index i] [x 2] [y :list '(1 3 5)] [:let i 100])
+            (set! i 200)
+            y))
+
+     (= 3.0 (for*/flaverage ([x 2] [:guard (zero? x)] [y :flvector (flvector 2.0 4.0)])
+              y))
+
+     (= 11 (for*/sum ([x :list '(1 2 3)] [y :iota x] [:guard (even? y)]) (+ x y)))
+
+     (= 5 (for/max ([x :list '(-8 -2 5)] [:guard (< x 6)]) x))
+
+     (= -2 (for/max ([x :list '(-8 -2 -5)]) x))
+
+     (= 2 (for/min ([x :list '(8 2 5)]) x))
+
+     (= 4+6i (for/sum ([x :list '(1+2i 3+4i)]) x))
+
+     (= 2+3i (for/average ([x :list '(1+2i 3+4i)]) x)))
+
+(mat numeric-reducer-exits
+     (= 3 (for/sum ([x 10] [:break (= x 3)]) x))
+
+     (= 1/2 (for/average ([x 10] [:break (= x 2)]) x))
+
+     (eq? #f (for/max ([x 10] [:break #t]) x))
+
+     (let ([calls 0])
+       (and (= 3 (for/fxsum ([x 10] [:break (= x 3) (begin (set! calls (+ calls 1))
+                                                                   (values 'ignored 'too))]) x))
+            (= 1 calls)))
+
+     (= 60 (for*/sum ([x :list '(10 20)] [y 4] [:break (= y 2)]) x))
+
+     (= 15 (for*/average ([x :list '(10 20)] [y 4] [:break (= y 2) (values)]) x))
+
+     (= 4 (for*/sum ([x 4] [:break (= x 2)] [y 2]) (+ x y)))
+
+     (= 4 (for*/sum ([x 4] [y 3] [:stop (and (= x 1) (= y 1))]) (+ x y)))
+
+     (= 1 (for*/average ([x 4] [y 3] [:stop (and (= x 1) (= y 1)) (values)]) (+ x y)))
+
+     (eq? #f (for*/average ([x 3] [y 2] [:stop #t]) x)))
+
+(mat numeric-reducer-validation
+     ;; Singleton results must be checked even when no arithmetic combination is needed.
+     (let ([env (environment '(cspp))])
+       (andmap
+        (lambda (prefix)
+          (andmap
+           (lambda (row)
+             (let ([kind (string->symbol (string-append prefix (symbol->string (car row))))])
+               (andmap (lambda (value)
+                         (guard (condition
+                                 [(syntax-violation? condition) #f]
+                                 [else #t])
+                           (eval `(,kind ([x 1]) ',value) env)
+                           #f))
+                       (cdr row))))
+           '((max #f 1+2i) (min #f 1+2i) (sum #f) (product #f) (average #f)
+             (fxmax 1.0 #f) (fxmin 1.0 #f) (fxsum 1.0 #f)
+             (fxproduct 1.0 #f) (fxaverage 1.0 #f)
+             (flmax 1 #f) (flmin 1 #f) (flsum 1 #f)
+             (flproduct 1 #f) (flaverage 1 #f))))
+        '("for/" "for*/"))))
+
+(mat numeric-reducer-bignum-sum
+     (= (+ (most-positive-fixnum) 1)
+        (for/sum ([x :list (list (most-positive-fixnum) 1)]) x)))
+
+(mat numeric-reducer-syntax
+     ;; Reducers own their accumulator and finalizer and require sources and a nonempty body.
+     (let ([env (environment '(cspp))])
+       (andmap
+        (lambda (kind)
+          (andmap
+           (lambda (form)
+             (guard (condition [(syntax-violation? condition) #t] [else #f])
+               (eval `(,kind ,@form) env)
+               #f))
+           '((([x 2]))
+             (() 1)
+             (([:init total 0] [x 2]) x)
+             (([:finish 42] [x 2]) x)
+             (([:length 2] [x 3]) x)
+             (([x 2] [:unknown #t]) x))))
+        '(for/max for/min for/sum for/product for/average
+          for/fxmax for/fxmin for/fxsum for/fxproduct for/fxaverage
+          for/flmax for/flmin for/flsum for/flproduct for/flaverage
+          for*/max for*/min for*/sum for*/product for*/average
+          for*/fxmax for*/fxmin for*/fxsum for*/fxproduct for*/fxaverage
+          for*/flmax for*/flmin for*/flsum for*/flproduct for*/flaverage))))
+
+(mat numeric-reducer-continuation-replay
+     (let ([resume #f] [replayed? #f])
+       (let ([result (for/sum ([x :list '(1 2 3)])
+                       (if (= x 2)
+                           ;; Replay must restore the accumulated prefix before this result.
+                           (call/cc (lambda (continuation) (set! resume continuation) x))
+                           x))])
+         (if replayed? (= 14 result)
+             (begin (set! replayed? #t) (resume 10)))))
+
+     (let ([resume #f] [replayed? #f])
+       (let ([result (for*/average ([x 2] [y :list '(1 2)])
+                       (if (and (= x 0) (= y 2))
+                           ;; Both total and body count must restore across nested replay.
+                           (call/cc (lambda (continuation) (set! resume continuation) y))
+                           y))])
+         (if replayed? (= 7/2 result)
+             (begin (set! replayed? #t) (resume 10))))))

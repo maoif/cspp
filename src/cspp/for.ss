@@ -1,6 +1,14 @@
 (library (cspp for)
   (export for/fold  for  for/list  for/vector
-          for*/fold for* for*/list for*/vector)
+          for*/fold for* for*/list for*/vector
+
+          for/max for/min for/sum for/product for/average
+          for/fxmax for/fxmin for/fxsum for/fxproduct for/fxaverage
+          for/flmax for/flmin for/flsum for/flproduct for/flaverage
+
+          for*/max for*/min for*/sum for*/product for*/average
+          for*/fxmax for*/fxmin for*/fxsum for*/fxproduct for*/fxaverage
+          for*/flmax for*/flmin for*/flsum for*/flproduct for*/flaverage)
   (import (cspp chez)
           (cspp private for)
           (cspp utils))
@@ -955,5 +963,420 @@
   (define-syntax for*/vector
     (syntax-rules ()
       [(_ clauses body ...) ($for/collect for* #t for*/vector clauses body ...)]))
+
+;;;;===----------------------------------------------------------------------===
+;;;; Numeric reducers
+;;;;===----------------------------------------------------------------------===
+
+  #|macro:$for/reduce
+  The `$for/reduce` helper reduces body results using the existing parallel or nested compiler.
+  `nested?` selects nested traversal; `kind` selects arithmetic and the body-result predicate.
+  `who` names the public macro for syntax errors. `clauses` and the nonempty body follow `for`.
+  The accumulator and optional average counter are loop parameters restored on replay.
+  Break results are evaluated for effect; inner breaks preserve the accumulator and counter,
+  while outer breaks and stops finalize the reduction accumulated before the exit.
+  |#
+  (define-syntax $for/reduce
+    (lambda (stx)
+      (syntax-case stx ()
+        [(_ nested? kind who clauses)
+         (syntax-violation (datum who) "numeric reducer requires a nonempty body" stx)]
+        [(_ nested? kind who (clause ...) body body* ...)
+         (let* ([nested? (datum nested?)]
+                [kind (datum kind)]
+                [average? (memq kind '(average fxaverage flaverage))]
+                [extreme? (memq kind '(max min fxmax fxmin flmax flmin))]
+                [clauses #'(clause ...)]
+                [index (and (pair? clauses)
+                            (syntax-case (car clauses) ()
+                              [(tag name) (kw:index? #'tag) (car clauses)]
+                              [_ #f]))]
+                [clauses (if index (cdr clauses) clauses)])
+           (with-syntax ([(accumulator count value)
+                          (generate-temporaries '(accumulator count value))]
+                         [compiler (if nested? #'$for*/fold #'$for/fold)]
+                         [predicate (cond [(memq kind '(fxmax fxmin fxsum fxproduct fxaverage))
+                                           #'fixnum?]
+                                          [(memq kind '(flmax flmin flsum flproduct flaverage))
+                                           #'flonum?]
+                                          [extreme? #'real?]
+                                          [else #'number?])]
+                         [combine (case kind
+                                    [(max) #'max] [(min) #'min]
+                                    [(fxmax) #'fxmax] [(fxmin) #'fxmin]
+                                    [(flmax) #'flmax] [(flmin) #'flmin]
+                                    [(product) #'*] [(fxproduct) #'fx*] [(flproduct) #'fl*]
+                                    [(fxsum fxaverage) #'fx+]
+                                    [(flsum flaverage) #'fl+]
+                                    [else #'+])]
+                         [initial (cond [extreme? #'#f]
+                                        [(eq? kind 'flproduct) #'1.0]
+                                        [(memq kind '(product fxproduct)) #'1]
+                                        [(memq kind '(flsum flaverage)) #'0.0]
+                                        [else #'0])])
+             (let* ([result (cond [(eq? kind 'flaverage)
+                                  #'(and (not (fxzero? count))
+                                         (fl/ accumulator (fixnum->flonum count)))]
+                                 [average? #'(and (not (fxzero? count)) (/ accumulator count))]
+                                 [else #'accumulator])]
+                    [mapped
+                     (let map-clauses ([clauses clauses] [level 0])
+                       (if (null? clauses) '()
+                           (let* ([clause (car clauses)]
+                                  [configuration?
+                                   (syntax-case clause ()
+                                     [(tag . arguments)
+                                      (and (identifier? #'tag) (kw-for*-config-clause? #'tag))]
+                                     [_ #f])]
+                                  [level (if configuration? level (fx1+ level))]
+                                  [exit (if (and nested? (fx> level 1)) #'accumulator result)])
+                             (cons
+                              (syntax-case clause ()
+                                [(tag condition) (kw:break? #'tag) #`(tag condition #,exit)]
+                                [(tag condition expression)
+                                 (kw:break? #'tag) #`(tag condition (begin expression #,exit))]
+                                [(tag condition)
+                                 (and nested? (kw:stop? #'tag)) #`(tag condition #,result)]
+                                [(tag condition expression)
+                                 (and nested? (kw:stop? #'tag))
+                                 #`(tag condition (begin expression #,result))]
+                                [_ clause])
+                              (map-clauses (cdr clauses) level)))))])
+               #`(compiler #t #,(if average? #'count #'#f)
+                   ((:init accumulator initial)
+                    #,@(if index (list index) '())
+                    (:finish #,result)
+                    #,@mapped)
+                   (let ([value (let () body body* ...)])
+                     (pcheck ([predicate value])
+                       #,(if extreme?
+                             #'(if accumulator (combine accumulator value) value)
+                             #'(combine accumulator value))))))))])))
+
+  #|macro:for/max
+  The `for/max` macro returns the maximum of real body results.
+  It uses parallel traversal and returns `#f` when no body result is produced.
+  Clauses follow `for`: an optional leading global `:index`, iterator clauses, then
+  configuration clauses. The nonempty body permits local definitions and is evaluated once
+  per accepted tuple; its final expression must produce one result of the required type.
+  Extrema start with the first result and combine subsequent results using `max` or `min`.
+  Sums, products, and averages use left-to-right arithmetic. Generic sums, products, and
+  averages accept complex numbers; generic extrema require real numbers.
+  Fixnum reducers add no overflow checks beyond Chez fixnum arithmetic; overflow behavior
+  depends on the caller's optimization level.
+  The reducer owns its accumulator and finalizer: `:init` and `:finish` are not accepted.
+  Collection options `:length` and `:fill` are not accepted either.
+  A `:break` returns the reduction so far. Its optional result expression is evaluated for
+  effect and discarded, including when it returns zero or multiple values.
+  In nested reducers, `:break` leaves its own level and `:stop` ends all levels. Inner
+  breaks preserve the reduction; outer breaks and stops return its finalized value.
+  Source ownership and concurrency rules follow `for/fold`. Accumulators and average
+  counts are loop parameters restored by continuation replay.
+  |#
+  (define-syntax for/max
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f max for/max clauses body ...)]))
+
+  #|macro:for/min
+  The `for/min` macro returns the minimum of real body results.
+  It uses parallel traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  |#
+  (define-syntax for/min
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f min for/min clauses body ...)]))
+
+  #|macro:for/sum
+  The `for/sum` macro returns the sum of numeric body results.
+  It uses parallel traversal and returns `0` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  |#
+  (define-syntax for/sum
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f sum for/sum clauses body ...)]))
+
+  #|macro:for/product
+  The `for/product` macro returns the product of numeric body results.
+  It uses parallel traversal and returns `1` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  |#
+  (define-syntax for/product
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f product for/product clauses body ...)]))
+
+  #|macro:for/average
+  The `for/average` macro returns the arithmetic mean of numeric body results.
+  It uses parallel traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  The accumulated sum is divided by the body-result count using exact `/` when possible.
+  |#
+  (define-syntax for/average
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f average for/average clauses body ...)]))
+
+  #|macro:for/fxmax
+  The `for/fxmax` macro returns the maximum of fixnum body results.
+  It uses parallel traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Body results must be fixnums; accumulation uses Chez fixnum arithmetic.
+  |#
+  (define-syntax for/fxmax
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f fxmax for/fxmax clauses body ...)]))
+
+  #|macro:for/fxmin
+  The `for/fxmin` macro returns the minimum of fixnum body results.
+  It uses parallel traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Body results must be fixnums; accumulation uses Chez fixnum arithmetic.
+  |#
+  (define-syntax for/fxmin
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f fxmin for/fxmin clauses body ...)]))
+
+  #|macro:for/fxsum
+  The `for/fxsum` macro returns the sum of fixnum body results.
+  It uses parallel traversal and returns `0` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Body results must be fixnums; accumulation uses Chez fixnum arithmetic.
+  |#
+  (define-syntax for/fxsum
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f fxsum for/fxsum clauses body ...)]))
+
+  #|macro:for/fxproduct
+  The `for/fxproduct` macro returns the product of fixnum body results.
+  It uses parallel traversal and returns `1` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Body results must be fixnums; accumulation uses Chez fixnum arithmetic.
+  |#
+  (define-syntax for/fxproduct
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f fxproduct for/fxproduct clauses body ...)]))
+
+  #|macro:for/fxaverage
+  The `for/fxaverage` macro returns the arithmetic mean of fixnum body results.
+  It uses parallel traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Body results must be fixnums; accumulation uses Chez fixnum arithmetic.
+  The accumulated sum is divided by the body-result count using exact `/` when possible.
+  |#
+  (define-syntax for/fxaverage
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f fxaverage for/fxaverage clauses body ...)]))
+
+  #|macro:for/flmax
+  The `for/flmax` macro returns the maximum of flonum body results.
+  It uses parallel traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Body results must be flonums; accumulation uses Chez flonum arithmetic.
+  |#
+  (define-syntax for/flmax
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f flmax for/flmax clauses body ...)]))
+
+  #|macro:for/flmin
+  The `for/flmin` macro returns the minimum of flonum body results.
+  It uses parallel traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Body results must be flonums; accumulation uses Chez flonum arithmetic.
+  |#
+  (define-syntax for/flmin
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f flmin for/flmin clauses body ...)]))
+
+  #|macro:for/flsum
+  The `for/flsum` macro returns the sum of flonum body results.
+  It uses parallel traversal and returns `0.0` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Body results must be flonums; accumulation uses Chez flonum arithmetic.
+  |#
+  (define-syntax for/flsum
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f flsum for/flsum clauses body ...)]))
+
+  #|macro:for/flproduct
+  The `for/flproduct` macro returns the product of flonum body results.
+  It uses parallel traversal and returns `1.0` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Body results must be flonums; accumulation uses Chez flonum arithmetic.
+  |#
+  (define-syntax for/flproduct
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f flproduct for/flproduct clauses body ...)]))
+
+  #|macro:for/flaverage
+  The `for/flaverage` macro returns the arithmetic mean of flonum body results.
+  It uses parallel traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Body results must be flonums; accumulation uses Chez flonum arithmetic.
+  The accumulated sum is divided by the body-result count using `fl/`.
+  |#
+  (define-syntax for/flaverage
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #f flaverage for/flaverage clauses body ...)]))
+
+  #|macro:for*/max
+  The `for*/max` macro returns the maximum of real body results.
+  It uses nested traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  |#
+  (define-syntax for*/max
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t max for*/max clauses body ...)]))
+
+  #|macro:for*/min
+  The `for*/min` macro returns the minimum of real body results.
+  It uses nested traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  |#
+  (define-syntax for*/min
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t min for*/min clauses body ...)]))
+
+  #|macro:for*/sum
+  The `for*/sum` macro returns the sum of numeric body results.
+  It uses nested traversal and returns `0` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  |#
+  (define-syntax for*/sum
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t sum for*/sum clauses body ...)]))
+
+  #|macro:for*/product
+  The `for*/product` macro returns the product of numeric body results.
+  It uses nested traversal and returns `1` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  |#
+  (define-syntax for*/product
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t product for*/product clauses body ...)]))
+
+  #|macro:for*/average
+  The `for*/average` macro returns the arithmetic mean of numeric body results.
+  It uses nested traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  The accumulated sum is divided by the body-result count using exact `/` when possible.
+  |#
+  (define-syntax for*/average
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t average for*/average clauses body ...)]))
+
+  #|macro:for*/fxmax
+  The `for*/fxmax` macro returns the maximum of fixnum body results.
+  It uses nested traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  Body results must be fixnums; accumulation uses Chez fixnum arithmetic.
+  |#
+  (define-syntax for*/fxmax
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t fxmax for*/fxmax clauses body ...)]))
+
+  #|macro:for*/fxmin
+  The `for*/fxmin` macro returns the minimum of fixnum body results.
+  It uses nested traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  Body results must be fixnums; accumulation uses Chez fixnum arithmetic.
+  |#
+  (define-syntax for*/fxmin
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t fxmin for*/fxmin clauses body ...)]))
+
+  #|macro:for*/fxsum
+  The `for*/fxsum` macro returns the sum of fixnum body results.
+  It uses nested traversal and returns `0` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  Body results must be fixnums; accumulation uses Chez fixnum arithmetic.
+  |#
+  (define-syntax for*/fxsum
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t fxsum for*/fxsum clauses body ...)]))
+
+  #|macro:for*/fxproduct
+  The `for*/fxproduct` macro returns the product of fixnum body results.
+  It uses nested traversal and returns `1` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  Body results must be fixnums; accumulation uses Chez fixnum arithmetic.
+  |#
+  (define-syntax for*/fxproduct
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t fxproduct for*/fxproduct clauses body ...)]))
+
+  #|macro:for*/fxaverage
+  The `for*/fxaverage` macro returns the arithmetic mean of fixnum body results.
+  It uses nested traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  Body results must be fixnums; accumulation uses Chez fixnum arithmetic.
+  The accumulated sum is divided by the body-result count using exact `/` when possible.
+  |#
+  (define-syntax for*/fxaverage
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t fxaverage for*/fxaverage clauses body ...)]))
+
+  #|macro:for*/flmax
+  The `for*/flmax` macro returns the maximum of flonum body results.
+  It uses nested traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  Body results must be flonums; accumulation uses Chez flonum arithmetic.
+  |#
+  (define-syntax for*/flmax
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t flmax for*/flmax clauses body ...)]))
+
+  #|macro:for*/flmin
+  The `for*/flmin` macro returns the minimum of flonum body results.
+  It uses nested traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  Body results must be flonums; accumulation uses Chez flonum arithmetic.
+  |#
+  (define-syntax for*/flmin
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t flmin for*/flmin clauses body ...)]))
+
+  #|macro:for*/flsum
+  The `for*/flsum` macro returns the sum of flonum body results.
+  It uses nested traversal and returns `0.0` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  Body results must be flonums; accumulation uses Chez flonum arithmetic.
+  |#
+  (define-syntax for*/flsum
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t flsum for*/flsum clauses body ...)]))
+
+  #|macro:for*/flproduct
+  The `for*/flproduct` macro returns the product of flonum body results.
+  It uses nested traversal and returns `1.0` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  Body results must be flonums; accumulation uses Chez flonum arithmetic.
+  |#
+  (define-syntax for*/flproduct
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t flproduct for*/flproduct clauses body ...)]))
+
+  #|macro:for*/flaverage
+  The `for*/flaverage` macro returns the arithmetic mean of flonum body results.
+  It uses nested traversal and returns `#f` when no body result is produced.
+  Clauses, body evaluation, exits, and continuation behavior follow `for/max`.
+  Inner sources are evaluated for each outer item, as in `for*`.
+  Body results must be flonums; accumulation uses Chez flonum arithmetic.
+  The accumulated sum is divided by the body-result count using `fl/`.
+  |#
+  (define-syntax for*/flaverage
+    (syntax-rules ()
+      [(_ clauses body ...) ($for/reduce #t flaverage for*/flaverage clauses body ...)]))
 
   )
