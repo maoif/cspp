@@ -24,11 +24,15 @@ Pass custom build settings to the target as well, for example
 `make package VARIANT=debug WITH_OPENSSL=0`; plain `make package` uses the default settings.
 Run the packaging regression tests with `make -C tests test-release-package`.
 
-Every push to `master` builds and runs all non-net tests on Ubuntu 24.04 for x64,
-arm64, and riscv64, and on a pinned Loongnix Debian image for loongarch64. x64 and arm64
-use native runners; riscv64 and loongarch64 use QEMU. Only after
-all four jobs pass does CI publish a separate prerelease tagged `master-<full-commit-sha>`
-on the [releases page](https://github.com/maoif/cspp/releases).
+Every push to `master` and every PR targeting `master` builds and runs all non-net tests
+on Ubuntu 24.04 for x64, arm64, and riscv64, and on the latest `ghcr.io/loong64/debian` image for
+loongarch64. x64 and arm64 use native runners. For riscv64 and loongarch64, the x64 runner
+first cross-compiles the pinned Chez Scheme; QEMU containers then build CSPP, run tests,
+and package and smoke-test the archives. The LoongArch job pulls `:latest` once and uses
+the image's APT sources and signing keys for both builds.
+PR checks upload verified packages as workflow artifacts but do not publish releases.
+For pushes to `master`, CI publishes a prerelease tagged `master-<full-commit-sha>`
+on the [releases page](https://github.com/maoif/cspp/releases) only after all four jobs pass.
 New pushes cancel older CI runs so only the newest push continues to build and publish.
 Published releases, tags, and packages remain available unchanged.
 Uploads remain in a draft release until all four packages are ready for publication.
@@ -37,8 +41,8 @@ The workflow can also be run manually against `master`; rerunning a commit reuse
 Each `.tar.gz` contains the `make install` artifacts, including bundled ChezScheme,
 and recursively resolved shared-library dependencies. Extract it anywhere and run
 `bin/cspp`. The package requires the matching Linux architecture and the glibc version
-listed in its `README.txt` and `BUILD-INFO.json` (Ubuntu packages require glibc 2.39;
-the pinned Loongnix Debian package requires glibc 2.43). glibc and its dynamic loader
+listed in its `README.txt` and `BUILD-INFO.json`. Ubuntu packages require glibc 2.39;
+the LoongArch requirement depends on the Debian image used. glibc and its dynamic loader
 come from the host. CI publishes only the archives; local packaging also writes SHA-256 checksums.
 `BUILD-INFO.json` records the source commit, version, build settings,
 and dependency provenance; bundled library licenses are under `share/licenses/`.

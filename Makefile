@@ -92,12 +92,21 @@ bundled-chez:
 	if [ -e .git ]; then \
 		submodules=$$(git submodule status --recursive -- "$(CHEZ_SOURCE_DIR)"); \
 		if printf '%s\n' "$$submodules" | grep -Eq '^[-+U]'; then \
+			if [ "$${CSPP_CI_CROSS_CHEZ:-0}" = 1 ]; then \
+				echo 'error: cross-compiled Chez requires the pinned submodules' >&2; exit 1; \
+			fi; \
 			git submodule update --init --depth 1 --filter=blob:none --recursive -- "$(CHEZ_SOURCE_DIR)"; \
 		fi; \
 		commit=$$(git -C "$$source" rev-parse HEAD); \
 	fi; \
 	signature="commit=$$commit configure=$$source/configure --installprefix=$$install"; \
 	old_signature=$$(cat "$$build/.chezscheme-signature" 2>/dev/null || :); \
+	if [ "$${CSPP_CI_CROSS_CHEZ:-0}" = 1 ]; then \
+		if [ "$$old_signature" != "cross commit=$$commit arch=$$(uname -m)" ] || [ ! -x "$$install/bin/scheme" ]; then \
+			echo 'error: missing or incompatible cross-compiled Chez' >&2; exit 1; \
+		fi; \
+		exit 0; \
+	fi; \
 	if [ "$$old_signature" != "$$signature" ] || [ ! -f "$$build/Makefile" ] || \
 		[ ! -x "$$install/bin/scheme" ]; then \
 		$(MAKE) --no-print-directory clean; \
