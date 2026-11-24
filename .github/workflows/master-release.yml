@@ -41,7 +41,7 @@ jobs:
           - arch: loongarch64
             platform: linux/loong64
             runner: ubuntu-24.04
-            image: lcr.loongnix.cn/library/debian@sha256:c0aa9264c13b608f40a3bf7b9c7662720b6b93839013038df9c3b079835c228f
+            image: ghcr.io/loong64/debian:latest
             emulation: loong64
     steps:
       - name: Checkout source and pinned submodules
@@ -49,6 +49,20 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
+      - name: Pull LoongArch Debian image
+        if: matrix.arch == 'loongarch64'
+        env:
+          TARGET_PLATFORM: ${{ matrix.platform }}
+          TARGET_IMAGE: ${{ matrix.image }}
+        run: |
+          docker pull --platform "$TARGET_PLATFORM" "$TARGET_IMAGE"
+          container=$(docker create --platform "$TARGET_PLATFORM" "$TARGET_IMAGE")
+          trap 'docker rm -v "$container" >/dev/null' EXIT
+          apt_dir=$PWD/.chezscheme-build/apt
+          mkdir -p "$apt_dir"
+          docker cp "$container:/usr/share/keyrings" "$apt_dir/"
+          docker cp "$container:/etc/apt/sources.list.d/debian.sources" "$apt_dir/debian.sources"
+          sed -i "s|^Signed-By: /usr/share/keyrings/|Signed-By: $apt_dir/keyrings/|" "$apt_dir/debian.sources"
       - name: Cross-compile bundled Chez Scheme on the runner
         if: matrix.emulation
         env:
@@ -146,7 +160,7 @@ jobs:
               notes.write(f"Master snapshot of `{os.environ['GITHUB_SHA']}`.\n\n")
               notes.write(f"CSPP version: `{versions.pop()}`.\n\n")
               notes.write('Linux packages built on Ubuntu 24.04 for x64, arm64, and riscv64, '
-                          'and Loongnix Debian for loongarch64. All non-net tests passed on '
+                          'and Debian for loongarch64. All non-net tests passed on '
                           'every architecture. Chez Scheme is cross-compiled for RISC-V and '
                           'LoongArch; their CSPP builds, tests, and packaging use QEMU.\n\n')
               for arch in sorted(requirements):

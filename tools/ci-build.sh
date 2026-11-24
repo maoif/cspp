@@ -13,15 +13,12 @@ esac
 source /etc/os-release
 case "$architecture:$ID:${VERSION_ID:-}" in
     loongarch64:debian:*|x64:ubuntu:24.04|arm64:ubuntu:24.04|riscv64:ubuntu:24.04) ;;
-    *) echo 'requires Ubuntu 24.04, or Loongnix Debian for loongarch64' >&2; exit 1 ;;
+    *) echo 'requires Ubuntu 24.04, or Debian for loongarch64' >&2; exit 1 ;;
 esac
 
 export DEBIAN_FRONTEND=noninteractive
-apt=(apt-get)
-if [[ $architecture == loongarch64 ]]; then
-    apt+=(-o "Dir::Etc::sourcelist=$PWD/tools/ci-loongarch64.sources" -o Dir::Etc::sourceparts=-)
-fi
-"${apt[@]}" update
+apt=(apt-get -o Acquire::Retries=3)
+"${apt[@]}" -o APT::Update::Error-Mode=any update
 "${apt[@]}" install -y --no-install-recommends \
     build-essential git pkg-config libncurses-dev libx11-dev \
     patchelf cmake curl ca-certificates python3 \

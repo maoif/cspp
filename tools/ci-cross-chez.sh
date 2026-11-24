@@ -14,7 +14,7 @@ case $architecture in
         machine=tla64le
         triplet=loongarch64-linux-gnu
         compiler=$triplet-gcc-14
-        cross_packages=(gcc-14-loongarch64-linux-gnu libc6-dev-loong64-cross debian-archive-keyring)
+        cross_packages=(gcc-14-loongarch64-linux-gnu libc6-dev-loong64-cross)
         deb_arch=loong64
         ;;
     *) echo 'usage: ci-cross-chez.sh riscv64|loongarch64' >&2; exit 2 ;;
@@ -42,7 +42,7 @@ workspace=$(mktemp -d)
 trap 'rm -rf "$workspace"' EXIT
 mkdir -p "$workspace"/{lists,packages,sysroot,build}
 if [[ $architecture == loongarch64 ]]; then
-    sources=$repository/tools/ci-loongarch64.sources
+    sources=$repository/.chezscheme-build/apt/debian.sources
 else
     sources=$workspace/sources.list
     printf '%s\n' 'deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://ports.ubuntu.com/ubuntu-ports noble main' > "$sources"
@@ -50,7 +50,7 @@ fi
 target_apt=(apt-get -o "APT::Architecture=$deb_arch" -o "APT::Architectures=$deb_arch"
     -o "Dir::Etc::sourcelist=$sources" -o Dir::Etc::sourceparts=-
     -o "Dir::State::lists=$workspace/lists" -o Dir::Cache::pkgcache= -o Dir::Cache::srcpkgcache=
-    -o Acquire::https::Timeout=30 -o Acquire::Retries=3)
+    -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 -o Acquire::Retries=3)
 "${target_apt[@]}" update
 (
     cd "$workspace/packages"
@@ -66,7 +66,11 @@ sysroot=$workspace/sysroot
 target_libs=$sysroot/usr/lib/$triplet
 ldflags="-L$target_libs -Wl,-rpath-link,$target_libs"
 if [[ $deb_arch == loong64 ]]; then
-    ln -s usr/lib64 "$sysroot/lib64"
+    for directory in lib lib64; do
+        if [[ ! -e $sysroot/$directory ]]; then
+            ln -s "usr/$directory" "$sysroot/$directory"
+        fi
+    done
     ldflags="--sysroot=$sysroot -B$target_libs/ $ldflags"
 fi
 (
