@@ -3,6 +3,8 @@ name: Build, test, and release master
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -15,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    if: github.ref == 'refs/heads/master'
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/master'
     name: Linux ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
@@ -98,6 +100,7 @@ jobs:
           retention-days: 7
 
   release:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
     name: Publish per-commit master prerelease
     needs: build
     runs-on: ubuntu-24.04
