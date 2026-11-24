@@ -17,8 +17,12 @@ case "$architecture:$ID:${VERSION_ID:-}" in
 esac
 
 export DEBIAN_FRONTEND=noninteractive
-apt-get update
-apt-get install -y --no-install-recommends \
+apt=(apt-get)
+if [[ $architecture == loongarch64 ]]; then
+    apt+=(-o "Dir::Etc::sourcelist=$PWD/tools/ci-loongarch64.sources" -o Dir::Etc::sourceparts=-)
+fi
+"${apt[@]}" update
+"${apt[@]}" install -y --no-install-recommends \
     build-essential git pkg-config libncurses-dev libx11-dev \
     patchelf cmake curl ca-certificates python3 \
     libssl-dev uuid-dev libxxhash-dev zlib1g-dev libc-ares-dev \
@@ -29,7 +33,7 @@ workspace=$(mktemp -d)
 trap 'rm -rf "$workspace"' EXIT
 blake3_commit=df610ddc3b93841ffc59a87e3da659a15910eb46 # 1.8.2
 curl -fsSL --retry 3 --connect-timeout 30 --max-time 300 \
-    "https://github.com/BLAKE3-team/BLAKE3/archive/$blake3_commit.tar.gz" \
+    "https://codeload.github.com/BLAKE3-team/BLAKE3/tar.gz/$blake3_commit" \
     -o "$workspace/blake3.tar.gz"
 printf '%s  %s\n' \
     3b5aab142e171a166eb530876d37eb70c4112ee3a0c9e18562f9c7401048dc2b \

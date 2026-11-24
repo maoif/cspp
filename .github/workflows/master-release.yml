@@ -47,6 +47,11 @@ jobs:
         with:
           submodules: recursive
           persist-credentials: false
+      - name: Cross-compile bundled Chez Scheme on the runner
+        if: matrix.emulation
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: bash tools/ci-cross-chez.sh "$TARGET_ARCH"
       - name: Enable architecture emulation
         if: matrix.emulation
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
@@ -57,8 +62,10 @@ jobs:
           TARGET_ARCH: ${{ matrix.arch }}
           TARGET_PLATFORM: ${{ matrix.platform }}
           TARGET_IMAGE: ${{ matrix.image }}
+          CSPP_CI_CROSS_CHEZ: ${{ matrix.emulation && '1' || '0' }}
         run: |
           docker run --rm --platform "$TARGET_PLATFORM" \
+            -e CSPP_CI_CROSS_CHEZ \
             -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             -w "$GITHUB_WORKSPACE" \
             "$TARGET_IMAGE" \
@@ -137,7 +144,8 @@ jobs:
               notes.write(f"CSPP version: `{versions.pop()}`.\n\n")
               notes.write('Linux packages built on Ubuntu 24.04 for x64, arm64, and riscv64, '
                           'and Loongnix Debian for loongarch64. All non-net tests passed on '
-                          'every architecture. RISC-V and LoongArch use QEMU.\n\n')
+                          'every architecture. Chez Scheme is cross-compiled for RISC-V and '
+                          'LoongArch; their CSPP builds, tests, and packaging use QEMU.\n\n')
               for arch in sorted(requirements):
                   notes.write(f"- `{arch}`: {', '.join(requirements[arch])}.\n")
               notes.write('\nExtract an archive anywhere and run `bin/cspp` on the '

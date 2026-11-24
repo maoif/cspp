@@ -1,0 +1,6 @@
+Types: deb
+URIs: http://snapshot.debian.org/archive/debian/20261018T180053Z/
+Suites: unstable
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+Check-Valid-Until: no

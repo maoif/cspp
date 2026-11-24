@@ -26,8 +26,11 @@ Run the packaging regression tests with `make -C tests test-release-package`.
 
 Every push to `master` builds and runs all non-net tests on Ubuntu 24.04 for x64,
 arm64, and riscv64, and on a pinned Loongnix Debian image for loongarch64. x64 and arm64
-use native runners; riscv64 and loongarch64 use QEMU. Only after
-all four jobs pass does CI publish a separate prerelease tagged `master-<full-commit-sha>`
+use native runners. For riscv64 and loongarch64, the x64 runner first cross-compiles
+the pinned Chez Scheme; QEMU containers then build CSPP, run tests, and package and
+smoke-test the archives. Update the Loongnix image and the matching Debian snapshot
+in `tools/ci-loongarch64.sources` together so both builds use the runtime's ABI.
+Only after all four jobs pass does CI publish a separate prerelease tagged `master-<full-commit-sha>`
 on the [releases page](https://github.com/maoif/cspp/releases).
 New pushes cancel older CI runs so only the newest push continues to build and publish.
 Published releases, tags, and packages remain available unchanged.
