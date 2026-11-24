@@ -52,8 +52,8 @@ jobs:
       - name: Cross-compile bundled Chez Scheme on the runner
         if: matrix.emulation
         env:
-          TARGET_ARCH: ${{ matrix.arch }}
-        run: bash tools/ci-cross-chez.sh "$TARGET_ARCH"
+          CSPP_TARGET_ARCH: ${{ matrix.arch }}
+        run: bash tools/ci-cross-chez.sh "$CSPP_TARGET_ARCH"
       - name: Enable architecture emulation
         if: matrix.emulation
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
@@ -61,7 +61,7 @@ jobs:
           platforms: ${{ matrix.emulation }}
       - name: Build, run non-net tests, and package installed artifacts
         env:
-          TARGET_ARCH: ${{ matrix.arch }}
+          CSPP_TARGET_ARCH: ${{ matrix.arch }}
           TARGET_PLATFORM: ${{ matrix.platform }}
           TARGET_IMAGE: ${{ matrix.image }}
           CSPP_CI_CROSS_CHEZ: ${{ matrix.emulation && '1' || '0' }}
@@ -71,7 +71,7 @@ jobs:
             -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
             -w "$GITHUB_WORKSPACE" \
             "$TARGET_IMAGE" \
-            bash tools/ci-build.sh "$TARGET_ARCH" "$GITHUB_SHA"
+            bash tools/ci-build.sh "$CSPP_TARGET_ARCH" "$GITHUB_SHA"
       - name: Smoke-test archive in a clean runtime
         env:
           TARGET_PLATFORM: ${{ matrix.platform }}
